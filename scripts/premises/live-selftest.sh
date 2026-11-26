@@ -344,7 +344,7 @@ fi
 exec sleep 30
 EOF
 printf '#!/bin/sh\necho "$0" >"%s/opencode.$$"\ncase "${1:-}" in --version) echo "%s"; exit 0 ;; esac\nexec sleep 30\n' "$MARK" "$POC" >"$MSTUB/opencode"
-printf '#!/bin/sh\necho "$0" >"%s/zygo.$$"\nexit 1\n' "$MARK" >"$MSTUB/zygo"
+printf '#!/bin/sh\necho "$0" >"%s/zygo.$$"\ncase "${1:-}" in --version) echo "zygo 9.8.7"; exit 0 ;; esac\nexit 1\n' "$MARK" >"$MSTUB/zygo"
 : >"$TLOG"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s"\nexec "%s" "$@"\n' "$TLOG" "$TMUX_REAL" >"$T/mtbin/tmux"
 chmod +x "$MSTUB/claude" "$MSTUB/opencode" "$MSTUB/zygo" "$T/mtbin/tmux"
@@ -455,6 +455,9 @@ else
   mcase "ML16 --m12: no process, tmux server or socket file left${l:+ ($(printf '%s' "$l" | tr '\n' ';'))}" "$t"
   t=1; [ -s "$MT/fixtures/claude-code/mail/m12.txt" ] && t=0
   mcase "ML16 --m12: the fixture is written in the copied tree" "$t"
+  h=$(sed -n 1p "$MT/fixtures/claude-code/mail/m12.txt" 2>/dev/null)
+  t=1; printf '%s\n' "$h" | grep -qF ', zygo 9.8.7, ' && [ "$(printf '%s\n' "$h" | grep -o zygo | wc -l | tr -d ' ')" -eq 1 ] && t=0
+  mcase "FX18 --m12: the M12 head line holds \", zygo <version>,\" with the word zygo once" "$t" "$MT/fixtures/claude-code/mail/m12.txt"
   task=$(sed -n "s/^M12_TASK='\\(.*\\)'\$/\\1/p" "$HERE/live-mail.sh" 2>/dev/null)
   t=1; [ -n "$task" ] && ! printf '%s\n' "$task" | grep -qiE 'mail|message|send|inbox|poll|watch' && t=0
   mcase "ML16 the M12 task names no mail" "$t"

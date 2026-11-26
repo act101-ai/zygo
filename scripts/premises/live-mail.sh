@@ -425,7 +425,7 @@ if [ "$MODE" = pm ]; then
 else
   part_m12
   ZV=$(renv "$ZYGO_BIN" --version 2>/dev/null | sed -n 1p)
-  finish M12 "$LIVE_CC_VER" "$FXC/m12.txt" "$CC, zygo ${ZV:-?}, $TVL" "12.1 12.2 12.3" "$OUTC/m12.txt"
+  finish M12 "$LIVE_CC_VER" "$FXC/m12.txt" "$CC, ${ZV:-zygo ?}, $TVL" "12.1 12.2 12.3" "$OUTC/m12.txt"
   tm kill-server 2>/dev/null
   cpfx "$OUTC" "$FXC/m12.txt"
 fi
