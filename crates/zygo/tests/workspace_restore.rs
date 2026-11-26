@@ -1145,28 +1145,31 @@ fn fx14_git(dir: &Path, args: &[&str]) {
     assert!(o.status.success(), "git {args:?}: {}", text(&o.stderr));
 }
 
-/// R§9.4, FX-14 (1): `zygo up` in a session reads the team `[limits] max_members` of the session `team.toml` through
-/// `with_team`: a start above it is refused with the R§9.4 line, after the team-layer warning. The user default is 8,
-/// so the refusal of 5 agents proves the team value. Kills: `run` loading with `team: None` only.
-#[test]
-fn up_reads_the_team_max_members_of_the_session() {
+/// FX-14, FX-17: `<root>/app`, a clone whose `main` has `.zygo/workspace.toml` = `toml`, approved; `bin/git`; a
+/// `bin/tmux` that appends each call after the setup to `<root>/tmux.log`, answers `-V` with `tmux 3.4` and fails every other call.
+/// Returns the clone and its workspace id.
+fn approved_repo(h: &Harness, toml: &str) -> (PathBuf, String) {
     use zygo_config::repo_def::{approve_workspace_in, check_default, SystemGit, Use};
-    let h = Harness::no_tmux();
     let tmux = h.bin.join("tmux");
+    let root = h.root().to_path_buf();
     std::fs::write(
         &tmux,
-        "#!/bin/sh\nfor a in \"$@\"; do if [ \"$a\" = -V ]; then echo 'tmux 3.4'; exit 0; fi; done\n\
-         echo 'no server running on /tmp/zygo-none/s' >&2\nexit 1\n",
+        format!(
+            "#!/bin/sh\necho \"$*\" >> '{}/tmux.log'\nfor a in \"$@\"; do if [ \"$a\" = -V ]; then echo 'tmux 3.4'; exit 0; fi; done\n\
+             echo 'no server running on /tmp/zygo-none/s' >&2\nexit 1\n",
+            root.display()
+        ),
     )
     .unwrap();
     ready_exe(&tmux);
+    // `ready_exe` runs `tmux --version` (D14); the log starts empty for the tests.
+    std::fs::remove_file(root.join("tmux.log")).unwrap();
     std::os::unix::fs::symlink(which::which("git").unwrap(), h.bin.join("git")).unwrap();
-    let root = h.root().to_path_buf();
     let w = root.join("w");
     std::fs::create_dir_all(w.join(".zygo")).unwrap();
     fx14_git(&root, &["init", "-q", "--bare", "-b", "main", "o.git"]);
     fx14_git(&w, &["init", "-q", "-b", "main"]);
-    std::fs::write(w.join(".zygo/workspace.toml"), "version = 1\n").unwrap();
+    std::fs::write(w.join(".zygo/workspace.toml"), toml).unwrap();
     fx14_git(&w, &["add", ".zygo/workspace.toml"]);
     fx14_git(&w, &["commit", "-q", "-m", "c"]);
     fx14_git(&w, &["remote", "add", "origin", "../o.git"]);
@@ -1178,6 +1181,30 @@ fn up_reads_the_team_max_members_of_the_session() {
         panic!("not NotApproved")
     };
     approve_workspace_in(&h.paths.approvals_file, &id, &digest).unwrap();
+    (app, id)
+}
+
+/// `zygo <args>` in `app`, with `ZYGO_SESSION_DIR = session` when given (the child only).
+fn up_in(h: &Harness, app: &Path, args: &[&str], session: Option<&Path>) -> std::process::Output {
+    let extra: Vec<(&str, &OsStr)> = session.map(|s| ("ZYGO_SESSION_DIR", s.as_os_str())).into_iter().collect();
+    h.zygo(args, &extra).current_dir(app).output().unwrap()
+}
+
+/// FX-17: the range line of `[limits] max_members` (R§9.4 bullet 1, `config check` rule).
+const RANGE: &str = "zygo: limits.max_members: must be 1-32; nothing started\n";
+/// FX-17: a repository workspace file with two claude-code members (R§6.2 defaults).
+const TWO: &str = "version = 1\n[members.a]\n[members.b]\n";
+/// FX-17: the R§9.4 count line for `TWO` under `max_members = 1`.
+const ONE_OF_TWO: &str = "zygo: this repository's workspace files start 2 agents; [limits] max_members is 1; nothing started\n";
+
+/// R§9.4, FX-14 (1): `zygo up` in a session reads the team `[limits] max_members` of the session `team.toml` through
+/// `with_team`: a start above it is refused with the R§9.4 line, after the team-layer warning. The user default is 8,
+/// so the refusal of 5 agents proves the team value. Kills: `run` loading with `team: None` only.
+#[test]
+fn up_reads_the_team_max_members_of_the_session() {
+    let h = Harness::no_tmux();
+    let (app, id) = approved_repo(&h, "version = 1\n");
+    let root = h.root().to_path_buf();
     let s = root.join("s");
     std::fs::create_dir_all(&s).unwrap();
     std::fs::write(s.join("team.toml"), "[limits]\nmax_members = 4\n[loadout.x]\n").unwrap();
@@ -1193,4 +1220,87 @@ fn up_reads_the_team_max_members_of_the_session() {
         )
     );
     assert!(!h.store(&id).dir().join("workspace.json").exists());
+}
+
+/// FX-17 (1): `zygo up` with the session `team.toml` setting `[limits] max_members` to 0 or 33 exits 1 with the range
+/// line and writes no workspace record and no tmux session (no tmux call). Kills: no range check on the team value.
+#[test]
+fn fx17_up_refuses_a_team_max_members_outside_1_32() {
+    let h = Harness::no_tmux();
+    let (app, id) = approved_repo(&h, TWO);
+    let s = h.root().join("s");
+    std::fs::create_dir_all(&s).unwrap();
+    for v in [0, 33] {
+        std::fs::write(s.join("team.toml"), format!("[limits]\nmax_members = {v}\n")).unwrap();
+        let o = up_in(&h, &app, &["up", "--no-attach"], Some(&s));
+        assert_eq!((o.status.code(), text(&o.stdout), text(&o.stderr)), (Some(1), String::new(), RANGE.to_string()), "{v}");
+        assert!(!h.store(&id).dir().join("workspace.json").exists(), "{v}");
+        assert!(!h.root().join("tmux.log").exists(), "{v}");
+    }
+}
+
+/// FX-17 (2): the same for the user config file, with no team layer. Kills: a range check on the team layer only.
+#[test]
+fn fx17_up_refuses_a_user_max_members_outside_1_32() {
+    let h = Harness::no_tmux();
+    let (app, id) = approved_repo(&h, TWO);
+    for v in [0, 33] {
+        std::fs::write(&h.paths.config_file, format!("[limits]\nmax_members = {v}\n")).unwrap();
+        let o = up_in(&h, &app, &["up", "--no-attach"], None);
+        assert_eq!((o.status.code(), text(&o.stdout), text(&o.stderr)), (Some(1), String::new(), RANGE.to_string()), "{v}");
+        assert!(!h.store(&id).dir().join("workspace.json").exists(), "{v}");
+        assert!(!h.root().join("tmux.log").exists(), "{v}");
+    }
+}
+
+/// FX-17 (3): 1 and 32 from the team layer and from the user layer are accepted: 1 gives the R§9.4 count line for
+/// 2 agents, 32 gives no `max_members` line. Kills: an off-by-one range.
+#[test]
+fn fx17_up_accepts_max_members_1_and_32_from_each_layer() {
+    let h = Harness::no_tmux();
+    let (app, _id) = approved_repo(&h, TWO);
+    let s = h.root().join("s");
+    std::fs::create_dir_all(&s).unwrap();
+    std::fs::write(s.join("team.toml"), "[limits]\nmax_members = 1\n").unwrap();
+    let o = up_in(&h, &app, &["up", "--no-attach"], Some(&s));
+    assert_eq!((o.status.code(), text(&o.stdout), text(&o.stderr)), (Some(1), String::new(), ONE_OF_TWO.to_string()), "team 1");
+    std::fs::write(s.join("team.toml"), "[limits]\nmax_members = 32\n").unwrap();
+    let o = up_in(&h, &app, &["up", "--no-attach"], Some(&s));
+    assert!(!text(&o.stderr).contains("max_members"), "team 32: {}", text(&o.stderr));
+    std::fs::write(&h.paths.config_file, "[limits]\nmax_members = 1\n").unwrap();
+    let o = up_in(&h, &app, &["up", "--no-attach"], None);
+    assert_eq!((o.status.code(), text(&o.stdout), text(&o.stderr)), (Some(1), String::new(), ONE_OF_TWO.to_string()), "user 1");
+    std::fs::write(&h.paths.config_file, "[limits]\nmax_members = 32\n").unwrap();
+    let o = up_in(&h, &app, &["up", "--no-attach"], None);
+    assert!(!text(&o.stderr).contains("max_members"), "user 32: {}", text(&o.stderr));
+}
+
+/// FX-17 (4): with no layer setting it, `max_members` is 8: two agents pass and no range line is printed.
+#[test]
+fn fx17_up_with_no_max_members_layer_uses_8() {
+    let h = Harness::no_tmux();
+    let (app, _id) = approved_repo(&h, TWO);
+    let o = up_in(&h, &app, &["up", "--no-attach"], None);
+    assert!(!text(&o.stderr).contains("max_members"), "{}", text(&o.stderr));
+}
+
+/// FX-17 (5): `zygo up --all` with `max_members` 0 from the user layer, then from the team layer, exits 1 with the range
+/// line, writes no workspace record and calls no tmux. Kills: a check on `up` only.
+#[test]
+fn fx17_up_all_refuses_max_members_0() {
+    let h = Harness::no_tmux();
+    let (app, _id) = approved_repo(&h, TWO);
+    std::fs::write(&h.paths.config_file, "[limits]\nmax_members = 0\n").unwrap();
+    let o = up_in(&h, &app, &["up", "--all"], None);
+    assert_eq!((o.status.code(), text(&o.stdout), text(&o.stderr)), (Some(1), String::new(), RANGE.to_string()), "user");
+    assert!(zygo_workspace::state::list_all(&h.paths).is_empty(), "user");
+    assert!(!h.root().join("tmux.log").exists(), "user");
+    std::fs::write(&h.paths.config_file, "").unwrap();
+    let s = h.root().join("s");
+    std::fs::create_dir_all(&s).unwrap();
+    std::fs::write(s.join("team.toml"), "[limits]\nmax_members = 0\n").unwrap();
+    let o = up_in(&h, &app, &["up", "--all"], Some(&s));
+    assert_eq!((o.status.code(), text(&o.stdout), text(&o.stderr)), (Some(1), String::new(), RANGE.to_string()), "team");
+    assert!(zygo_workspace::state::list_all(&h.paths).is_empty(), "team");
+    assert!(!h.root().join("tmux.log").exists(), "team");
 }
