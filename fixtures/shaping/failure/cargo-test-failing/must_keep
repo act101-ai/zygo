@@ -1,0 +1,9 @@
+Exit code 101
+test tests::add_exceeds_its_inputs ... FAILED
+thread 'tests::add_exceeds_its_inputs' (63003053) panicked at src/lib.rs:501:9:
+add(1, 1) must exceed 2
+test tests::sums_a_ledger ... FAILED
+thread 'tests::sums_a_ledger' (63003181) panicked at src/lib.rs:496:9:
+assertion `left == right` failed: ledger total
+  left: 12
+ right: 13
