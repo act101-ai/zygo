@@ -373,12 +373,12 @@ fn message(c: &mut Conv, it: &Value, d: &mut Drops) -> Result<(), ZygoError> {
         Some(Value::Array(parts)) => parts.iter().map(|p| part(p, d)).collect::<Result<_, _>>()?,
         _ => return Err(bad("message: missing content")),
     };
-    if role == "user" {
-        c.all_answered()?;
-    }
     blocks.retain(|b| !is_empty_text(b));
     if blocks.is_empty() && matches!(role, "user" | "assistant" | "developer" | "system") {
         return Ok(());
+    }
+    if role == "user" {
+        c.all_answered()?;
     }
     let role = match role {
         "developer" | "system" => {
