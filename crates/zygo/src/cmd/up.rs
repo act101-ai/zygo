@@ -227,6 +227,20 @@ mod tests {
         assert_eq!(max_members_line(&zygo_config::Config::default()), None);
     }
 
+    /// R§9.4 bullet 1, FX-17 review F1: only the `limits.max_members` rule refuses; another `config check` error
+    /// (`statusline.style`, `zygo-config/src/check.rs:115-117`) with `max_members` in range gives no line. Kills: the
+    /// first Error-severity violation of any path.
+    #[test]
+    fn max_members_line_ignores_other_check_errors() {
+        let mut c = zygo_config::Config::default();
+        c.statusline.style = "bad".into();
+        assert!(zygo_config::check(&c).iter().any(|v| v.path == "statusline.style" && v.severity == zygo_config::Severity::Error));
+        for v in [1, 8, 32] {
+            c.limits.max_members = v;
+            assert_eq!(max_members_line(&c), None, "{v}");
+        }
+    }
+
     /// R§9.4 bullet 1, FX-17: the check takes the value `with_team` gives (the user layer over the team layer,
     /// `zygo-config/src/layers.rs:27-28`). Kills: a check on the user layer only, or on the team value instead of the
     /// merged value.

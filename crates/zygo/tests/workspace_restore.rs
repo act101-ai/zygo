@@ -1304,3 +1304,22 @@ fn fx17_up_all_refuses_max_members_0() {
     assert!(zygo_workspace::state::list_all(&h.paths).is_empty(), "team");
     assert!(!h.root().join("tmux.log").exists(), "team");
 }
+
+/// R§9.4 bullet 1, FX-17 review F2: `up` prints the warnings the team layer causes before the range refusal: a team
+/// file with `max_members = 0` and a `[loadout]` gives the AU22 warning, then the range line, exit 1, no tmux call.
+/// Kills: the range refusal above the team-warning loop.
+#[test]
+fn fx17_up_prints_the_team_warnings_before_the_range_line() {
+    let h = Harness::no_tmux();
+    let (app, id) = approved_repo(&h, TWO);
+    let s = h.root().join("s");
+    std::fs::create_dir_all(&s).unwrap();
+    std::fs::write(s.join("team.toml"), "[limits]\nmax_members = 0\n[loadout.x]\n").unwrap();
+    let o = up_in(&h, &app, &["up", "--no-attach"], Some(&s));
+    assert_eq!(
+        (o.status.code(), text(&o.stdout), text(&o.stderr)),
+        (Some(1), String::new(), format!("zygo: [loadout] and [workspace] are read from user config only; ignored\n{RANGE}"))
+    );
+    assert!(!h.store(&id).dir().join("workspace.json").exists());
+    assert!(!h.root().join("tmux.log").exists());
+}
