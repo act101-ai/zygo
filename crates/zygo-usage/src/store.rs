@@ -95,9 +95,9 @@ impl BusyWait {
 
     /// The busy call `count` of a lock cycle at `now`: `Some(sleep)` retries after `sleep`, `None` gives up. With `new`,
     /// the clock restarts at each busy count 0, which SQLite passes at the first busy call of each step; with `total`, it
-    /// starts at the first busy call and never restarts. A busy call during a
-    /// prepare can carry the previous step's count and keep its start; it then gives up sooner, never later than the
-    /// bound. No sleep passes the bound.
+    /// starts at the first busy call and never restarts. With `new`, a busy
+    /// call during a prepare can carry the previous step's count and keep its start; it then gives up sooner, never later
+    /// than the bound. No sleep passes the bound.
     pub fn next(&mut self, count: i32, now: Instant) -> Option<Duration> {
         if count == 0 && self.restart {
             self.start = Some(now);
@@ -151,7 +151,7 @@ fn is_busy(e: &rusqlite::Error) -> bool {
 impl Store {
     /// The full open: creates the file and the schema, and adds each missing `trims` column one time per process for
     /// this path (O§6.5 item 3). The trim hook and the MCP server's read-back write do not use it; they use
-    /// [`Store::open_bounded`] (O§7.11).
+    /// [`Store::open_bounded_total`] and [`Store::open_bounded`] (O§7.11).
     pub fn open(path: &Path) -> Result<Store> {
         let checked = TRIM_COLUMNS_CHECKED.lock().unwrap_or_else(|e| e.into_inner()).contains(path);
         Store::open_full(path, if checked { None } else { Some(&[] as &[&str]) })

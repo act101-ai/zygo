@@ -887,16 +887,20 @@ fn busy_wait_restarts_its_clock_at_count_zero() {
 
 #[test]
 fn busy_wait_open_bounded_waits_for_a_released_lock() {
-    // The real handler: the insert succeeds only if it waited for the lock; no clock decides the result.
+    // The real handler waits for a released lock: the bound is `Duration::MAX`, so no deadline can fail the test
+    // (O§8.4); the lock is released only after the insert is about to run, so the insert almost surely meets it.
     let t = Tmp::new();
     drop(Store::open(&t.db()).unwrap());
     let raw = Connection::open(t.db()).unwrap();
     raw.execute_batch("BEGIN IMMEDIATE").unwrap(); // another process holds the write lock
+    let (go, ready) = std::sync::mpsc::channel::<()>();
     let release = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(100));
+        ready.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(20));
         raw.execute_batch("COMMIT").unwrap();
     });
-    let s = Store::open_bounded(&t.db(), Duration::from_secs(5)).unwrap();
+    let s = Store::open_bounded(&t.db(), Duration::MAX).unwrap();
+    go.send(()).unwrap();
     let r = s.insert_trim(&trim("S1", 5, 1000, 100));
     release.join().unwrap();
     r.expect("the bounded insert must wait for the released lock");
@@ -905,6 +909,7 @@ fn busy_wait_open_bounded_waits_for_a_released_lock() {
 
 #[test]
 fn busy_wait_open_bounded_insert_is_busy_when_the_lock_is_never_released() {
+    // The lock is never released, so the outcome does not depend on time: only the error kind is asserted.
     let t = Tmp::new();
     drop(Store::open(&t.db()).unwrap());
     let s = Store::open_bounded(&t.db(), Duration::from_millis(50)).unwrap();
@@ -981,16 +986,20 @@ fn open_bounded_total_replaces_the_sqlite_busy_timeout() {
 
 #[test]
 fn open_bounded_total_waits_for_a_released_lock_on_a_rollback_journal_database() {
-    // The open's read and the insert both succeed only if the handler waited; no clock decides the result.
+    // The total open waits for a released lock: the bound is `Duration::MAX`, so no deadline can fail the test
+    // (O§8.4); the lock is released only after the open is about to run, so its read almost surely meets it.
     let t = Tmp::new();
     old_db(&t.db()); // journal_mode delete
     let raw = Connection::open(t.db()).unwrap();
     raw.execute_batch("BEGIN EXCLUSIVE").unwrap(); // blocks readers too in rollback-journal mode
+    let (go, ready) = std::sync::mpsc::channel::<()>();
     let release = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(100));
+        ready.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(20));
         raw.execute_batch("COMMIT").unwrap();
     });
-    let r = Store::open_bounded_total(&t.db(), Duration::from_secs(5)).and_then(|s| s.insert_trim(&trim("S4", 8, 4000, 400)));
+    go.send(()).unwrap();
+    let r = Store::open_bounded_total(&t.db(), Duration::MAX).and_then(|s| s.insert_trim(&trim("S4", 8, 4000, 400)));
     release.join().unwrap();
     r.expect("the total open must wait for the released lock");
     assert_eq!(count(&t.db(), "trims"), 2);
@@ -998,6 +1007,7 @@ fn open_bounded_total_waits_for_a_released_lock_on_a_rollback_journal_database()
 
 #[test]
 fn open_bounded_total_is_busy_when_the_lock_is_never_released_on_a_rollback_journal_database() {
+    // The lock is never released, so the outcome does not depend on time: only the error kind is asserted.
     let t = Tmp::new();
     old_db(&t.db());
     let raw = Connection::open(t.db()).unwrap();
