@@ -136,7 +136,17 @@ LEAK = [
     ("arch", '"x-stainless-arch": "(ARCH OMITTED)"', True),
     ("arch", '"x-stainless-arch": "(version omitted)"', True),
     ("arch", "x-stainless-arch: (arch omitted)\r\n", False),
-    ("arch", "x-stainless-arch: (arch omitted) arm64", True),
+    # Review round 3 H1: an unquoted Stainless value ends at a ",", a blank or the line end, so the
+    # placeholder then a "," or a blank passes (the shell and OS lines stay strict).
+    ("arch", "x-stainless-arch: (arch omitted) arm64", False),
+    ("arch", "x-stainless-arch=(arch omitted), x-stainless-os=MacOS", False),
+    ("arch", "x-stainless-arch: (arch omitted) ", False),
+    ("arch", "x-stainless-arch: (arch omitted)\t", False),
+    ("arch", "x-stainless-arch=arm64, x-stainless-os=MacOS", True),
+    ("arch", "x-stainless-arch: arm64 ", True),
+    ("arch", '"x-stainless-arch": "arm64 extra"', True),
+    ("runtime version", "x-stainless-runtime-version: v26.1.0, node", True),
+    ("runtime version", "x-stainless-runtime-version: (version omitted), node", False),
     ("arch", '{\\"x-stainless-arch\\":\\"(arch omitted)\\"}', False),
     ("runtime version", '"x-stainless-runtime-version": "v26.12.1"', True),
     ("runtime version", '{\\"X-Stainless-Runtime-Version\\":\\"v22.1.0\\"}', True),
@@ -148,7 +158,40 @@ LEAK = [
     # Review round 2 G7: the messaging socket pid.
     ("socket pid", "/tmp/cc-socks/95709.sock", True),
     ("socket pid", "/tmp/cc-socks/<pid>.sock", False),
+    # Review round 3 H5: escaped slashes.
+    ("socket pid", "\\/tmp\\/cc-socks\\/95709.sock", True),
+    ("socket pid", "\\/tmp\\/cc-socks\\/<pid>.sock", False),
+    # Review round 3 H3: more dashless host values.
+    ("os version", "OS Version: Windows_NT 10.0.26100", True),
+    ("os version", "OS Version: Windows Server 2022", True),
+    ("os version", "OS Version: Ubuntu 24.04", True),
+    ("os version", "OS Version: Debian 12", True),
+    ("os version", "OS Version: Fedora 40", True),
+    ("os version", "OS Version: FreeBSD 14.1", True),
+    ("os version", "OS Version: OpenBSD 7.5", True),
+    ("os version", "OS Version: NixOS 24.05", True),
+    ("os version", "OS Version: Ubuntu is fine", False),
+    ("os version", "OS Version: Windowsill", False),
+    ("shell name", "Shell: nu", True),
+    ("shell name", "Shell: mksh", True),
+    ("shell name", "Shell: csh", True),
+    ("shell name", "Shell: xonsh", True),
+    ("shell name", "Shell: nushell is new", False),
+    ("shell name", "Shell: /home/linuxbrew/.linuxbrew/bin/zsh", True),
+    ("shell name", "Shell: /run/current-system/sw/bin/bash", True),
+    ("shell name", "Shell: /nix/store/0a1b2c3d4e5f6g7h8i9j0k1l2m3n4p5q-zsh-5.9/bin/zsh", True),
+    ("shell name", "Shell: C:\\Program Files\\Git\\bin\\bash.exe", True),
+    ("shell name", "Shell: C:\\Program Files\\PowerShell\\7\\pwsh.exe", True),
+    ("shell name", "Shell: C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", True),
+    ("shell name", "Shell: C:\\Windows\\System32\\cmd.exe", True),
+    ("shell name", "x\\nShell: C:\\\\Program Files\\\\Git\\\\bin\\\\bash.exe\\n", True),
+    ("shell name", "Shell: C:\\tools\\bash.exe.bak", False),
 ]
+
+# Review round 3 H1: the reviewer's inputs; the scrub of each must pass --check (and the gate; see
+# test-check-premises.sh).
+H1_INPUTS = ["x-stainless-arch=arm64, x-stainless-os=MacOS", "x-stainless-arch: arm64 ",
+             '"x-stainless-arch": "arm64 extra"', "x-stainless-runtime-version: v26.1.0, node"]
 
 # Review round 2 G1: the reviewer's forms, a Claude Code environment block inside JSON inside a JSON
 # string (an .sse partial_json line; a .summary.json string holding an escaped newline).
@@ -198,6 +241,19 @@ def main():
         got = rule in R.leaks(text, (), R.ENV_LEAKS)
         if got is not want:
             bad.append("ENV_LEAKS %s: %r: got %r" % (rule, text, got))
+    # Review round 3 H1: a fixed point; the scrub of each input leaks nothing and a second scrub
+    # changes nothing.
+    with tempfile.TemporaryDirectory() as d:
+        env = dict(os.environ, SCRUB_FIXED="1", SCRUB_USER="user", SCRUB_HOSTS="")
+        for i, text in enumerate(H1_INPUTS):
+            n += 1
+            p = os.path.join(d, "h1.txt")
+            put(d, "h1.txt", text + "\n")
+            once = R.scrubbed(p, d, env)
+            put(d, "h1.txt", once)
+            again = R.scrubbed(p, d, env)
+            if R.leaks(once, (), R.ENV_LEAKS) or again != once:
+                bad.append("H1 input %d: scrub %r leaks %r; again %r" % (i, once, R.leaks(once, (), R.ENV_LEAKS), again))
     # The folder argument and the per-folder verbatim lists.
     n += 1
     if R.FOLDERS != ("codex", "claude-code", "opencode") or R.VERBATIM != {
@@ -249,6 +305,17 @@ def main():
             if (rc, out, rc2, out2) != (0, "rescrub: wrote 3 files\n", 1,
                                         "rescrub: settings-schema.json: shell name\nrescrub: 1 files to fix\n"):
                 bad.append("--write claude-code then --check: %r" % ((rc, out, rc2, out2),))
+        # Review round 3 H2: a .json file of 100000 nested "[" goes through --check with no traceback.
+        with tempfile.TemporaryDirectory() as fx:
+            R.FIXTURES = fx
+            put(fx, "opencode/deep.json", "[" * 100000)
+            n += 1
+            try:
+                got = run(["--check", "opencode"])
+            except Exception as e:  # a failed scrub raises CalledProcessError
+                got = repr(e)
+            if got != (0, "rescrub: ok (1 files)\n"):
+                bad.append("--check of 100000 nested lists: got %r" % (got,))
     finally:
         R.FIXTURES = saved[0]
         if saved[1] is not None:

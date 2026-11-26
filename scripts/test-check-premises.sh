@@ -1023,6 +1023,51 @@ awk 'BEGIN { s = "\\"; while (length(s) < 1048576) s = s s; print s " - Shell: z
 run "$D"
 expect_ok
 
+# PC-13 review round 3. H1: the reviewer's Stainless inputs fail; their scrub passes (a fixed point).
+env_case "R3 H1 comma-separated header pair" 'x-stainless-arch=arm64, x-stainless-os=MacOS' 'Stainless arch'
+env_case "R3 H1 trailing blank" 'x-stainless-arch: arm64 ' 'Stainless arch'
+env_case "R3 H1 quoted value with a blank" '"x-stainless-arch": "arm64 extra"' 'Stainless arch'
+env_case "R3 H1 runtime version then a comma" 'x-stainless-runtime-version: v26.1.0, node' 'Stainless runtime version'
+CASE="PC-13 R3: H1 the scrub of the reviewer's inputs passes"
+D=$(mk pc13r3h1)
+printf '%s\n' 'x-stainless-arch=arm64, x-stainless-os=MacOS' 'x-stainless-arch: arm64 ' \
+    '"x-stainless-arch": "arm64 extra"' 'x-stainless-runtime-version: v26.1.0, node' > "$T/h1.in"
+SCRUB_FIXED=1 SCRUB_USER=user SCRUB_HOSTS= python3 -I "$ROOT/scripts/premises/scrub.py" "$T" "$T/h1.in" \
+    > "$D/fixtures/claude-code/plant.txt" || fail "scrub.py failed"
+grep -q arm64 "$D/fixtures/claude-code/plant.txt" && fail "the scrub left a value"
+run "$D"
+expect_ok
+# H3: more dashless host values.
+env_case "R3 H3 Windows_NT" 'OS Version: Windows_NT 10.0.26100' 'OS version'
+env_case "R3 H3 Windows then a blank" 'OS Version: Windows Server 2022' 'OS version'
+env_case "R3 H3 Ubuntu" 'OS Version: Ubuntu 24.04' 'OS version'
+env_case "R3 H3 Debian" 'OS Version: Debian 12' 'OS version'
+env_case "R3 H3 Fedora" 'OS Version: Fedora 40' 'OS version'
+env_case "R3 H3 FreeBSD" 'OS Version: FreeBSD 14.1' 'OS version'
+env_case "R3 H3 OpenBSD" 'OS Version: OpenBSD 7.5' 'OS version'
+env_case "R3 H3 NixOS" 'OS Version: NixOS 24.05' 'OS version'
+env_case "R3 H3 nu" 'Shell: nu' 'shell name'
+env_case "R3 H3 mksh" 'Shell: mksh' 'shell name'
+env_case "R3 H3 csh" 'Shell: csh' 'shell name'
+env_case "R3 H3 xonsh" 'Shell: xonsh' 'shell name'
+env_case "R3 H3 linuxbrew path" 'Shell: /home/linuxbrew/.linuxbrew/bin/zsh' 'shell name'
+env_case "R3 H3 NixOS system path" 'Shell: /run/current-system/sw/bin/bash' 'shell name'
+env_case "R3 H3 Nix store path" 'Shell: /nix/store/0a1b2c3d4e5f6g7h8i9j0k1l2m3n4p5q-zsh-5.9/bin/zsh' 'shell name'
+env_case "R3 H3 Windows bash.exe" 'Shell: C:\Program Files\Git\bin\bash.exe' 'shell name'
+env_case "R3 H3 Windows pwsh.exe" 'Shell: C:\Program Files\PowerShell\7\pwsh.exe' 'shell name'
+env_case "R3 H3 Windows powershell.exe" 'Shell: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' 'shell name'
+env_case "R3 H3 Windows cmd.exe" 'Shell: C:\Windows\System32\cmd.exe' 'shell name'
+env_case "R3 H3 Windows path, escaped backslashes" 'x\nShell: C:\\Program Files\\Git\\bin\\bash.exe\n' 'shell name'
+# H5: a socket path with escaped slashes.
+env_case "R3 H5 escaped socket path" '"\/tmp\/cc-socks\/95709.sock"' 'socket pid'
+
+CASE="PC-13 R3: prose, an escaped socket placeholder and a non-shell .exe pass"
+D=$(mk pc13r3ok)
+printf '%s\n' 'OS Version: Ubuntu is fine' 'OS Version: Windowsill' 'Shell: nushell is new' \
+    '"\/tmp\/cc-socks\/<pid>.sock"' 'Shell: C:\tools\bash.exe.bak' > "$D/fixtures/claude-code/plant.txt"
+run "$D"
+expect_ok
+
 # PC-13 review round 1 F4: the rescrub_codex.py tests (same(), the folders and verbatim lists, ENV_LEAKS).
 CASE="PC-13 R1: rescrub_test.py"
 OUT=$(python3 -I "$ROOT/scripts/premises/rescrub_test.py" 2>&1)

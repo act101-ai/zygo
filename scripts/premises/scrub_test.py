@@ -261,6 +261,43 @@ CASES += [
     # Review round 1 F7: the process id in a Claude Code messaging socket path.
     ("messaging socket pid", "/tmp/cc-socks/95709.sock", "/tmp/cc-socks/<pid>.sock", ["95709"]),
 ]
+# PC-13 review round 3. H1: a quoted Stainless value is replaced up to its closing quote; an unquoted
+# one up to the first ",", blank or line end.
+H1_INPUTS = ["x-stainless-arch=arm64, x-stainless-os=MacOS", "x-stainless-arch: arm64 ",
+             '"x-stainless-arch": "arm64 extra"', "x-stainless-runtime-version: v26.1.0, node"]
+CASES += [
+    ("H1: header pair with a comma", H1_INPUTS[0], "x-stainless-arch=(arch omitted), x-stainless-os=MacOS", ["arm64"]),
+    ("H1: trailing blank", H1_INPUTS[1], "x-stainless-arch: (arch omitted) ", ["arm64"]),
+    ("H1: quoted value with a blank", H1_INPUTS[2], '"x-stainless-arch": "(arch omitted)"', ["arm64", "extra"]),
+    ("H1: runtime version then a comma", H1_INPUTS[3], "x-stainless-runtime-version: (version omitted), node",
+     ["26.1.0"]),
+    ("H1: escaped quoted value with a blank", '{\\"x-stainless-arch\\":\\"arm64 extra\\",\\"k\\":1}',
+     '{\\"x-stainless-arch\\":\\"(arch omitted)\\",\\"k\\":1}', ["arm64", "extra"]),
+    # H3: more dashless host values (OS names, shells, shell paths, Windows shell paths).
+    ("H3: Windows_NT", "OS Version: Windows_NT 10.0.26100", "OS Version: (os omitted)", ["Windows_NT", "26100"]),
+    ("H3: Windows then a blank", "OS Version: Windows Server 2022", "OS Version: (os omitted)", ["Server", "2022"]),
+    ("H3: Linux distributions", "OS Version: Ubuntu 24.04\nOS Version: Debian 12\nOS Version: Fedora 40",
+     "OS Version: (os omitted)\nOS Version: (os omitted)\nOS Version: (os omitted)", ["24.04", "Debian", "Fedora"]),
+    ("H3: BSD and NixOS", "OS Version: FreeBSD 14.1\nOS Version: OpenBSD 7.5\nOS Version: NixOS 24.05",
+     "OS Version: (os omitted)\nOS Version: (os omitted)\nOS Version: (os omitted)", ["14.1", "OpenBSD", "NixOS"]),
+    ("H3: OS name without a version kept", "OS Version: Ubuntu is fine", "OS Version: Ubuntu is fine", []),
+    ("H3: more shell names", "Shell: nu\nShell: mksh\nShell: csh\nShell: xonsh",
+     "Shell: (omitted)\nShell: (omitted)\nShell: (omitted)\nShell: (omitted)", ["nu\n", "mksh", "csh", "xonsh"]),
+    ("H3: linuxbrew and NixOS shell paths", "Shell: /home/linuxbrew/.linuxbrew/bin/zsh\n"
+     "Shell: /run/current-system/sw/bin/bash\nShell: /nix/store/0a1b2c3d4e5f6g7h8i9j0k1l2m3n4p5q-zsh-5.9/bin/zsh",
+     "Shell: (omitted)\nShell: (omitted)\nShell: (omitted)", ["linuxbrew", "current-system", "zsh-5.9"]),
+    ("H3: Windows shell paths", "Shell: C:\\Program Files\\Git\\bin\\bash.exe\n"
+     "Shell: C:\\Program Files\\PowerShell\\7\\pwsh.exe\n"
+     "Shell: C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\nShell: C:\\Windows\\System32\\cmd.exe",
+     "Shell: (omitted)\nShell: (omitted)\nShell: (omitted)\nShell: (omitted)",
+     ["Program", "bash.exe", "pwsh", "powershell", "cmd.exe"]),
+    ("H3: Windows shell path, escaped backslashes", "x\\nShell: C:\\\\Program Files\\\\Git\\\\bin\\\\bash.exe\\n",
+     "x\\nShell: (omitted)\\n", ["Program", "bash.exe"]),
+    ("H3: dash form, Windows shell path", " - Shell: C:\\Program Files\\Git\\bin\\bash.exe",
+     " - Shell: (omitted)", ["Program", "bash.exe"]),
+    # H5: a socket path with escaped slashes.
+    ("H5: escaped socket path", "\\/tmp\\/cc-socks\\/95709.sock", "\\/tmp\\/cc-socks\\/<pid>.sock", ["95709"]),
+]
 # T8: the macOS LocalHostName and ComputerName, when scutil gives them (4 characters or more).
 for k in ("LocalHostName", "ComputerName"):
     try:
@@ -365,9 +402,12 @@ def main():
         want = {"client": {"os_type": "(os omitted)", "os_version": "(os omitted)", "os_arch": "(os omitted)", "k": "v"}}
         if got != want:
             bad.append("json os keys: got %r" % (got,))
-        # F9: Claude's dashed form of a run path that holds "//" (so "--").
-        with tempfile.TemporaryDirectory() as run:
-            rr = os.path.realpath(run)
+        # F9: Claude's dashed form of a run path that holds "//" (so "--"). Review round 3 H6: the run
+        # folder has a fixed name ("pc13run", letters and digits only) under a temp root, so the dashed
+        # form never ends in a "-" that the next "-" could join.
+        with tempfile.TemporaryDirectory() as root:
+            rr = os.path.join(os.path.realpath(root), "pc13run")
+            os.mkdir(rr)
             head, tail = os.path.split(rr)
             dbl = head + "//" + tail
             alt = dbl[len("/private"):] if dbl.startswith("/private/") else dbl
@@ -494,11 +534,20 @@ def main():
         if got != {"headers": {"x-stainless-arch": "(arch omitted)", "X-Stainless-Runtime-Version": "(version omitted)",
                                "x-stainless-os": "MacOS"}}:
             bad.append("stainless header keys: got %r" % (got,))
+        # Review round 3 H2: a .json file of 100000 nested "[" (too deep to parse) takes the raw-text
+        # scrub, with no traceback.
+        t = os.path.join(d, "deep.json")
+        with open(t, "w") as f:
+            f.write("[" * 100000)
+        with tempfile.TemporaryDirectory() as run:
+            r = subprocess.run([sys.executable, "-I", SCRUB, run, t], capture_output=True, text=True)
+        if r.returncode != 0 or r.stdout != "[" * 100000 or "Traceback" in r.stderr:
+            bad.append("100000 nested lists: exit %d, stderr %r" % (r.returncode, r.stderr[-200:]))
     for b in bad:
         print("scrub test fail: " + b)
     if bad:
         sys.exit(1)
-    print("scrub tests: ok (%d)" % (len(CASES) + 17))
+    print("scrub tests: ok (%d)" % (len(CASES) + 18))
 
 
 main()
