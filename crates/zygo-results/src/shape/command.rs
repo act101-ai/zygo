@@ -1107,7 +1107,8 @@ fn runners_of(name: &str, rest: &[Word]) -> &'static [Runner] {
 
 /// Whether the words of a pytest stage ask for live test output: `-s` (also in a short-option cluster such as
 /// `-sv`, before an option that takes a value), `--capture=no`, `--capture=tee-sys`, `--capture no`,
-/// `--capture tee-sys`, or a dynamic word that may hold one of them (O§7.6, O-C9).
+/// `--capture tee-sys`, `-p no:capture` (also `-pno:capture`, `-vp no:capture`), or a dynamic word that may hold
+/// one of them (O§7.6, O-C9).
 fn pytest_live(rest: &[Word]) -> bool {
     rest.iter().enumerate().any(|(i, w)| {
         let t = w.text.as_str();
@@ -1117,10 +1118,23 @@ fn pytest_live(rest: &[Word]) -> bool {
                     .get(i + 1)
                     .is_some_and(|n| matches!(n.text.as_str(), "no" | "tee-sys")),
                 Some(v) => matches!(v, "=no" | "=tee-sys"),
-                None => t.strip_prefix('-').is_some_and(|c| {
-                    !c.starts_with('-') && c.chars().take_while(|ch| !"kmrpcoWn".contains(*ch)).any(|ch| ch == 's')
+                None => t.strip_prefix('-').filter(|c| !c.starts_with('-')).is_some_and(|c| {
+                    let lead = c.find(|ch| "kmrpcoWn".contains(ch)).unwrap_or(c.len());
+                    c[..lead].contains('s')
+                        || c[lead..].strip_prefix('p').is_some_and(|v| {
+                            let v = if v.is_empty() { rest.get(i + 1).map_or("", |n| n.text.as_str()) } else { v };
+                            v == "no:capture"
+                        })
                 }),
             }
+    })
+}
+
+/// A word that sets `PYTEST_ADDOPTS` (`PYTEST_ADDOPTS=…` or `PYTEST_ADDOPTS+=…`): pytest reads live-output
+/// flags from it, and its value is not parsed (O§7.6, O-C9).
+fn sets_pytest_addopts(words: &[Word]) -> bool {
+    words.iter().any(|w| {
+        w.text.strip_prefix("PYTEST_ADDOPTS").is_some_and(|r| r.starts_with('=') || r.starts_with("+="))
     })
 }
 
@@ -1132,7 +1146,8 @@ struct Acc {
     runners: Vec<Runner>,
     runner_name: Option<String>,
     list_name: Option<String>,
-    /// A pytest stage prints test output live, so the pytest view does not apply (O§7.6, O-C9).
+    /// The pytest live-output setting is on or cannot be seen (a live-output flag, `-p no:capture`, a
+    /// `PYTEST_ADDOPTS` word, a wrapper), so the pytest view does not apply (O§7.6, O-C9).
     live_pytest: bool,
 }
 
@@ -1189,6 +1204,7 @@ fn inner(words: &[Word], depth: usize, mode: Mode, acc: &mut Acc) {
 }
 
 fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, pos: usize, acc: &mut Acc) {
+    acc.live_pytest |= sets_pytest_addopts(words);
     let a = argv(words);
     if let Some(s) = &a.split {
         nest(s, depth, mode, acc);
@@ -1302,7 +1318,7 @@ fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, pos: usize, 
         return;
     }
     let runners = runners_of(name, rest);
-    if runners == [Runner::Pytest] && pytest_live(rest) {
+    if runners == ALL_RUNNERS || (runners == [Runner::Pytest] && pytest_live(rest)) {
         acc.live_pytest = true;
     }
     if !runners.is_empty() {
