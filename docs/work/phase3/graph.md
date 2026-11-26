@@ -194,7 +194,6 @@ Session text (T, SX nodes):
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
 | ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
-| MS-12 | Import: candidates, checks, crash-safe delivery | MS-6, MS-10, ML-2, ML-4 | DONE | judgment | 68fa626f, dc8f3ad4, cf388671 · import 23/0 ; floor green · PR #114 |
 | MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5, OS-4 | DONE | implementation | ea149eab, ad7d3736 · acc 18/18, 26/26 · PR #148 |
 | OS-27 | Shape-off baseline: hook output and stored file of the `97d8767` behavior | OS-9, OS-17, OS-18, OS-19, OS-20, OS-21 | DONE | implementation | abea1612, 74976374 · acc 5/5 · PR #140 |
 | OS-30 | Runner views: dispatch and the libtest view (pipeline step 3) | OS-29, OS-19 | DONE | judgment | 974fef24 plan; 6f4959d7, d1f02107, eef74481; shape_runner_libtest 20/20, shape_pipeline 24/24; PR #158 |
@@ -211,7 +210,7 @@ Session text (T, SX nodes):
 | MS-14 | Prune: orphan rewrite of acknowledged files, lease push | MS-13 | TODO | judgment | — |
 | MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | TODO | mechanical | — |
 | OS-32 | go test runner view with interleaved parallel output | OS-31, OS-21 | TODO | judgment | — |
-| OS-33 | Failed Bash calls on Claude Code, as PO1 decided | OS-28, OS-23 | TODO | judgment | — |
+| OS-33 | Failed Bash calls on Claude Code, as PO1 decided | OS-28, OS-23 | DONE | judgment | plan 911576e7 · node f632354c, 662bb328, 425bb080, 03d0f9c1 · acceptance pass (hooks 4 passed, launch 1 passed) · PR #168 |
 | MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | TODO | judgment | — |
 | OS-34 | Set the stderr branch as PO2 decided | OS-33, OS-24 | TODO | mechanical | — |
 | WD-18 | Session text: each member's job and the job sentence | WD-11, ML-9, ML-10, MS-20 | TODO | implementation | — |
@@ -404,3 +403,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | OS-24 DONE: PO2 verified on Claude Code 2.1.332 (stderr arrives merged into stdout; the replaced stdout removed err-line); hook fixture + empty shape-off golden added; review 7: F1/F2/F4-F7 fixed (first reading "not shown" reversed), F3 refuted · PR #151 |
 | 2026-11-25 | OS-30 DONE: libtest runner view and dispatch as pipeline step 3; review round 2 fixed F1-F4 (failure sections, binary boundary, dedup lines, ASCII/CR whitespace); F5 is FX-16; F6 fixed in the OS-36 contract. |
 | 2026-11-25 | OS-25 DONE: PO3 verified on OpenCode 1.18.16 (live-shaping.sh po3, mock upstream): output.output holds stdout then stderr. Review R1-R3: run-opencode.sh keeps fixtures it does not write; test name match exact; spec records PO3. F2 (no PO arm in check-premises) awaits operator OK. |
+| 2026-11-25 | OS-33 DONE (kept, round 1): PO1 failed, so the O§7.13 "If PO1 fails" branch was taken: no trim on failed Bash. Review 3, all fixed: F1 vacuous hook fixtures (a tool_response input added); F2 step 13 clippy note; F3 trailer text · PR #168 |
