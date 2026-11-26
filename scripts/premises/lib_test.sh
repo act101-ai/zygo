@@ -4,8 +4,9 @@
 # live_traps and live_end, and under run-all.sh; the Codex helpers and run-codex.sh (node PC-2).
 # Usage: sh scripts/premises/lib_test.sh   ->  "lib tests: ok (<n>)", exit 0
 # LIB_TEST_SH: the shell the children run under (default dash when installed, else sh).
-# No agent, no network; not run by CI. Each child runs with PATH = a dir of stub claude, opencode
-# and codex programs and links to the few tools lib.sh needs, and TMPDIR = a dir of its own.
+# No agent, no network; CI runs it on ubuntu and macOS. Each child runs with PATH = a dir of stub
+# claude, opencode and codex programs and links to the few tools lib.sh needs, and TMPDIR = a dir of
+# its own.
 set -u
 unset N2_SCRATCH N2_SCRATCH_OWN
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -103,12 +104,10 @@ run() {
 }
 # sigact <case>: the action of a signal case.
 sigact() { printf '%s' "echo \$\$ >'$T/$1.pid'; sleep 30 & echo \$! >'$T/$1.sleep'; : >'$T/$1.ready'; wait"; }
-# waitready <file>: at most 50 polls, 0.1 s apart.
+# waitready <file>: poll 0.1 s apart until the file exists, with no count limit (TF-2: no case
+# passes or fails by wall-clock time; the CI job timeout is the bound).
 waitready() {
-  i=0
   while [ ! -f "$1" ]; do
-    i=$((i + 1))
-    [ "$i" -le 50 ] || return 1
     sleep 0.1
   done
 }
@@ -991,7 +990,7 @@ done
 # X36: a process of the run folder still runs after the part (a daemon left by a TUI run):
 # codex_record exits 1 and names its pid.
 c=X36; cxprep $c caller
-child $c 0 "new_run x; start_mock; $(mockrec X36); run_codex exec hi; mkdir -p \"\$RUN/pk\"; cp '$T/dmn/codex' \"\$RUN/pk/codex\"; N2D_READY='$T/X36.ready' \"\$RUN/pk/codex\" app-server --managed-daemon & echo \$! >'$T/X36.dpid'; i=0; while [ ! -f '$T/X36.ready' ] && [ \$i -lt 100 ]; do i=\$((i + 1)); sleep 0.1; done; stop_mock; codex_record base"
+child $c 0 "new_run x; start_mock; $(mockrec X36); run_codex exec hi; mkdir -p \"\$RUN/pk\"; cp '$T/dmn/codex' \"\$RUN/pk/codex\"; N2D_READY='$T/X36.ready' \"\$RUN/pk/codex\" app-server --managed-daemon & echo \$! >'$T/X36.dpid'; while [ ! -f '$T/X36.ready' ]; do sleep 0.1; done; stop_mock; codex_record base"
 run $c; killmock $c
 x36() { out_has X36 "premises: codex_record: a process of this run folder still runs (pid $(cat "$T/X36.dpid"), $T/keep-X36/x/pk/codex); stop it (TUI runs pass --no-daemon)"; }
 res "X36 a process of the run folder left running: codex_record exits 1 and names it" 1 x36
@@ -1043,7 +1042,7 @@ res "X38b with an exported N2_TEST_ROOT codex_record passes and writes no test_r
 mkdir -p "$T/dmn2"
 cp "$T/dmn/codex" "$T/dmn2/codex"
 c=X39; cxprep $c caller
-child $c 0 "new_run x; start_mock; $(mockrec X39); run_codex exec hi; (cd \"\$RUN\" && export N2D_READY='$T/X39a.ready' && exec '$T/dmn/codex' daemon pid-update-loop) & echo \$! >'$T/X39a.dpid'; (cd \"\$R\" && export PATH='$T/dmn2':\$PATH N2D_READY='$T/X39b.ready' && exec codex app-server) & echo \$! >'$T/X39b.dpid'; i=0; while { [ ! -f '$T/X39a.ready' ] || [ ! -f '$T/X39b.ready' ]; } && [ \$i -lt 100 ]; do i=\$((i + 1)); sleep 0.1; done; stop_mock; codex_record base"
+child $c 0 "new_run x; start_mock; $(mockrec X39); run_codex exec hi; (cd \"\$RUN\" && export N2D_READY='$T/X39a.ready' && exec '$T/dmn/codex' daemon pid-update-loop) & echo \$! >'$T/X39a.dpid'; (cd \"\$R\" && export PATH='$T/dmn2':\$PATH N2D_READY='$T/X39b.ready' && exec codex app-server) & echo \$! >'$T/X39b.dpid'; while [ ! -f '$T/X39a.ready' ] || [ ! -f '$T/X39b.ready' ]; do sleep 0.1; done; stop_mock; codex_record base"
 run $c; killmock $c
 x39() {
   out_has X39 "premises: codex_record: a process with its cwd in this run folder still runs (pid $(cat "$T/X39a.dpid"), $T/dmn/codex); stop it (TUI runs pass --no-daemon)" || return 1
@@ -1128,7 +1127,7 @@ res "X45 an exported MOCK_ALT_KEY is refused at source time" 1 x45
 # X46 (G4): lib.sh's own n2_procs (no seam) in left mode: a stub process with its cwd in the run
 # folder is named and the call returns 1.
 c=X46; cxprep $c caller; NOSEAM=1
-child $c 0 "new_run x; (cd \"\$RUN\" && export N2D_READY='$T/X46.ready' && exec '$T/dmn/codex' sleeper) & echo \$! >'$T/X46.dpid'; i=0; while [ ! -f '$T/X46.ready' ] && [ \$i -lt 100 ]; do i=\$((i + 1)); sleep 0.1; done; n2_procs left"
+child $c 0 "new_run x; (cd \"\$RUN\" && export N2D_READY='$T/X46.ready' && exec '$T/dmn/codex' sleeper) & echo \$! >'$T/X46.dpid'; while [ ! -f '$T/X46.ready' ]; do sleep 0.1; done; n2_procs left"
 run $c
 x46() { out_has X46 "premises: codex_record: a process with its cwd in this run folder still runs (pid $(cat "$T/X46.dpid"), $T/dmn/codex); stop it (TUI runs pass --no-daemon)"; }
 res "X46 the real n2_procs left names a process with its cwd in the run folder" 1 x46

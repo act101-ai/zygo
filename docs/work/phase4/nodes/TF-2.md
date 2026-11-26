@@ -28,14 +28,27 @@ Capability: `mechanical` (CI steps, one wait helper, no new test logic).
 
 ### Steps
 
-- [ ] 1. Confirm PC-13 is merged into `phase-4` (`scripts/premises/rescrub_test.py` exists; `sh scripts/test-check-premises.sh` exits 0). Run each of the five Acceptance script commands locally. Pass: each exits 0; note each final line.
-- [ ] 2. In `scripts/premises/lib_test.sh`, make `waitready` (`:106-114`) wait with no count limit, and remove the `$i -lt 100` limit from the three inline loops (`:994`, `:1046`, `:1131`). Keep each case's assertions and expected results. Change the header line 7 "not run by CI" to say CI runs it on ubuntu and macOS. Run `sh scripts/premises/lib_test.sh`. Pass: exit 0, the same case count as step 1.
-- [ ] 3. Add one CI step per script to job `test` in `.github/workflows/ci.yml`, after "Install script (sh)", each with `if: matrix.os != 'windows-latest'`, in this order (a failed step stops the later ones, so the run is fail-fast and names the failing script):
+- [x] 1. Confirm PC-13 is merged into `phase-4` (`scripts/premises/rescrub_test.py` exists; `sh scripts/test-check-premises.sh` exits 0). Run each of the five Acceptance script commands locally. Pass: each exits 0; note each final line.
+- [x] 2. In `scripts/premises/lib_test.sh`, make `waitready` (`:106-114`) wait with no count limit, and remove the `$i -lt 100` limit from the three inline loops (`:994`, `:1046`, `:1131`). Keep each case's assertions and expected results. Change the header line 7 "not run by CI" to say CI runs it on ubuntu and macOS. Run `sh scripts/premises/lib_test.sh`. Pass: exit 0, the same case count as step 1.
+- [x] 3. Add one CI step per script to job `test` in `.github/workflows/ci.yml`, after "Install script (sh)", each with `if: matrix.os != 'windows-latest'`, in this order (a failed step stops the later ones, so the run is fail-fast and names the failing script):
   - `Premise scrub tests`: `python3 -I scripts/premises/scrub_test.py`;
   - `Premise re-scrub tests`: `python3 -I scripts/premises/rescrub_test.py`;
   - `Premise check tests`: `sh scripts/test-check-premises.sh`;
   - `Premise harness tests`: `sh scripts/premises/lib_test.sh`;
   - `Premise check`: `sh scripts/check-premises.sh` with `env: N2_FORBIDDEN_NAMES: zzcinameq`.
-- [ ] 4. Add `- 'docs/specs/2026-11-20-workspaces-design.md'` to the `push` and the `pull_request` path lists of `ci.yml`, beside `docs/specs/2026-11-18-zygo-design.md`.
-- [ ] 5. Run the Acceptance `grep` check. Pass: exit 0 (5 names). Run `git diff origin/phase-4 -- .github/workflows/ci.yml scripts/premises/lib_test.sh`. Pass: only the steps, the path lines, the wait loops and the header line changed.
-- [ ] 6. Commit `ci: TF-2 run the premise test scripts` with trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:TF-2`; push the node branch; open the pull request. Pass: CI green on ubuntu, macOS and Windows; on ubuntu and macOS the five steps ran and passed; on Windows they show as skipped. Do not rerun CI without the operator's word.
+- [x] 4. Add `- 'docs/specs/2026-11-20-workspaces-design.md'` to the `push` and the `pull_request` path lists of `ci.yml`, beside `docs/specs/2026-11-18-zygo-design.md`.
+- [x] 5. Run the Acceptance `grep` check. Pass: exit 0 (5 names). Run `git diff origin/phase-4 -- .github/workflows/ci.yml scripts/premises/lib_test.sh`. Pass: only the steps, the path lines, the wait loops and the header line changed.
+- [x] 6. Commit `ci: TF-2 run the premise test scripts` with trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:TF-2`; push the node branch; open the pull request. Pass: CI green on ubuntu, macOS and Windows; on ubuntu and macOS the five steps ran and passed; on Windows they show as skipped. Do not rerun CI without the operator's word.
+
+### Execution notes
+
+- Step 1 (base `e4fb2e37`, PC-13 merged): `scrub tests: ok (158)`; `rescrub tests: ok (172)`;
+  `test-check-premises: ok (173 cases)`; `lib tests: ok (157)`; `check-premises: ok (P1 … PC18)`
+  with `N2_FORBIDDEN_NAMES=zzcinameq`.
+- Step 2: `lib tests: ok (157)` after the change, the same count. The callers of `waitready` keep
+  their not-ready branches (`sigrun`, R5, B4, X34, X48, and the `NR` message "not ready in 5 s" in
+  `res`); with no count limit these branches no longer run. They are left as they are, because the
+  plan keeps each case's assertions unchanged and these lines are outside the plan's change list.
+- Step 5: each of the five script names occurs once in `ci.yml` (`grep -c` per name → 1); the
+  diff holds only the five steps, the two path lines, `waitready`, the three inline loops and the
+  header line (rewrapped to the file's line width).
