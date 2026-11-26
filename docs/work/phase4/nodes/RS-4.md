@@ -137,9 +137,9 @@ Produces: nothing for later nodes. RS-5 builds on the `Encode` field of `Flow` (
 
 - [x] 7. In this file's Planning notes, add one line: "Base §7.6 null removal now covers the translated Responses route (author's call, RS-4 step 5c)." Commit `forward.rs` and this file: `feat(proxy): RS-4 Responses response side for Anthropic and chat upstreams`, with the same trailers. Push `phase-4--RS-4`.
 
-- [ ] 8. Run the Acceptance check alone as one command (it is the Check line). Pass: exit 0, and `--list` counts at least 6.
+- [x] 8. Run the Acceptance check alone as one command (it is the Check line). Pass: exit 0, and `--list` counts at least 6.
 
-- [ ] 9. Run the verification floor: `CARGO_INCREMENTAL=0 cargo test --workspace --locked --no-fail-fast`. Pass: exit 0. Then run `git diff origin/phase-4 --stat -- crates/zygo-proxy/tests/`. Pass: it lists only `responses_forward.rs` and `support/responses.rs`, which shows that the existing Messages-client stream tests are unchanged.
+- [x] 9. Run the verification floor: `CARGO_INCREMENTAL=0 cargo test --workspace --locked --no-fail-fast`. Pass: exit 0. Then run `git diff origin/phase-4 --stat -- crates/zygo-proxy/tests/`. Pass: it lists only `responses_forward.rs` and `support/responses.rs`, which shows that the existing Messages-client stream tests are unchanged. (Run 2026-11-26: Acceptance exit 0, with 10 tests in `responses_forward`. Workspace: 2419 passed, 2 failed, 778 ignored. The 2 failures are the known `zygo --test guard_hook` environment failures under /private/tmp (`binary_guard_not_a_repository_writes_no_line`, `binary_guard_slow_rev_parse_says_unread_once`). The test diff lists only the two files.)
 
 ### Author's checks (2026-11-26)
 
