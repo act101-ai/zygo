@@ -1,7 +1,7 @@
 # TF-2 — CI runs the premise test scripts
 
 **Spec:** none (CI defect); PC-13 round-2 review G3; Global constraints "No CI test runs a real `claude`, `opencode` or `codex` binary" and "No test … may pass or fail by wall-clock time"
-**Files:** `.github/workflows/ci.yml`, `scripts/premises/lib_test.sh` (CI-friendly waits and its "not run by CI" header line only), `scripts/premises/lib.sh` (round 1 F3: the port-file waits; CI run 1: n2_scan's /proc owner check), `scripts/premises/scrub_test.py` (CI run 1: the SCRUB_FIXED case only), `scripts/premises/mock_upstream.py` and `scripts/premises/https_static.py` (CI run 3: server_bind only), `scripts/test-check-premises.sh` (CI run 3: the TCP_TIMES report only)
+**Files:** `.github/workflows/ci.yml`, `scripts/premises/lib_test.sh` (CI-friendly waits and its "not run by CI" header line; round 2: the traps, the recorded process groups and servers, the socket timeouts, cases G1-G5), `scripts/premises/lib.sh` (round 1 F3: the port-file waits; CI run 1: n2_scan's /proc owner check; round 2: N2_PART_MARK unset at source time, ps lstart in UTC), `scripts/premises/scrub_test.py` (CI run 1: the SCRUB_FIXED case only), `scripts/premises/mock_upstream.py` and `scripts/premises/https_static.py` (CI run 3: server_bind only), `scripts/test-check-premises.sh` (CI run 3: the TCP_TIMES report only)
 **Consumes:** —
 **Produces:** CI job `premises` (round 1 F5; was job `test`) runs the five premise test scripts on `ubuntu-latest` and `macos-latest`
 **Acceptance:** each command run alone from the repository root: `test "$(grep -oE 'scripts/(premises/scrub_test\.py|premises/rescrub_test\.py|test-check-premises\.sh|premises/lib_test\.sh|check-premises\.sh)' .github/workflows/ci.yml | sort -u | wc -l)" -eq 5` → exit 0 (ci.yml names each of the five scripts); `python3 -I scripts/premises/scrub_test.py` → exit 0; `python3 -I scripts/premises/rescrub_test.py` → exit 0; `sh scripts/test-check-premises.sh` → exit 0; `sh scripts/premises/lib_test.sh` → exit 0; `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → exit 0; then the CI run of the node's pull request is green on ubuntu, macOS and Windows, with the five new steps run on ubuntu and macOS. No real agent runs in CI (every script uses stubs or none); no network beyond what the scripts already use (127.0.0.1 only).
@@ -194,3 +194,68 @@ the causes, keep the 90-minute backstop.
   in this node's Files) or a smaller fixture tree per case (the evidence paths include whole
   folders, so each case would need its own list); both are left for the operator's decision.
   `scrub tests: ok (158)`; the other checks as above.
+
+## Round 2 review
+
+G1-G5 and G6 (part) are fixed in `83af5701`; G6 (rest), G7 and G8 are rejected with the reasons
+below. Each code fix has a case that failed on the code before it (G2: a mutation); G5 adds a
+missing case and G6 removes timeouts.
+
+- G1 (important), fixed in `83af5701`: a TERM or INT to lib_test left the child sh, its
+  `signal.pause()` helper and srv.py running. The traps are now in `$T/stop.sh` (EXIT; INT and TERM
+  exit 130 and 143, and the exit runs the EXIT trap). `stopall` kills each pid in `$T/*.dpid` and
+  sends TERM to each process group in `$T/*.pgid`. sigrun's child (now its own process group, by
+  perl `setpgrp`), R5's run-all and B4's base.sh record their group; srv.py (`<case>-srv.dpid`) and
+  the W7 and W8 servers record their pid. Each case removes its file once it has stopped the
+  process (`endgrp`). New cases G1TERM and G1INT: a driver sources the same `stop.sh`, starts a
+  group as sigrun does (a sh that waits on a helper), and waits; lib_test signals the driver, waits
+  for it, then sends WINCH to the helper. The helper writes the first signal it handles: SIGTERM
+  when the trap stopped it, SIGWINCH when the trap left it running (pending signals are handled in
+  number order, TERM 15 before WINCH 28, on Linux and macOS), so no wait is timed. Before the fix
+  both failed ("the helper got SIGWINCH"); after it both pass. The reviewer's run, repeated with
+  lib_test stopped (SIGSTOP) at L4, R5 and B4 ready, then TERM: rc 143, the case's process group
+  (and B4's srv.py) is gone, and `$TMPDIR` is empty.
+- G2 (important, missing test), fixed in `83af5701`: cases with the real `n2_mark` (in `new_run`),
+  real processes and the real ps. On a host with /proc: G2c (a helper made non-dumpable with
+  `prctl(PR_SET_DUMPABLE, 0)`, started before `new_run`: skipped, rc 0) and G2d (the same helper
+  started after `new_run`: fails closed, "pid N, …: Permission denied"). On a host without /proc:
+  G2a and G2b, the same with a stub lsof that gives every process but the target a working folder.
+  `g2tick.py` waits, with no count limit, until the clock has passed its value, so the "before"
+  process started before the mark. Mutation (n2_mark prints epoch seconds on /proc): G2d fails
+  (rc 0); the mutation was reverted. Each host runs one pair: Linux procps derives ps lstart from
+  the boot time and the process's start ticks, and on this host it was 0.6 s behind the wall clock
+  (`btime` + uptime 1795720922.54 against `time.time()` 1795720923.17), so G2b failed on Linux with
+  the lsof path forced; n2_scan takes the lsof path only with no /proc (macOS, where lstart is the
+  kernel's wall-clock start time). G2a and G2b run on the macOS CI runner only.
+- G3 (nit), fixed in `83af5701`: `n2_scan` runs `ps -o lstart=` with `TZ=UTC` (and `LC_ALL=C`) and
+  converts it with `calendar.timegm`; `n2_mark`'s epoch form is UTC already (comment updated). New
+  case G3: `TZ=America/New_York`, mark 1793514600 (2026-11-01 01:30 EST), a stub ps that prints the
+  target's start 1793515200 (01:40 EST) in the time zone it runs with, a stub lsof with no working
+  folder for the target. Before the fix: rc 0 (skipped, fail-open); after it: fails closed.
+- G4 (nit), fixed in `83af5701`: lib.sh unsets `N2_PART_MARK` at source time; `new_run` sets it. New
+  case G4 (`export N2_PART_MARK=9999999999` before lib.sh): before the fix "set:9999999999", after
+  it unset.
+- G5 (nit, missing test), added in `83af5701`: G5 runs `n2_procs daemon` with a stub
+  `codex app-server` whose stub /proc entry has an unreadable cwd and another uid (as Y1): the
+  scan skips the cwd failure and still names it ("a codex app-server runs outside this run
+  folder"), rc 1. It passes on the code before the round.
+- G6 (part), fixed in `83af5701`: `connect.py` and `alt.py` connect with no socket timeout; the job
+  timeout is the bound. No new case; the cases that use them (the HTTPS_PROXY cases, X37) pass.
+- G6 (rest), rejected: the 120 s ps and lsof bounds in `lib.sh` `n2_scan` fail closed (a line and
+  return 1); a ps or lsof that runs 2 minutes is a host fault, not timing noise. `scrub_test.py`'s
+  5 s `scutil` timeout removes the T8 cases when it fires; it does not change pass or fail.
+- G7, rejected: the `scrub_test.py` SCRUB_FIXED case tests the SCRUB_FIXED rule; extra scrubbing of
+  a CI host name is not a leak, and the case's input is now fixed (CI run 1), so the result does not
+  depend on the machine.
+- G8, rejected: a wait with no count limit is the form the Global constraint requires; a producer
+  that lives and never writes is bounded by the job timeout (CI) or the operator (local); pid reuse
+  within one wait is not a practical case.
+- Verification at `83af5701` (Linux, bash 5.3 as `/bin/sh`, no dash): `lib tests: ok (176)` (168 +
+  G1TERM, G1INT, G2c, G2d, G3, G4, G5, and the line "G2a, G2b skipped: this host has /proc");
+  `scrub tests: ok (156)` (158 on macOS: the T8 scutil cases); `rescrub tests: ok (172)`;
+  `check-premises: ok (P1 … PC18)` with `N2_FORBIDDEN_NAMES=zzcinameq`; the Acceptance grep → exit
+  0. `test-check-premises.sh` exits 1 on this host with one failure, "H1: a binary file with a
+  forbidden name": bash 5.3 as `sh` writes "warning: command substitution: ignored null byte in
+  input" (`check-premises.sh:431`) to stderr, and `run_names` (`test-check-premises.sh:128`) takes
+  stderr into the output it compares. Neither file is changed in this round; the CI shells (dash on
+  ubuntu, bash 3.2 on macOS) do not print the warning, and CI run 3 passed it on both.
