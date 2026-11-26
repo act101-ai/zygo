@@ -121,6 +121,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | WD-18 | Session text: each member's job and the job sentence | WD-11, ML-9, ML-10, MS-20 | DONE | implementation | plan 97283bcc · node 445b4399, 875618e6, f4fcd2fd, dbff60d9 · acceptance pass (job_ 8 listed; session_text 51 passed) · PR #189 |
 | OS-35 | Fixture views through the hook: goldens, floors, recovery, bless guard | OS-34, OS-32, OS-42 | DONE | judgment | 3a9dbffb · 3c10f93d · f788f46d · acceptance pass (shaping 14) · PR #198 |
 | SX-4 | `hook trim` takes the flag and adds `additionalContext` = mechanics text, once (T§9.2 item 2) | SX-1, SX-3, OS-34 | DONE | judgment | plan 5441dd4c · node d37419f1, 927b1246, 86db8ba5 · acceptance pass (trim 17 listed; reinject trim 17 passed; zygo-hooks 344 passed) · PR #191 |
+| OS-36 | The never-worse check over every case and the built inputs | OS-35 | DONE | judgment | 1fb09e17 · a4501591 · 65a63246 · acceptance pass (never_worse 22, shaping 36) · PR #201 |
 
 ## Log
 
