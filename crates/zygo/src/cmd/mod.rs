@@ -375,7 +375,7 @@ enum Cmd {
     Workspace,
     /// Workspace tools: forget, forget-pane
     Ws(ws::WsArgs),
-    /// Workspace mail: send, read, ls
+    /// Workspace mail: send, read, ls, watch
     Mail(mail::MailArgs),
     /// Internal: MCP server started by the agents
     Mcp {
