@@ -16,6 +16,7 @@ use zygo_mail_sync::env::{Env, NoSeam, SystemClock, TmuxWake};
 use zygo_mail_sync::ops;
 use zygo_mail_sync::public::LsRemote;
 use zygo_mail_sync::spawn::ChildSpawner;
+use zygo_mail_sync::state::SyncPaths;
 use zygo_mail_sync::sync::{run_with, Mode, Opts, Report, SyncError};
 use zygo_redact::secret::DeadlinePolicy;
 use zygo_workspace::identity::{valid_ws_id, workspace_id};
@@ -260,7 +261,9 @@ pub fn verb(ctx: &VerbCtx, args: &[String]) -> anyhow::Result<String> {
     ls_text(&ctx.paths, &ws, name)
 }
 
-/// The command-start mail sweep (M§5, AU71): `cur/` files older than `[mail] keep` in each workspace. A user config
+/// The command-start mail sweep (M§5, AU71): `cur/` files older than `[mail] keep` in each workspace, and the outbox
+/// sweep of mail sync (S§9 last paragraph, D9): `outbox/refused/` files older than `keep` and `outbox/tmp/` files older
+/// than 1 h; queued outbox files are kept. A user config
 /// that does not load or a `keep` that does not parse gives no sweep (Open 2). A workspace folder or a `mail/` folder
 /// that is a link is not opened (as `admin.rs:410`). Every error is ignored.
 pub(crate) fn sweep(paths: &Paths, now: SystemTime) {
@@ -276,6 +279,9 @@ pub(crate) fn sweep(paths: &Paths, now: SystemTime) {
             continue;
         }
         store::sweep(&dir, keep, now);
+        if let Ok(sp) = SyncPaths::new(paths, id) {
+            zygo_mail_sync::outbox::sweep(&sp, keep, now);
+        }
     }
 }
 

@@ -333,3 +333,22 @@ fn ci_note_prints_at_the_first_cli_sync_only() { // T10
     let b = machine(&r, "b", &[(BOB, "bob")]);
     assert!(out(&sync(&b)).contains(CI_NOTE)); // once per workspace
 }
+
+#[test] // S§9 last paragraph, D9: the command-start sweep deletes old refused/ and tmp/ files, never queued ones
+fn mail_sweep_deletes_old_refused_and_tmp_files_at_command_start() { // T14
+    let r = remote();
+    let a = machine(&r, "a", &[(ALICE, "alice")]);
+    std::fs::write(a.root().join("config.toml"), "[mail]\nhost = \"a\"\nkeep = \"1d\"\n").unwrap();
+    let s = sp(&a);
+    for d in [&s.refused, &s.outbox_tmp] { std::fs::create_dir_all(d).unwrap(); }
+    let now = SystemTime::now();
+    let file = |p: PathBuf, age: Duration| { std::fs::write(&p, "{}").unwrap(); set_mtime(&p, now - age); p };
+    let old_refused = file(s.refused.join("01J00000000000000000000000.json"), Duration::from_secs(2 * 86400));
+    let new_refused = file(s.refused.join("01J00000000000000000000001.json"), Duration::from_secs(3600));
+    let old_tmp = file(s.outbox_tmp.join("t1"), Duration::from_secs(2 * 3600));
+    let queued = file(s.outbox.join("01J00000000000000000000002.json"), Duration::from_secs(30 * 86400));
+    let o = zygo(&a, &["mail", "ls"], &[], None);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert!(!old_refused.exists() && !old_tmp.exists());
+    assert!(new_refused.exists() && queued.exists());
+}
