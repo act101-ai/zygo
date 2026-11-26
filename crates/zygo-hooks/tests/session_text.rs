@@ -554,6 +554,99 @@ fn start(agent: Agent) -> HookInput {
         _ => HookInput::parse(Agent::OpenCode, b"{}").unwrap(),
     }
 }
+const ORCHESTRATOR_JOB: &str = "Your job: orchestrator. Give work to the workers with mail_send, collect their results with mail_read, and check each result against its brief.";
+const JOB_LIST: &str = "orchestrator (orchestrator), worker-1 (worker), elena";
+fn worker_job(o: &str) -> String {
+    format!("Your job: worker. Take your work from {o} by mail, do it through your zygo-<role> subagents, and send the result to {o} with mail_send.")
+}
+/// `ws_of("app", ..)` with `launch.job` of each member: (key, name, job).
+fn ws_jobs(members: &[(&str, Option<&str>, Option<&str>)]) -> Workspace {
+    let mut ws = ws_of("app", &members.iter().map(|(k, n, _)| (*k, *n)).collect::<Vec<_>>());
+    for (k, _, j) in members {
+        ws.members.get_mut(*k).unwrap().launch.job = j.map(String::from);
+    }
+    ws
+}
+/// R§9.3's example: an orchestrator, a worker and a member with no job, in key order.
+fn team() -> Workspace {
+    ws_jobs(&[(OWN, Some("orchestrator"), Some("orchestrator")), (PEER, Some("worker-1"), Some("worker")), (LATE, Some("elena"), None)])
+}
+#[cfg(unix)]
+fn set_jobs(x: &Mx, jobs: &[(&str, &str)]) {
+    Store::open(&x.paths, WS_ID)
+        .update(Duration::from_secs(5), &mut |ws| {
+            for (k, j) in jobs {
+                ws.members.get_mut(*k).unwrap().launch.job = Some(j.to_string());
+            }
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test] // R§9.3 effect 3, R§18 item 19
+fn job_worker_text_lists_each_job_and_names_the_orchestrator() {
+    let want = format!("{} {}", item8("you are `worker-1` in workspace `app`", JOB_LIST), worker_job("orchestrator"));
+    assert_eq!(mail::session_item(&team(), PEER), Some(want));
+    // The S§10.4 clause keeps its place; the job sentence stays last.
+    let got = mail::session_item_with(&team(), PEER, &["bob@b".to_string()]).unwrap();
+    let tail = format!("Members: `{JOB_LIST}`. Other machines: bob@b; mail them by the full address. {MAIL_TAIL} {}", worker_job("orchestrator"));
+    assert!(got.ends_with(&tail), "{got}");
+}
+
+#[test] // R§9.3 effect 3
+fn job_orchestrator_text_gets_the_orchestrator_sentence() {
+    let want = format!("{} {ORCHESTRATOR_JOB}", item8("you are `orchestrator` in workspace `app`", JOB_LIST));
+    assert_eq!(mail::session_item(&team(), OWN), Some(want));
+}
+
+#[test] // R§9.3: no orchestrator in the workspace
+fn job_worker_with_no_orchestrator_names_the_member_that_gave_you_the_work() {
+    let ws = ws_jobs(&[(OWN, Some("worker-1"), Some("worker")), (PEER, Some("elena"), None)]);
+    let want = format!("{} {}", item8("you are `worker-1` in workspace `app`", "worker-1 (worker), elena"), worker_job("the member that gave you the work"));
+    assert_eq!(mail::session_item(&ws, OWN), Some(want));
+}
+
+#[test] // R§9.3 "no job: no sentence", R§18 item 19
+fn job_absent_member_is_listed_by_name_alone_and_gets_no_sentence() {
+    assert_eq!(mail::session_item(&team(), LATE), Some(item8("you are `elena` in workspace `app`", JOB_LIST)));
+    let ws = ws_jobs(&[(OWN, Some("elena"), None), (PEER, Some("kai"), None)]);
+    assert_eq!(mail::session_item(&ws, OWN), Some(item8("you are `elena` in workspace `app`", "elena, kai")));
+}
+
+#[test] // Reading 4: the orchestrator's mail address is names::sender
+fn job_orchestrator_with_no_name_is_named_by_its_pane_key() {
+    let ws = ws_jobs(&[(OWN, None, Some("orchestrator")), (PEER, Some("worker-1"), Some("worker"))]);
+    let want = format!("{} {}", item8("you are `worker-1` in workspace `app`", "worker-1 (worker)"), worker_job("kaaaaaaaa"));
+    assert_eq!(mail::session_item(&ws, PEER), Some(want));
+}
+
+#[test] // Reading 3: R§9.3 defines two jobs; the text holds names and tool names only
+fn job_value_outside_jobs_reads_as_no_job() {
+    let ws = ws_jobs(&[(OWN, Some("elena"), Some("lead\n")), (PEER, Some("kai"), Some("worker"))]);
+    assert_eq!(mail::session_item(&ws, OWN), Some(item8("you are `elena` in workspace `app`", "elena, kai (worker)")));
+}
+
+#[cfg(unix)]
+#[test] // R§12 row member.launch.job: read by the session-start hook
+fn job_sentence_at_session_start_from_the_member_record() {
+    for agent in [Agent::ClaudeCode, Agent::OpenCode] {
+        let x = mx(agent, true, true, None, &[(OWN, Some("worker-1")), (PEER, Some("orchestrator"))]);
+        set_jobs(&x, &[(OWN, "worker"), (PEER, "orchestrator")]);
+        let base = build(&SessionView::load(&x.dir).unwrap());
+        let item = item8("you are `worker-1` in workspace `app`", "worker-1 (worker), orchestrator (orchestrator)");
+        assert_eq!(member_text(&x, &start(agent)), format!("{base}\n\n{item} {}", worker_job("orchestrator")), "{agent:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test] // R§9.3 "with mail off there is no job sentence"
+fn job_sentence_absent_with_mail_off() {
+    let x = mx(Agent::ClaudeCode, false, true, None, &[(OWN, Some("worker-1")), (PEER, Some("orchestrator"))]);
+    set_jobs(&x, &[(OWN, "worker"), (PEER, "orchestrator")]);
+    let got = member_text(&x, &start(Agent::ClaudeCode));
+    assert_eq!(got, build(&SessionView::load(&x.dir).unwrap()));
+    assert!(!got.contains("Your job:"), "{got}");
+}
 
 #[test] // M§8a item 1
 fn mail_item_named_member_lists_every_member_name() {
