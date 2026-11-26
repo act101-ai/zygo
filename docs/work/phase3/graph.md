@@ -202,7 +202,7 @@ Session text (T, SX nodes):
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | TODO | implementation | — |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
 | OS-36 | The never-worse check over every case and the built inputs | OS-35 | TODO | judgment | — |
-| OS-37 | On-demand latency test, ignored in CI | OS-35 | TODO | implementation | — |
+| OS-37 | On-demand latency test, ignored in CI | OS-35 | PLANNED | implementation | — |
 | WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | TODO | judgment | — |
 | MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17, FX-15 | TODO | implementation | — |
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | TODO | implementation | — |
