@@ -125,6 +125,67 @@ fn trim_opts_default_branch_is_po2_constant() {
     assert!(!o.shape_panic); // ZYGO_TEST_SHAPE_PANIC unset in CI
 }
 
+/// The PO1 capture with its `error` text `Exit code 3\n` then `out-line\nerr-line\n` repeated to at least 20 KiB.
+fn po1_big() -> (Value, String) {
+    let mut v = fixture("claude-code/hooks/PostToolUseFailure-Bash-output-main.json");
+    let mut text = String::from("Exit code 3\n");
+    while text.len() < 20 * 1024 {
+        text.push_str("out-line\nerr-line\n");
+    }
+    v["error"] = json!(text);
+    (v, text)
+}
+
+#[test]
+fn po1_holds_equals_the_premise_row() {
+    // O§7.13, O§17 PO1: the constant equals the PO1 row; the failing branch records its limit
+    let p = std::fs::read_to_string(shaping::repo().join("docs/premises.md")).unwrap();
+    let row = p.lines().find(|l| l.starts_with("| PO1 |")).unwrap();
+    let status = row.split(" | ").nth(5).unwrap();
+    assert_eq!(status, "failed");
+    assert_eq!(trim::PO1_HOLDS, status == "verified");
+    assert!(row.contains("a failed Bash call on Claude Code passes unchanged"), "{row}");
+}
+
+#[test]
+fn po1_failed_bash_capture_gives_no_output_and_no_row() {
+    // O§7.13 "If PO1 fails", O§10 "PO1 fails", O§16 item 18 (fail)
+    let (big, text) = po1_big();
+    assert!(text.len() >= 20 * 1024);
+    for shape in [true, false] {
+        let e = env(shape);
+        let raw = fixture("claude-code/hooks/PostToolUseFailure-Bash-output-main.json");
+        assert_eq!(raw["error"], "Exit code 3\nout-line\nerr-line");
+        for input in [&raw, &big] {
+            assert_eq!(run(&e, Agent::ClaudeCode, input, &TrimOpts::default()), "");
+            assert_eq!(run(&e, Agent::ClaudeCode, input, &TrimOpts { stderr_cleared: false, ..TrimOpts::default() }), "");
+        }
+        assert!(rows(&e).is_empty() && ids(&e).is_empty(), "shape = {shape}");
+    }
+}
+
+#[test]
+fn po1_silent_failed_bash_gives_no_output() {
+    // O§16 item 18: the silent command
+    let e = env(true);
+    let v = fixture("claude-code/live/p-n24-1-exit.json");
+    assert_eq!(v["error"], "Exit code 3");
+    assert_eq!(run(&e, Agent::ClaudeCode, &v, &TrimOpts::default()), "");
+    assert!(rows(&e).is_empty() && ids(&e).is_empty());
+}
+
+#[test]
+fn po1_same_text_after_a_passing_call_is_shaped() {
+    // O§7.13 "A passing run is still shaped": the same text as `PostToolUse` stdout is stored and replaced
+    let (big, text) = po1_big();
+    let e = env(true);
+    let out = run(&e, Agent::ClaudeCode, &bash(big["tool_input"]["command"].clone(), &text, ""), &TrimOpts::default());
+    assert!(!out.is_empty());
+    assert_eq!(ids(&e).len(), 1);
+    assert_eq!(rows(&e).len(), 1);
+    assert_eq!(stored(&e, &ids(&e)[0]), text.as_bytes());
+}
+
 fn fixture(rel: &str) -> Value {
     serde_json::from_slice(&std::fs::read(shaping::repo().join("fixtures").join(rel)).unwrap()).unwrap()
 }
