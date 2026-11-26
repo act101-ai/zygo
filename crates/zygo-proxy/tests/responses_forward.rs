@@ -9,9 +9,11 @@ mod support;
 use http::HeaderMap;
 use regex::Regex;
 use serde_json::{json, Value};
-use support::{codex_request, Harness, PROVIDER};
+use support::{codex_request, Harness, PROVIDER, UPSTREAM_MODEL};
 use zygo_config::Dialect::{Anthropic as A, OpenaiChat as C};
 use zygo_core::Agent;
+use zygo_proxy::translate::reasoning::decode_thinking;
+use zygo_proxy::translate::Target;
 
 const R: &str = "openai/v1/responses";
 const SSE: &str = "text/event-stream";
@@ -333,8 +335,8 @@ fn non_streaming_anthropic_same_content() {
     assert_eq!(r["usage"], usage);
     assert!(hv(&hd, "x-zygo-adjustments").split(',').any(|a| a == "server_tool_dropped"), "{hd:?}");
 
-    // A JSON answer to a streaming request: SSE with the same items (no server tool block: see the plan's lead notes).
-    h.reply_with(200, JSON, serde_json::to_vec(&MSG_JSON(false)).unwrap());
+    // A JSON answer to a streaming request: SSE with the same items (the server tool block dropped by the encoder).
+    h.reply_with(200, JSON, serde_json::to_vec(&MSG_JSON(true)).unwrap());
     let (s, hd, b) = h.post(R, &with_stream(body, true));
     assert_eq!(s, 200);
     assert!(hv(&hd, "content-type").starts_with(SSE), "{hd:?}");
@@ -344,6 +346,7 @@ fn non_streaming_anthropic_same_content() {
 
     let rows = h.usage_rows();
     assert_eq!(rows.len(), 3);
+    assert_eq!(rows[2].adjustments.iter().filter(|a| *a == "server_tool_dropped").count(), 1, "{:?}", rows[2].adjustments);
     assert_eq!(counts(&rows[1]), (100, 30, 5, 42));
     assert_eq!(counts(&rows[2]), (100, 30, 5, 42));
 }
@@ -675,6 +678,34 @@ fn streamed_request_json_answer_completed_and_row() {
     let rows = h.usage_rows();
     assert_eq!(rows.len(), 1);
     assert_eq!(counts(&rows[0]), (100, 30, 5, 42));
+}
+
+#[test] // RS-10: a JSON 2xx to a streamed request: message_events → encoder keeps redacted_thinking, drops server tools
+fn streamed_request_json_answer_keeps_redacted_drops_server_tool() {
+    let h = start(A);
+    let red = json!({"type":"redacted_thinking","data":"EmwKAhgB"});
+    let mut m = MSG_JSON(true);
+    let content = m["content"].as_array_mut().unwrap();
+    content.insert(0, red.clone());
+    content.push(json!({"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[]}));
+    h.reply_with(200, JSON, serde_json::to_vec(&m).unwrap());
+    let (s, hd, b) = h.post(R, &with_stream(codex_request("after-custom-tool-call-output"), true));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    assert!(hv(&hd, "content-type").starts_with(SSE), "{hd:?}");
+    let evs = events(&b);
+    assert_eq!(terminals(&evs).len(), 1, "{:?}", names(&evs));
+    assert_eq!(evs.last().unwrap().0, "response.completed");
+    let items = done_items(&evs);
+    let types: Vec<&str> = items.iter().map(|i| i["type"].as_str().unwrap()).collect();
+    assert_eq!(types, ["reasoning", "message", "function_call", "custom_tool_call"]);
+    assert_eq!(items[0]["summary"], json!([]));
+    let t = Target { provider: PROVIDER.into(), upstream_model: UPSTREAM_MODEL.into() };
+    assert_eq!(decode_thinking(items[0]["encrypted_content"].as_str().unwrap(), &t), Some(red));
+    assert_eq!(items[1]["content"][0]["text"], "hello");
+    assert!(!evs.iter().any(|(_, d)| d.to_string().contains("srvtoolu_1")));
+    let rows = h.usage_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].adjustments.iter().filter(|a| *a == "server_tool_dropped").count(), 1, "{:?}", rows[0].adjustments);
 }
 
 #[test] // base §7.6: an injected null is removed on the way back to a Responses client

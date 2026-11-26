@@ -432,7 +432,11 @@ impl StreamMapper {
     }
 }
 
-/// A Messages body as the Messages SSE events that build it: one delta per block, the usage on `message_delta`.
+/// A Messages body as the Messages SSE events that build it: one delta per text, thinking or tool_use block; any
+/// other block (of another type or with no `type`) goes out whole in its content_block_start with no delta; the
+/// usage on message_delta. The Responses encoder keeps redacted_thinking from that arm and drops server-tool and
+/// unknown blocks; a Messages client never reaches it, because its translated bodies hold only text, thinking and
+/// tool_use.
 pub fn message_events(m: &Value) -> Vec<SseEvent> {
     let mut start = m.clone();
     start["content"] = json!([]);
@@ -452,7 +456,8 @@ pub fn message_events(m: &Value) -> Vec<SseEvent> {
                 let input = b.get("input").map_or_else(|| "{}".into(), Value::to_string);
                 (json!({"type":"tool_use","id":b["id"],"name":b["name"],"input":{}}), vec![json!({"type":"input_json_delta","partial_json":input})])
             }
-            _ => (json!({"type":"text","text":""}), vec![json!({"type":"text_delta","text":s(b, "text").unwrap_or("")})]),
+            Some("text") => (json!({"type":"text","text":""}), vec![json!({"type":"text_delta","text":s(b, "text").unwrap_or("")})]),
+            _ => (b.clone(), vec![]),
         };
         out.push(ev("content_block_start", json!({"type":"content_block_start","index":i,"content_block":first})));
         out.extend(deltas.into_iter().map(|d| ev("content_block_delta", json!({"type":"content_block_delta","index":i,"delta":d}))));
