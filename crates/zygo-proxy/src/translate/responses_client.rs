@@ -59,10 +59,31 @@ pub const HOSTED_ITEMS: [&str; 12] = [
     "mcp_approval_response",
 ];
 
-/// The three top-level lists: a refused or unknown field → `400 zygo_bad_request` that names it.
+/// The longest client-sent name or type echoed in an error message (K§6.7 hostile input).
+const ECHO_MAX: usize = 64;
+
+/// The first `ECHO_MAX` characters of `x`.
+fn cut(x: &str) -> &str {
+    x.char_indices().nth(ECHO_MAX).map_or(x, |(i, _)| &x[..i])
+}
+
+/// The three top-level lists, keys in body order, the first failure returned: a refused or unknown field →
+/// `400 zygo_bad_request` that names it.
 pub fn check_fields(req: &Value) -> Result<(), ZygoError> {
-    let _ = req;
-    todo!()
+    let obj = req.as_object().ok_or_else(|| ZygoError::bad_request("request body must be a JSON object"))?;
+    for (k, v) in obj {
+        let k = k.as_str();
+        if REFUSED.contains(&k) {
+            return Err(ZygoError::bad_request(format!("{k}: {NO_STATE}")));
+        }
+        if k == "truncation" && v.as_str() != Some("disabled") {
+            return Err(ZygoError::bad_request("truncation: only \"disabled\" is accepted"));
+        }
+        if !MAPPED.contains(&k) && !IGNORED.contains(&k) {
+            return Err(ZygoError::bad_request(format!("unknown field: {}", cut(k))));
+        }
+    }
+    Ok(())
 }
 
 /// A Responses body as a Messages body for `t`; `facts` = the resolved model's catalog facts.
