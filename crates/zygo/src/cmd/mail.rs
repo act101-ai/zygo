@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{anyhow, bail};
 use clap::{Args, Subcommand};
-use zygo_config::SyncOff;
+use zygo_config::{MailConfig, SyncOff};
 use zygo_core::esc;
 use zygo_core::verbs::MAIL_SLASH_ARGS;
 use zygo_core::paths::Paths;
@@ -192,29 +192,64 @@ pub fn run(a: MailArgs) -> i32 {
                 }
             };
             let subject = subject.unwrap_or_default();
-            let r = match mail::send(&paths, &ws, pane.as_deref(), &to, &subject, &body, &cfg.mail, SystemTime::now()) {
-                Ok(r) => r,
-                Err(e) => {
-                    print_err(&format!("{e}\n"));
-                    return 1;
-                }
-            };
-            // The labels, the wake and the refused lines use the state `send` read under `mail/lock` (M§5 P1).
-            let mut text = String::new();
-            for s in &r.sent {
-                text.push_str(&format!("sent {} to {}\n", esc(&s.id), esc(&s.label)));
-            }
-            if !text.is_empty() {
-                print_out(&text);
-            }
-            let keys: Vec<String> = r.sent.iter().map(|s| s.key.clone()).collect();
-            wake::after_send(&paths, &r.workspace, &tmux_program(), &keys, &cfg.mail);
-            for x in &r.refused {
-                print_err(&format!("{}; to {}\n", x.error, member(&r.workspace, &x.key)));
-            }
-            if r.refused.is_empty() { 0 } else { 1 }
+            let tmux = tmux_program();
+            send_cli(
+                &paths,
+                &ws,
+                pane.as_deref(),
+                &to,
+                &subject,
+                &body,
+                &cfg.mail,
+                SystemTime::now(),
+                &|p, w, k, c| wake::after_send(p, w, &tmux, k, c),
+                &print_out,
+                &print_err,
+            )
         }
     }
+}
+
+/// The wake of `zygo mail send`: [`wake::after_send`] with the tmux program in production (M§7.3).
+type Waker<'a> = &'a dyn Fn(&Paths, &Workspace, &[String], &MailConfig);
+
+/// `zygo mail send` after its body is read (M§8): `send`, then one `sent <id> to <label>` line per message on `out`,
+/// the wake of the sent keys, and one line per refused target on `err`; exit 1 on a send error or a refused target.
+/// The labels, the wake and the refused lines use the state `send` read under `mail/lock` (M§5 P1), not `ws`.
+#[allow(clippy::too_many_arguments)]
+fn send_cli(
+    paths: &Paths,
+    ws: &Workspace,
+    pane: Option<&str>,
+    to: &str,
+    subject: &str,
+    body: &str,
+    cfg: &MailConfig,
+    now: SystemTime,
+    waker: Waker<'_>,
+    out: &dyn Fn(&str),
+    err: &dyn Fn(&str),
+) -> i32 {
+    let r = match mail::send(paths, ws, pane, to, subject, body, cfg, now) {
+        Ok(r) => r,
+        Err(e) => {
+            err(&format!("{e}\n"));
+            return 1;
+        }
+    };
+    let mut text = String::new();
+    for s in &r.sent {
+        text.push_str(&format!("sent {} to {}\n", esc(&s.id), esc(&s.label)));
+    }
+    if !text.is_empty() {
+        out(&text);
+    }
+    let keys: Vec<String> = r.sent.iter().map(|s| s.key.clone()).collect();
+    waker(paths, &r.workspace, &keys, cfg);
+    for x in &r.refused {
+        err(&format!("{}; to {}\n", x.error, member(&r.workspace, &x.key)));
+    }
+    if r.refused.is_empty() { 0 } else { 1 }
 }
 
 /// `zygo mail watch` (M-G5, M§8): each `poll`, the count of files in `new/` of `key` under `dir`; when a file has
@@ -652,6 +687,86 @@ mod tests {
         let log = std::fs::read_to_string(store.dir().join("errors.log")).unwrap();
         assert_eq!(log.lines().count(), 1, "{log}");
         assert!(log.ends_with(" mail sync: stopped: panic\n"), "{log}");
+    }
+
+    /// FX-13 review R1-3 (F4): `zygo mail send` labels its lines, wakes and names refused targets from the state that
+    /// `send` read under `mail/lock`, not from the older read of the command.
+    #[test]
+    fn send_labels_and_wakes_from_the_read_under_the_lock() {
+        use std::cell::RefCell;
+        use std::time::{Duration, SystemTime};
+        use zygo_config::MailConfig;
+        use zygo_core::Agent;
+        use zygo_workspace::mail::{mail_dir, store as mail_store, Message};
+        use zygo_workspace::state::{MemberRecord, Phase, Workspace};
+
+        const ID: &str = "0123456789abcdef";
+        let d = tempfile::TempDir::new().unwrap();
+        let data = d.path().join("data");
+        let cache = d.path().join("cache");
+        let paths = zygo_core::paths::Paths {
+            config_file: d.path().join("config.toml"),
+            sessions_dir: cache.join("sessions"),
+            marketplaces_dir: cache.join("marketplaces"),
+            plugin_store: data.join("plugins"),
+            approvals_file: data.join("approvals.toml"),
+            usage_db: data.join("usage.db"),
+            cache_dir: cache,
+            data_dir: data,
+        };
+        let named = |n: &str| MemberRecord { name: Some(n.into()), ..MemberRecord::new(Agent::ClaudeCode) };
+        let store = zygo_workspace::state::Store::open(&paths, ID);
+        let s5 = Duration::from_secs(5);
+        store
+            .update(s5, &mut |w| {
+                w.name = "app".into();
+                w.tmux_session = "zygo-app".into();
+                w.phase = Phase::Up;
+                w.members.insert("kaaaaaaaa".into(), named("lead"));
+                w.members.insert("kbbbbbbbb".into(), named("bob"));
+                Ok(())
+            })
+            .unwrap();
+        // The command's read; then `bob` becomes `robert` and `carol` joins, with one unread message (full at 1).
+        let stale: Workspace = store.read().unwrap().unwrap();
+        store
+            .update(s5, &mut |w| {
+                w.members.insert("kbbbbbbbb".into(), named("robert"));
+                w.members.insert("kcccccccc".into(), named("carol"));
+                Ok(())
+            })
+            .unwrap();
+        let m = Message::new("cli", "carol", "s", "b", SystemTime::now()).unwrap();
+        mail_store::deliver(&mail_dir(&paths, ID), "kcccccccc", "carol", &m, 500).unwrap();
+        let cfg = MailConfig { max_unread: 1, ..MailConfig::default() };
+
+        let (out, err, woke) = (RefCell::new(String::new()), RefCell::new(String::new()), RefCell::new(Vec::new()));
+        let waker = |_: &zygo_core::paths::Paths, w: &Workspace, k: &[String], _: &MailConfig| {
+            let names: Vec<(String, Option<String>)> =
+                k.iter().map(|k| (k.clone(), w.members.get(k).and_then(|m| m.name.clone()))).collect();
+            woke.borrow_mut().push(names);
+        };
+        let code = super::send_cli(
+            &paths,
+            &stale,
+            Some("kaaaaaaaa"),
+            "all",
+            "s",
+            "b",
+            &cfg,
+            SystemTime::now(),
+            &waker,
+            &|t| out.borrow_mut().push_str(t),
+            &|t| err.borrow_mut().push_str(t),
+        );
+        assert_eq!(code, 1);
+        let ids = mail_store::list(&mail_dir(&paths, ID), "kbbbbbbbb").unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(*out.borrow(), format!("sent {} to robert\n", ids[0].id));
+        assert_eq!(*woke.borrow(), vec![vec![("kbbbbbbbb".to_string(), Some("robert".to_string()))]]);
+        let e = err.borrow();
+        assert!(e.ends_with("; to kcccccccc (carol)\n"), "{e}");
+        assert_eq!(e.lines().count(), 1, "{e}");
     }
 }
 
