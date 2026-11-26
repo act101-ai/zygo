@@ -1,0 +1,5 @@
+Warnings · 1 of 4 · Deprecation`[features].codex_hooks`isdeprecated.Use`[features].hooks`instead.Enableitwith`--enablehooks`or`[features].hooks`inconfig.toml.Seehttps://developers.openai.com/codex/config-basic#feature-flagsfordetails. kkeep & ext · esc dismiss & close·⌃ocopy·←/→warning›Ask Codex to do anythinggpt-mock default·/repo·Reply ok. pc16-tracer-six←for agets · ? for shortcuts                       ⚠3 warnings·f2toview ›Shutting down...gpt-mock default· /repo·Reply ok. pc16-tracer-sixToken usage: total=11 input=10 output=1
+To continue this session, run:
+  codex resume uuid-0002
+Or run codex resume and select Reply ok. pc16-tracer-six.
+^C^C
