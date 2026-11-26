@@ -17,6 +17,7 @@ use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::Agent;
 use zygo_hooks::statusline::render::{glyphs, icon_set, IconSet};
+use zygo_mail_sync::identity::Stop;
 use zygo_plugins::check::esc;
 use zygo_plugins::select::selection;
 use zygo_plugins::snapshot::missing_commands;
@@ -420,6 +421,15 @@ fn plugin_lines(env: &Env, merged: &Merged, out: &mut Vec<String>) {
     }
 }
 
+/// Mail sync design S§7.5: the twin line while the `state.json` `last_error` of workspace `ws_id` is the twin check,
+/// which the stopped pass writes and a pass that ends clears. Reads `state.json` only: no git, no lock. A missing or
+/// unreadable file gives no line, so `zygo doctor` still never fails (§8.2).
+pub fn twin_line(paths: &Paths, ws_id: &str) -> Option<String> {
+    let sp = zygo_mail_sync::state::SyncPaths::new(paths, ws_id).ok()?;
+    let st = zygo_mail_sync::state::load(&sp).ok()?;
+    (st.last_error.as_deref() == Some(Stop::Twin.check_name())).then(|| Stop::Twin.line())
+}
+
 /// Reports and never refuses: exit 0, except an invalid config (§8.2).
 pub fn run() -> i32 {
     let paths = Paths::from_env();
@@ -470,6 +480,10 @@ pub fn run() -> i32 {
     );
     if let Ok(cwd) = std::env::current_dir() {
         lines.extend(definition_lines(&cwd, &merged, &paths.approvals_file, &SystemGit));
+        // S§7.5: the workspace of the mail verbs (`ZYGO_WORKSPACE`, else the checkout of this folder); none: no line.
+        if let Ok(ws) = super::mail::workspace_of(&paths, &cwd, std::env::var_os("ZYGO_WORKSPACE").as_deref(), GIT_BOUND) {
+            lines.extend(twin_line(&paths, &ws.id));
+        }
     }
     print_out(&(lines.join("\n") + "\n"));
     0

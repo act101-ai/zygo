@@ -1,6 +1,6 @@
-//! The start of the sync child and its rate limit (mail sync design S§8.1, S§8.4, S§15). The hook path starts a
-//! child when `now - last_start >= sync_gap` and writes `mail/sync/last_start` before the spawn; a send starts one
-//! with no gap and writes no `last_start`. Only a detached thread waits for the child (to reap it); nothing here
+//! The start of the sync child and its rate limit (mail sync design S§8.1, S§8.4, S§15). The hook path and
+//! `zygo mail watch` start a child when `now - last_start >= sync_gap` and write `mail/sync/last_start` before the
+//! spawn; a send starts one with no gap and writes no `last_start`. Only a detached thread waits for the child (to reap it); nothing here
 //! runs git.
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -69,9 +69,10 @@ pub fn due(sp: &SyncPaths, now: SystemTime, gap: Duration) -> bool {
     unix_secs(now).checked_sub(last).is_none_or(|d| d >= gap.as_secs())
 }
 
-/// S§8.1, S§8.4: starts the sync child of `ws_id`. With `Some(gap)` (the hook path) it starts one only when [`due`],
-/// and writes `last_start` first; a failed write gives one `log` line and no child. With `None` (a send) it starts
-/// one with no gap and reads and writes no `last_start` (S§15). A child that cannot start gives one `log` line.
+/// S§8.1, S§8.4: starts the sync child of `ws_id`. With `Some(gap)` (the hooks, `zygo mail watch`) it starts one only
+/// when [`due`], and writes `last_start` first; a failed write gives one `log` line and no child. With `None` (a send)
+/// it starts one with no gap and reads and writes no `last_start` (S§15). A child that cannot start gives one `log`
+/// line.
 pub fn trigger(env: &Env, ws_id: &str, gap: Option<Duration>, log: &dyn Fn(&str)) {
     let sp = match SyncPaths::new(&env.paths, ws_id) {
         Ok(sp) => sp,

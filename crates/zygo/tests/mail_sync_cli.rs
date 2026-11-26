@@ -28,10 +28,19 @@ const BOB: &str = "kbbbbbbbb";
 const CI_NOTE: &str = "zygo: each mail sync push can start CI and webhooks on the forge. The commits hold [skip ci]; webhooks, other workflow events and CI systems that do not read [skip ci] still run. Exclude zygo/** in such CI configs.";
 const COLLISION: &str = "zygo: the mail host name is taken on the side branch by another identity. If that is another machine, set another [mail] host. If it is this workspace from before (a moved repository, a ws forget, a restored backup), run zygo mail sync --take-host.";
 
+/// `git` with no global or system config and no template folder (MS-18 review F4), so the hooks, signing, templates
+/// and `insteadOf` rules of the user who runs the tests cannot change a result. Every git that a test starts is made
+/// here.
+fn git_cmd() -> std::process::Command {
+    let mut c = std::process::Command::new("git");
+    c.env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_TEMPLATE_DIR", "");
+    c
+}
+
 /// `git -c user.name=t -c user.email=t@t.invalid -c commit.gpgSign=false <args>` in `dir`; panics on a non-zero
 /// exit; the stdout without its trailing newline.
 fn git(dir: &Path, args: &[&str]) -> String {
-    let o = std::process::Command::new("git")
+    let o = git_cmd()
         .args(["-c", "user.name=t", "-c", "user.email=t@t.invalid", "-c", "commit.gpgSign=false"])
         .args(args).current_dir(dir).output().unwrap();
     assert!(o.status.success(), "git {args:?}: {}", err(&o));
@@ -112,7 +121,7 @@ fn send(h: &Harness, own: &str, from: &str, to: (&str, &str)) -> String {
 
 /// The paths at the tip of `refs/heads/zygo/mail` of the bare repository; empty when the branch does not exist.
 fn tip_paths(r: &Remote) -> Vec<String> {
-    let o = std::process::Command::new("git").args(["ls-tree", "-r", "--name-only", "refs/heads/zygo/mail"])
+    let o = git_cmd().args(["ls-tree", "-r", "--name-only", "refs/heads/zygo/mail"])
         .current_dir(&r.bare).output().unwrap();
     if !o.status.success() { return Vec::new(); }
     out(&o).lines().map(String::from).collect()
