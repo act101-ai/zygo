@@ -278,7 +278,7 @@ A runner view is tried when a segment of the command names the runner, and it is
 
 ### 7.7 Kind views
 
-**(author)** Only for a text that is still over the threshold after steps 1-3. Each replaces the head-and-tail view, which can cut through the part that matters. Each stays within `VIEW_CAP_BYTES` (`crates/zygo-results/src/view.rs:6`, 8 KiB). When a kind view cannot fit its first unit, it gives "no change" and step 5 runs.
+**(author)** Only for a text that is still over the threshold after steps 1-3. Each replaces the head-and-tail view, which can cut through the part that matters. Each stays within `VIEW_CAP_BYTES` (`crates/zygo-results/src/view.rs:6`, 8 KiB) less the largest shaped marker (O§7.8), so the final view with its marker stays within `VIEW_CAP_BYTES` (O§8.2). When a kind view cannot fit its first unit, it gives "no change" and step 5 runs.
 
 - **diff** (`kind.rs:72-74`): first a list of the changed files, one line each, `<path> +<added> -<removed>`. Then whole file sections, in order, while they fit; the first section that does not fit ends the walk. Then the marker `[zygo: <n> file sections not shown]`, where `<n>` is the count of file sections not shown; the marker is written also when `<n>` is 0. Text before the first file section (for example a commit header) is not shown. Failure prevented: a head-and-tail cut hides which files changed.
 - **json**: the key outline of `result_tree` (`kind.rs:89-91`, depth 3 with array lengths), cut to half the cap; then the first lines of the text to fill the cap. A parse error (including serde_json's nesting limit) gives "no change".
@@ -592,3 +592,4 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | 2026-11-25 | O§7.4 | author's call (pending operator ratification under O§15 item 2) | OS-12 review F4/F5: charset designations and ESC ESC left residue |
 | 2026-11-25 | O§7.7, O§8.1, O§8.2, O§8.3 item 4 | author's call (lead) | OS-29 plan open items: diff marker text, diff preamble not shown, log level words and line numbers, log with no level line, a `must_keep` line holds when a view line equals it or, in the log view, equals `<n>: ` followed by it, and an empty `must_keep` line is invalid (O§8.1 Bless, O§8.2, O§8.3 item 4; OS-29 review R3); `VIEW_CAP_BYTES` cite moved to `view.rs:6` |
 | 2026-11-25 | O§7.3 | author's call | kind sniffed on stdout: the combined text with a [stderr] part never sniffs as JSON, so the reuse protection was lost |
+| 2026-11-25 | O§7.7 | author's call (lead) | kind views left no room for the shaped marker, so a view near 8 KiB broke the O§8.2 view ≤ 8 KiB floor (OS-28 plan, OS-29 F3) |

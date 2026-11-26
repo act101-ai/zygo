@@ -197,7 +197,6 @@ Session text (T, SX nodes):
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | TODO | implementation | — |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
 | ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
-| MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | DONE | judgment | e7987782, f30700e9, bec4c680 · outbox 29/0 ; floor green · PR #111 |
 | MS-11 | Tip metadata, own hosts, collision and twin checks | MS-6, MS-10 | DONE | judgment | 53f75bbc 95931099 eaf0f3ee 71ba6b9c · identity 17/0 ; floor green · PR #113 |
 | MS-12 | Import: candidates, checks, crash-safe delivery | MS-6, MS-10, ML-2, ML-4 | DONE | judgment | 68fa626f, dc8f3ad4, cf388671 · import 23/0 ; floor green · PR #114 |
 | MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5, OS-4 | DONE | implementation | ea149eab, ad7d3736 · acc 18/18, 26/26 · PR #148 |
@@ -209,6 +208,7 @@ Session text (T, SX nodes):
 | ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | TODO | implementation | — |
 | MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | TODO | judgment | — |
 | OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | DONE | judgment | node commits 81332899, b442555c, 095ee7bb, 63e6f26a, fe154009, 725e2609; acceptance: shaping_hook 21/21, shaping_off 5/5, hooks_basic 60/60, hook_trim 6/6; floor ws 3432/0; PR #154 |
+| OS-41 | Kind views leave room for the shaped marker | OS-28, OS-29, OS-30 | TODO | implementation | — |
 | OS-31 | pytest runner view | OS-30, OS-20 | TODO | judgment | — |
 | WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | DONE | judgment | bae5b7af, 11d71492 · up_definition 35/0 ; floor green · PR #125 |
 | ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | TODO | mechanical | — |
