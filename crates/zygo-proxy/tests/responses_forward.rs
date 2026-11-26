@@ -346,7 +346,7 @@ fn non_streaming_anthropic_same_content() {
 
     let rows = h.usage_rows();
     assert_eq!(rows.len(), 3);
-    assert!(rows[2].adjustments.iter().any(|a| a == "server_tool_dropped"), "{:?}", rows[2].adjustments);
+    assert_eq!(rows[2].adjustments.iter().filter(|a| *a == "server_tool_dropped").count(), 1, "{:?}", rows[2].adjustments);
     assert_eq!(counts(&rows[1]), (100, 30, 5, 42));
     assert_eq!(counts(&rows[2]), (100, 30, 5, 42));
 }

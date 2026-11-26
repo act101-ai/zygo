@@ -27,7 +27,7 @@ use zygo_proxy::server::StartOpts;
 use zygo_proxy::session::{ManualClock, SessionGrant, SessionRequest};
 use zygo_proxy::tee::{COPY_MAX, HOLD_MAX};
 use zygo_proxy::translate::reasoning::{decode, decode_thinking, encode, without_zygo_thinking, Signature};
-use zygo_proxy::translate::responses_client::{Calls, Encoder};
+use zygo_proxy::translate::responses_client::{response, Calls, Encoder};
 use zygo_proxy::{Proxy, ProxyHandle};
 use zygo_redact::DeadlinePolicy;
 use zygo_usage::{RequestRow, Store};
@@ -1629,4 +1629,31 @@ fn message_events_drops_server_tool_blocks() {
     assert!(!out.iter().any(|e| e.data.to_string().contains("srvtoolu_1")));
     assert_eq!(out.last().unwrap().event, "response.completed");
     assert_eq!(codes, ["server_tool_dropped"]);
+}
+
+#[test] // RS-10: unknown block types and blocks with no `type` take the fallback arm: no empty message item, same items as the JSON path
+fn message_events_unknown_blocks_match_json_path() {
+    let m = msg_body(json!([
+        {"type":"mcp_tool_use","id":"mcptoolu_1","name":"n","server_name":"s","input":{}},
+        {"type":"mcp_tool_result","tool_use_id":"mcptoolu_1","is_error":false,"content":[]},
+        {"type":"container_upload","file_id":"file_1"},
+        {"type":"future_block_v9","x":1},
+        {},
+        {"type":"text","text":"hi"},
+    ]));
+    let (out, codes) = encoded(&m);
+    let without_id = |i: &Value| {
+        let mut i = i.clone();
+        i.as_object_mut().unwrap().remove("id");
+        i
+    };
+    let items: Vec<Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| without_id(&e.data["item"])).collect();
+    assert!(!items.iter().any(|i| i["type"] == "message" && i["content"][0]["text"] == ""), "{items:?}");
+    let (r, json_codes) = response(&m, "role-x", &tgt(), &Calls::default());
+    let json_items: Vec<Value> = r["output"].as_array().unwrap().iter().map(without_id).collect();
+    assert_eq!(items, json_items);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["content"][0]["text"], "hi");
+    assert_eq!(codes, json_codes.into_iter().map(|a| a.0).collect::<Vec<_>>());
+    assert_eq!(out.last().unwrap().event, "response.completed");
 }
