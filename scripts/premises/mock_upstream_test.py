@@ -17,6 +17,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 MOCK = os.path.join(HERE, "mock_upstream.py")
 KEY = "dummy-" + "key"
+ALT = "dummy-" + "alt-" + "key"  # PC-10: the second accepted credential
 FAILS = []
 CHECKS = [0]
 
@@ -75,7 +76,7 @@ class Mock:
         with open(rules, "w") as f:
             json.dump(RULES, f)
         port_file = os.path.join(tmp, "port")
-        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "MOCK_KEY": KEY}
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "MOCK_KEY": KEY, "MOCK_ALT_KEY": ALT}
         self.proc = subprocess.Popen([sys.executable, "-I", MOCK, "--dir", self.dir, "--rules", rules,
                                       "--port-file", port_file], env=env)
         for _ in range(600):
@@ -216,7 +217,7 @@ def run(m):
     before = m.records()
     line, _ = m.raw("GET http://example.invalid/x HTTP/1.1\r\nHost: example.invalid\r\n\r\n")
     check("M10", line.startswith("HTTP/1.1 403")
-          and m.connect_txt() == "example.invalid:443 refused\nexample.invalid:80 GET refused\n"
+          and m.connect_txt() == "example.invalid:443 refused\nexample.invalid:80 GET /x refused\n"
           and m.records() == before,
           "status %r, connect.txt %r, records %d -> %d" % (line, m.connect_txt(), len(before), len(m.records())))
 
@@ -249,25 +250,48 @@ def run(m):
     # M12: PATCH, OPTIONS, TRACE and an unknown method go through the same handler.
     for meth in ("PATCH", "OPTIONS", "TRACE", "FOO"):
         refused("M12 " + meth, "%s http://example.invalid:8080/x HTTP/1.1\r\nHost: example.invalid\r\n\r\n" % meth,
-                "example.invalid:8080 %s refused" % meth)
+                "example.invalid:8080 %s /x refused" % meth)
     # M13: a malformed authority is recorded verbatim with ? for the port.
-    refused("M13", "GET http://[::1/x HTTP/1.1\r\nHost: x\r\n\r\n", "[::1:? GET refused")
+    refused("M13", "GET http://[::1/x HTTP/1.1\r\nHost: x\r\n\r\n", "[::1:? GET /x refused")
     # M14: a port out of range is ?, not the scheme default.
-    refused("M14", "GET http://evil.example:99999/ HTTP/1.1\r\nHost: x\r\n\r\n", "evil.example:? GET refused")
+    refused("M14", "GET http://evil.example:99999/ HTTP/1.1\r\nHost: x\r\n\r\n", "evil.example:? GET / refused")
     # M15: any scheme counts: ws (port 80), wss (443), ftp (21), an unknown scheme (?).
-    refused("M15 ws", "GET ws://example.invalid/x HTTP/1.1\r\nHost: x\r\n\r\n", "example.invalid:80 GET refused")
-    refused("M15 wss", "GET wss://example.invalid/x HTTP/1.1\r\nHost: x\r\n\r\n", "example.invalid:443 GET refused")
-    refused("M15 ftp", "GET ftp://example.invalid/x HTTP/1.1\r\nHost: x\r\n\r\n", "example.invalid:21 GET refused")
-    refused("M15 zz", "GET zz://example.invalid/x HTTP/1.1\r\nHost: x\r\n\r\n", "example.invalid:? GET refused")
+    refused("M15 ws", "GET ws://example.invalid/x HTTP/1.1\r\nHost: x\r\n\r\n", "example.invalid:80 GET /x refused")
+    refused("M15 wss", "GET wss://example.invalid/x HTTP/1.1\r\nHost: x\r\n\r\n", "example.invalid:443 GET /x refused")
+    refused("M15 ftp", "GET ftp://example.invalid/x HTTP/1.1\r\nHost: x\r\n\r\n", "example.invalid:21 GET /x refused")
+    refused("M15 zz", "GET zz://example.invalid/x HTTP/1.1\r\nHost: x\r\n\r\n", "example.invalid:? GET /x refused")
     # M16: userinfo is never recorded.
     refused("M16", "GET http://user:secret@example.invalid/ HTTP/1.1\r\nHost: x\r\n\r\n",
-            "example.invalid:80 GET refused")
+            "example.invalid:80 GET / refused")
     # M17: a target that is neither origin-form nor an absolute URI (asterisk form, a bare word).
-    refused("M17 *", "OPTIONS * HTTP/1.1\r\nHost: x\r\n\r\n", "*:? OPTIONS refused")
-    refused("M17 word", "GET u:p@foo HTTP/1.1\r\nHost: x\r\n\r\n", "foo:? GET refused")
+    refused("M17 *", "OPTIONS * HTTP/1.1\r\nHost: x\r\n\r\n", "*:? OPTIONS ? refused")
+    refused("M17 word", "GET u:p@foo HTTP/1.1\r\nHost: x\r\n\r\n", "foo:? GET ? refused")
     # M18: ws:// to the mock's own address is not served (only http and https are).
     refused("M18", "GET ws://127.0.0.1:%d/v1/models HTTP/1.1\r\nHost: x\r\n\r\n" % m.port,
-            "127.0.0.1:%d GET refused" % m.port)
+            "127.0.0.1:%d GET /v1/models refused" % m.port)
+
+    # M26 (PC-10; review round 1, F5): the recorded path drops the whole query and the fragment; a
+    # path to another local port is recorded with its path; a segment that looks like a token
+    # (sk-..., long hex, long base64 with a digit, bot<digits>:...) is ?; a path with a byte outside
+    # visible ASCII is ?.
+    refused("M26 query", "GET http://example.invalid/a/b?token=s3cret&x&y=2#frag HTTP/1.1\r\nHost: x\r\n\r\n",
+            "example.invalid:80 GET /a/b refused")
+    # Round 2 (G8): any segment of 20 or more token characters (letters, digits, . ~ % - _ + =),
+    # as a JWT or a percent-encoded key.
+    tokens = ["sk" + "-abcd1234", "0123456789abcdef0123", "QUJDREVGR0hJSktMTU5PUFFS", "bot" + "123456:ABCdef",
+              "eyJ" + "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln", "sk" + "%2Dabcdefghijklmnopqrst",
+              "a.b~c_d-e%2Ff.g~h_i-j", "chat-completions-streaming"]
+    for i, tok in enumerate(tokens):
+        refused("M26 token %d" % i, "GET http://example.invalid/v1/%s/send HTTP/1.1\r\nHost: x\r\n\r\n" % tok,
+                "example.invalid:80 GET /v1/?/send refused")
+    refused("M26 plain segments", "GET http://example.invalid/v1/chat-completions/x1 HTTP/1.1\r\nHost: x\r\n\r\n",
+            "example.invalid:80 GET /v1/chat-completions/x1 refused")
+    refused("M26 other port", "POST http://127.0.0.1:1/some/path HTTP/1.1\r\nHost: x\r\ncontent-length: 0\r\n\r\n",
+            "127.0.0.1:1 POST /some/path refused")
+    refused("M26 query only", "GET http://example.invalid?k=v HTTP/1.1\r\nHost: x\r\n\r\n",
+            "example.invalid:80 GET / refused")
+    refused("M26 byte", "GET http://example.invalid/\xe9 HTTP/1.1\r\nHost: x\r\n\r\n",
+            "example.invalid:80 GET ? refused")
 
     # M19-M21 (review round 2, G8): a request line over 64 KiB (414) or a header line too long
     # (431) is answered by the base class before any handler; a proxy request among them is still
@@ -285,10 +309,10 @@ def run(m):
 
     big = "a" * 70000
     overlong("M19", "GET http://evil.example/%s HTTP/1.1\r\nHost: x\r\n\r\n" % big, 414,
-             "evil.example:80 GET refused\n")
+             "evil.example:80 GET ? refused\n")
     overlong("M20", "CONNECT %s:443 HTTP/1.1\r\nHost: x\r\n\r\n" % ("e" * 70000), 414, "?:? refused\n")
     overlong("M21", "GET http://evil4.example/ HTTP/1.1\r\nHost: x\r\nX-A: %s\r\n\r\n" % big, 431,
-             "evil4.example:80 GET refused\n")
+             "evil4.example:80 GET / refused\n")
     overlong("M21 origin", "GET /v1/models HTTP/1.1\r\nHost: x\r\nX-A: %s\r\n\r\n" % big, 431, "")
 
     # M22-M25 (review round 3, H3): every other error reply of the base class (400, 505) to a
@@ -308,19 +332,53 @@ def run(m):
     base_error("M22 CONNECT syntax", "CONNECT evil5.example:443 HTTP/1.1 x\r\nHost: x\r\n\r\n", 400,
                "evil5.example:443 refused\n")
     base_error("M22 GET syntax", "GET http://evil5.example/ HTTP/1.1 x\r\nHost: x\r\n\r\n", 400,
-               "evil5.example:80 GET refused\n")
+               "evil5.example:80 GET / refused\n")
     base_error("M23 HTTP/0.9 CONNECT", "CONNECT evil6.example:443\r\n\r\n", 400, "evil6.example:443 refused\n")
     base_error("M23 CONNECT alone", "CONNECT\r\n\r\n", 400, "?:? refused\n")
     base_error("M24 HTTP/2.0", "GET http://evil7.example:8080/ HTTP/2.0\r\nHost: x\r\n\r\n", 505,
-               "evil7.example:8080 GET refused\n")
+               "evil7.example:8080 GET / refused\n")
     base_error("M24 CONNECT HTTP/2.0", "CONNECT evil7.example:443 HTTP/2.0\r\nHost: x\r\n\r\n", 505,
                "evil7.example:443 refused\n")
     base_error("M25 HTTP/1.1x", "POST https://evil8.example/v1 HTTP/1.1x\r\nHost: x\r\n\r\n", 400,
-               "evil8.example:443 POST refused\n")
-    base_error("M25 unparsable", "GET http://[::1/x HTTP/1.1x\r\nHost: x\r\n\r\n", 400, "[::1:? GET refused\n")
+               "evil8.example:443 POST /v1 refused\n")
+    base_error("M25 unparsable", "GET http://[::1/x HTTP/1.1x\r\nHost: x\r\n\r\n", 400, "[::1:? GET /x refused\n")
     # Not recorded: an origin-form target, and the mock's own address.
     base_error("M25 origin", "GET /v1/models HTTP/2.0\r\nHost: x\r\n\r\n", 505, "")
     base_error("M25 own address", "GET http://127.0.0.1:%d/v1/models HTTP/1.1x\r\nHost: x\r\n\r\n" % m.port, 400, "")
+
+    # M27 (PC-10): MOCK_ALT_KEY is accepted like MOCK_KEY (Bearer or x-api-key); each record says
+    # which of the two a request carried (credential primary or alt), never the value.
+    def cred_of(st, case):
+        new = sorted(set(m.records()) - before)
+        try:
+            with open(os.path.join(m.dir, new[-1])) as f:
+                text = f.read()
+            return st, json.loads(text).get("credential"), ALT in text or KEY in text
+        except (ValueError, IndexError) as e:
+            return st, "error %r" % e, False
+    before = set(m.records())
+    got = cred_of(m.req("POST", "/v1/responses", {"model": "m", "input": "m27a"}, auth=ALT)[0], "alt")
+    check("M27 alt", got == (200, "alt", False), "got %r" % (got,))
+    before = set(m.records())
+    got = cred_of(m.req("POST", "/v1/responses", {"model": "m", "input": "m27p"})[0], "primary")
+    check("M27 primary", got == (200, "primary", False), "got %r" % (got,))
+    before = set(m.records())
+    c = http.client.HTTPConnection("127.0.0.1", m.port, timeout=10)
+    c.request("POST", "/v1/messages", body=json.dumps({"model": "m", "messages": []}).encode(),
+              headers={"x-api-key": ALT, "content-type": "application/json"})
+    r = c.getresponse()
+    r.read()
+    c.close()
+    got = cred_of(r.status, "alt x-api-key")
+    check("M27 alt x-api-key", got == (200, "alt", False), "got %r" % (got,))
+    # M28 (PC-10): a MOCK_ALT_KEY equal to MOCK_KEY is refused at start (the record could not say
+    # which one a request carried).
+    with tempfile.TemporaryDirectory() as t2:
+        r2 = subprocess.run([sys.executable, "-I", MOCK, "--dir", os.path.join(t2, "rec")],
+                            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "MOCK_KEY": KEY, "MOCK_ALT_KEY": KEY},
+                            capture_output=True, text=True, timeout=30)
+    check("M28", r2.returncode != 0 and "MOCK_ALT_KEY equals MOCK_KEY" in r2.stderr,
+          "exit %r, stderr %r" % (r2.returncode, r2.stderr))
 
     # M9 (last: it stops the mock): another credential gives 401 and ABORT.
     st, _, _ = m.req("POST", "/v1/responses", {"model": "m", "input": "m9"}, auth="other")
