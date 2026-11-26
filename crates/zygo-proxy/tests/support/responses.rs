@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -42,6 +42,8 @@ struct Upstream {
     addr: SocketAddr,
     got: Arc<Mutex<Vec<Got>>>,
     reply: Arc<Mutex<Reply>>,
+    /// Set: the reply body is followed by a read error (`reply_cut`).
+    cut: Arc<AtomicBool>,
     _stop: tokio::sync::oneshot::Sender<()>,
 }
 
@@ -51,28 +53,33 @@ impl Upstream {
     fn start(reply: Reply) -> Upstream {
         let got: Arc<Mutex<Vec<Got>>> = Arc::default();
         let reply = Arc::new(Mutex::new(reply));
+        let cut: Arc<AtomicBool> = Arc::default();
         let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         l.set_nonblocking(true).unwrap();
         let addr = l.local_addr().unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let (g2, r2) = (got.clone(), reply.clone());
+        let (g2, r2, c2) = (got.clone(), reply.clone(), cut.clone());
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
             rt.block_on(async move {
                 let l = tokio::net::TcpListener::from_std(l).unwrap();
                 let app = axum::Router::new().fallback(move |req: Request| {
-                    let (g3, r3) = (g2.clone(), r2.clone());
+                    let (g3, r3, c3) = (g2.clone(), r2.clone(), c2.clone());
                     async move {
                         let path = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_default();
                         let headers = req.headers().clone();
                         let body = axum::body::to_bytes(req.into_body(), usize::MAX).await.unwrap().to_vec();
                         g3.lock().unwrap().push((path, headers, body));
                         let (status, ctype, b) = r3.lock().unwrap().clone();
-                        Response::builder()
-                            .status(status)
-                            .header("content-type", ctype)
-                            .body(axum::body::Body::from(b))
-                            .unwrap()
+                        let body = if c3.load(Ordering::SeqCst) {
+                            axum::body::Body::from_stream(futures_util::stream::iter([
+                                Ok::<Bytes, std::io::Error>(Bytes::from(b)),
+                                Err(std::io::Error::other("cut")),
+                            ]))
+                        } else {
+                            axum::body::Body::from(b)
+                        };
+                        Response::builder().status(status).header("content-type", ctype).body(body).unwrap()
                     }
                 });
                 tokio::select! {
@@ -81,7 +88,7 @@ impl Upstream {
                 }
             });
         });
-        Upstream { addr, got, reply, _stop: tx }
+        Upstream { addr, got, reply, cut, _stop: tx }
     }
 }
 
@@ -249,7 +256,14 @@ impl Harness {
 
     /// The mock's reply to every later request.
     pub fn reply_with(&self, status: u16, content_type: &str, body: Vec<u8>) {
+        self.up.cut.store(false, Ordering::SeqCst);
         *self.up.reply.lock().unwrap() = (status, content_type.to_string(), body);
+    }
+
+    /// As `reply_with`, then a read error after `body`: the proxy sees the upstream body fail partway through.
+    pub fn reply_cut(&self, status: u16, content_type: &str, body: Vec<u8>) {
+        *self.up.reply.lock().unwrap() = (status, content_type.to_string(), body);
+        self.up.cut.store(true, Ordering::SeqCst);
     }
 
     fn usage_db(&self) -> PathBuf {

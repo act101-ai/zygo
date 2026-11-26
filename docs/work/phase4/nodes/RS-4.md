@@ -42,9 +42,9 @@ Produces: nothing for later nodes. RS-5 builds on the `Encode` field of `Flow` (
 
 ### Steps
 
-- [ ] 1. **Harness.** In `tests/support/responses.rs`, add to `Upstream` the field `cut: Arc<AtomicBool>`. When the field is set, the mock sends the reply body as `Body::from_stream(futures_util::stream::iter([Ok::<Bytes, std::io::Error>(body), Err(std::io::Error::other("cut"))]))`, so that the proxy sees a read error after the first bytes. Add `pub fn reply_cut(&self, status: u16, content_type: &str, body: Vec<u8>)`, which sets the reply and `cut = true`. `reply_with` sets `cut = false`. Pass: `cargo test -p zygo-proxy --test responses_route --locked` passes unchanged.
+- [x] 1. **Harness.** In `tests/support/responses.rs`, add to `Upstream` the field `cut: Arc<AtomicBool>`. When the field is set, the mock sends the reply body as `Body::from_stream(futures_util::stream::iter([Ok::<Bytes, std::io::Error>(body), Err(std::io::Error::other("cut"))]))`, so that the proxy sees a read error after the first bytes. Add `pub fn reply_cut(&self, status: u16, content_type: &str, body: Vec<u8>)`, which sets the reply and `cut = true`. `reply_with` sets `cut = false`. Pass: `cargo test -p zygo-proxy --test responses_route --locked` passes unchanged.
 
-- [ ] 2. **Failing tests.** Write `crates/zygo-proxy/tests/responses_forward.rs`. Its header is `#[path = "support/responses.rs"] mod support;`, `const R: &str = "openai/v1/responses";`, and each harness is `Harness::start(<A|C>, Agent::ClaudeCode, "")`. Helpers, which hold no logic under test:
+- [x] 2. **Failing tests.** Write `crates/zygo-proxy/tests/responses_forward.rs`. Its header is `#[path = "support/responses.rs"] mod support;`, `const R: &str = "openai/v1/responses";`, and each harness is `Harness::start(<A|C>, Agent::ClaudeCode, "")`. Helpers, which hold no logic under test:
   - `msg_sse(evs: &[Value]) -> Vec<u8>`: `event: <type>\ndata: <compact json>\n\n` for each event.
   - `chat_sse(chunks: &[Value]) -> Vec<u8>`: `data: <json>\n\n` for each chunk, then `data: [DONE]\n\n`.
   - `events(b: &[u8]) -> Vec<(String, Value)>`: splits on blank lines and takes `event:` and `data:`.
@@ -102,7 +102,7 @@ Produces: nothing for later nodes. RS-5 builds on the `Encode` field of `Flow` (
      - Non-streaming (`stream:false`, `CHAT_JSON` with those arguments): the `function_call` `arguments` parse to `{"cmd":"ls"}`.
   10. `bad_2xx_body_is_502_openai_shape`. Anthropic replies 200 `application/json` `{"output":[]}` and the body has `stream:false`. Assert status 502 and `oai_err(b) == {"type":"zygo_upstream_bad_response","message":"upstream response could not be translated"}` (`errors.rs:36-42`, `forward.rs:199-201`).
 
-- [ ] 3. Run `cargo test -p zygo-proxy --test responses_forward --locked`. Expect failure: tests 1-6 and 8-10 fail on the RS-3 placeholder 502 or on the Anthropic body check. Test 7 may already pass, because RS-3 built that path; it stays as the contract's case.
+- [x] 3. Run `cargo test -p zygo-proxy --test responses_forward --locked`. Expect failure: tests 1-6 and 8-10 fail on the RS-3 placeholder 502 or on the Anthropic body check. Test 7 may already pass, because RS-3 built that path; it stays as the contract's case. (Run 2026-11-26: 8 failed, 2 passed. Tests 7 and 10 pass already: the RS-3 placeholder gives the same 502 `zygo_upstream_bad_response` body that test 10 asks for. Test 10 stays to keep that answer after the placeholder goes.)
 
 - [ ] 4. Commit the tests and the harness helper: `test(proxy): RS-4 Responses response side tests`. Trailers: `Zygo-Session: <session>`, `Zygo-Work: phase4:RS-4`.
 
