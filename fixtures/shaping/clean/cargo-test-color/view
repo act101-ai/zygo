@@ -1,76 +1,17 @@
-[zygo shaped this output: color codes removed. The full output (75 lines, 2560 bytes) is saved as result 00000000000000000000000000; read it with result_view, result_search or result_tree.]
+[zygo shaped this output: color codes removed, passed tests hidden, build progress hidden. The full output (135 lines, 5288 bytes) is saved as result 00000000000000000000000000; read it with result_view, result_search or result_tree.]
 
-running 60 tests
-test passes_001 ... okB
-test passes_002 ... okB
-test passes_004 ... okB
-test passes_003 ... okB
-test passes_005 ... okB
-test passes_006 ... okB
-test passes_007 ... okB
-test passes_008 ... okB
-test passes_009 ... okB
-test passes_010 ... okB
-test passes_011 ... okB
-test passes_012 ... okB
-test passes_013 ... okB
-test passes_014 ... okB
-test passes_015 ... okB
-test passes_016 ... okB
-test passes_017 ... okB
-test passes_018 ... okB
-test passes_019 ... okB
-test passes_020 ... okB
-test passes_021 ... okB
-test passes_022 ... okB
-test passes_023 ... okB
-test passes_024 ... okB
-test passes_025 ... okB
-test passes_026 ... okB
-test passes_027 ... okB
-test passes_028 ... okB
-test passes_029 ... okB
-test passes_030 ... okB
-test passes_031 ... okB
-test passes_032 ... okB
-test passes_033 ... okB
-test passes_034 ... okB
-test passes_035 ... okB
-test passes_036 ... okB
-test passes_037 ... okB
-test passes_038 ... okB
-test passes_039 ... okB
-test passes_040 ... okB
-test passes_041 ... okB
-test passes_042 ... okB
-test passes_043 ... okB
-test passes_044 ... okB
-test passes_045 ... okB
-test passes_046 ... okB
-test passes_047 ... okB
-test passes_048 ... okB
-test passes_049 ... okB
-test passes_050 ... okB
-test passes_051 ... okB
-test passes_052 ... okB
-test passes_053 ... okB
-test passes_054 ... okB
-test passes_055 ... okB
-test passes_056 ... okB
-test passes_057 ... okB
-test passes_058 ... okB
-test passes_059 ... okB
-test passes_060 ... okB
+running 120 tests
+[zygo: 120 passed and 0 ignored test lines hidden]
 
-test result: okB. 60 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 120 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
 running 0 tests
 
-test result: okB. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 [stderr]
-   Compiling scratch v0.1.0 (/repo)
+[zygo: 1 build progress lines hidden]
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.23s
-     Running unittests src/lib.rs (target/debug/deps/scratch-b66679a8c20ae5f6)
+     Running unittests src/lib.rs (target/debug/deps/scratch-8a410b8008eed53d)
    Doc-tests scratch

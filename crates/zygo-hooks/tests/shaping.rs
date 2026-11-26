@@ -41,7 +41,9 @@ const FAILED_CC: Floor = if trim::PO1_HOLDS { Floor::Failing } else { Floor::NoC
 
 /// Each O§8.1 table row's case folders, with the O§8.2 row each is checked against.
 const CASES: &[(&str, &str, Floor)] = &[
-    ("clean", "cargo-test-color", Floor::Clean),
+    // O§8.2 checks a view against the row of the shaper that gives it: this case gets the libtest view.
+    // As a clean-row case it also meets the clean row's Plus (`problems`).
+    ("clean", "cargo-test-color", Floor::LibtestPassing),
     ("clean", "git-clone-progress", Floor::Clean),
     ("clean", "git-diff-color-crlf", Floor::Clean),
     // O§8.1 "no change"
@@ -374,15 +376,18 @@ fn problems(c: &Case, f: Floor, g: &Got) -> Vec<String> {
             p.push(format!("{at}: saving {} of {s} bytes is under the {pct} % floor (O§8.2)", *s as i64 - *v as i64));
         }
     };
+    // O§8.2: a case in the O§8.1 clean row also meets the clean row's Plus, whatever row gives its view.
+    if f == Floor::Clean || c.shaper == "clean" {
+        if g.view.contains('\x1b') {
+            p.push(format!("{at}: the view holds ESC (O§8.2)"));
+        }
+        if g.view.contains('\r') && !reuse(c) {
+            p.push(format!("{at}: the view holds CR and the text is not reuse text (O§8.2)"));
+        }
+    }
     match f {
         Floor::Clean => {
             floor(5, &mut p);
-            if g.view.contains('\x1b') {
-                p.push(format!("{at}: the view holds ESC (O§8.2)"));
-            }
-            if g.view.contains('\r') && !reuse(c) {
-                p.push(format!("{at}: the view holds CR and the text is not reuse text (O§8.2)"));
-            }
             // O§8.1 clean row: the CRLF `git diff --color=always` case stays byte-equal except the color codes
             if c.name == "git-diff-color-crlf" && g.view.split_once('\n').map(|(_, b)| b) != Some(no_color(&raw_s).as_str()) {
                 p.push(format!("{at}: the view after the marker is not the raw text byte-equal except the color codes (O§8.1)"));
@@ -398,7 +403,9 @@ fn problems(c: &Case, f: Floor, g: &Got) -> Vec<String> {
         }
         Floor::LibtestPassing => {
             floor(80, &mut p);
-            for l in raw_s.split('\n').filter(|l| l.starts_with("test result: ")) {
+            // The raw lines after clean (O§7.4): in a colored raw text a summary line holds escape bytes.
+            let cleaned = clean(&raw_s, reuse(c)).map_or(raw_s.clone(), |(t, _)| t);
+            for l in cleaned.split('\n').filter(|l| l.starts_with("test result: ")) {
                 if !g.view.split('\n').any(|x| x == l) {
                     p.push(format!("{at}: summary line not in the view: {l:?}"));
                 }
@@ -734,6 +741,40 @@ fn problems_name_a_crlf_diff_view_that_changed_more_than_color() {
     let b = Got { view: g.view.replacen("\r\n", " \n", 1), ..g.clone() };
     let p = problems(&c, Floor::Clean, &b);
     assert!(p.iter().any(|l| l.contains("byte-equal")), "{p:?}");
+}
+
+#[test]
+fn libtest_passing_names_a_missing_summary_line_of_the_clean_color_case() {
+    // FX-16 review 2 F2: the libtest-passing check compares each raw `test result:` line after clean
+    let (c, g) = got("clean", "cargo-test-color");
+    assert_eq!(problems(&c, Floor::LibtestPassing, &g), Vec::<String>::new());
+    let line = g.view.split('\n').find(|l| l.starts_with("test result: ")).unwrap().to_string();
+    let p = problems(&c, Floor::LibtestPassing, &hiding(&g, &line));
+    assert!(p.iter().any(|l| l.contains(&format!("summary line not in the view: {line:?}"))), "{p:?}");
+}
+
+#[test]
+fn clean_case_view_with_esc_fails_the_clean_plus() {
+    // FX-16 review 2 F3/F4: a case in the O§8.1 clean row meets the clean row's Plus whatever its floor
+    let (c, g) = got("clean", "cargo-test-color");
+    let f = floor_of(&c);
+    assert_eq!(f, Floor::LibtestPassing);
+    assert_eq!(problems(&c, f, &g), Vec::<String>::new());
+    let b = Got { view: g.view.replacen('\n', "\n\x1b[31m", 1), ..g.clone() };
+    let p = problems(&c, f, &b);
+    assert!(p.iter().any(|l| l.contains("the view holds ESC")), "{p:?}");
+}
+
+#[test]
+fn clean_case_view_with_cr_fails_the_clean_plus() {
+    // FX-16 review 3 F4: a stray `\r` in a clean-row case view fails the clean row's Plus when reuse does not apply
+    let (c, g) = got("clean", "cargo-test-color");
+    assert!(!reuse(&c));
+    let f = floor_of(&c);
+    assert_eq!(problems(&c, f, &g), Vec::<String>::new());
+    let b = Got { view: g.view.replacen('\n', "\r\n", 1), ..g.clone() };
+    let p = problems(&c, f, &b);
+    assert!(p.iter().any(|l| l.contains("the view holds CR")), "{p:?}");
 }
 
 /// The view `trim_in` builds for `c`'s raw text when the hook runs on it: `shape::run` as `trim.rs` calls it,
