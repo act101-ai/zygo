@@ -650,3 +650,13 @@ fn f6_mapped_field_of_wrong_type_400() {
         assert!(m.get(k).is_none(), "{k}");
     }
 }
+
+#[test]
+fn f7_short_form_only_without_type() {
+    let (m, _) = rq(&body(json!([{"role":"user","content":[{"type":"input_text","text":"go"}]}]))).unwrap();
+    assert_eq!(m["messages"], json!([{"role":"user","content":[text("go")]}]));
+    for ty in [json!(5), json!(null), json!({"x":1})] {
+        let item = json!({"type":ty,"role":"user","content":[{"type":"input_text","text":"x"}]});
+        assert_400(err(rq(&body(json!([user("go"), item])))), "input item: type must be a string");
+    }
+}
