@@ -834,6 +834,13 @@ fn g3_pairing_after_empty_message_dropped() {
 }
 
 #[test]
+fn g4_duplicate_tool_names_400() {
+    let mut b = body(json!([user("go")]));
+    b["tools"] = json!([{"type":"function","name":"f","parameters":{"type":"object"}}, {"type":"custom","name":"f"}]);
+    assert_400(err(rq(&b)), "tools: two tools have the same name");
+}
+
+#[test]
 fn f9_other_hosted_items_dropped() {
     let b = body(json!([user("go"), {"type":"local_shell_call","id":"l","status":"completed"},
         {"type":"mcp_call","id":"m"}, asst("a")]));
