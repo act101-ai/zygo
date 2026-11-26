@@ -1,0 +1,73 @@
+[zygo shaped this output: diff files listed. The full output (1540 lines, 89286 bytes) is saved as result 00000000000000000000000000; read it with result_view, result_search or result_tree.]
+Cargo.toml +1 -0
+src/kind.rs +1 -0
+src/lib.rs +1 -0
+src/shape/mod.rs +1 -0
+src/store.rs +1 -0
+src/sweep.rs +1 -0
+src/view.rs +1 -0
+tests/results.rs +586 -586
+diff --git a/Cargo.toml b/Cargo.toml
+index cbba958..e5ccb7a 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,3 +1,4 @@
++# Reviewed.
+ [package]
+ name = "zygo-results"
+ version.workspace = true
+diff --git a/src/kind.rs b/src/kind.rs
+index cef843f..0422884 100644
+--- a/src/kind.rs
++++ b/src/kind.rs
+@@ -1,3 +1,4 @@
++// Reviewed.
+ use std::sync::LazyLock;
+ 
+ use regex::Regex;
+diff --git a/src/lib.rs b/src/lib.rs
+index 5b1434d..6e8b249 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,4 @@
++// Reviewed.
+ pub mod kind;
+ pub mod shape;
+ pub mod store;
+diff --git a/src/shape/mod.rs b/src/shape/mod.rs
+index 586aba4..ff2f37d 100644
+--- a/src/shape/mod.rs
++++ b/src/shape/mod.rs
+@@ -1,3 +1,4 @@
++// Reviewed.
+ /// Raw text above this size gets only the size view (O§7.3).
+ pub const SHAPE_MAX_BYTES: usize = 4 * 1024 * 1024;
+ 
+diff --git a/src/store.rs b/src/store.rs
+index b975c1a..fb5ec74 100644
+--- a/src/store.rs
++++ b/src/store.rs
+@@ -1,3 +1,4 @@
++// Reviewed.
+ use std::io::Write;
+ use std::path::Path;
+ use std::time::{SystemTime, UNIX_EPOCH};
+diff --git a/src/sweep.rs b/src/sweep.rs
+index 1a1fce6..84a56ab 100644
+--- a/src/sweep.rs
++++ b/src/sweep.rs
+@@ -1,3 +1,4 @@
++// Reviewed.
+ use std::path::{Component, Path, PathBuf};
+ use std::time::{Duration, SystemTime};
+ 
+diff --git a/src/view.rs b/src/view.rs
+index f847d44..bb1992a 100644
+--- a/src/view.rs
++++ b/src/view.rs
+@@ -1,3 +1,4 @@
++// Reviewed.
+ use zygo_config::ResultsConfig;
+ 
+ use crate::shape::Step;
+[zygo: 1 file sections not shown]

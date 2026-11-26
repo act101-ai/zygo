@@ -1,0 +1,406 @@
+[zygo shaped this output: color codes removed. The full output (405 lines, 15005 bytes) is saved as result 00000000000000000000000000; read it with result_view, result_search or result_tree.]
+diff --git a/crlf.txt b/crlf.txt
+index b14ad67..e127d0b 100644
+--- a/crlf.txt
++++ b/crlf.txt
+@@ -1,300 +1,300 @@
+ line 1 of the CRLF file
+ line 2 of the CRLF file
+-line 3 of the CRLF file
++LINE 3 of the CRLF file
+ line 4 of the CRLF file
+ line 5 of the CRLF file
+-line 6 of the CRLF file
++LINE 6 of the CRLF file
+ line 7 of the CRLF file
+ line 8 of the CRLF file
+-line 9 of the CRLF file
++LINE 9 of the CRLF file
+ line 10 of the CRLF file
+ line 11 of the CRLF file
+-line 12 of the CRLF file
++LINE 12 of the CRLF file
+ line 13 of the CRLF file
+ line 14 of the CRLF file
+-line 15 of the CRLF file
++LINE 15 of the CRLF file
+ line 16 of the CRLF file
+ line 17 of the CRLF file
+-line 18 of the CRLF file
++LINE 18 of the CRLF file
+ line 19 of the CRLF file
+ line 20 of the CRLF file
+-line 21 of the CRLF file
++LINE 21 of the CRLF file
+ line 22 of the CRLF file
+ line 23 of the CRLF file
+-line 24 of the CRLF file
++LINE 24 of the CRLF file
+ line 25 of the CRLF file
+ line 26 of the CRLF file
+-line 27 of the CRLF file
++LINE 27 of the CRLF file
+ line 28 of the CRLF file
+ line 29 of the CRLF file
+-line 30 of the CRLF file
++LINE 30 of the CRLF file
+ line 31 of the CRLF file
+ line 32 of the CRLF file
+-line 33 of the CRLF file
++LINE 33 of the CRLF file
+ line 34 of the CRLF file
+ line 35 of the CRLF file
+-line 36 of the CRLF file
++LINE 36 of the CRLF file
+ line 37 of the CRLF file
+ line 38 of the CRLF file
+-line 39 of the CRLF file
++LINE 39 of the CRLF file
+ line 40 of the CRLF file
+ line 41 of the CRLF file
+-line 42 of the CRLF file
++LINE 42 of the CRLF file
+ line 43 of the CRLF file
+ line 44 of the CRLF file
+-line 45 of the CRLF file
++LINE 45 of the CRLF file
+ line 46 of the CRLF file
+ line 47 of the CRLF file
+-line 48 of the CRLF file
++LINE 48 of the CRLF file
+ line 49 of the CRLF file
+ line 50 of the CRLF file
+-line 51 of the CRLF file
++LINE 51 of the CRLF file
+ line 52 of the CRLF file
+ line 53 of the CRLF file
+-line 54 of the CRLF file
++LINE 54 of the CRLF file
+ line 55 of the CRLF file
+ line 56 of the CRLF file
+-line 57 of the CRLF file
++LINE 57 of the CRLF file
+ line 58 of the CRLF file
+ line 59 of the CRLF file
+-line 60 of the CRLF file
++LINE 60 of the CRLF file
+ line 61 of the CRLF file
+ line 62 of the CRLF file
+-line 63 of the CRLF file
++LINE 63 of the CRLF file
+ line 64 of the CRLF file
+ line 65 of the CRLF file
+-line 66 of the CRLF file
++LINE 66 of the CRLF file
+ line 67 of the CRLF file
+ line 68 of the CRLF file
+-line 69 of the CRLF file
++LINE 69 of the CRLF file
+ line 70 of the CRLF file
+ line 71 of the CRLF file
+-line 72 of the CRLF file
++LINE 72 of the CRLF file
+ line 73 of the CRLF file
+ line 74 of the CRLF file
+-line 75 of the CRLF file
++LINE 75 of the CRLF file
+ line 76 of the CRLF file
+ line 77 of the CRLF file
+-line 78 of the CRLF file
++LINE 78 of the CRLF file
+ line 79 of the CRLF file
+ line 80 of the CRLF file
+-line 81 of the CRLF file
++LINE 81 of the CRLF file
+ line 82 of the CRLF file
+ line 83 of the CRLF file
+-line 84 of the CRLF file
++LINE 84 of the CRLF file
+ line 85 of the CRLF file
+ line 86 of the CRLF file
+-line 87 of the CRLF file
++LINE 87 of the CRLF file
+ line 88 of the CRLF file
+ line 89 of the CRLF file
+-line 90 of the CRLF file
++LINE 90 of the CRLF file
+ line 91 of the CRLF file
+ line 92 of the CRLF file
+-line 93 of the CRLF file
++LINE 93 of the CRLF file
+ line 94 of the CRLF file
+ line 95 of the CRLF file
+-line 96 of the CRLF file
++LINE 96 of the CRLF file
+ line 97 of the CRLF file
+ line 98 of the CRLF file
+-line 99 of the CRLF file
++LINE 99 of the CRLF file
+ line 100 of the CRLF file
+ line 101 of the CRLF file
+-line 102 of the CRLF file
++LINE 102 of the CRLF file
+ line 103 of the CRLF file
+ line 104 of the CRLF file
+-line 105 of the CRLF file
++LINE 105 of the CRLF file
+ line 106 of the CRLF file
+ line 107 of the CRLF file
+-line 108 of the CRLF file
++LINE 108 of the CRLF file
+ line 109 of the CRLF file
+ line 110 of the CRLF file
+-line 111 of the CRLF file
++LINE 111 of the CRLF file
+ line 112 of the CRLF file
+ line 113 of the CRLF file
+-line 114 of the CRLF file
++LINE 114 of the CRLF file
+ line 115 of the CRLF file
+ line 116 of the CRLF file
+-line 117 of the CRLF file
++LINE 117 of the CRLF file
+ line 118 of the CRLF file
+ line 119 of the CRLF file
+-line 120 of the CRLF file
++LINE 120 of the CRLF file
+ line 121 of the CRLF file
+ line 122 of the CRLF file
+-line 123 of the CRLF file
++LINE 123 of the CRLF file
+ line 124 of the CRLF file
+ line 125 of the CRLF file
+-line 126 of the CRLF file
++LINE 126 of the CRLF file
+ line 127 of the CRLF file
+ line 128 of the CRLF file
+-line 129 of the CRLF file
++LINE 129 of the CRLF file
+ line 130 of the CRLF file
+ line 131 of the CRLF file
+-line 132 of the CRLF file
++LINE 132 of the CRLF file
+ line 133 of the CRLF file
+ line 134 of the CRLF file
+-line 135 of the CRLF file
++LINE 135 of the CRLF file
+ line 136 of the CRLF file
+ line 137 of the CRLF file
+-line 138 of the CRLF file
++LINE 138 of the CRLF file
+ line 139 of the CRLF file
+ line 140 of the CRLF file
+-line 141 of the CRLF file
++LINE 141 of the CRLF file
+ line 142 of the CRLF file
+ line 143 of the CRLF file
+-line 144 of the CRLF file
++LINE 144 of the CRLF file
+ line 145 of the CRLF file
+ line 146 of the CRLF file
+-line 147 of the CRLF file
++LINE 147 of the CRLF file
+ line 148 of the CRLF file
+ line 149 of the CRLF file
+-line 150 of the CRLF file
++LINE 150 of the CRLF file
+ line 151 of the CRLF file
+ line 152 of the CRLF file
+-line 153 of the CRLF file
++LINE 153 of the CRLF file
+ line 154 of the CRLF file
+ line 155 of the CRLF file
+-line 156 of the CRLF file
++LINE 156 of the CRLF file
+ line 157 of the CRLF file
+ line 158 of the CRLF file
+-line 159 of the CRLF file
++LINE 159 of the CRLF file
+ line 160 of the CRLF file
+ line 161 of the CRLF file
+-line 162 of the CRLF file
++LINE 162 of the CRLF file
+ line 163 of the CRLF file
+ line 164 of the CRLF file
+-line 165 of the CRLF file
++LINE 165 of the CRLF file
+ line 166 of the CRLF file
+ line 167 of the CRLF file
+-line 168 of the CRLF file
++LINE 168 of the CRLF file
+ line 169 of the CRLF file
+ line 170 of the CRLF file
+-line 171 of the CRLF file
++LINE 171 of the CRLF file
+ line 172 of the CRLF file
+ line 173 of the CRLF file
+-line 174 of the CRLF file
++LINE 174 of the CRLF file
+ line 175 of the CRLF file
+ line 176 of the CRLF file
+-line 177 of the CRLF file
++LINE 177 of the CRLF file
+ line 178 of the CRLF file
+ line 179 of the CRLF file
+-line 180 of the CRLF file
++LINE 180 of the CRLF file
+ line 181 of the CRLF file
+ line 182 of the CRLF file
+-line 183 of the CRLF file
++LINE 183 of the CRLF file
+ line 184 of the CRLF file
+ line 185 of the CRLF file
+-line 186 of the CRLF file
++LINE 186 of the CRLF file
+ line 187 of the CRLF file
+ line 188 of the CRLF file
+-line 189 of the CRLF file
++LINE 189 of the CRLF file
+ line 190 of the CRLF file
+ line 191 of the CRLF file
+-line 192 of the CRLF file
++LINE 192 of the CRLF file
+ line 193 of the CRLF file
+ line 194 of the CRLF file
+-line 195 of the CRLF file
++LINE 195 of the CRLF file
+ line 196 of the CRLF file
+ line 197 of the CRLF file
+-line 198 of the CRLF file
++LINE 198 of the CRLF file
+ line 199 of the CRLF file
+ line 200 of the CRLF file
+-line 201 of the CRLF file
++LINE 201 of the CRLF file
+ line 202 of the CRLF file
+ line 203 of the CRLF file
+-line 204 of the CRLF file
++LINE 204 of the CRLF file
+ line 205 of the CRLF file
+ line 206 of the CRLF file
+-line 207 of the CRLF file
++LINE 207 of the CRLF file
+ line 208 of the CRLF file
+ line 209 of the CRLF file
+-line 210 of the CRLF file
++LINE 210 of the CRLF file
+ line 211 of the CRLF file
+ line 212 of the CRLF file
+-line 213 of the CRLF file
++LINE 213 of the CRLF file
+ line 214 of the CRLF file
+ line 215 of the CRLF file
+-line 216 of the CRLF file
++LINE 216 of the CRLF file
+ line 217 of the CRLF file
+ line 218 of the CRLF file
+-line 219 of the CRLF file
++LINE 219 of the CRLF file
+ line 220 of the CRLF file
+ line 221 of the CRLF file
+-line 222 of the CRLF file
++LINE 222 of the CRLF file
+ line 223 of the CRLF file
+ line 224 of the CRLF file
+-line 225 of the CRLF file
++LINE 225 of the CRLF file
+ line 226 of the CRLF file
+ line 227 of the CRLF file
+-line 228 of the CRLF file
++LINE 228 of the CRLF file
+ line 229 of the CRLF file
+ line 230 of the CRLF file
+-line 231 of the CRLF file
++LINE 231 of the CRLF file
+ line 232 of the CRLF file
+ line 233 of the CRLF file
+-line 234 of the CRLF file
++LINE 234 of the CRLF file
+ line 235 of the CRLF file
+ line 236 of the CRLF file
+-line 237 of the CRLF file
++LINE 237 of the CRLF file
+ line 238 of the CRLF file
+ line 239 of the CRLF file
+-line 240 of the CRLF file
++LINE 240 of the CRLF file
+ line 241 of the CRLF file
+ line 242 of the CRLF file
+-line 243 of the CRLF file
++LINE 243 of the CRLF file
+ line 244 of the CRLF file
+ line 245 of the CRLF file
+-line 246 of the CRLF file
++LINE 246 of the CRLF file
+ line 247 of the CRLF file
+ line 248 of the CRLF file
+-line 249 of the CRLF file
++LINE 249 of the CRLF file
+ line 250 of the CRLF file
+ line 251 of the CRLF file
+-line 252 of the CRLF file
++LINE 252 of the CRLF file
+ line 253 of the CRLF file
+ line 254 of the CRLF file
+-line 255 of the CRLF file
++LINE 255 of the CRLF file
+ line 256 of the CRLF file
+ line 257 of the CRLF file
+-line 258 of the CRLF file
++LINE 258 of the CRLF file
+ line 259 of the CRLF file
+ line 260 of the CRLF file
+-line 261 of the CRLF file
++LINE 261 of the CRLF file
+ line 262 of the CRLF file
+ line 263 of the CRLF file
+-line 264 of the CRLF file
++LINE 264 of the CRLF file
+ line 265 of the CRLF file
+ line 266 of the CRLF file
+-line 267 of the CRLF file
++LINE 267 of the CRLF file
+ line 268 of the CRLF file
+ line 269 of the CRLF file
+-line 270 of the CRLF file
++LINE 270 of the CRLF file
+ line 271 of the CRLF file
+ line 272 of the CRLF file
+-line 273 of the CRLF file
++LINE 273 of the CRLF file
+ line 274 of the CRLF file
+ line 275 of the CRLF file
+-line 276 of the CRLF file
++LINE 276 of the CRLF file
+ line 277 of the CRLF file
+ line 278 of the CRLF file
+-line 279 of the CRLF file
++LINE 279 of the CRLF file
+ line 280 of the CRLF file
+ line 281 of the CRLF file
+-line 282 of the CRLF file
++LINE 282 of the CRLF file
+ line 283 of the CRLF file
+ line 284 of the CRLF file
+-line 285 of the CRLF file
++LINE 285 of the CRLF file
+ line 286 of the CRLF file
+ line 287 of the CRLF file
+-line 288 of the CRLF file
++LINE 288 of the CRLF file
+ line 289 of the CRLF file
+ line 290 of the CRLF file
+-line 291 of the CRLF file
++LINE 291 of the CRLF file
+ line 292 of the CRLF file
+ line 293 of the CRLF file
+-line 294 of the CRLF file
++LINE 294 of the CRLF file
+ line 295 of the CRLF file
+ line 296 of the CRLF file
+-line 297 of the CRLF file
++LINE 297 of the CRLF file
+ line 298 of the CRLF file
+ line 299 of the CRLF file
+-line 300 of the CRLF file
++LINE 300 of the CRLF file
