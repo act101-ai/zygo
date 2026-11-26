@@ -57,20 +57,32 @@ fn joined(h: Reader) -> Vec<u8> {
     h.map(|h| h.join().unwrap_or_default()).unwrap_or_default()
 }
 
-/// [`wait_child`], with stdout and stderr read on two threads, so a full pipe cannot block the child (D15).
+/// No line of the stderr `err` of `what` comes from a marketplace sync (FX-23): no line names a marketplace (`marketplace
+/// act101: tag … moved`, a failed fetch) and none is the sync summary `plugins: offline` or `plugins: partial` (an
+/// offline sync prints only the summary). So the run did no marketplace sync and reached no network.
+pub fn no_marketplace_line(err: &str, what: &str) {
+    let sync = |l: &str| l.contains("marketplace") || l.ends_with("plugins: offline") || l.ends_with("plugins: partial");
+    assert!(!err.lines().any(sync), "{what}: a marketplace sync ran (FX-23):\n{err}");
+}
+
+/// [`wait_child`], with stdout and stderr read on two threads, so a full pipe cannot block the child (D15). Asserts
+/// [`no_marketplace_line`] on the stderr.
 pub fn output_child(mut child: Child, what: &str) -> Output {
     let out = reader(child.stdout.take());
     let err = reader(child.stderr.take());
     let status = wait_child(&mut child, what);
-    Output { status, stdout: joined(out), stderr: joined(err) }
+    let o = Output { status, stdout: joined(out), stderr: joined(err) };
+    no_marketplace_line(&String::from_utf8_lossy(&o.stderr), what);
+    o
 }
 
 /// A child that leads its own process group, held until the test reaps it (M2 review rounds 2 and 3, findings 6 and
 /// 8). On every path (a normal exit, the [`CHILD_BOUND`] timeout, and `Drop` when a failed assert left the child) the
 /// whole group gets SIGKILL first, so a process that the child left in its group (the agent) goes too, and only then
 /// is the leader reaped. Until that reap the leader's pid, which is the group id, cannot name another process; no
-/// signal is sent after it.
-pub struct Guarded(Option<Child>);
+/// signal is sent after it. [`Guarded::output`] asserts [`no_marketplace_line`] unless the test opted in
+/// ([`Guarded::marketplace_ok`]).
+pub struct Guarded(Option<Child>, bool);
 
 /// SIGKILL to the process group `leader` leads. The caller has not reaped `leader`.
 fn kill_group(leader: &Child) {
@@ -98,7 +110,14 @@ impl Guarded {
     pub fn spawn(mut c: Command) -> Guarded {
         use std::os::unix::process::CommandExt;
         c.process_group(0);
-        Guarded(Some(c.spawn().unwrap()))
+        Guarded(Some(c.spawn().unwrap()), false)
+    }
+
+    /// Opts this run out of the [`no_marketplace_line`] assertion of [`Guarded::output`]: for a test that runs a
+    /// marketplace sync on purpose (with its own marketplace config).
+    pub fn marketplace_ok(mut self) -> Guarded {
+        self.1 = true;
+        self
     }
 
     /// The pid of the child.
@@ -140,13 +159,18 @@ impl Guarded {
         st
     }
 
-    /// [`output_child`] on the guarded child, with [`Guarded::wait`].
+    /// [`output_child`] on the guarded child, with [`Guarded::wait`]: asserts [`no_marketplace_line`] unless
+    /// [`Guarded::marketplace_ok`].
     pub fn output(mut self, what: &str) -> Output {
         let c = self.0.as_mut().expect("the child is reaped");
         let out = reader(c.stdout.take());
         let err = reader(c.stderr.take());
         let status = self.wait(what);
-        Output { status, stdout: joined(out), stderr: joined(err) }
+        let o = Output { status, stdout: joined(out), stderr: joined(err) };
+        if !self.1 {
+            no_marketplace_line(&String::from_utf8_lossy(&o.stderr), what);
+        }
+        o
     }
 }
 
@@ -155,6 +179,19 @@ impl Drop for Guarded {
         if let Some(mut c) = self.0.take() {
             kill_group(&c);
             let _ = c.wait();
+        }
+    }
+}
+
+impl Drop for Harness {
+    /// FX-23: no `zygo` of this harness ran a marketplace sync, unless the test opted in
+    /// ([`Harness::allow_marketplace`]). A sync takes `<marketplaces_dir>/<name>.lock` (`zygo-plugins` `sync.rs`
+    /// `lock_marketplace`), which makes the folder; this covers the launches in tmux panes, whose stderr the test does
+    /// not read. Not checked while the test already panics.
+    fn drop(&mut self) {
+        if !self.marketplace_ok.get() && !std::thread::panicking() {
+            let d = &self.paths.marketplaces_dir;
+            assert!(!d.exists(), "a marketplace sync ran (FX-23): {} exists", d.display());
         }
     }
 }
@@ -222,6 +259,8 @@ pub struct Harness {
     pub bin: PathBuf,
     pub paths: Paths,
     pub server: Option<PrivateServer>,
+    /// The test runs a marketplace sync on purpose ([`Harness::allow_marketplace`]).
+    marketplace_ok: std::cell::Cell<bool>,
 }
 
 impl Harness {
@@ -287,7 +326,13 @@ impl Harness {
         std::fs::create_dir_all(&state).unwrap();
         std::fs::create_dir_all(root.join(".local/state")).unwrap();
         std::os::unix::fs::symlink(&state, root.join(".local/state/zygo")).unwrap();
-        Harness { home, root, bin, paths, server }
+        Harness { home, root, bin, paths, server, marketplace_ok: std::cell::Cell::new(false) }
+    }
+
+    /// Opts this harness out of the marketplace check of its drop: for a test that runs a marketplace sync on purpose
+    /// (with its own marketplace config).
+    pub fn allow_marketplace(&self) {
+        self.marketplace_ok.set(true);
     }
 
     pub fn root(&self) -> &Path {
