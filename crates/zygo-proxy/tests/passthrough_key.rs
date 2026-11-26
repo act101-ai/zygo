@@ -248,6 +248,33 @@ fn bare_cr_lines_have_no_key() {
     }
 }
 
+/// Round 1 F10: a stream with CRLF line endings that holds the key, in an error event and a text delta.
+#[test]
+fn crlf_lines_have_no_key() {
+    for d in [Dialect::Anthropic, Dialect::Openai] {
+        stream_is_redacted(d, Agent::OpenCode, |k| {
+            let mut up = text_stream(d, &format!("echo {k}"));
+            up.extend_from_slice(
+                format!("event: error\ndata: {{\"type\":\"error\",\"error\":{{\"message\":\"{k}\"}}}}\n\n").as_bytes(),
+            );
+            String::from_utf8(up).unwrap().replace('\n', "\r\n").into_bytes()
+        });
+    }
+}
+
+/// Round 1 F10: the key in the last bytes of the body, with no final newline, is replaced (the replacement's flush
+/// at the body end).
+#[test]
+fn key_at_the_end_without_final_newline_is_replaced() {
+    for d in [Dialect::Anthropic, Dialect::Openai] {
+        stream_is_redacted(d, Agent::OpenCode, |k| {
+            let mut up = sse(&[first(d)]);
+            up.extend_from_slice(format!("data: {k}").as_bytes());
+            up
+        });
+    }
+}
+
 /// K§6.4.4: the key in a 2xx success text delta is replaced (round 1 F8).
 #[test]
 fn success_text_delta_has_no_key() {
