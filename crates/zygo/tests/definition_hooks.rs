@@ -4,7 +4,8 @@
 //! one `zygo-workspace` caller of the read, and for an absolute `git` path. h-tests, unix (workspace state, a `sh`
 //! fake `git`, process groups; OP5): each hook registration, each slash verb, each OpenCode plugin call and
 //! `zygo mcp`, in a repository with an approved `.zygo/` and in the same repository without it, with three checks per
-//! run: the fake `git` log, the `repo_def` tripwire (`ZYGO_TEST_TRAP_REPO_DEF`, feature `test-hooks`) and, on Linux,
+//! run: the fake `git` log (the output of each call, judged by a canary in each `.zygo/` file, and its arguments),
+//! the `repo_def` tripwire (`ZYGO_TEST_TRAP_REPO_DEF`, feature `test-hooks`) and, on Linux,
 //! an inotify watch of the working-tree `.zygo/`. No agent runs (R-C9), the built-in marketplace is off in the user
 //! config (`USER_CONFIG`), no test asserts a time.
 mod common;
@@ -275,6 +276,15 @@ mod unix {
     const DEFAULT_LOOKUP: &str = "symbolic-ref --quiet refs/remotes/origin/HEAD";
     /// The prefix of a `bin/git` log line that holds one stdin line of a `cat-file --batch*` call.
     const STDIN: &str = "stdin: ";
+    /// The prefix of a `bin/git` log line that holds the arguments of a call whose stdout or stderr names the
+    /// definition ([`output_reads_definition`]; review round 2 F1, F2).
+    const OUTPUT: &str = "output: ";
+    /// The canary of the fixture with a definition (review round 2 F1, F2): in each `.zygo/` file and in the name of
+    /// `.zygo/<CANARY>.toml`, so a read of the content or of the `.zygo` tree carries it out of git.
+    const CANARY: &str = "canary-5d2e9b4f0a71c386";
+    /// The first line of each `.zygo/` file of the fixture: a TOML comment that holds [`CANARY`] (and an `x`, so a
+    /// `git grep -e x` prints it).
+    const CANARY_LINE: &str = "# zygo-wd19-canary-5d2e9b4f0a71c386: text of the WD-19 test fixture\n";
     /// The stored result that the result tools read (review F6): JSON, so `result_tree` has an outline.
     const RESULT: &str = "{\"alpha\": 1,\n\"beta\": [1, 2]}\n";
 
@@ -289,7 +299,12 @@ mod unix {
     /// `cat-file --batch*` call takes its objects on stdin, so each of its stdin lines (`stdin: <object>`; with
     /// `--batch-command`, the last word) is judged: one that [`names_zygo`], one that names the root tree (`^{tree}`,
     /// an empty path or a path with a `.` or `..` part), or an id in `defs`. The `load` read of `.zygo.toml` is not one.
+    /// This argument check is the second check: the first is the output of each call (`output: <args>` lines of
+    /// [`take_log`], [`output_reads_definition`]), which needs no list of argument forms (review round 2 F1, F2).
     fn reads_definition(line: &str, defs: &BTreeSet<String>) -> bool {
+        if line.starts_with(OUTPUT) {
+            return true;
+        }
         if let Some(x) = line.strip_prefix(STDIN) {
             let obj = x.split_whitespace().last().unwrap_or_default();
             let root_path = obj
@@ -310,6 +325,22 @@ mod unix {
             None => false,
         };
         line.contains(DEFAULT_LOOKUP) || all_objects || whole_tree || args.iter().any(|a| names_zygo(a))
+    }
+
+    /// Whether the stdout or stderr `b` of one git call names the definition of the fixture (review round 2 F1, F2):
+    /// it holds [`CANARY`] (the content of a `.zygo/` file: `show`, `cat-file`, patches, `archive`, `grep`; or the
+    /// name `.zygo/<CANARY>.toml` in a listing of the `.zygo` tree), the raw entry `.zygo\0` (a binary tree object of
+    /// `cat-file --batch`, a `-z` listing), or a line (split at `\n` and `\0`) whose part after the last tab is
+    /// `.zygo` or starts with `.zygo/` (a text listing of the root tree: `ls-tree`, `cat-file -p`, `show <tree>`).
+    /// `.zygo.toml` is none of these.
+    fn output_reads_definition(b: &[u8]) -> bool {
+        let has = |n: &[u8]| b.windows(n.len()).any(|w| w == n);
+        has(CANARY.as_bytes())
+            || has(b".zygo\0")
+            || b.split(|&c| c == b'\n' || c == b'\0').any(|l| {
+                let name = l.rsplit(|&c| c == b'\t').next().unwrap_or(l);
+                name == b".zygo" || name.starts_with(b".zygo/")
+            })
     }
 
     /// The object ids of the root tree of `app`'s HEAD and of `.zygo` and each tree and blob under it: the ids by
@@ -376,18 +407,33 @@ mod unix {
     }
 
     /// `bin/git`: appends each call (`$*`) to `<root>/git.log`, and the stdin of a `cat-file --batch*` call to
-    /// `<root>/git.stdin` (review F2; `tee` by its full path, since a run's `PATH` is `bin`), then runs the real git
-    /// with no user or system config and no templates (as `workspace_definition.rs:578`).
+    /// `<root>/git.stdin` (review F2; `tee` and `mktemp` by their full paths, since a run's `PATH` is `bin`), then
+    /// runs the real git with no user or system config and no templates (as `workspace_definition.rs:578`). Each call
+    /// has its capture `<root>/git.out/<name>` (review round 2 F1, F2): the file holds the arguments, `.out` and
+    /// `.err` the stdout and stderr of the real git (each passed on as it comes, so a `cat-file --batch` exchange
+    /// still works), `.st` its exit code, which the script returns.
     fn fake_git(h: &Harness) {
         use std::os::unix::fs::PermissionsExt;
         let real = which::which("git").unwrap();
         let tee = which::which("tee").unwrap();
+        let mktemp = which::which("mktemp").unwrap();
         let env = "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TEMPLATE_DIR=";
+        let out = h.root().join("git.out");
+        std::fs::create_dir_all(&out).unwrap();
         let body = format!(
-            "#!/bin/sh\necho \"$*\" >> '{log}'\ncase \" $* \" in\n  *\" cat-file \"*--batch*) \
-             '{tee}' -a '{stdin}' | {env} '{real}' \"$@\"; exit $? ;;\nesac\n{env} exec '{real}' \"$@\"\n",
+            "#!/bin/sh\n\
+             echo \"$*\" >> '{log}'\n\
+             cap=$('{mktemp}' '{out}/XXXXXXXXXX') || exit 125\n\
+             echo \"$*\" > \"$cap\"\n\
+             run() {{ {{ {{ {env} '{real}' \"$@\" 3>&-; echo $? > \"$cap.st\"; }} 2>&1 1>&3 3>&- \
+             | '{tee}' \"$cap.err\" 1>&2; }} 3>&1 | '{tee}' \"$cap.out\"; }}\n\
+             case \" $* \" in\n  *\" cat-file \"*--batch*) '{tee}' -a '{stdin}' | run \"$@\" ;;\n  *) run \"$@\" ;;\nesac\n\
+             read st < \"$cap.st\"\n\
+             exit \"${{st:-1}}\"\n",
             log = h.root().join("git.log").display(),
             stdin = h.root().join("git.stdin").display(),
+            out = out.display(),
+            mktemp = mktemp.display(),
             real = real.display(),
             tee = tee.display(),
         );
@@ -482,15 +528,19 @@ mod unix {
 
     /// A harness with `USER_CONFIG` as the user config, `bin/git` from [`fake_git`], and `app` with `.zygo.toml` =
     /// `version = 1` and `README`. With `definition`, also `.zygo/workspace.toml` = `version = 1` and
-    /// `.zygo/profiles/rust.toml` = `RUST`, approved for `app` (a definition that changes `up` and a `rust` launch),
-    /// and on Linux the watch of `app/.zygo`, set after the approval.
+    /// `.zygo/profiles/rust.toml` = `RUST`, each after [`CANARY_LINE`], and `.zygo/<CANARY>.toml` = `CANARY_LINE`,
+    /// approved for `app` (a definition that changes `up` and a `rust` launch), and on Linux the watch of `app/.zygo`,
+    /// set after the approval.
     fn fx(definition: bool) -> Fx {
         let h = Harness::no_tmux();
         std::fs::write(h.root().join("config.toml"), USER_CONFIG).unwrap();
+        let canary_file = format!(".zygo/{CANARY}.toml");
+        let (workspace, rust) = (format!("{CANARY_LINE}version = 1\n"), format!("{CANARY_LINE}{RUST}"));
         let mut files = vec![(".zygo.toml", "version = 1\n"), ("README", "app\n")];
         if definition {
-            files.push((".zygo/workspace.toml", "version = 1\n"));
-            files.push((".zygo/profiles/rust.toml", RUST));
+            files.push((".zygo/workspace.toml", &workspace));
+            files.push((".zygo/profiles/rust.toml", &rust));
+            files.push((&canary_file, CANARY_LINE));
         }
         let app = repo_at(h.root(), &files);
         let head = git(&app, &["rev-parse", "HEAD"]);
@@ -500,6 +550,8 @@ mod unix {
             assert!(def.workspace.is_some() && def.profiles.contains_key("rust"), "{def:?}");
             let _ = std::fs::remove_file(h.root().join("git.log"));
             let _ = std::fs::remove_file(h.root().join("git.stdin"));
+            std::fs::remove_dir_all(h.root().join("git.out")).unwrap();
+            std::fs::create_dir(h.root().join("git.out")).unwrap();
         }
         let trap = h.root().join("trap.log");
         let defs = def_oids(&app);
@@ -516,8 +568,10 @@ mod unix {
         }
     }
 
-    /// The `bin/git` lines since the last call, each `cat-file --batch*` stdin line as `stdin: <line>`, with the
-    /// harness root as `<root>` and HEAD of `app` as `<head>`, sorted; the logs are removed.
+    /// The `bin/git` lines since the last call, each `cat-file --batch*` stdin line as `stdin: <line>`, and the
+    /// arguments of each call whose stdout or stderr [`output_reads_definition`] as `output: <args>`, with the harness
+    /// root as `<root>` and HEAD of `app` as `<head>`, sorted; the logs and the captures of the calls that ended are
+    /// removed (a capture with no `.st` yet is judged again by the next call).
     fn take_log(fx: &Fx) -> Vec<String> {
         let take = |name: &str| {
             let p = fx.h.root().join(name);
@@ -528,10 +582,28 @@ mod unix {
         let root = fx.h.root().display().to_string();
         let calls = take("git.log");
         let stdin = take("git.stdin");
+        let mut outputs = Vec::new();
+        for e in std::fs::read_dir(fx.h.root().join("git.out")).unwrap() {
+            let cap = e.unwrap().path();
+            if cap.extension().is_some() {
+                continue;
+            }
+            let with = |ext: &str| cap.with_extension(ext);
+            let named = ["out", "err"].iter().any(|x| output_reads_definition(&std::fs::read(with(x)).unwrap_or_default()));
+            if named {
+                outputs.push(format!("{OUTPUT}{}", std::fs::read_to_string(&cap).unwrap_or_default().trim_end()));
+            }
+            if with("st").is_file() {
+                for p in [cap.clone(), with("out"), with("err"), with("st")] {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
+        }
         let mut v: Vec<String> = calls
             .lines()
             .map(str::to_string)
             .chain(stdin.lines().map(|l| format!("{STDIN}{l}")))
+            .chain(outputs)
             .map(|l| l.replace(&root, "<root>").replace(&fx.head, "<head>"))
             .collect();
         v.sort();
@@ -841,6 +913,52 @@ mod unix {
         }
     }
 
+    /// The reads of `.zygo/` that review round 2 F1 (whole-tree and object reads on the command line) and F2
+    /// (`cat-file --batch` stdin: abbreviated and uppercase ids, `%(rest)` formats) found the argument predicate
+    /// missed: (label, arguments after `-C <app>`, stdin of the call).
+    fn round2_forms(fx: &Fx) -> Vec<(String, Vec<String>, Option<String>)> {
+        let head = fx.head.clone();
+        let root_tree = git(&fx.app, &["rev-parse", "HEAD^{tree}"]);
+        let rust_blob = git(&fx.app, &["rev-parse", "HEAD:.zygo/profiles/rust.toml"]);
+        let a = |s: &str| s.split(' ').map(String::from).collect::<Vec<_>>();
+        let batch = |label: &str, args: &str, line: String| (label.to_string(), a(args), Some(format!("{line}\n")));
+        vec![
+            ("F1 show <head>:".into(), vec!["show".into(), format!("{head}:")], None),
+            ("F1 cat-file -p <head>^{tree}".into(), vec!["cat-file".into(), "-p".into(), format!("{head}^{{tree}}")], None),
+            ("F1 cat-file -p <root tree id>".into(), vec!["cat-file".into(), "-p".into(), root_tree.clone()], None),
+            ("F1 cat-file -p <.zygo blob id>".into(), vec!["cat-file".into(), "-p".into(), rust_blob.clone()], None),
+            ("F1 archive HEAD".into(), a("archive HEAD"), None),
+            ("F1 grep -e x HEAD".into(), a("grep -e x HEAD"), None),
+            ("F1 show HEAD".into(), a("show HEAD"), None),
+            ("F1 log -p".into(), a("log -p"), None),
+            ("F1 diff-tree -r -p --root HEAD".into(), a("diff-tree -r -p --root HEAD"), None),
+            ("F1 ls-tree -r HEAD -- .".into(), a("ls-tree -r HEAD -- ."), None),
+            batch("F2 --batch abbreviated root tree", "cat-file --batch", root_tree[..10].to_string()),
+            batch("F2 --batch abbreviated .zygo blob", "cat-file --batch", rust_blob[..10].to_string()),
+            batch("F2 --batch uppercase root tree", "cat-file --batch", root_tree.to_uppercase()),
+            batch("F2 --batch uppercase .zygo blob", "cat-file --batch", rust_blob.to_uppercase()),
+            batch("F2 --batch=%(rest) root tree", "cat-file --batch=%(objectname)%(rest)", format!("{root_tree} r")),
+            batch("F2 --batch=%(rest) .zygo blob", "cat-file --batch=%(objectname)%(rest)", format!("{rust_blob} r")),
+        ]
+    }
+
+    /// Runs `bin/git -C <app> <args>` with `stdin` (else none) to its end; returns whether it succeeded.
+    fn fake_call(fx: &Fx, args: &[String], stdin: Option<&str>) -> bool {
+        let mut c = std::process::Command::new(fx.h.bin.join("git"))
+            .arg("-C")
+            .arg(&fx.app)
+            .args(args)
+            .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        if let Some(s) = stdin {
+            feed_stdin(c.stdin.take().unwrap(), s.as_bytes());
+        }
+        wait_child(&mut c, &format!("bin/git {args:?}")).success()
+    }
+
     #[test]
     fn h0_the_log_predicate_and_the_tripwire_see_a_definition_read() { // R§18 item 20: the control of h1-h4
         let fx = fx(true);
@@ -856,7 +974,7 @@ mod unix {
         // Review F2: the forms that the first predicate missed, and the forms that are not a read.
         let root_tree = git(&fx.app, &["rev-parse", "HEAD^{tree}"]);
         let rust_blob = git(&fx.app, &["rev-parse", "HEAD:.zygo/profiles/rust.toml"]);
-        assert!(defs.contains(&root_tree) && defs.contains(&rust_blob) && defs.len() == 5, "{defs:?}");
+        assert!(defs.contains(&root_tree) && defs.contains(&rust_blob) && defs.len() == 6, "{defs:?}");
         for l in [
             "-C <root>/app show origin/main:./.zygo/profiles/rust.toml",
             "-C <root>/app/.zygo log -1",
@@ -899,7 +1017,26 @@ mod unix {
         assert!(wait_child(&mut c, "bin/git cat-file --batch").success());
         let lines = take_log(&fx);
         assert!(lines.contains(&format!("{STDIN}{rust_blob}")), "{lines:?}");
-        assert_eq!(lines.iter().filter(|l| reads_definition(l, defs)).count(), 1, "{lines:?}");
+        // The stdin line by its id, and the call by its output (the blob holds the canary).
+        assert!(lines.contains(&format!("{OUTPUT}-C <root>/app cat-file --batch")), "{lines:?}");
+        assert_eq!(lines.iter().filter(|l| reads_definition(l, defs)).count(), 2, "{lines:?}");
+        // Review round 2 F1, F2: each form that the argument predicate missed is caught by its output.
+        let forms = round2_forms(&fx);
+        assert_eq!(forms.len(), 16);
+        for (label, args, stdin) in forms {
+            assert!(fake_call(&fx, &args, stdin.as_deref()), "{label}");
+            let lines = take_log(&fx);
+            assert!(lines.iter().any(|l| l.starts_with(OUTPUT)), "{label}: {lines:?}");
+        }
+        // The output check passes the `load` read of `.zygo.toml` and reads of other paths.
+        for args in ["show origin/main:.zygo.toml", "ls-tree --name-only origin/main -- .zygo.toml", "ls-tree HEAD -- README",
+            "cat-file -p HEAD", "log -1"]
+        {
+            let a: Vec<String> = args.split(' ').map(String::from).collect();
+            assert!(fake_call(&fx, &a, None), "{args}");
+            let lines = take_log(&fx);
+            assert!(!lines.iter().any(|l| l.starts_with(OUTPUT)), "{args}: {lines:?}");
+        }
         // The tripwire: `zygo doctor` reads the definition (`cmd/doctor.rs:472`) in a child, through `bin/git`.
         let sd = session(&fx, "d", Agent::ClaudeCode, false);
         let o = run_raw(&fx, &sd, &["doctor"], b"");
@@ -907,6 +1044,8 @@ mod unix {
             assert!(o.trap.iter().any(|l| l == entry), "{entry}: {:?}\n{}", o.trap, o.stderr);
         }
         assert!(o.git.iter().any(|l| reads_definition(l, &fx.defs)), "{:?}", o.git);
+        // The capture works in a `zygo` run too: the read's output is seen, not only its arguments.
+        assert!(o.git.iter().any(|l| l.starts_with(OUTPUT)), "{:?}", o.git);
     }
 
     #[cfg(target_os = "linux")]
@@ -914,7 +1053,7 @@ mod unix {
     fn h5_the_working_tree_trap_sees_an_open_of_zygo() { // review F1: the control of the watch in h1-h4
         let fx = fx(true);
         assert_eq!(take_events(&fx), Vec::<String>::new());
-        assert_eq!(std::fs::read_to_string(fx.app.join(".zygo/profiles/rust.toml")).unwrap(), RUST);
+        assert_eq!(std::fs::read_to_string(fx.app.join(".zygo/profiles/rust.toml")).unwrap(), format!("{CANARY_LINE}{RUST}"));
         let ev = take_events(&fx);
         assert!(ev.iter().any(|e| e.contains(".zygo/profiles/rust.toml")), "{ev:?}");
         assert_eq!(take_events(&fx), Vec::<String>::new());
