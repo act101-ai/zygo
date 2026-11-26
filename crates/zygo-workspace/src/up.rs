@@ -23,7 +23,7 @@ use crate::identity::{
     main_worktree, new_pane_key, slug, unique_name, valid_name, valid_pane_key, workspace_id, worktrees, Worktree,
 };
 use crate::loadout::{self, LoadoutError, PaneKind as PlanKind, PlanPane};
-use crate::mail::{mail_dir, store as mail_store};
+use crate::mail::{self, MAIL_LOCK_WAIT, mail_dir, not_pruned_line, store as mail_store};
 use crate::pool;
 use crate::mux::tmux::Tmux;
 use crate::mux::{
@@ -1618,6 +1618,11 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
         .map_err(write_err)?;
     if let Err(e) = snapshot::after_write(&opts.paths, &Tmux::new(opts.tmux.clone(), done.tmux_socket.clone()), &id, snapshot::OP_WAIT) {
         say(err, &format!("zygo: final snapshot not saved: {e:#}"));
+    }
+    // M§5 P1: after `phase = up`, the maildirs of the records this `up` dropped (`--reset`, `plan.forget`, members
+    // not built) go, under mail/lock and the state read there.
+    if let Err(e) = mail::prune(&store, MAIL_LOCK_WAIT) {
+        say(err, &not_pruned_line(&e));
     }
     // D23; M§9: the unread count when it is not zero.
     let mail = mail_dir(&opts.paths, &id);

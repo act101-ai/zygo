@@ -4,27 +4,32 @@
 //! test takes `serial()`, so no test writes a script while another test forks (ETXTBSY).
 #![cfg(unix)]
 
+use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tempfile::TempDir;
-use zygo_config::MailConfig;
+use zygo_config::{Config, Loadout, LoadoutPane, LoadoutWindow, MailConfig};
 use zygo_core::paths::Paths;
 use zygo_core::Agent;
 use zygo_workspace::admin;
-use zygo_workspace::identity::workspace_id;
+use zygo_workspace::identity::{valid_pane_key, workspace_id};
 use zygo_workspace::mail::{
     mail_dir, prune, remove_maildir, send, store as mail_store, Delivery, MailError, Message, MAIL_LOCK_WAIT,
 };
+use zygo_workspace::mux::testing::{require_tmux, PrivateServer};
 use zygo_workspace::mux::tmux::Tmux;
 use zygo_workspace::repair;
-use zygo_workspace::state::{BuildPlan, MemberRecord, MemberState, Pane, PaneKind, Phase, Store, Workspace};
-use zygo_workspace::up;
+use zygo_workspace::state::{
+    BuildPlan, MemberRecord, MemberState, Pane, PaneKind, Pending, Phase, Store, Window, Workspace,
+};
+use zygo_workspace::up::{self, UpOpts};
 
 const S5: Duration = Duration::from_secs(5);
 const OTHER: &str = "fedcba9876543210";
@@ -368,6 +373,305 @@ fn lifecycle_repair_take_back_removes_the_maildir() {
     assert_eq!(ws.members.keys().collect::<Vec<_>>(), ["kbbbbbbbb"]);
     assert!(gone(&mail_dir(&p, id).join("kaaaaaaaa")));
     assert_eq!(unread(&p, id, "kbbbbbbbb"), 1);
+}
+
+// ---- steps 7 and 8: `up` (copied from tests/up.rs) ----
+
+/// The zygo stand-in of `tests/up.rs` (D25): `ws run` copies the state to `<dir>/runs/<key>.json`, waits `delay`,
+/// changes to the pane's cwd read from that copy and runs `sleep 600`; every other call exits 0.
+fn stand_in(dir: &Path, state: &Path, delay: &str) -> PathBuf {
+    let runs = dir.join("runs");
+    let body = format!(
+        "if [ \"$1\" = ws ] && [ \"$2\" = run ]; then\n\
+         mkdir -p '{runs}'\ncp '{state}' '{runs}'/\"$6\".json\nsleep {delay}\n\
+         d=$(awk -v k=\"\\\"$6\\\"\" '/\"key\": / {{ f = index($0, k) > 0 }} f && /\"cwd\": / {{ sub(/.*\"cwd\": \"/, \"\"); sub(/\",?$/, \"\"); print; exit }}' '{runs}'/\"$6\".json)\n\
+         cd \"$d\"\nexec sleep 600\nfi\nexit 0",
+        runs = runs.display(),
+        state = state.display()
+    );
+    script(dir, "zygo", &body)
+}
+
+fn opts(t: &Path, cwd: &Path, tmux: &Path, zygo: &Path) -> UpOpts {
+    let mut vars = BTreeMap::new();
+    vars.insert(OsString::from("PATH"), std::env::var_os("PATH").unwrap_or_default());
+    vars.insert(OsString::from("HOME"), t.join("home").into_os_string());
+    UpOpts {
+        name: None,
+        loadout: None,
+        reset: false,
+        no_attach: true,
+        cwd: cwd.to_path_buf(),
+        zygo: zygo.to_path_buf(),
+        tmux: tmux.to_path_buf(),
+        tmux_env: None,
+        zygo_session: None,
+        vars,
+        paths: paths(t),
+        config: Config::default(),
+        default_loadout_set: false,
+        git: None,
+    }
+}
+
+fn run(o: &UpOpts) -> (i32, String, String) {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = up::testing::run_with(o, &mut out, &mut err);
+    (code, text(out), text(err))
+}
+
+fn win(index: u32, name: Option<&str>, layout: &str, width: u32, height: u32) -> Window {
+    Window { index, name: name.map(String::from), layout: layout.into(), width, height, ..Window::default() }
+}
+
+/// A saved state of the workspace of `repo`: name `app`, phase `down`, loadout `solo`, and the three lists.
+fn saved(store: &Store, repo: &Path, windows: Vec<Window>, panes: Vec<Pane>, members: Vec<(&str, MemberRecord)>) {
+    let common = canon(&repo.join(".git"));
+    store
+        .update(S5, &mut |ws| {
+            ws.name = "app".into();
+            ws.tmux_session = "zygo-app".into();
+            ws.common_dir = common.clone();
+            ws.main_root = repo.to_path_buf();
+            ws.loadout = "solo".into();
+            ws.phase = Phase::Down;
+            ws.windows = windows.clone();
+            ws.panes = panes.clone();
+            ws.members = members.iter().map(|(k, m)| (k.to_string(), m.clone())).collect();
+            Ok(())
+        })
+        .unwrap();
+}
+
+fn set(store: &Store, f: impl Fn(&mut Workspace)) {
+    store
+        .update(S5, &mut |ws| {
+            f(ws);
+            Ok(())
+        })
+        .unwrap();
+}
+
+fn lp(kind: &str) -> LoadoutPane { LoadoutPane { kind: kind.into(), ..LoadoutPane::default() } }
+
+fn lw(name: Option<&str>, layout: Option<&str>, pane: Vec<LoadoutPane>) -> LoadoutWindow {
+    LoadoutWindow { name: name.map(String::from), layout: layout.map(String::from), pane }
+}
+
+fn with_loadout(name: &str, window: Vec<LoadoutWindow>) -> Config {
+    let mut c = Config::default();
+    c.loadout.insert(name.into(), Loadout { window });
+    c
+}
+
+/// `pair`: window `agents` (main-vertical; claude-code and a shell on `branch:feature-x`) and window `logs` (a shell).
+fn pair() -> Config {
+    let shell = LoadoutPane { cwd: Some("branch:feature-x".into()), ..lp("shell") };
+    with_loadout("pair", vec![lw(Some("agents"), Some("main-vertical"), vec![lp("claude-code"), shell]), lw(Some("logs"), None, vec![lp("shell")])])
+}
+
+struct Live {
+    t: TempDir,
+    srv: PrivateServer,
+    repo: PathBuf,
+    id: String,
+    o: UpOpts,
+}
+
+impl Live {
+    fn store(&self) -> Store { Store::open(&self.o.paths, &self.id) }
+}
+
+/// Repository `app` with worktree `../wt-x` on the new branch `feature-x`, a private server and the stand-in zygo.
+fn live(delay: &str) -> Live {
+    let t = TempDir::new().unwrap();
+    let srv = PrivateServer::start();
+    let repo = repo(t.path(), "app");
+    git(&repo, &["worktree", "add", "-q", "-b", "feature-x", "../wt-x"]);
+    let id = workspace_id(&canon(&repo.join(".git")));
+    let p = paths(t.path());
+    let state = p.workspaces_dir().join(&id).join("workspace.json");
+    let zygo = stand_in(t.path(), &state, delay);
+    let o = opts(t.path(), &repo, srv.wrapper(), &zygo);
+    Live { t, srv, repo, id, o }
+}
+
+/// A tmux wrapper as `tests/up.rs` `socket_only_tmux` whose `new-session` exits 1 with `injected`: `fail` makes no
+/// session.
+fn failing_new_session(dir: &Path, real: &Path, mode: &str) -> PathBuf {
+    let r = real.display();
+    let body = format!(
+        "sock=; prev=; for a in \"$@\"; do [ \"$prev\" = -S ] && sock=$a; prev=$a; done\n\
+         case \"$*\" in *new-session*)\n\
+         case {mode} in make) '{r}' -f /dev/null \"$@\" ;; foreign) '{r}' -f /dev/null -S \"$sock\" new-session -d -s zygo-app sleep 600 ;; esac\n\
+         echo injected >&2; exit 1 ;;\n\
+         esac\n\
+         for a in \"$@\"; do case \"$a\" in -S|-V) exec '{r}' -f /dev/null \"$@\";; esac; done\n\
+         echo 'no server running on /tmp/zygo-none/s' >&2\nexit 1"
+    );
+    script(dir, &format!("ftmux-{mode}"), &body)
+}
+
+/// `$TMUX` of a client of the private server.
+fn inside(l: &Live) -> Option<OsString> { Some(OsString::from(format!("{},1,0", l.srv.socket().display()))) }
+
+/// The names in `mail/` of workspace `id` that are pane keys.
+fn maildirs(p: &Paths, id: &str) -> Vec<String> {
+    let Ok(rd) = fs::read_dir(mail_dir(p, id)) else { return Vec::new() };
+    let mut v: Vec<String> =
+        rd.filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|k| valid_pane_key(k)).collect();
+    v.sort();
+    v
+}
+
+/// A send from a hook: reads the state, sends to the `fresh_members` key whose record is claude-code, and keeps that
+/// key and the number of messages sent.
+fn send_to_fresh(p: &Paths, store: &Store, kept: &Mutex<Option<(String, usize)>>) {
+    let ws = read(store);
+    let key = ws
+        .fresh_members
+        .iter()
+        .find(|k| ws.members.get(*k).is_some_and(|m| m.launch.kind == Agent::ClaudeCode))
+        .cloned()
+        .expect("a fresh claude-code record");
+    let r = send(p, &ws, None, &key, "s", "b", &MailConfig::default(), SystemTime::now()).unwrap();
+    *kept.lock().unwrap() = Some((key, r.sent.len()));
+}
+
+#[test] // b1: `up --reset` drops every record, and their maildirs go after `phase = up`
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound and the 2 s cwd wait"]
+fn lifecycle_up_reset_removes_the_dropped_maildirs() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    saved(
+        &store,
+        &l.repo,
+        vec![win(0, None, "tiled", 200, 50)],
+        vec![pane("kaaaaaaaa", 0, 0, PaneKind::ClaudeCode, &l.repo)],
+        vec![
+            ("kaaaaaaaa", member(Agent::ClaudeCode, MemberState::Resumable, Some("c-1"))),
+            ("kbbbbbbbb", member(Agent::ClaudeCode, MemberState::Resumable, Some("c-2"))),
+            ("kcccccccc", member(Agent::ClaudeCode, MemberState::Ended, Some("c-3"))),
+        ],
+    );
+    for k in ["kaaaaaaaa", "kbbbbbbbb", "kcccccccc"] {
+        put(&l.o.paths, &l.id, k, 1);
+    }
+    l.o.reset = true;
+    let (code, out, err) = run(&l.o);
+    assert_eq!((code, out.as_str()), (0, "zygo: app is up\n"), "{err}");
+    let ws = read(&store);
+    assert_eq!(ws.members.len(), 1);
+    for k in ["kaaaaaaaa", "kbbbbbbbb", "kcccccccc"] {
+        assert!(gone(&mail_dir(&l.o.paths, &l.id).join(k)), "{k}");
+    }
+    assert!(maildirs(&l.o.paths, &l.id).iter().all(|k| ws.members.contains_key(k)), "{:?}", maildirs(&l.o.paths, &l.id));
+}
+
+#[test] // b2: a restore drops a bare record and its maildir; a failed restore's undo puts the record back and keeps it
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound and the 2 s cwd wait"]
+fn lifecycle_restore_forget_removes_the_maildir_and_undo_keeps_it() {
+    let _g = serial();
+    let Some(real) = require_tmux() else { return };
+    let l = live("0");
+    let store = l.store();
+    let mut pend = member(Agent::ClaudeCode, MemberState::Running, None);
+    pend.pending =
+        Some(Pending { zygo_session: "01DEAD".into(), agent_session: Some("p-1".into()), started_at: 1, ..Pending::default() });
+    let mut bare = member(Agent::ClaudeCode, MemberState::Running, None);
+    bare.launch.profile = Some("fast".into());
+    saved(
+        &store,
+        &l.repo,
+        vec![win(0, None, "tiled", 200, 50)],
+        vec![pane("kaaaaaaaa", 0, 0, PaneKind::ClaudeCode, &l.repo), pane("kbbbbbbbb", 0, 1, PaneKind::ClaudeCode, &l.repo)],
+        vec![("kaaaaaaaa", bare.clone()), ("kbbbbbbbb", pend.clone())],
+    );
+    let sock = l.srv.socket().to_path_buf();
+    set(&store, move |w| w.tmux_socket = Some(sock.clone()));
+    put(&l.o.paths, &l.id, "kaaaaaaaa", 1);
+    put(&l.o.paths, &l.id, "kbbbbbbbb", 1);
+    let mut o = l.o.clone();
+    o.tmux = failing_new_session(l.t.path(), &real, "fail");
+    let (code, _, err) = run(&o);
+    assert_eq!(code, 1, "{err}");
+    assert_eq!(read(&store).members["kaaaaaaaa"], bare);
+    assert_eq!(unread(&l.o.paths, &l.id, "kaaaaaaaa"), 1);
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    assert!(!read(&store).members.contains_key("kaaaaaaaa"), "{err}");
+    assert!(gone(&mail_dir(&l.o.paths, &l.id).join("kaaaaaaaa")));
+    assert_eq!(unread(&l.o.paths, &l.id, "kbbbbbbbb"), 1);
+}
+
+#[test] // b3: a fresh member whose split failed has no record and no maildir, also after a send during the build
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound and the 2 s cwd wait"]
+fn lifecycle_fresh_member_not_built_has_no_maildir() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    l.o.config = with_loadout("duo", vec![lw(None, None, vec![lp("shell"), lp("claude-code")])]);
+    l.o.loadout = Some("duo".into());
+    fs::create_dir_all(store.dir()).unwrap();
+    let kept: Arc<Mutex<Option<(String, usize)>>> = Arc::new(Mutex::new(None));
+    let calls = AtomicUsize::new(0);
+    let (hp, hs, hk) = (l.o.paths.clone(), store.clone(), Arc::clone(&kept));
+    up::testing::hook(
+        store.dir(),
+        "split",
+        Some(Box::new(move || {
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                send_to_fresh(&hp, &hs, &hk);
+                Err("no space for new pane".into())
+            } else {
+                Ok(())
+            }
+        })),
+    );
+    let (code, _, err) = run(&l.o);
+    up::testing::hook(store.dir(), "split", None);
+    assert_eq!(code, 0, "{err}");
+    let (key, sent) = kept.lock().unwrap().take().expect("the split hook ran");
+    assert_eq!(sent, 1);
+    let ws = read(&store);
+    assert!(ws.members.is_empty(), "{ws:?}");
+    assert!(gone(&mail_dir(&l.o.paths, &l.id).join(&key)), "{key}");
+}
+
+#[test] // b4: the `up` undo takes back the plan; the maildir of a fresh record it drops goes too
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound and the 2 s cwd wait"]
+fn lifecycle_up_undo_take_back_removes_the_maildir() {
+    let _g = serial();
+    let Some(real) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    l.o.config = pair();
+    l.o.loadout = Some("pair".into());
+    l.o.tmux_env = inside(&l);
+    l.o.tmux = failing_new_session(l.t.path(), &real, "fail");
+    fs::create_dir_all(store.dir()).unwrap();
+    let kept: Arc<Mutex<Option<(String, usize)>>> = Arc::new(Mutex::new(None));
+    let (hp, hs, hk) = (l.o.paths.clone(), store.clone(), Arc::clone(&kept));
+    up::testing::hook(
+        store.dir(),
+        "before_undo",
+        Some(Box::new(move || {
+            send_to_fresh(&hp, &hs, &hk);
+            Ok(())
+        })),
+    );
+    let (code, _, err) = run(&l.o);
+    up::testing::hook(store.dir(), "before_undo", None);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("injected"), "{err}");
+    let (key, sent) = kept.lock().unwrap().take().expect("the before_undo hook ran");
+    assert_eq!(sent, 1);
+    let ws = read(&store);
+    assert!(ws.members.is_empty(), "{ws:?}");
+    assert!(gone(&mail_dir(&l.o.paths, &l.id).join(&key)), "{key}");
 }
 
 // ---- step 4: path a3 (`forget-pane`) ----
