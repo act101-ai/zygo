@@ -445,6 +445,18 @@ fn l11_a_pin_outside_a_checkout_stops() { // R§7.4 bullet 4 (rewritten)
 }
 
 #[test]
+fn l13_a_huge_non_id_pin_gives_a_short_stop_line() { // R§7.4 bullet 4 (rewritten); review F5
+    let fx = fx();
+    let pin = approve(&fx.app, &fx.paths.approvals_file);
+    let bad = Pin::new("z".repeat(1 << 20), pin.digest.clone());
+    let r = run(&fx, Arc::new(Rec::default()), |o| o.definition = Some(bad.clone()));
+    assert_eq!(r.code, 1, "{}", r.err.len());
+    let line = r.err.lines().find(|l| l.starts_with("zygo: profile rust of this member")).expect("the stop line");
+    assert!(line.len() < 1024, "the stop line has {} bytes", line.len());
+    assert!(r.err.len() < 1024, "stderr has {} bytes", r.err.len());
+}
+
+#[test]
 fn l12_a_read_profile_that_validate_refuses_gives_no_pin() { // R§7.4 bullet 2 (a first start that applied the profile), R§12 row; review F2
     let fx = fx();
     commit_default(&fx.app, "overrides = { code = \"no-such-model\" }\n");
