@@ -101,7 +101,17 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
         .map(|r| typed(r, "effort", "a string", Value::is_string).map_err(|_| bad("reasoning.effort must be a string")))
         .transpose()?
         .flatten();
-    let format = typed(req, "text", "an object", Value::is_object)?
+    let text_obj = typed(req, "text", "an object", Value::is_object)?;
+    let text_keys = text_obj.and_then(Value::as_object).into_iter().flat_map(|o| o.keys());
+    if let Some(k) = text_keys.into_iter().find(|k| !matches!(k.as_str(), "format" | "verbosity")) {
+        return Err(bad(format!("unknown field: text.{}", cut(k))));
+    }
+    // `text.verbosity` has no Messages counterpart: checked, then not sent (K§6.4.3).
+    let verbosity = text_obj.and_then(|x| x.get("verbosity")).filter(|v| !v.is_null());
+    if verbosity.is_some_and(|v| !matches!(v.as_str(), Some("low" | "medium" | "high"))) {
+        return Err(bad("text.verbosity must be one of low, medium, high"));
+    }
+    let format = text_obj
         .map(|x| typed(x, "format", "an object", Value::is_object).map_err(|_| bad("text.format must be an object")))
         .transpose()?
         .flatten();
