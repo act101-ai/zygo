@@ -1,6 +1,6 @@
 //! N13: dialect translation (§7.6, §14).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -28,6 +28,7 @@ use zygo_proxy::session::{ManualClock, SessionGrant, SessionRequest};
 use zygo_proxy::tee::{COPY_MAX, HOLD_MAX};
 use zygo_proxy::translate::reasoning::{decode, decode_thinking, encode, without_zygo_thinking, Signature};
 use zygo_proxy::translate::responses_client::{response, Calls, Encoder};
+use zygo_proxy::translate::schema::{NullMap, RestoreFilter, Seg};
 use zygo_proxy::translate::sse::INPUT_DELTA_MAX;
 use zygo_proxy::{Proxy, ProxyHandle};
 use zygo_redact::DeadlinePolicy;
@@ -1721,4 +1722,61 @@ fn message_events_tool_input_near_copy_max_completes() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["arguments"], want["output"][0]["arguments"]);
     assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// A chat SSE stream of one tool call whose `arguments` come in 60 KB deltas (RS-13 round 2 review G2).
+fn chat_args_sse(args: &str) -> String {
+    let call = json!({"index":0,"id":"call_1","type":"function","function":{"name":"exec_command","arguments":""}});
+    let mut s = chat_delta(json!({"role":"assistant","tool_calls":[call]}), Value::Null);
+    for p in args.as_bytes().chunks(60_000) {
+        let a = std::str::from_utf8(p).unwrap();
+        s += &chat_delta(json!({"tool_calls":[{"index":0,"function":{"arguments":a}}]}), Value::Null);
+    }
+    s + &chat_delta(json!({}), json!("tool_calls")) + DONE
+}
+
+/// Chat SSE through the mapper, the restore filter when given, and the Responses encoder: the longest mapped event
+/// as bytes, and the encoder's events.
+fn chat_through_encoder(sse: &str, mut restore: Option<RestoreFilter>) -> (usize, Vec<SseEvent>) {
+    let mut m = chat();
+    let mut evs = m.push(sse.as_bytes());
+    evs.extend(m.finish_events());
+    if let Some(r) = &mut restore {
+        let mut x: Vec<SseEvent> = evs.into_iter().flat_map(|e| r.push(e)).collect();
+        x.extend(r.finish());
+        evs = x;
+    }
+    let longest = evs.iter().map(|e| e.to_bytes().len()).max().unwrap();
+    let bytes: Vec<u8> = evs.iter().flat_map(SseEvent::to_bytes).collect();
+    let mut e = Encoder::new("role-x", &tgt(), Calls::default());
+    let mut out = e.push(&bytes);
+    out.extend(e.finish());
+    (longest, out)
+}
+
+#[test] // RS-13 round 2 review G2, K§6.4.3 stream obligation 8: 2,621,448 bytes of chat arguments in 60 KB deltas complete
+fn chat_sse_large_tool_arguments_complete() {
+    let args = format!("{{\"a\":\"{}\"}}", "\\\"".repeat(5 << 18));
+    assert_eq!(args.len(), 2_621_448);
+    let (longest, out) = chat_through_encoder(&chat_args_sse(&args), None);
+    assert!(longest < 2 * INPUT_DELTA_MAX + 256, "{longest}");
+    assert_eq!(out.last().unwrap().event, "response.completed", "{:?}", out.last().unwrap().data);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["type"], "function_call");
+    assert_eq!(items[0]["arguments"], json!(args));
+}
+
+#[test] // RS-13 round 2 review G2: the restore filter's rebuilt arguments go out in INPUT_DELTA_MAX pieces too
+fn chat_sse_large_restored_tool_arguments_complete() {
+    let b = "\"".repeat(5 << 18);
+    let args = json!({"a":null,"b":b}).to_string();
+    assert!(args.len() > 2_600_000, "{}", args.len());
+    let nulls = NullMap { tools: BTreeMap::from([("exec_command".to_string(), vec![vec![Seg::Key("a".into())]])]), output: vec![] };
+    let (longest, out) = chat_through_encoder(&chat_args_sse(&args), Some(RestoreFilter::new(nulls)));
+    assert!(longest < 2 * INPUT_DELTA_MAX + 256, "{longest}");
+    assert_eq!(out.last().unwrap().event, "response.completed", "{:?}", out.last().unwrap().data);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["arguments"], json!(json!({"b":b}).to_string()));
 }
