@@ -539,6 +539,95 @@ mod tests {
         "==== short test summary info ====", "= PASSES =", "failures:", "    boom", "---- boom stdout ----",
     ];
 
+    /// The go test fixture texts (O§7.2 raw text; their `stderr` files are empty, so the raw text is `stdout`).
+    const GO_FIXTURES: &[&str] = &[
+        include_str!("../../../../fixtures/shaping/gotest/failing-parallel/stdout"),
+        include_str!("../../../../fixtures/shaping/gotest/panic/stdout"),
+        include_str!("../../../../fixtures/shaping/gotest/passing-verbose/stdout"),
+    ];
+
+    /// The edge texts of the section guard test: each line of `LINES` alone, with `\n`, between two lines, and
+    /// all of them joined by `\n` and by `\r\n`.
+    fn edge_texts() -> Vec<String> {
+        let mut texts: Vec<String> =
+            LINES.iter().flat_map(|l| [l.to_string(), format!("{l}\n"), format!("x\n{l}\ny\n")]).collect();
+        texts.push(LINES.join("\n"));
+        texts.push(LINES.join("\r\n"));
+        texts
+    }
+
+    /// `section` as it is at 442defa3: go test reads `go_lines_reference`, not the fast `go_lines`.
+    fn section_reference(r: Runner, text: &str) -> Vec<bool> {
+        match r {
+            Runner::Gotest => go_lines_reference(text).into_iter().map(|g| g == GoLine::Kept).collect(),
+            _ => section(r, text),
+        }
+    }
+
+    /// `go_lines` verbatim as it is at commit 442defa3 (before the OS-47 fast path), with the regex `captures`
+    /// calls: the reference that the fast `go_lines` must equal.
+    fn go_lines_reference(text: &str) -> Vec<GoLine> {
+        let mut pkg = 0usize;
+        let mut cur: Option<GoKey> = None;
+        let mut open: Vec<(GoKey, usize)> = Vec::new();
+        let mut owner: Vec<Option<GoKey>> = Vec::new();
+        let mut passed: HashMap<GoKey, bool> = HashMap::new();
+        for line in text.split_inclusive('\n') {
+            let bare = line.strip_suffix('\n').unwrap_or(line);
+            let rest = bare.trim_start_matches([' ', '\t']);
+            let depth = bare.len() - rest.len();
+            let cr = bare.ends_with('\r');
+            while open.last().is_some_and(|&(_, d)| d >= depth) {
+                open.pop();
+            }
+            let summary = GO_SUMMARY.is_match(bare);
+            let o = if bare == "[stderr]" || (summary && !bare.starts_with('?')) {
+                pkg += 1;
+                cur = None;
+                open.clear();
+                None
+            } else if summary && cur.is_none() {
+                None
+            } else if GO_PACKAGE.is_match(bare) {
+                cur = None;
+                open.clear();
+                None
+            } else if let Some(c) = GO_MARK.captures(bare).filter(|_| !cr) {
+                cur = Some((pkg, c.get(2).expect("group 2").as_str()));
+                cur
+            } else if let Some(c) = GO_RESULT.captures(bare).filter(|_| !cr) {
+                let key = (pkg, c.get(2).expect("group 2").as_str());
+                let ok = &c[1] != "FAIL";
+                passed.entry(key).and_modify(|p| *p &= ok).or_insert(ok);
+                open.push((key, depth));
+                let within = |n: &str| n == key.1 || n.strip_prefix(key.1).is_some_and(|r| r.starts_with('/'));
+                if cur.is_some_and(|(p, n)| p == key.0 && within(n)) {
+                    cur = None;
+                }
+                Some(key)
+            } else if rest.starts_with("=== ") || rest.starts_with("--- ") {
+                cur = None;
+                None
+            } else {
+                open.last().map(|&(k, _)| k).or(cur)
+            };
+            owner.push(o);
+        }
+        text.split_inclusive('\n')
+            .zip(owner)
+            .map(|(line, o)| {
+                let bare = line.strip_suffix('\n').unwrap_or(line);
+                match o {
+                    None => GoLine::Free,
+                    Some(k) if passed.get(&k) == Some(&true) && !bare.ends_with('\r') && !COUNTED.is_match(bare) => {
+                        GoLine::Passed
+                    }
+                    Some(_) => GoLine::Kept,
+                }
+            })
+            .collect()
+    }
+
     #[test]
     fn runner_fast_path_libtest_test_line_and_ok_match_test_hidden() {
         for line in LINES {
@@ -568,13 +657,9 @@ mod tests {
     #[test]
     fn runner_fast_path_section_guard_keeps_every_section() {
         let all = [Runner::Libtest, Runner::Pytest, Runner::Gotest];
-        let mut texts: Vec<String> =
-            LINES.iter().flat_map(|l| [l.to_string(), format!("{l}\n"), format!("x\n{l}\ny\n")]).collect();
-        texts.push(LINES.join("\n"));
-        texts.push(LINES.join("\r\n"));
-        for t in &texts {
+        for t in &edge_texts() {
             for o in all {
-                if section(o, t).contains(&true) {
+                if section_reference(o, t).contains(&true) {
                     assert!(may_have_section(o, t), "{o:?} {t:?}");
                 }
             }
@@ -582,7 +667,7 @@ mod tests {
                 // the mask of `view` at 442defa3: both other runners, unguarded
                 let mut old = vec![false; t.split_inclusive('\n').count()];
                 for o in all.into_iter().filter(|&o| o != r) {
-                    for (k, s) in old.iter_mut().zip(section(o, t)) {
+                    for (k, s) in old.iter_mut().zip(section_reference(o, t)) {
                         *k |= s;
                     }
                 }
@@ -592,6 +677,16 @@ mod tests {
         }
         for o in all {
             assert!(!may_have_section(o, "test a ... ok\n"), "{o:?}");
+        }
+    }
+
+    #[test]
+    fn runner_fast_path_go_lines_equal_the_reference() {
+        let mut texts = edge_texts();
+        texts.extend(GO_FIXTURES.iter().map(|f| f.to_string()));
+        texts.push(GO_FIXTURES.concat());
+        for t in &texts {
+            assert!(go_lines(t) == go_lines_reference(t), "{t:?}");
         }
     }
 }
