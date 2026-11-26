@@ -723,7 +723,8 @@ fn bind_note(c: &Ctx, id: &str) {
 }
 
 /// The member part of `SessionStart` (W§9.1, W§9.4, AU60, AU92, AU104; D11) for the main loop of a member view;
-/// `text` is the session text. The output is the session text, an empty line, item 8 when `view.mail` is on, the
+/// `text` is the session text. The output is the session text, an empty line, item 8 when `view.mail` is on (with the
+/// S§10.4 clause when sync is on and the member cache is not empty), the
 /// state reads and holds a record for the pane, then the note, then the mail delivery line when `view.mail` is on and
 /// `new/` holds mail (M§7.2); empty parts are left out. Claude Code: the whole hook
 /// output is written to `out` and flushed first (a write error returns `Err` with nothing written to any file), then
@@ -748,9 +749,10 @@ pub fn session_start_with_sync(
     let log = matches!(view.agent, Agent::ClaudeCode);
     let Some(c) = ctx_of("session-start", dir, view.clone(), paths, log) else { return Ok(Some(text.to_string())) };
     let inputs = view.workspace.as_ref().and_then(|w| w.resume_note.as_ref());
-    // M§8a item 1: item 8 after the mechanics text, before the resume note, from `workspace.json` read at this start.
+    // M§8a item 1: item 8 after the mechanics text, before the resume note, from `workspace.json` read at this start,
+    // with the S§10.4 clause when sync is on and the member cache is not empty.
     // A read error or no state gives no item and no line of its own (record_session's read writes the one line, C6).
-    let item = if view.mail { c.store.read().ok().flatten().and_then(|ws| crate::mail::session_item(&ws, &c.pane)) } else { None };
+    let item = if view.mail { c.store.read().ok().flatten().and_then(|ws| crate::mail::session_item_with(&ws, &c.pane, &crate::mail::remote_addresses(c.paths, &c.ws_id, &ws.name))) } else { None };
     // M§7.2, ML-10 D5: the mail delivery line comes after the resume note while `new/` holds mail.
     let line = match unread_mail(&c) {
         0 => None,
