@@ -7,10 +7,33 @@ use zygo_workspace::state::Workspace;
 
 const MAIL_TAIL: &str = "Send with mail_send (to a name, or `all`); read with mail_read; mail_list shows unread mail and the current members. zygo tells you when mail arrives: before your turn ends, at your next prompt, or with a wake line. Do not poll or wait for mail: end your turn, and you will be woken.";
 
-/// Item 8 of the session text (M§8a item 1) for the member `own_key` of `ws`: its name and the workspace name, or the
-/// no-name clause with its pane key, then the valid names of the members in key order, each name once. Each name
-/// passes `esc`. `None` when `own_key` has no member record: no one can reach that pane by mail (`names::resolve`).
+/// The most addresses the "Other machines" clause of item 8 names (mail sync design S§10.4).
+const OTHER_MACHINES_MAX: usize = 64;
+
+/// The "Other machines" clause of item 8 (mail sync design S§10.4): each address of `addresses` passes `esc`, at most
+/// 64, then `and <n> more; mail_list lists all` for the `n` left out. `None` for no address.
+pub fn other_machines(addresses: &[String]) -> Option<String> {
+    if addresses.is_empty() {
+        return None;
+    }
+    let mut list: Vec<String> = addresses.iter().take(OTHER_MACHINES_MAX).map(|a| esc(a)).collect();
+    if addresses.len() > OTHER_MACHINES_MAX {
+        list.push(format!("and {} more; mail_list lists all", addresses.len() - OTHER_MACHINES_MAX));
+    }
+    Some(format!("Other machines: {}; mail them by the full address.", list.join(", ")))
+}
+
+/// Item 8 of the session text (M§8a item 1) for the member `own_key` of `ws`, with no remote address:
+/// `session_item_with(ws, own_key, &[])`.
 pub fn session_item(ws: &Workspace, own_key: &str) -> Option<String> {
+    session_item_with(ws, own_key, &[])
+}
+
+/// Item 8 of the session text (M§8a item 1) for the member `own_key` of `ws`: its name and the workspace name, or the
+/// no-name clause with its pane key, then the valid names of the members in key order, each name once, then the
+/// "Other machines" clause of `remote` (S§10.4) when `remote` is not empty. Each name passes `esc`. `None` when
+/// `own_key` has no member record: no one can reach that pane by mail (`names::resolve`).
+pub fn session_item_with(ws: &Workspace, own_key: &str, remote: &[String]) -> Option<String> {
     let own = ws.members.get(own_key)?;
     let first = match own.valid_name() {
         Some(name) => format!("you are `{}` in workspace `{}`", esc(name), esc(&ws.name)),
@@ -23,7 +46,8 @@ pub fn session_item(ws: &Workspace, own_key: &str) -> Option<String> {
         }
     }
     let names: Vec<String> = names.iter().map(|n| esc(n)).collect();
-    Some(format!("Workspace mail: {first}. Members: `{}`. {MAIL_TAIL}", names.join(", ")))
+    let other = other_machines(remote).map_or(String::new(), |c| format!(" {c}"));
+    Some(format!("Workspace mail: {first}. Members: `{}`.{other} {MAIL_TAIL}", names.join(", ")))
 }
 
 /// The delivery line of `n` unread messages (M§7.2): the prompt line, the SessionStart line and the Stop reason.
