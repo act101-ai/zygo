@@ -1,9 +1,12 @@
 //! Responses client → Messages (K§6.4.3, K§6.7).
 
-use serde_json::Value;
+use std::collections::BTreeMap;
+
+use serde_json::{json, Map, Value};
 use zygo_config::Facts;
 
-use super::Target;
+use super::reasoning::decode_thinking;
+use super::{copy, input_of, s, Target, DOC_OMITTED};
 use crate::errors::ZygoError;
 use crate::pipeline::Adjustment;
 
@@ -86,8 +89,291 @@ pub fn check_fields(req: &Value) -> Result<(), ZygoError> {
     Ok(())
 }
 
-/// A Responses body as a Messages body for `t`; `facts` = the resolved model's catalog facts.
+/// A Responses body as a Messages body for `t` (K§6.4.3 request obligations 1-10); `facts` = the resolved model's
+/// catalog facts, the source of `max_tokens` when the client gives none. The output is built new, so no ignored field
+/// is carried. `model` stays as the client sent it.
 pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value, Vec<Adjustment>), ZygoError> {
-    let _ = (req, t, facts);
-    todo!()
+    check_fields(req)?;
+    let model = req.get("model").filter(|v| v.is_string()).ok_or_else(|| bad("model must be a string"))?;
+    let max_tokens = max_tokens(req, facts)?;
+    if req.get("text").and_then(|x| x.get("format")).is_some_and(|f| !f.is_null() && s(f, "type") != Some("text")) {
+        return Err(bad("text.format: only type text is accepted toward this upstream"));
+    }
+    let mut d = Drops::default();
+    let mut c = Conv { leading: true, ..Conv::default() };
+    match req.get("instructions") {
+        None | Some(Value::Null) => {}
+        Some(Value::String(x)) if x.is_empty() => {}
+        Some(Value::String(x)) => c.system.push(x.clone()),
+        Some(_) => return Err(bad("instructions must be a string")),
+    }
+    match req.get("input") {
+        Some(Value::String(x)) => c.push("user", text(x)),
+        Some(Value::Array(items)) => {
+            for it in items {
+                item(&mut c, it, t, &mut d)?;
+            }
+        }
+        _ => return Err(bad("input must be a string or an array")),
+    }
+    let tools = tools(req, &mut d)?;
+    let choice = tool_choice(req)?;
+
+    let mut out = Map::new();
+    out.insert("model".into(), model.clone());
+    if !c.system.is_empty() {
+        out.insert("system".into(), Value::String(c.system.join("\n\n")));
+    }
+    let messages = c.messages.into_iter().map(|(role, content)| json!({"role": role, "content": content})).collect();
+    out.insert("messages".into(), Value::Array(messages));
+    out.insert("max_tokens".into(), json!(max_tokens));
+    for k in ["temperature", "top_p", "stream"] {
+        copy(req, &mut out, k, k);
+    }
+    if !tools.is_empty() {
+        out.insert("tools".into(), Value::Array(tools));
+    }
+    if let Some(tc) = choice {
+        out.insert("tool_choice".into(), tc);
+    }
+    if let Some(e) = req.get("reasoning").and_then(|r| r.get("effort")).filter(|e| e.is_string()) {
+        out.insert("output_config".into(), json!({"effort": e}));
+    }
+    Ok((Value::Object(out), d.codes()))
+}
+
+fn bad(message: impl Into<String>) -> ZygoError {
+    ZygoError::bad_request(message)
+}
+
+fn text(x: &str) -> Value {
+    json!({"type":"text","text":x})
+}
+
+/// The string field `k` of an item of type `ty`, or `400 "<ty>: missing <k>"`.
+fn field<'a>(it: &'a Value, ty: &str, k: &str) -> Result<&'a str, ZygoError> {
+    s(it, k).ok_or_else(|| bad(format!("{ty}: missing {k}")))
+}
+
+/// The client's `max_output_tokens`, else the catalog's (obligation 7).
+fn max_tokens(req: &Value, facts: Option<&Facts>) -> Result<u64, ZygoError> {
+    match req.get("max_output_tokens") {
+        None | Some(Value::Null) => facts.map(|f| f.max_output_tokens).filter(|&n| n > 0).ok_or_else(|| {
+            bad("max_output_tokens is required: the model's catalog states no max_output_tokens")
+        }),
+        Some(v) => v.as_u64().filter(|&n| n > 0).ok_or_else(|| bad("max_output_tokens must be a positive integer")),
+    }
+}
+
+/// What the translation removed or changed, for the adjustment codes.
+#[derive(Default)]
+struct Drops {
+    custom: bool,
+    reasoning: u32,
+    documents: u32,
+    tools: BTreeMap<String, u32>,
+    items: BTreeMap<String, u32>,
+}
+
+impl Drops {
+    /// `custom_tool_as_function`, `reasoning_dropped`, `documents_dropped`, then `tools_dropped` and `items_dropped`
+    /// by type; no zero count.
+    fn codes(&self) -> Vec<Adjustment> {
+        let mut out = Vec::new();
+        if self.custom {
+            out.push(Adjustment("custom_tool_as_function".into()));
+        }
+        for (name, n) in [("reasoning_dropped", self.reasoning), ("documents_dropped", self.documents)] {
+            if n > 0 {
+                out.push(Adjustment(format!("{name}:{n}")));
+            }
+        }
+        out.extend(self.tools.iter().map(|(t, n)| Adjustment(format!("tools_dropped:{t}:{n}"))));
+        out.extend(self.items.iter().map(|(t, n)| Adjustment(format!("items_dropped:{t}:{n}"))));
+        out
+    }
+}
+
+/// The Messages conversation being built.
+#[derive(Default)]
+struct Conv {
+    system: Vec<String>,
+    /// No item other than a `developer`/`system` message seen yet (obligation 1).
+    leading: bool,
+    messages: Vec<(&'static str, Vec<Value>)>,
+}
+
+impl Conv {
+    /// Appends `b` to the last message when it has `role`, else starts one; in a user message `tool_result` blocks
+    /// come first (obligation 2).
+    fn push(&mut self, role: &'static str, b: Value) {
+        match self.messages.last_mut() {
+            Some((r, content)) if *r == role => {
+                if s(&b, "type") == Some("tool_result") {
+                    let at = content.iter().take_while(|x| s(x, "type") == Some("tool_result")).count();
+                    content.insert(at, b);
+                } else {
+                    content.push(b);
+                }
+            }
+            _ => self.messages.push((role, vec![b])),
+        }
+    }
+}
+
+/// One `input` item (obligations 1-6, 9).
+fn item(c: &mut Conv, it: &Value, t: &Target, d: &mut Drops) -> Result<(), ZygoError> {
+    let ty = match s(it, "type") {
+        Some(ty) => ty,
+        None if it.get("role").is_some() => "message",
+        None => return Err(bad("input item: missing type")),
+    };
+    if ty != "message" {
+        c.leading = false;
+    }
+    match ty {
+        "message" => message(c, it, d)?,
+        "function_call" => {
+            let (id, name, args) = (field(it, ty, "call_id")?, field(it, ty, "name")?, field(it, ty, "arguments")?);
+            c.push("assistant", json!({"type":"tool_use","id":id,"name":name,"input":input_of(Some(args))}));
+        }
+        "custom_tool_call" => {
+            let (id, name, input) = (field(it, ty, "call_id")?, field(it, ty, "name")?, field(it, ty, "input")?);
+            c.push("assistant", json!({"type":"tool_use","id":id,"name":name,"input":{"input":input}}));
+            d.custom = true;
+        }
+        "function_call_output" | "custom_tool_call_output" => {
+            let id = field(it, ty, "call_id")?;
+            let content = match it.get("output") {
+                Some(Value::String(x)) => Value::String(x.clone()),
+                Some(Value::Array(parts)) => Value::Array(parts.iter().map(|p| part(p, d)).collect::<Result<_, _>>()?),
+                _ => return Err(bad(format!("{ty}: missing output"))),
+            };
+            c.push("user", json!({"type":"tool_result","tool_use_id":id,"content":content}));
+        }
+        "reasoning" => match s(it, "encrypted_content").and_then(|v| decode_thinking(v, t)) {
+            Some(b) => c.push("assistant", b),
+            None => d.reasoning += 1,
+        },
+        _ if HOSTED_ITEMS.contains(&ty) => *d.items.entry(ty.into()).or_default() += 1,
+        _ => return Err(bad(format!("unknown input item type: {}", cut(ty)))),
+    }
+    Ok(())
+}
+
+/// A `message` item: leading `developer`/`system` text to the system text, a later one as user text in place.
+fn message(c: &mut Conv, it: &Value, d: &mut Drops) -> Result<(), ZygoError> {
+    let role = field(it, "message", "role")?;
+    let blocks: Vec<Value> = match it.get("content") {
+        Some(Value::String(x)) => vec![text(x)],
+        Some(Value::Array(parts)) => parts.iter().map(|p| part(p, d)).collect::<Result<_, _>>()?,
+        _ => return Err(bad("message: missing content")),
+    };
+    let role = match role {
+        "developer" | "system" => {
+            if c.leading && blocks.iter().all(|b| s(b, "type") == Some("text")) {
+                c.system.extend(blocks.iter().filter_map(|b| s(b, "text")).filter(|x| !x.is_empty()).map(str::to_owned));
+                return Ok(());
+            }
+            "user"
+        }
+        "user" => "user",
+        "assistant" => "assistant",
+        other => return Err(bad(format!("message: unknown role: {}", cut(other)))),
+    };
+    c.leading = false;
+    for b in blocks {
+        c.push(role, b);
+    }
+    Ok(())
+}
+
+/// One content part as a Messages block (obligation 2).
+fn part(p: &Value, d: &mut Drops) -> Result<Value, ZygoError> {
+    let ty = s(p, "type").ok_or_else(|| bad("content part: missing type"))?;
+    Ok(match ty {
+        "input_text" | "output_text" => text(field(p, ty, "text")?),
+        "refusal" => text(field(p, ty, "refusal")?),
+        "input_image" => {
+            let url = field(p, ty, "image_url")?;
+            match data_url(url) {
+                Some((mt, data)) => json!({"type":"image","source":{"type":"base64","media_type":mt,"data":data}}),
+                None => json!({"type":"image","source":{"type":"url","url":url}}),
+            }
+        }
+        "input_file" => match s(p, "file_data").and_then(data_url).filter(|(mt, _)| *mt == "application/pdf") {
+            Some((mt, data)) => json!({"type":"document","source":{"type":"base64","media_type":mt,"data":data}}),
+            None => {
+                d.documents += 1;
+                text(DOC_OMITTED)
+            }
+        },
+        _ => return Err(bad(format!("unknown content part type: {}", cut(ty)))),
+    })
+}
+
+/// `data:<media type>;base64,<data>` as its two parts.
+fn data_url(u: &str) -> Option<(&str, &str)> {
+    u.strip_prefix("data:")?.split_once(";base64,")
+}
+
+/// Tool definitions (obligations 4, 6): `function` and `custom` map; another type is counted and dropped.
+fn tools(req: &Value, d: &mut Drops) -> Result<Vec<Value>, ZygoError> {
+    let list = match req.get("tools") {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Array(a)) => a,
+        Some(_) => return Err(bad("tools must be an array")),
+    };
+    let mut out = Vec::new();
+    for tool in list {
+        let ty = s(tool, "type").ok_or_else(|| bad("tool: missing type"))?;
+        let schema = match ty {
+            "function" => tool.get("parameters").filter(|p| p.is_object()).cloned().unwrap_or_else(|| json!({"type":"object"})),
+            "custom" => {
+                let mut input = json!({"type":"string"});
+                if let Some(def) = tool
+                    .get("format")
+                    .filter(|f| s(f, "type") == Some("grammar"))
+                    .and_then(|f| f.get("definition"))
+                    .filter(|v| v.is_string())
+                {
+                    input["description"] = def.clone();
+                }
+                d.custom = true;
+                json!({"type":"object","properties":{"input":input},"required":["input"]})
+            }
+            other => {
+                // The `namespace` drop is RS-9's to replace (flatten into function tools).
+                *d.tools.entry(cut(other).into()).or_default() += 1;
+                continue;
+            }
+        };
+        let mut x = json!({"name": field(tool, &format!("{ty} tool"), "name")?, "input_schema": schema});
+        if let Some(desc) = tool.get("description").filter(|v| v.is_string()) {
+            x["description"] = desc.clone();
+        }
+        out.push(x);
+    }
+    Ok(out)
+}
+
+/// `tool_choice` with `parallel_tool_calls` (obligation 7).
+fn tool_choice(req: &Value) -> Result<Option<Value>, ZygoError> {
+    let mut tc = match req.get("tool_choice") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(match (v.as_str(), s(v, "type"), s(v, "name")) {
+            (Some("auto"), _, _) => json!({"type":"auto"}),
+            (Some("none"), _, _) => json!({"type":"none"}),
+            (Some("required"), _, _) => json!({"type":"any"}),
+            (None, Some("function" | "custom"), Some(name)) => json!({"type":"tool","name":name}),
+            _ => return Err(bad("tool_choice: unknown form")),
+        }),
+    };
+    if req.get("parallel_tool_calls").and_then(Value::as_bool) == Some(false) {
+        let tc = tc.get_or_insert_with(|| json!({"type":"auto"}));
+        if s(tc, "type") != Some("none") {
+            tc["disable_parallel_tool_use"] = json!(true);
+        }
+    }
+    Ok(tc)
 }
