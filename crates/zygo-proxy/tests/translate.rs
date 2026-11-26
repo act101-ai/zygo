@@ -1429,11 +1429,9 @@ fn wire_openai_routes_not_in_v1() {
     let g = grant(&t, false);
     let not_in_v1 = json!({"error":{"type":"zygo_route_not_in_v1","message":"this route is not in zygo v1"}});
     for hd in [vec![], auth(&g)] {
-        for (m, p, b) in [("POST", "openai/v1/chat/completions", Some(b"{}".to_vec())), ("GET", "openai/v1/models", None)] {
-            let r = send(&t.h, m, p, &hd, b);
-            assert_eq!(r.0, 404, "{m} {p}");
-            assert_eq!(serde_json::from_slice::<Value>(&r.2).unwrap(), not_in_v1);
-        }
+        let r = send(&t.h, "POST", "openai/v1/chat/completions", &hd, Some(b"{}".to_vec()));
+        assert_eq!(r.0, 404);
+        assert_eq!(serde_json::from_slice::<Value>(&r.2).unwrap(), not_in_v1);
     }
     let r = send(&t.h, "GET", "openai/v1/responses", &auth(&g), None);
     assert_eq!((r.0, serde_json::from_slice::<Value>(&r.2).unwrap()["error"]["type"].clone()), (405, json!("zygo_method_not_allowed")));

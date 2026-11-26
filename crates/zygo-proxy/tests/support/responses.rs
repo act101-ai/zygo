@@ -234,6 +234,11 @@ impl Harness {
         self.send("GET", path, &[("authorization", &bearer), ("x-zygo-session", &self.session)], None)
     }
 
+    /// GET with exactly `headers`; counts nothing.
+    pub fn get_as(&self, path: &str, headers: &[(&str, &str)]) -> (StatusCode, HeaderMap, Bytes) {
+        self.send("GET", path, headers, None)
+    }
+
     /// Each upstream request body as JSON; panics on a non-JSON body.
     pub fn upstream_bodies(&self) -> Vec<Value> {
         self.up.got.lock().unwrap().iter().map(|g| serde_json::from_slice(&g.2).expect("upstream body is JSON")).collect()

@@ -479,7 +479,7 @@ From research on Codex CLI 0.172.0 (its `--help`, `codex features list`, the pin
 #### 6.4.1 Routes
 
 - `POST /openai/v1/responses`: the model call, streaming and non-streaming.
-- `GET /openai/v1/models`: the session's role list in the shape that PC7 records.
+- `GET /openai/v1/models`: the session's role list in the shape that PC7 records. Each entry's `base_instructions` is empty and it has no `apply_patch_tool_type`. Codex reads `base_instructions` in place of its own base prompt, so the Codex launch supplies both values through the catalog file (K§6.3.1) and must not rely on this route; with that file Codex sends no `/models` request (PC7, `fixtures/codex/models/result.txt` `d: models_request=0`).
 - Each other path under `/openai/v1/` that PC1 shows Codex calls: served when its function is in this section, else `404` in the OpenAI error shape. `POST /openai/v1/chat/completions` keeps `404 zygo_route_not_in_v1` (K§3).
 
 Stage 1 is the existing identity rule (`crates/zygo-proxy/src/identity.rs:22-35`): `X-Zygo-Session` and the bearer token. Errors on these routes use the OpenAI shape (`errors.rs:34-41`).
@@ -970,3 +970,4 @@ P4-11 (client updates):
 - 2026-11-25: K§6.4.3 stream obligations 2, 5, 6, 9 — custom tools named by `custom_tool_call` history items return as custom_tool_call items; a reasoning mark over MARK_MAX is not sent (`reasoning_unmarked`); `model_context_window_exceeded` and `refusal` give `response.incomplete`, `pause_turn` completes; an upstream error message is cut as a 400 echo; the held-bytes bound holds inside one chunk and the failure names its cause (RS-2 review round 1); author's call.
 - 2026-11-25: K§6.4.3 candidates of a Responses client (`anthropic`, then `openai-chat`; `openai` from RS-5), K§6.4.4 over-long forms and the K§12 §7.6 context-limit line (lead, RS-3 review round 1 F1, F2).
 - 2026-11-25: K§6.4.4 and the K§12 §7.6 line: Anthropic's `max_tokens` limit form maps to the PC14 shape for the Responses client only and reaches other clients unchanged (lead, RS-3 review round 2 G1-G3).
+- 2026-11-25: K§6.4.1 `GET /openai/v1/models` — `base_instructions` empty and no `apply_patch_tool_type`; the Codex launch supplies both through the K§6.3.1 catalog file and must not rely on this route (lead, RS-8 planning).
