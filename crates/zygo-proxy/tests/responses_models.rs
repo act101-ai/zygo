@@ -4,12 +4,14 @@
 #[path = "support/responses.rs"]
 mod support;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 use support::{codex_request, Harness, MODEL};
-use zygo_config::Dialect;
+use zygo_config::profile::Profile;
+use zygo_config::{CustomRole, Dialect};
 use zygo_core::Agent;
 
 const M: &str = "openai/v1/models";
@@ -129,4 +131,68 @@ fn other_openai_paths_served_or_404_openai_shape() {
         (404, json!({"type":"error","error":{"type":"zygo_not_found","message":"no such route"}}))
     );
     assert_eq!(h.upstream_paths().len(), 1);
+}
+
+#[test]
+fn models_suspended_session_openai_shape() {
+    let h = start("");
+    let (id, token) = h.team_session();
+    let bearer = format!("Bearer {token}");
+    let who = [("authorization", bearer.as_str()), ("x-zygo-session", id.as_str())];
+    assert_eq!(h.get_as(M, &who).0, 200);
+    // §7.2: a team session with no heartbeat for 5 min is suspended.
+    h.advance(Duration::from_secs(6 * 60));
+    let (s, _, b) = h.get_as(M, &who);
+    assert_eq!(
+        (s.as_u16(), json_of(&b)),
+        (401, json!({"error":{"type":"zygo_session_suspended","message":"session suspended: no heartbeat for 5 min"}}))
+    );
+}
+
+#[test]
+fn models_with_profile_match_the_anthropic_list() {
+    let d = zygo_config::builtin::defaults();
+    let off = d.role.keys().find(|k| *k != &d.main_role && *k != "code").unwrap().clone();
+    let p = Profile {
+        name: "rs8p".into(),
+        overrides: BTreeMap::from([("code".to_string(), MODEL.to_string())]),
+        disabled: vec![off.clone()],
+        roles: BTreeMap::from([(
+            "rs8p-bench".to_string(),
+            CustomRole { model: MODEL.into(), description: "rs8p bench".into(), prompt: "rs8p".into(), writes: false },
+        )]),
+        ..Default::default()
+    };
+    let h = Harness::start_with_profile(Dialect::Anthropic, Agent::ClaudeCode, "", Some(p));
+    let (s, _, b) = h.get(M);
+    assert_eq!(s, 200);
+    let oai = json_of(&b)["models"].as_array().unwrap().clone();
+    let (s, _, b) = h.get("anthropic/v1/models");
+    assert_eq!(s, 200);
+    let ant = json_of(&b)["data"].as_array().unwrap().clone();
+    // The role part of the Anthropic list (ids and descriptions) equals the OpenAI list; only catalog ids follow it.
+    let pairs = |v: &[Value], id: &str| {
+        v.iter()
+            .map(|m| (m[id].as_str().unwrap().to_string(), m["description"].as_str().unwrap_or("").to_string()))
+            .collect::<Vec<_>>()
+    };
+    let roles = pairs(&oai, "slug");
+    assert_eq!(pairs(&ant[..roles.len()], "id"), roles);
+    assert!(ant[roles.len()..].iter().all(|m| m.get("description").is_none()), "only catalog ids follow the roles");
+    let names: Vec<&str> = roles.iter().map(|r| r.0.as_str()).collect();
+    assert!(!names.contains(&off.as_str()), "disabled role {off} is absent");
+    assert_eq!(roles.last().unwrap(), &("rs8p-bench".to_string(), "rs8p bench".to_string()));
+    let code = &roles.iter().find(|r| r.0 == "code").unwrap().1;
+    assert!(code.ends_with(&format!(" · profile rs8p: {MODEL}")), "{code}");
+}
+
+#[test]
+fn openai_prefix_itself_is_openai_shaped() {
+    let h = start("");
+    let ant = json!({"type":"error","error":{"type":"zygo_not_found","message":"no such route"}});
+    let oai = json!({"error":{"type":"zygo_not_found","message":"no such route"}});
+    for (p, want) in [("openai/v1", &oai), ("openai/v1x/models", &ant), ("openai/v10/models", &ant)] {
+        let (s, _, b) = h.get_as(p, &[]);
+        assert_eq!((s.as_u16(), &json_of(&b)), (404, want), "{p}");
+    }
 }

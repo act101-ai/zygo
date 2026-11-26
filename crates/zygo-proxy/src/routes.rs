@@ -57,9 +57,11 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
-/// The error shape of a fallback reply: OpenAI under `/openai/v1/` (K§6.4.1), else Anthropic.
+/// The error shape of a fallback reply: OpenAI for `/openai/v1` and each path under `/openai/v1/` (K§6.4.1), else
+/// Anthropic (so `/openai/v1x/…` and `/openai/v10/…` stay Anthropic).
 fn path_dialect(uri: &Uri) -> Dialect {
-    if uri.path().starts_with("/openai/v1/") {
+    let p = uri.path();
+    if p == "/openai/v1" || p.starts_with("/openai/v1/") {
         Dialect::Openai
     } else {
         Dialect::Anthropic
