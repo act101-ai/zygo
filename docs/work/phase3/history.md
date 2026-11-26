@@ -126,6 +126,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4, OS-46 | DROPPED(premise false: O§8.2 floors are per shaper, a clean view has no 8 KiB floor; a cut under the threshold breaks O-C9; review of 0fd61644) | judgment | 8883d724 · 65cdeb63 · round 1 discarded (0fd61644) · PR #195 |
 | FX-1 | Process-group kill tests: anonymous pipe in place of a FIFO (Darwin FIFO lost wakeup) | — | DONE | implementation | 38ca329 · git_runner 17 + decision_git 34 pass; floor green · PR #40 |
 | FX-2 | Decision writer lock: unlock before the close (a forked child keeps a closed flock) | — | DONE | implementation | 8a6191d c4584c2 · decisions::edit 4 pass; floor green · PR #42 |
+| FX-3 | Test stdin helpers tolerate a child that exits before it reads stdin (statusline BrokenPipe flake) | — | DONE | implementation | 1636973 · compact_cmd 5p + statusline_cmd 4p; floor green · PR #46 |
 
 ## Log
 

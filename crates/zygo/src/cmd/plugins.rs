@@ -98,7 +98,7 @@ fn run_io(ctx: &VerbCtx, args: &[String], team: Option<toml::Table>, builtin: Op
 }
 
 /// `y` or `yes` (any case, trimmed) on the next line.
-fn confirm(input: &mut dyn BufRead) -> bool {
+pub(crate) fn confirm(input: &mut dyn BufRead) -> bool {
     let mut s = String::new();
     input.read_line(&mut s).is_ok() && matches!(s.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }

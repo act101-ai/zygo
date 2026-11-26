@@ -375,7 +375,7 @@ enum Cmd {
     Workspace,
     /// Workspace tools: forget, forget-pane
     Ws(ws::WsArgs),
-    /// Workspace mail: send, read, ls, watch
+    /// Workspace mail: send, read, ls, watch, sync
     Mail(mail::MailArgs),
     /// Internal: MCP server started by the agents
     Mcp {
@@ -545,6 +545,16 @@ fn start_check(rest: &[String]) -> Option<i32> {
     }
 }
 
+/// The commands that run no results sweep and no mail sweep at their start: hooks and `zygo mcp` (time-bounded; C6),
+/// `zygo ws` (AU71) and the sync child `zygo mail sync --background` (AU71; mail sync design S§17 row `cmd/mod.rs`).
+fn skips_sweep(c: &Cmd) -> bool {
+    match c {
+        Cmd::Hook { .. } | Cmd::Mcp { .. } | Cmd::Ws(_) => true,
+        Cmd::Mail(mail::MailArgs { sub: Some(mail::MailCmd::Sync(s)) }) => s.background,
+        _ => false,
+    }
+}
+
 /// Entry point of the binary; returns the process exit code.
 pub fn run() -> i32 {
     set_slash_dispatch(slash);
@@ -562,8 +572,9 @@ pub fn run() -> i32 {
         }
     };
     // §10.1 and its N71 note: results of ended sessions are swept at the next `zygo` command, except hooks,
-    // `zygo mcp` (time-bounded; C6) and `zygo ws` (AU71). I/O errors are ignored; the mail sweep (M§5) runs under the same rule.
-    if !matches!(cli.command, Cmd::Hook { .. } | Cmd::Mcp { .. } | Cmd::Ws(_)) {
+    // `zygo mcp` (time-bounded; C6), `zygo ws` and `zygo mail sync --background` (AU71; mail sync design S§17).
+    // I/O errors are ignored; the mail sweep (M§5) runs under the same rule.
+    if !skips_sweep(&cli.command) {
         let p = Paths::from_env();
         zygo_results::sweep(&p.cache_dir, &p.workspace_cache_dir(), SystemTime::now());
         // OP5: native Windows has no workspace features, so it has no mail sweep (the cfg of `op5`).
@@ -706,5 +717,49 @@ mod tests {
         let Some(MailCmd::Ls { name }) = mail(&["ls", "bob"]).unwrap().sub else { panic!() };
         assert_eq!(name.as_deref(), Some("bob"));
         assert!(mail(&[]).unwrap().sub.is_none());
+    }
+
+    #[test] // AU71, S§17 row cmd/mod.rs: the sweep rule
+    fn sweep_skips_hooks_mcp_ws_and_mail_sync_background() { // U2
+        let cmd = |a: &[&str]| Cli::try_parse_from(a).unwrap().command;
+        assert!(super::skips_sweep(&cmd(&["zygo", "mail", "sync", "--ws-id", "0123456789abcdef", "--background"])));
+        assert!(super::skips_sweep(&cmd(&["zygo", "ws", "forget", "app"])));
+        assert!(super::skips_sweep(&cmd(&["zygo", "mcp"])));
+        assert!(!super::skips_sweep(&cmd(&["zygo", "mail", "sync"])));
+        assert!(!super::skips_sweep(&cmd(&["zygo", "mail", "ls"])));
+        assert!(!super::skips_sweep(&cmd(&["zygo", "status"])));
+    }
+
+    #[test] // S§8.1 row 4, AU44: the options of zygo mail sync and the hidden child form
+    fn mail_sync_args_parse() { // U1
+        use super::mail::{MailArgs, MailCmd, SyncArgs};
+        let sync = |a: &[&str]| -> Result<SyncArgs, clap::Error> {
+            let argv: Vec<&str> = ["zygo", "mail", "sync"].iter().chain(a).copied().collect();
+            match Cli::try_parse_from(argv)?.command {
+                Cmd::Mail(MailArgs { sub: Some(MailCmd::Sync(s)) }) => Ok(s),
+                _ => panic!("not mail sync"),
+            }
+        };
+        let s = sync(&[]).unwrap();
+        assert!(s.name.is_none() && !s.prune && !s.take_host && !s.new_identity && s.drop_host.is_none() && !s.yes);
+        assert!(s.ws_id.is_none() && !s.background);
+        let s = sync(&["--name", "app", "--prune"]).unwrap();
+        assert_eq!((s.name.as_deref(), s.prune), (Some("app"), true));
+        let s = sync(&["--drop-host", "b", "--yes"]).unwrap();
+        assert_eq!((s.drop_host.as_deref(), s.yes), (Some("b"), true));
+        assert!(sync(&["--take-host"]).unwrap().take_host);
+        assert!(sync(&["--new-identity"]).unwrap().new_identity);
+        let s = sync(&["--ws-id", "0123456789abcdef", "--background"]).unwrap();
+        assert_eq!((s.ws_id.as_deref(), s.background), (Some("0123456789abcdef"), true));
+        for bad in [
+            &["--yes"][..], &["--prune", "--take-host"], &["--take-host", "--new-identity"],
+            &["--new-identity", "--drop-host", "b"], &["--prune", "--drop-host", "b"],
+            &["--ws-id", "0123456789abcdef"], &["--background"],
+            &["--ws-id", "0123456789abcdef", "--background", "--name", "app"],
+            &["--ws-id", "0123456789abcdef", "--background", "--take-host"],
+            &["--ws-id", "0123456789abcdef", "--background", "--drop-host", "b"],
+        ] {
+            assert!(sync(bad).is_err(), "{bad:?}");
+        }
     }
 }

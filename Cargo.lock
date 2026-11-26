@@ -3530,6 +3530,7 @@ dependencies = [
  "zygo-core",
  "zygo-hooks",
  "zygo-launch",
+ "zygo-mail-sync",
  "zygo-mcp",
  "zygo-plugins",
  "zygo-proxy",

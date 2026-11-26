@@ -1,18 +1,28 @@
-//! zygo mail send|read|ls|watch and /zygo:mail (M§8; owner: nodes ML-12, ML-13); the command-start mail sweep (M§5, AU71).
+//! zygo mail send|read|ls|watch and /zygo:mail (M§8; owner: nodes ML-12, ML-13); the command-start mail sweep (M§5, AU71);
+//! zygo mail sync (mail sync design S§8.1-S§8.3; owner: node MS-17).
 
 use std::ffi::OsStr;
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{anyhow, bail};
 use clap::{Args, Subcommand};
+use zygo_config::SyncOff;
 use zygo_core::esc;
 use zygo_core::verbs::MAIL_SLASH_ARGS;
 use zygo_core::paths::Paths;
+use zygo_mail_sync::env::{Env, NoSeam, SystemClock, TmuxWake};
+use zygo_mail_sync::ops;
+use zygo_mail_sync::public::LsRemote;
+use zygo_mail_sync::spawn::ChildSpawner;
+use zygo_mail_sync::state::SyncPaths;
+use zygo_mail_sync::sync::{run_with, Mode, Opts, Report, SyncError};
+use zygo_redact::secret::DeadlinePolicy;
 use zygo_workspace::identity::{valid_ws_id, workspace_id};
 use zygo_workspace::mail::{self, mail_dir, names, store, wake, MailError, BODY_MAX};
-use zygo_workspace::state::{Store, Workspace};
+use zygo_workspace::state::{list_all, Store, Workspace};
 use zygo_workspace::up::{find_checkout, GIT_BOUND};
 
 use super::verbs::VerbCtx;
@@ -30,6 +40,12 @@ const SLASH_GIT_BOUND: Duration = Duration::from_secs(2);
 
 /// The poll of `zygo mail watch` (A6): a send is seen within 1 s (M§13 #7).
 const WATCH_POLL: Duration = Duration::from_millis(500);
+
+/// S§8.3 step 3, D4: the CLI line when another sync of the workspace still holds the lock after `LOCK_WAIT`.
+const BUSY_LINE: &str = "zygo: another mail sync of this workspace holds the lock; try again";
+
+/// S§6.6 Limit, D4: the once-per-workspace note at the first `zygo mail sync` that ends without a stop.
+const CI_NOTE: &str = "zygo: each mail sync push can start CI and webhooks on the forge. The commits hold [skip ci]; webhooks, other workflow events and CI systems that do not read [skip ci] still run. Exclude zygo/** in such CI configs.";
 
 #[derive(Args)]
 pub struct MailArgs {
@@ -66,12 +82,47 @@ pub enum MailCmd {
         #[arg(long, default_value = "25m")]
         timeout: String,
     },
+    /// Sync this workspace's mail with the side branch of its remote
+    Sync(SyncArgs),
+}
+
+// `zygo mail sync` (S§8.1 row 4); a plain comment, so the about text is the doc of `MailCmd::Sync`.
+#[derive(Args)]
+#[command(group(clap::ArgGroup::new("op").multiple(false).args(["prune", "take_host", "new_identity", "drop_host"])))]
+pub struct SyncArgs {
+    /// Workspace name; default: the workspace of this session or folder
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Prune the side branch in this sync
+    #[arg(long)]
+    pub prune: bool,
+    /// Take the mail host name for this workspace (after the collision line)
+    #[arg(long)]
+    pub take_host: bool,
+    /// Make a new mail identity for this workspace (after the twin line)
+    #[arg(long)]
+    pub new_identity: bool,
+    /// Delete the waiting mail, registry and ack of a host that will never sync again
+    #[arg(long, value_name = "host")]
+    pub drop_host: Option<String>,
+    /// Answer yes to the question of --drop-host
+    #[arg(long, requires = "drop_host")]
+    pub yes: bool,
+    /// The hidden child form (S§8.1 child row, AU44): the workspace id the hook passes.
+    #[arg(long, hide = true, requires = "background")]
+    pub ws_id: Option<String>,
+    /// The hidden child form (S§8.1 child row, AU44): silent, `Mode::Child`.
+    #[arg(long, hide = true, requires = "ws_id", conflicts_with_all = ["name", "prune", "take_host", "new_identity", "drop_host", "yes"])]
+    pub background: bool,
 }
 
 /// `zygo mail`: the OP5 check first; bare `zygo mail` is `zygo mail ls` (D1).
 pub fn run(a: MailArgs) -> i32 {
     if let Some(code) = op5_exit() {
         return code;
+    }
+    if let Some(MailCmd::Sync(s)) = a.sub {
+        return sync_run(s);
     }
     let paths = Paths::from_env();
     let cwd = match cwd_or_exit() {
@@ -127,6 +178,7 @@ pub fn run(a: MailArgs) -> i32 {
             };
             watch(&mail_dir(&paths, &ws.id), &key, d, WATCH_POLL, &Instant::now, &mut std::io::stdout().lock())
         }
+        Some(MailCmd::Sync(_)) => unreachable!("taken above"),
         Some(MailCmd::Send { to, subject, file, stdin }) => {
             let cfg = match user_config_or_exit(&paths, "mail") {
                 Ok(c) => c,
@@ -210,7 +262,9 @@ pub fn verb(ctx: &VerbCtx, args: &[String]) -> anyhow::Result<String> {
     ls_text(&ctx.paths, &ws, name)
 }
 
-/// The command-start mail sweep (M§5, AU71): `cur/` files older than `[mail] keep` in each workspace. A user config
+/// The command-start mail sweep (M§5, AU71): `cur/` files older than `[mail] keep` in each workspace, and the outbox
+/// sweep of mail sync (S§9 last paragraph, D9): `outbox/refused/` files older than `keep` and `outbox/tmp/` files older
+/// than 1 h; queued outbox files are kept. A user config
 /// that does not load or a `keep` that does not parse gives no sweep (Open 2). A workspace folder or a `mail/` folder
 /// that is a link is not opened (as `admin.rs:410`). Every error is ignored.
 pub(crate) fn sweep(paths: &Paths, now: SystemTime) {
@@ -226,7 +280,187 @@ pub(crate) fn sweep(paths: &Paths, now: SystemTime) {
             continue;
         }
         store::sweep(&dir, keep, now);
+        if let Ok(sp) = SyncPaths::new(paths, id) {
+            zygo_mail_sync::outbox::sweep(&sp, keep, now);
+        }
     }
+}
+
+/// The production mail sync seams of the CLI (S§18; MS-18, MS-23): the system clock, the `git ls-remote` probe, no
+/// seam, the `<zygo> mail sync --ws-id <id> --background` child of this binary (the binary rule of `ws run`), the
+/// tmux wake and the default deadline policy of the secret pass (S§8.6).
+pub fn sync_env(paths: Paths) -> Env {
+    Env {
+        paths,
+        clock: Box::new(SystemClock),
+        probe: Box::new(LsRemote),
+        seam: Box::new(NoSeam),
+        spawner: Box::new(ChildSpawner {
+            zygo: super::member::zygo_binary(&std::env::current_exe().and_then(std::fs::canonicalize)),
+        }),
+        wake: Box::new(TmuxWake { tmux: tmux_program() }),
+        secret_policy: DeadlinePolicy::default(),
+    }
+}
+
+/// S§8.3 step 1 (D3): the CLI line of sync off for workspace `ws_name`.
+fn off_line(off: SyncOff, ws_name: &str) -> String {
+    let name = esc(ws_name);
+    match off {
+        SyncOff::NotOn => {
+            format!("zygo: mail sync is off for workspace {name}; set sync in [mail.workspace.{name}] of the user config")
+        }
+        SyncOff::NoHost => "zygo: mail sync is off: no mail host; set host in [mail] of the user config".into(),
+        SyncOff::BadHost => {
+            "zygo: mail sync is off: the mail host is not 1 to 32 of a-z, 0-9 and -, starting with a letter or a digit".into()
+        }
+        SyncOff::BadBranch => {
+            format!("zygo: mail sync is off: sync in [mail.workspace.{name}] is not zygo/ and 1 to 32 of a-z, 0-9 and -")
+        }
+        SyncOff::BadGap => "zygo: mail sync is off: sync_gap in [mail] is not <n>s, <n>m or <n>h".into(),
+    }
+}
+
+/// D6: the workspace whose name is `name`, resolved as `ws forget-pane --name` resolves it
+/// (`zygo_workspace::admin::named`): a readable state in a real state folder; a shared name is its line (exit 1).
+fn workspace_named(paths: &Paths, name: &str) -> anyhow::Result<Workspace> {
+    let all = list_all(paths);
+    match zygo_workspace::admin::named(paths, &all, name, true) {
+        Ok(Some(ws)) => Ok(ws.clone()),
+        Ok(None) => Err(anyhow!("zygo: no workspace named {}", esc(name))),
+        Err(line) => Err(anyhow!(line)),
+    }
+}
+
+/// `zygo mail sync` (S§8.1 row 4): the workspace of `--name`, else of this session or folder; then the sync.
+fn sync_run(a: SyncArgs) -> i32 {
+    if a.background {
+        return sync_background(Paths::from_env(), a.ws_id.as_deref().unwrap_or_default());
+    }
+    let paths = Paths::from_env();
+    let ws = match &a.name {
+        Some(n) => workspace_named(&paths, n),
+        None => {
+            let cwd = match cwd_or_exit() {
+                Ok(c) => c,
+                Err(code) => return code,
+            };
+            workspace_of(&paths, &cwd, std::env::var_os("ZYGO_WORKSPACE").as_deref(), GIT_BOUND)
+        }
+    };
+    let ws = match ws {
+        Ok(w) => w,
+        Err(e) => return finish(Err(e)),
+    };
+    let (stdin, stdout, stderr) = (std::io::stdin(), std::io::stdout(), std::io::stderr());
+    sync_cli(&sync_env(paths), &ws, &a, &mut stdin.lock(), &mut stdout.lock(), &mut stderr.lock())
+}
+
+/// `zygo mail sync --ws-id <id> --background` (S§8.1 child row, S§8.3; AU44, D7): one `Mode::Child` sync that
+/// prints nothing on any path. A panic prints nothing either: the hook in place first writes the one `errors.log` line
+/// `mail sync: stopped: panic` (C6, S-C2) when `ws_id` is a workspace id whose state folder is a real folder, else
+/// nothing. An id that fails `valid_ws_id` stops at the gate (check `workspace`): exit 0, nothing written. The exit
+/// code is that of `SyncError::exit_code(Mode::Child)`.
+fn sync_background(paths: Paths, ws_id: &str) -> i32 {
+    let real = valid_ws_id(ws_id)
+        && std::fs::symlink_metadata(paths.workspaces_dir().join(ws_id)).is_ok_and(|m| m.is_dir());
+    let store = real.then(|| Store::open(&paths, ws_id));
+    std::panic::set_hook(Box::new(move |_| panic_line(store.as_ref(), &PANIC_LOGGED)));
+    #[cfg(feature = "test-hooks")]
+    if std::env::var_os("ZYGO_TEST_PANIC_SYNC").is_some() {
+        panic!("test panic in mail sync --background");
+    }
+    match run_with(&sync_env(paths), ws_id, Mode::Child, &Opts::default()) {
+        Ok(_) => 0,
+        Err(e) => e.exit_code(Mode::Child),
+    }
+}
+
+/// D7, C6: set once the hook of the hidden form has written its line in this process.
+static PANIC_LOGGED: AtomicBool = AtomicBool::new(false);
+
+/// D7, C6: the body of the hidden form's panic hook: the one `errors.log` line `mail sync: stopped: panic` to
+/// `store`, at most once while `written` is false (a panic in a `std::thread::scope` thread panics again on the main
+/// thread, and both reach the hook). No store: nothing.
+fn panic_line(store: Option<&Store>, written: &AtomicBool) {
+    if let Some(s) = store
+        && !written.swap(true, Ordering::SeqCst)
+    {
+        s.log_error("mail sync: stopped: panic");
+    }
+}
+
+/// S§7.6, S§8.2, S§8.3 (D1, D2, D5): `--drop-host` asks on `err` and reads the answer from `input`, and runs no
+/// sync; `--take-host` and `--new-identity` run their operation and the sync; else one `Mode::Cli` sync of `ws`.
+/// The lines go to `out` and `err`; the result is the exit code.
+fn sync_cli(env: &Env, ws: &Workspace, a: &SyncArgs, input: &mut dyn BufRead, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    if let Some(host) = &a.drop_host {
+        let dropped = {
+            let mut ask = |prompt: &str| -> bool {
+                if a.yes {
+                    let _ = writeln!(err, "{prompt} y (--yes)");
+                    return true;
+                }
+                let _ = write!(err, "{prompt} ");
+                let _ = err.flush();
+                super::plugins::confirm(input)
+            };
+            ops::drop_host(env, &ws.id, host, &mut ask)
+        };
+        return match dropped {
+            Ok(None) => {
+                let _ = writeln!(out, "zygo: host {} not dropped", esc(host));
+                0
+            }
+            Ok(Some(n)) => {
+                let _ = writeln!(out, "zygo: host {} dropped; {n} messages deleted", esc(host));
+                0
+            }
+            Err(e) => {
+                print_error(&e, &ws.name, err);
+                e.exit_code(Mode::Cli)
+            }
+        };
+    }
+    let done = if a.take_host {
+        ops::take_host(env, &ws.id)
+    } else if a.new_identity {
+        ops::new_identity(env, &ws.id)
+    } else {
+        run_with(env, &ws.id, Mode::Cli, &Opts { prune: a.prune })
+    };
+    match done {
+        Ok(r) => {
+            print_report(&r, out, err);
+            0
+        }
+        Err(e) => {
+            print_error(&e, &ws.name, err);
+            e.exit_code(Mode::Cli)
+        }
+    }
+}
+
+/// D1: the CI note on `out` when `r.ci_note` (S§6.6); each note on `err` as it is (fixed text, or text
+/// `public::classify` already scrubbed and escaped); then the summary on `out`. Write errors are ignored.
+fn print_report(r: &Report, out: &mut dyn Write, err: &mut dyn Write) {
+    if r.ci_note {
+        let _ = writeln!(out, "{CI_NOTE}");
+    }
+    for n in &r.notes {
+        let _ = writeln!(err, "{n}");
+    }
+    let _ = writeln!(out, "zygo: mail sync: {} sent, {} delivered", r.pushed, r.delivered);
+}
+
+/// D2: the one stderr line of a sync that did not run to its end. Write errors are ignored.
+fn print_error(e: &SyncError, ws_name: &str, err: &mut dyn Write) {
+    let line = match e {
+        SyncError::Off(o) => off_line(*o, ws_name),
+        SyncError::Busy => BUSY_LINE.to_string(),
+        SyncError::Stopped { line, .. } => line.clone(),
+    };
+    let _ = writeln!(err, "{line}");
 }
 
 /// The workspace of `ZYGO_WORKSPACE`, else of the checkout of `cwd`, with the error texts of `zygo workspace`
@@ -372,6 +606,52 @@ mod tests {
     #[test]
     fn watch_poll_is_at_most_1s() {
         assert!(super::WATCH_POLL <= std::time::Duration::from_secs(1));
+    }
+
+    /// MS-18, MS-23: `sync_env` keeps the paths and the default secret-pass policy.
+    #[test]
+    fn sync_env_keeps_paths_and_default_policy() { // U3
+        let p = zygo_core::paths::Paths::from_env();
+        let e = super::sync_env(p.clone());
+        assert_eq!(e.paths, p);
+        assert_eq!(e.secret_policy, zygo_redact::secret::DeadlinePolicy::default());
+    }
+
+    /// D2, D4 (review round 1, T1): a CLI sync that finds the lock held after the wait prints `BUSY_LINE` and exits 1.
+    #[test]
+    fn busy_is_the_busy_line_and_exit_1() {
+        use zygo_mail_sync::sync::{Mode, SyncError};
+        let mut err = Vec::new();
+        super::print_error(&SyncError::Busy, "app", &mut err);
+        assert_eq!(String::from_utf8(err).unwrap(), format!("{}\n", super::BUSY_LINE));
+        assert_eq!(super::BUSY_LINE, "zygo: another mail sync of this workspace holds the lock; try again");
+        assert_eq!(SyncError::Busy.exit_code(Mode::Cli), 1);
+    }
+
+    /// D7, C6 (review round 1, F3): a panic in a scoped thread panics again on the main thread; the hook body writes
+    /// one `errors.log` line for both.
+    #[test]
+    fn panic_line_is_written_at_most_once() {
+        let d = tempfile::TempDir::new().unwrap();
+        let data = d.path().join("data");
+        let cache = d.path().join("cache");
+        let paths = zygo_core::paths::Paths {
+            config_file: d.path().join("config.toml"),
+            sessions_dir: cache.join("sessions"),
+            marketplaces_dir: cache.join("marketplaces"),
+            plugin_store: data.join("plugins"),
+            approvals_file: data.join("approvals.toml"),
+            usage_db: data.join("usage.db"),
+            cache_dir: cache,
+            data_dir: data,
+        };
+        let store = zygo_workspace::state::Store::open(&paths, "0123456789abcdef");
+        let written = std::sync::atomic::AtomicBool::new(false);
+        super::panic_line(Some(&store), &written);
+        super::panic_line(Some(&store), &written);
+        let log = std::fs::read_to_string(store.dir().join("errors.log")).unwrap();
+        assert_eq!(log.lines().count(), 1, "{log}");
+        assert!(log.ends_with(" mail sync: stopped: panic\n"), "{log}");
     }
 }
 
