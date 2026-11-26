@@ -37,6 +37,7 @@ impl SystemGit {
 
 impl GitRunner for SystemGit {
     fn git(&self, top: &Path, args: &[&str], deadline: Instant) -> Result<Output, String> {
+        super::trap("SystemGit::git");
         crate::repo_file::git_out_with(Self::command(), top, args, deadline)
             .map(|o| Output { status: o.status, stdout: o.out, stderr: o.err })
             .map_err(str::to_owned)
@@ -75,6 +76,7 @@ pub const PROFILES_MAX: usize = 32;
 
 /// R§6.1 steps 2-5 on the default branch, as a full ref, under one budget.
 pub fn read_default(top: &Path, git: &dyn GitRunner) -> Read {
+    super::trap("read_default");
     let d = Instant::now() + BUDGET;
     let unread = |why: &str| Read::Unread { why: why.to_string() };
     let full_ref = match git.git(top, &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], d) {
@@ -126,6 +128,7 @@ pub fn read_default(top: &Path, git: &dyn GitRunner) -> Read {
 
 /// R§7.4: R§6.1 steps 3-5 at the saved commit, with no default-branch lookup.
 pub fn read_at(top: &Path, commit: &str, git: &dyn GitRunner) -> Read {
+    super::trap("read_at");
     if !is_oid(commit) {
         return Read::Unread { why: format!("pinned commit {} is not an object id", esc(super::short(commit))) };
     }

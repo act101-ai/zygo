@@ -203,7 +203,7 @@ Session text (T, SX nodes):
 | OS-45 | Bound the usage-store wait in elapsed time | — | DONE | judgment | fb717aba · aecf74d2 · a0378951 · acceptance pass (busy_wait 7, zygo-usage, zygo-hooks, readbacks) · PR #203 |
 | OS-47 | Runner view cost on large inputs, output unchanged | — | DONE | judgment | f1d69ae0 · d56988df · c37c66d4 · acceptance pass (runner_fast_path 5, zygo-results, shaping 36, shaping_fixtures 22, shaping_hook 29) · PR #206 |
 | OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45, OS-47 | TODO | lookup | — |
-| WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | TODO | implementation | — |
+| WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | DONE | implementation | 15ea1e5b^..9a264b0a · acceptance pass (definition_hooks 11 passed) · PR #218 |
 | WD-21 | PR1 live check (operator): two pool members send two logins | WD-14, ML-19 | TODO | mechanical | — |
 | WD-22 | PR2 live check (operator): per-session settings act the same on a pool directory | WD-14, WD-21 | TODO | mechanical | — |
 | MS-22 | No mail content in logs, state, usage rows, commits or refs | MS-18, MS-19, MS-21 | TODO | implementation | — |
@@ -231,7 +231,6 @@ Session text (T, SX nodes):
 | FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | DONE | implementation | 569e61a9^..9ac65902 · acceptance pass (shape_clean 35 passed) · PR #211 |
 | FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | TODO | implementation | — |
 | FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | TODO | implementation | — |
-| WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
 | MS-26 | `state::load` refuses a state.json value that `save` refuses (S§8.3) | MS-5 | DONE | implementation | 2c17b835 · acc 20/0; floor green · PR #83 |
 
@@ -435,3 +434,5 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-22, FX-23 added: WD-14 review: built-in act101 tag v2.9.2 moved upstream (every launch prints the tag-moved line); six binary test files launch with the built-in marketplace on and reach the network |
 | 2026-11-26 | MS-18 plan: premise drift: S§7.2 not-local line for read/ls/watch; S§7.5 doctor twin line on last_error twin; S§10.3 ls sync line form; S§8.1 row 3 watch sync |
 | 2026-11-26 | MS-18 DONE: CLI send/read/ls/watch with addresses, ls sync line, doctor twin line; review R1 F1/F3 (watch synced in process, a hang blocked it) → watch starts the child; R2 F1 per-workspace rate limit, F2 F3 fixed, F4 F5 recorded · PR #215 |
+| 2026-11-26 | WD-19 plan: premise held: hooks, MCP and status line read nothing from .zygo/; node adds tests only; R§8 and R§18 item 20 restated against the code |
+| 2026-11-26 | WD-19 DONE: scans, repo_def tripwire (test-hooks feature, test builds only), inotify watch and git output canary prove no .zygo/ read on hook, MCP and status-line paths; R1 F1-F7, R2 F1 F2 fixed, F3 recorded · PR #218 |

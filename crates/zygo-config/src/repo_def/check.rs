@@ -34,6 +34,7 @@ pub enum Use {
 
 /// R§7.3: one read of the default branch; the digest and the definition both come from that one read.
 pub fn check_default(top: &Path, ws_id: &str, approvals: &Path, git: &dyn GitRunner) -> Use {
+    super::trap("check_default");
     let files = match read_default(top, git) {
         Read::Absent { full_ref } => return Use::Absent { full_ref: full_ref.unwrap_or_default() },
         Read::Unread { why } => return Use::Unread { why },
@@ -66,6 +67,7 @@ pub enum PinnedUse {
 
 /// R§7.4: one read at `pin.commit`; approved only when its digest is `pin.digest` and that pair is stored.
 pub fn check_pinned(top: &Path, ws_id: &str, pin: &Pin, approvals: &Path, git: &dyn GitRunner) -> PinnedUse {
+    super::trap("check_pinned");
     let files = match read_at(top, &pin.commit, git) {
         Read::Gone { .. } => return PinnedUse::Gone,
         Read::Unread { why } => return PinnedUse::Unread { why },
