@@ -186,10 +186,41 @@ CASES += [
      "Platform: darwin\n - Shell: (omitted)\n - OS Version: (os omitted)\n - Downloaded files", ["zsh", "25.6.0"]),
     ("claude code env block, json-escaped", "x\\n - Shell: bash\\n - OS Version: Linux 6.8.0-49-generic\\n - y",
      "x\\n - Shell: (omitted)\\n - OS Version: (os omitted)\\n - y", ["bash", "6.8.0"]),
-    ("shell outside an env block kept", 'Shell: zsh is the default; "shell": "/bin/zsh"',
-     'Shell: zsh is the default; "shell": "/bin/zsh"', []),
+    ("shell outside an env block kept", 'The Shell: zsh is the default; "shell": "/bin/zsh"',
+     'The Shell: zsh is the default; "shell": "/bin/zsh"', []),
     ("env block placeholders kept", " - Shell: (omitted)\n - OS Version: (os omitted)",
      " - Shell: (omitted)\n - OS Version: (os omitted)", []),
+    # Review round 1 F5: any case, any whitespace after the colon (space, tab, escaped \t), with or
+    # without the leading "- ", at a line start or after a literal or escaped newline.
+    ("env block, lower case", "x\n - shell: zsh\n - os version: Darwin 25.6.0",
+     "x\n - shell: (omitted)\n - os version: (os omitted)", ["zsh", "25.6.0"]),
+    ("env block, upper case", "x\n - SHELL: zsh\n - OS VERSION: Darwin 25.6.0",
+     "x\n - SHELL: (omitted)\n - OS VERSION: (os omitted)", ["zsh", "25.6.0"]),
+    ("env block, tab after the colon", "x\n - Shell:\tzsh\n - OS Version:\tDarwin 25.6.0",
+     "x\n - Shell:\t(omitted)\n - OS Version:\t(os omitted)", ["zsh", "25.6.0"]),
+    ("env block, escaped tab after the colon", "x\\n - Shell:\\tzsh\\n - OS Version:\\tDarwin 25.6.0",
+     "x\\n - Shell:\\t(omitted)\\n - OS Version:\\t(os omitted)", ["zsh", "25.6.0"]),
+    ("env block, no dash", "Shell: zsh\nOS Version: Darwin 25.6.0",
+     "Shell: (omitted)\nOS Version: (os omitted)", ["zsh", "25.6.0"]),
+    ("env block, no dash after an escaped newline", "x\\nShell: fish\\nOS Version: Linux 6.8.0",
+     "x\\nShell: (omitted)\\nOS Version: (os omitted)", ["fish", "6.8.0"]),
+    # Review round 1 F8: an escaped backslash then "n" is not a newline; an escaped backslash then an
+    # escaped newline is one.
+    ("env block, escaped backslash then n kept", "x\\\\n - Shell: zsh", "x\\\\n - Shell: zsh", []),
+    ("env block, escaped backslash then escaped newline", "x\\\\\\n - Shell: zsh",
+     "x\\\\\\n - Shell: (omitted)", ["zsh"]),
+    # Review round 1 F3: the Stainless SDK's architecture and runtime version headers.
+    ("stainless arch and runtime version", '"x-stainless-arch": "arm64", "X-Stainless-Runtime-Version": "v26.12.1"',
+     '"x-stainless-arch": "(arch omitted)", "X-Stainless-Runtime-Version": "(version omitted)"', ["arm64", "26.12.1"]),
+    ("stainless headers, escaped", '{\\"x-stainless-arch\\":\\"x64\\",\\"x-stainless-runtime-version\\":\\"v22.1.0\\"}',
+     '{\\"x-stainless-arch\\":\\"(arch omitted)\\",\\"x-stainless-runtime-version\\":\\"(version omitted)\\"}',
+     ["x64", "22.1.0"]),
+    ("stainless header line", "x-stainless-arch: arm64\nx-stainless-os: MacOS",
+     "x-stainless-arch: (arch omitted)\nx-stainless-os: MacOS", ["arm64"]),
+    ("stainless placeholders kept", '"x-stainless-arch": "(arch omitted)", "x-stainless-runtime-version": "(version omitted)"',
+     '"x-stainless-arch": "(arch omitted)", "x-stainless-runtime-version": "(version omitted)"', []),
+    # Review round 1 F7: the process id in a Claude Code messaging socket path.
+    ("messaging socket pid", "/tmp/cc-socks/95709.sock", "/tmp/cc-socks/<pid>.sock", ["95709"]),
 ]
 # T8: the macOS LocalHostName and ComputerName, when scutil gives them (4 characters or more).
 for k in ("LocalHostName", "ComputerName"):
@@ -414,11 +445,21 @@ def main():
         got = json.loads(scrub(t))
         if got != {"x": "msg_placeholder0001", "y": "fco_placeholder0001"}:
             bad.append("upper-case item id: got %r" % (got,))
+        # PC-13 review round 1 F3: Stainless headers of a captured request (keys of a parsed object, any
+        # case); the OS family header is kept.
+        t = os.path.join(d, "stainless.json")
+        with open(t, "w") as f:
+            json.dump({"headers": {"x-stainless-arch": "arm64", "X-Stainless-Runtime-Version": "v26.12.1",
+                                   "x-stainless-os": "MacOS"}}, f)
+        got = json.loads(scrub(t))
+        if got != {"headers": {"x-stainless-arch": "(arch omitted)", "X-Stainless-Runtime-Version": "(version omitted)",
+                               "x-stainless-os": "MacOS"}}:
+            bad.append("stainless header keys: got %r" % (got,))
     for b in bad:
         print("scrub test fail: " + b)
     if bad:
         sys.exit(1)
-    print("scrub tests: ok (%d)" % (len(CASES) + 16))
+    print("scrub tests: ok (%d)" % (len(CASES) + 17))
 
 
 main()
