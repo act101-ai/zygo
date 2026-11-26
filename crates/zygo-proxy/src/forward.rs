@@ -603,16 +603,25 @@ async fn run(
 
 /// An upstream error on a translated Responses request, before the first byte (K§6.4.4, K-D50): `translate_error`'s
 /// status and error in the OpenAI shape; a context-limit refusal in the shape Codex recovers from (PC14,
-/// `fixtures/codex/errors/context-400.json`). Both Anthropic overflow texts reach the check as `prompt is too long`:
-/// Anthropic's own text as sent, the `exceed context limit` text as `context_error` maps it.
+/// `fixtures/codex/errors/context-400.json`): a `prompt is too long` message (Anthropic's own text, or `translate_error`'s
+/// mapping), or Anthropic's full `max_tokens` limit form with its message under the echo rule (K§6.7). That form is
+/// mapped here only: every other client gets it unchanged (Claude Code parses it).
 fn responses_error(status: StatusCode, body: &[u8], estimate: u64, key: Option<&str>) -> (StatusCode, Value) {
     let (s, m) = translate_error(status, body, estimate, key);
     let message = m["error"]["message"].as_str().unwrap_or_default();
-    if s == StatusCode::BAD_REQUEST && message.starts_with("prompt is too long") {
+    if s == StatusCode::BAD_REQUEST && (message.starts_with("prompt is too long") || anthropic_limit_form(message)) {
+        let message = if message.starts_with("prompt is too long") { message.to_string() } else { responses_client::cut(message) };
         let e = json!({"message": message, "type": "invalid_request_error", "param": "input", "code": "context_length_exceeded"});
         return (s, json!({ "error": e }));
     }
     (s, json!({ "error": m["error"] }))
+}
+
+/// Anthropic's refusal when input plus `max_tokens` is over the window, in full (the form Claude Code parses).
+fn anthropic_limit_form(m: &str) -> bool {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"input length and `max_tokens` exceed context limit: \d+ \+ \d+ > \d+").expect("valid pattern"))
+        .is_match(m)
 }
 
 /// A read error on the served response (Round 2, F6), or a translated 2xx that is not a response (Round 3, D4): the

@@ -67,7 +67,7 @@ const ECHO_MAX: usize = 64;
 
 /// A client name or type as an error message may echo it: its first `ECHO_MAX` characters, each control (Cc), format
 /// (Cf), line separator (Zl) or paragraph separator (Zp) character replaced with `?`.
-fn cut(x: &str) -> String {
+pub(crate) fn cut(x: &str) -> String {
     x.chars().take(ECHO_MAX).map(|c| if c.is_control() || is_format_or_separator(c) { '?' } else { c }).collect()
 }
 
