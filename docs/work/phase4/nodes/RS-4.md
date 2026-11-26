@@ -189,3 +189,17 @@ Review of PR #165 at bcd6758b (1 important, 4 nits). Round 2 merges `origin/phas
   - `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings`: clean.
   - `responses_forward`: 30 runs, 0 failures.
   - Workspace: 2423 passed, 2 failed, 778 ignored. The 2 failures are the known `zygo --test guard_hook` environment failures under /private/tmp.
+
+### Round 3
+
+Review round 2 of PR #165 at a516e20c (2 important, 2 nits). Each fix is test-first: the test failed before the fix and passes after it.
+
+- G1 (important, fixed in 3fb742f9): after the encoder's terminal event, `next_chunk` ends the client body. The rest of the upstream is read in a detached task (`drain`, `tokio::spawn`) that owns the `Flow`. The task reads through the tee, and the usage row is written once, when the `Flow` drops. The task ends at the upstream end, at a read error or at the upstream idle read timeout. Tests: `client_released_at_completed` and `client_released_at_encoder_failure`. In each test the mock (`reply_held`) declares `content-length` + 1 and keeps the connection open until the test sends on a oneshot. The client body ends with `response.completed` or `response.failed`. After the release, the row has the final `message_delta` counts. Before the fix both reads did not end. `encoder_failure_row_has_final_usage` passes with no change, because `usage_rows` waits until the row is written.
+- G2 (important, fixed in 3d957228): the `prompt is too long` branch of `pc14_form` now goes through `pc14_message`, which applies the 512-character cap and replaces Cc, Cf, Zl and Zp characters. `responses_error` uses the same function. Test: `in_stream_prompt_too_long_capped_and_cleaned`. Before the fix the message had 5046 characters.
+- G3 (nit, fixed in 617529f9): if a data line does not parse as JSON and contains the provider key, `Streamed::line` replaces each occurrence of the key with `[REDACTED]` (`scrub`). The parsed path is unchanged. Test: `split_error_event_without_key`. Before the fix the key reached the client in `response.failed`.
+- G4 (nit, fixed in ce397965): K§6.4.3 stream obligation 9 now states both bounded buffers: the tee's partial line and the encoder's held bytes. It gives the peak as about 2 × `HOLD_MAX` per stream. One change-log line was added (author's call). The code is unchanged.
+- Results (round 3):
+  - Check `cargo test -p zygo-proxy --locked`: 501 passed, 0 failed.
+  - Acceptance: exit 0, with 18 tests in `responses_forward`.
+  - `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings`: clean.
+  - Workspace: 2434 passed, 2 failed, 778 ignored. The 2 failures are the known `zygo --test guard_hook` environment failures under /private/tmp.
