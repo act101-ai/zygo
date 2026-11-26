@@ -192,7 +192,6 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
-| ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
 | MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5, OS-4 | DONE | implementation | ea149eab, ad7d3736 · acc 18/18, 26/26 · PR #148 |
 | OS-27 | Shape-off baseline: hook output and stored file of the `97d8767` behavior | OS-9, OS-17, OS-18, OS-19, OS-20, OS-21 | DONE | implementation | abea1612, 74976374 · acc 5/5 · PR #140 |
 | OS-30 | Runner views: dispatch and the libtest view (pipeline step 3) | OS-29, OS-19 | DONE | judgment | 974fef24 plan; 6f4959d7, d1f02107, eef74481; shape_runner_libtest 20/20, shape_pipeline 24/24; PR #158 |
@@ -405,5 +404,6 @@ Session text (T, SX nodes):
 | 2026-11-25 | OS-30 DONE: libtest runner view and dispatch as pipeline step 3; review round 2 fixed F1-F4 (failure sections, binary boundary, dedup lines, ASCII/CR whitespace); F5 is FX-16; F6 fixed in the OS-36 contract. |
 | 2026-11-25 | FX-14 DONE: `zygo up` prints only team-layer warnings; CLI test of `with_team`, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code. 2 rounds; review F1, F2 fixed; F3 nit kept; F4 (max_members range) is new node FX-17 · PR #162 |
 | 2026-11-25 | FX-17 added from FX-14 review F4: `zygo up` takes `[limits] max_members` from the team or user layer with no 1-32 range check; contract reuses the `config check` rule via the `check_jobs` path (check.rs:119-120, up.rs:797-808) |
+| 2026-11-25 | ML-13 DONE: zygo mail watch (exit 0 on any file in new/, 1 at timeout, default 25m, 500ms poll). Review R1-R7: wake on unparsable files, write error exits 1, help/cli_surface, duplicate-name and poll-bound tests · PR #159 |
 | 2026-11-25 | OS-25 DONE: PO3 verified on OpenCode 1.18.16 (live-shaping.sh po3, mock upstream): output.output holds stdout then stderr. Review R1-R3: run-opencode.sh keeps fixtures it does not write; test name match exact; spec records PO3. F2 (no PO arm in check-premises) awaits operator OK. |
 | 2026-11-25 | OS-26 DONE: PO4 verified on Claude Code 2.1.332 and OpenCode 1.18.16 (wrapper 0 bytes up to 5199-byte replies); review findings 5: 3 confirmed and fixed, 2 refuted; new node OS-44 for read-back bytes above the agent's cut limits · PR #170 |
