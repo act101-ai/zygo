@@ -46,6 +46,18 @@ fn other_machines_holds_at_most_64_addresses() {
     );
 }
 
+#[test] // S§10.4: each address once, first occurrence kept; the cap and `<n>` count distinct addresses
+fn other_machines_names_each_address_once() {
+    assert_eq!(mail::other_machines(&["bob@b".to_string(), "bob@b".to_string()]).as_deref(), Some(ONE));
+    let mut a = addrs(65);
+    a.insert(1, "m0@b".to_string());
+    let d = addrs(65);
+    assert_eq!(
+        mail::other_machines(&a),
+        Some(format!("Other machines: {}, and 1 more; mail_list lists all; mail them by the full address.", first64(&d)))
+    );
+}
+
 #[test] // S§10.4: only when the member cache is not empty
 fn other_machines_is_none_for_no_address() {
     assert_eq!(mail::other_machines(&[]), None);
@@ -226,6 +238,27 @@ mod at_session_start {
         let empty = fx(Agent::ClaudeCode, ON);
         cache(&empty, &[]);
         assert_eq!(text(&empty), format!("TEXT\n\n{}", item(None)));
+    }
+
+    #[test] // S§10.4: a registry with `bob` twice for `b` gives `bob@b` once
+    fn item_8_names_a_duplicate_address_once() {
+        let f = fx(Agent::ClaudeCode, ON);
+        cache(&f, &[("b", &["bob", "bob"])]);
+        assert_eq!(text(&f), format!("TEXT\n\n{}", item(Some(ONE))));
+    }
+
+    #[test] // M§8a: a config that does not load gives no clause and no extra line
+    fn no_clause_with_a_config_that_does_not_load() {
+        let f = fx(Agent::ClaudeCode, "[mail\nhost = ");
+        cache(&f, &[("b", &["bob"])]);
+        assert_eq!(text(&f), format!("TEXT\n\n{}", item(None)));
+    }
+
+    #[test] // M§8a, S§11: sync on for another workspace gives no clause in `app`
+    fn no_clause_with_sync_on_for_another_workspace() {
+        let f = fx(Agent::ClaudeCode, "[mail]\nhost = \"studio\"\n\n[mail.workspace.other]\nsync = \"zygo/mail\"\n");
+        cache(&f, &[("b", &["bob"])]);
+        assert_eq!(text(&f), format!("TEXT\n\n{}", item(None)));
     }
 
     #[test] // S§10.4, M§8a, M-C2: addresses only, no message text

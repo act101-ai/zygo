@@ -13,15 +13,22 @@ const MAIL_TAIL: &str = "Send with mail_send (to a name, or `all`); read with ma
 /// The most addresses the "Other machines" clause of item 8 names (mail sync design S§10.4).
 const OTHER_MACHINES_MAX: usize = 64;
 
-/// The "Other machines" clause of item 8 (mail sync design S§10.4): each address of `addresses` passes `esc`, at most
-/// 64, then `and <n> more; mail_list lists all` for the `n` left out. `None` for no address.
+/// The "Other machines" clause of item 8 (mail sync design S§10.4): each address of `addresses` once, first occurrence
+/// kept, each passing `esc`, at most 64, then `and <n> more; mail_list lists all` for the `n` distinct addresses left
+/// out. `None` for no address.
 pub fn other_machines(addresses: &[String]) -> Option<String> {
-    if addresses.is_empty() {
+    let mut distinct: Vec<&String> = Vec::new();
+    for a in addresses {
+        if !distinct.contains(&a) {
+            distinct.push(a);
+        }
+    }
+    if distinct.is_empty() {
         return None;
     }
-    let mut list: Vec<String> = addresses.iter().take(OTHER_MACHINES_MAX).map(|a| esc(a)).collect();
-    if addresses.len() > OTHER_MACHINES_MAX {
-        list.push(format!("and {} more; mail_list lists all", addresses.len() - OTHER_MACHINES_MAX));
+    let mut list: Vec<String> = distinct.iter().take(OTHER_MACHINES_MAX).map(|a| esc(a)).collect();
+    if distinct.len() > OTHER_MACHINES_MAX {
+        list.push(format!("and {} more; mail_list lists all", distinct.len() - OTHER_MACHINES_MAX));
     }
     Some(format!("Other machines: {}; mail them by the full address.", list.join(", ")))
 }
