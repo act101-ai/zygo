@@ -194,8 +194,6 @@ Session text (T, SX nodes):
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | TODO | judgment | — |
 | OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4 | TODO | judgment | — |
-| OS-31 | pytest runner view | OS-30, OS-20 | DONE | judgment | 86aaac5a, 1b22b0ca, f6759d10, 7544ce89 · acceptance 18 passed · PR #166 |
-| WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | DONE | judgment | bae5b7af, 11d71492 · up_definition 35/0 ; floor green · PR #125 |
 | ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | DONE | mechanical | plan 0cbac05c · node b16ce79f, f13fe09b · acceptance LIVE M12 verified (agent 2.1.332): 3 of 3 ; check-premises ok · PR #178 |
 | MS-14 | Prune: orphan rewrite of acknowledged files, lease push | MS-13 | DONE | judgment | plan d2642ab4; node 51e0a828, ba8f8542, af8c6af8, f0cb91a7, f7a2bd2a; prune 18 passed; PR #179 |
 | MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | DONE | mechanical | plan fb76dfa8 · node 0febbe3b, 7e7d53a3, e63e4c6c, 8d5469a7 · acceptance pass (mail_sync_text 12 passed, session_text 43 passed) · PR #177 |
@@ -207,7 +205,7 @@ Session text (T, SX nodes):
 | WD-18 | Session text: each member's job and the job sentence | WD-11, ML-9, ML-10, MS-20 | TODO | implementation | — |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | TODO | implementation | — |
 | OS-35 | Fixture views through the hook: goldens, floors, recovery, bless guard | OS-34, OS-32, OS-42 | TODO | judgment | — |
-| SX-4 | `hook trim` takes the flag and adds `additionalContext` = mechanics text, once (T§9.2 item 2) | SX-1, SX-3, OS-34 | TODO | judgment | — |
+| SX-4 | `hook trim` takes the flag and adds `additionalContext` = mechanics text, once (T§9.2 item 2) | SX-1, SX-3, OS-34 | DONE | judgment | plan 5441dd4c · node d37419f1, 927b1246, 86db8ba5 · acceptance pass (trim 17 listed; reinject trim 17 passed; zygo-hooks 344 passed) · PR #191 |
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | TODO | implementation | — |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
 | OS-36 | The never-worse check over every case and the built inputs | OS-35 | TODO | judgment | — |
@@ -415,3 +413,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | OS-32 DONE, kept, round 1. Fixed F1 (panic/race/teardown after a passed test hidden; O-C9), F2 (unparsed mark), F3 (go test rules 1-3 rewritten, lead's call, O§15 decision record). Refuted F4 (fixed step set), F5, F6 (OS-36 seam) · PR #182 |
 | 2026-11-26 | OS-34 DONE, kept, round 1. Fixed F1 (test follows the PO2 row to failed), F3 (no prose assertion). F2 → FX-19 (PO2 run had stderr merged into stdout). Refuted F4 (fixed acceptance; --exact used), F5 (no failure) · PR #184 |
 | 2026-11-26 | FX-19 added: PO2 row states what its run observed (OS-34 review F2); OS-42 and MS-25 now depend on it (shared files: output-shaping spec, premises.md) |
+| 2026-11-26 | SX-4 DONE: hook trim takes the subagent's re-inject flag first and adds additionalContext once (T§9.2 item 2); review F1 (run entry test), F3 (stat error) and a doc nit fixed; F2 refuted (any remove/print order has a kill window; at-most-once holds). |
