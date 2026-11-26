@@ -34,7 +34,7 @@ use crate::session::{InFlight, SessionState};
 use crate::tee::{CacheSplit, ErrorCapture, SseLine, Tee, Ticket, Usage, UsageSink, COPY_MAX, ERROR_BODY_MAX};
 use crate::translate::schema::{NullMap, RestoreFilter};
 use crate::translate::{
-    facts, is_response, message_events, reasoning, schema, translate_error, translate_request, translate_response, SseEvent, StreamMapper,
+    facts, is_response, responses_client, message_events, reasoning, schema, translate_error, translate_request, translate_response, SseEvent, StreamMapper,
     Target,
 };
 use crate::window;
@@ -42,6 +42,8 @@ use crate::Url;
 
 pub const BUSY_WAIT: Duration = Duration::from_secs(5); // §7.3
 pub const INFLIGHT_FACTOR: u64 = 4; // §7.3
+/// The `anthropic-version` sent for a client that sends none (K§6.4.3).
+const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// Never forwarded upstream, whatever `forward_headers` says (§7.3 and its note; RFC 9110 §7.2, §7.6.1, §8.6;
 /// RFC 9112 §6.1).
@@ -168,12 +170,15 @@ impl ModelRoute {
         match self {
             ModelRoute::Messages => "/anthropic/v1/messages",
             ModelRoute::CountTokens => "/anthropic/v1/messages/count_tokens",
+            ModelRoute::Responses => "/openai/v1/responses",
         }
     }
     fn upstream_path(self) -> &'static str {
         match self {
             ModelRoute::Messages => "/v1/messages",
             ModelRoute::CountTokens => "/v1/messages/count_tokens",
+            // Its path on an `anthropic` upstream: the Messages body the request side builds (K§6.4.3).
+            ModelRoute::Responses => "/v1/messages",
         }
     }
 }
@@ -308,7 +313,7 @@ pub(crate) async fn handle(app: Arc<App>, s: Arc<SessionState>, route: ModelRout
                 p.row.status = e.status.as_u16();
                 p.row.latency_ms = ms(&app, start);
             }
-            e.into_response()
+            e.response(route.dialect())
         }
     }
 }
@@ -330,12 +335,16 @@ async fn run(
     let (raw, permit) = read_charged(app, req).await?;
     let repeated = key_scan(&raw)?;
     let body: Value = serde_json::from_slice(&raw).map_err(|_| ZygoError::bad_request("invalid JSON body"))?;
+    // The Responses field lists before any stage (K§11 item 12).
+    if route == ModelRoute::Responses {
+        responses_client::check_fields(&body)?;
+    }
     let name = body.get("model").and_then(Value::as_str).ok_or_else(|| ZygoError::bad_request("model must be a string"))?.to_string();
     let mut ctx = RequestCtx {
         session: s.clone(),
         cfg: app.served().cfg.clone(),
         route,
-        dialect: Dialect::Anthropic,
+        dialect: route.dialect(),
         headers,
         raw,
         body,
@@ -435,12 +444,17 @@ async fn run(
         attempted = true;
         // A loopback upstream never goes through a proxy (C3).
         let http = if loopback(&url, &[]) { &app.direct } else { &app.http };
+        let mut out = match pt {
+            Some(t) => t.outbound(&ctx.headers, &c.provider),
+            None => outbound_headers(&ctx.headers, &c.provider, c.dialect, c.key.as_ref()),
+        };
+        // A Responses client sends no `anthropic-version`; the Anthropic API needs it (K§6.4.3).
+        if ctx.dialect == Dialect::Openai && c.dialect == Dialect::Anthropic && !out.contains_key("anthropic-version") {
+            out.insert("anthropic-version", HeaderValue::from_static(ANTHROPIC_VERSION));
+        }
         let sent = http
             .post(url)
-            .headers(match pt {
-                Some(t) => t.outbound(&ctx.headers, &c.provider),
-                None => outbound_headers(&ctx.headers, &c.provider, c.dialect, c.key.as_ref()),
-            })
+            .headers(out)
             .body(body)
             .send()
             .await;
@@ -495,6 +509,10 @@ async fn run(
     let mut adjustments = ctx.adjustments;
     adjustments.extend(extra);
     let mut mapper = None;
+    // The Responses encoder of a translated 2xx is RS-4's: until then no such answer reaches the client.
+    if ctx.dialect == Dialect::Openai && translated && status.is_success() {
+        return Err(read_failed(slot, c, &adjustments, upstream_bad_response()));
+    }
     // Injected nulls are removed on the way back (§7.6): a Messages 2xx with a non-empty map.
     let armed = route == ModelRoute::Messages && status.is_success() && !nulls.is_empty();
     let mut restore = None;
@@ -521,7 +539,11 @@ async fn run(
             }
             m
         } else {
-            let (s, v) = translate_error(status, &bytes, estimate, key);
+            let (s, v) = if ctx.dialect == Dialect::Openai {
+                responses_error(status, &bytes, estimate, key)
+            } else {
+                translate_error(status, &bytes, estimate, key)
+            };
             status = s;
             v
         };
@@ -577,6 +599,41 @@ async fn run(
     *out.status_mut() = status;
     *out.headers_mut() = headers;
     Ok(out)
+}
+
+/// An upstream error on a translated Responses request, before the first byte (K§6.4.4, K-D50): `translate_error`'s
+/// status and error in the OpenAI shape; a context-limit refusal in the shape Codex recovers from (PC14,
+/// `fixtures/codex/errors/context-400.json`): a `prompt is too long` message (Anthropic's own text, or `translate_error`'s
+/// mapping), or Anthropic's full `max_tokens` limit form with its message cleaned (`pc14_message`). That form is
+/// mapped here only: every other client gets it unchanged (Claude Code parses it).
+fn responses_error(status: StatusCode, body: &[u8], estimate: u64, key: Option<&str>) -> (StatusCode, Value) {
+    let (s, m) = translate_error(status, body, estimate, key);
+    let message = m["error"]["message"].as_str().unwrap_or_default();
+    if s == StatusCode::BAD_REQUEST && (message.starts_with("prompt is too long") || anthropic_limit_form(message)) {
+        let message = if message.starts_with("prompt is too long") { message.to_string() } else { pc14_message(message) };
+        let e = json!({"message": message, "type": "invalid_request_error", "param": "input", "code": "context_length_exceeded"});
+        return (s, json!({ "error": e }));
+    }
+    (s, json!({ "error": m["error"] }))
+}
+
+/// The most characters of an upstream message in the PC14 shape: the limit form's numbers survive (K§6.4.4).
+const PC14_MESSAGE_MAX: usize = 512;
+
+/// The upstream message, its first `PC14_MESSAGE_MAX` characters, each control (Cc), format (Cf), line separator (Zl)
+/// or paragraph separator (Zp) character replaced with `?` (K§6.4.4).
+fn pc14_message(m: &str) -> String {
+    m.chars()
+        .take(PC14_MESSAGE_MAX)
+        .map(|c| if c.is_control() || responses_client::is_format_or_separator(c) { '?' } else { c })
+        .collect()
+}
+
+/// Anthropic's refusal when input plus `max_tokens` is over the window, in full (the form Claude Code parses).
+fn anthropic_limit_form(m: &str) -> bool {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"input length and `max_tokens` exceed context limit: \d+ \+ \d+ > \d+").expect("valid pattern"))
+        .is_match(m)
 }
 
 /// A read error on the served response (Round 2, F6), or a translated 2xx that is not a response (Round 3, D4): the
@@ -786,6 +843,9 @@ fn attempt_body(
 ) -> Result<(Bytes, Vec<Adjustment>, NullMap), ZygoError> {
     let family = if c.dialect == Dialect::Anthropic { Family::Anthropic } else { Family::Openai };
     let rules: Vec<SchemaRule> = rw.rules.iter().filter(|r| r.family == family).cloned().collect();
+    if client == Dialect::Openai && c.dialect != client {
+        return responses_attempt(body, raw, c, rw, &rules);
+    }
     if c.dialect != client {
         let mut a = body.clone();
         let mut codes = match rw.facts {
@@ -826,6 +886,41 @@ fn attempt_body(
     }
     let (b, adj) = model_body(body, raw, changed, c)?;
     Ok((b, adj, NullMap::default()))
+}
+
+/// A Responses body toward an `anthropic` or `openai-chat` candidate (K§6.4.3): the Messages body of
+/// `responses_client::request`, then facts and the schema rewrite as on a translated Messages request; to
+/// `openai-chat`, the Messages → chat translator after them (Messages is the pivot). Codes in the order `model_body`,
+/// `request`, facts, schema, translator.
+fn responses_attempt(
+    body: &Value,
+    raw: &Bytes,
+    c: &Candidate,
+    rw: &Rewrite,
+    rules: &[SchemaRule],
+) -> Result<(Bytes, Vec<Adjustment>, NullMap), ZygoError> {
+    let t = Target::of(c);
+    let (mut m, rc) = responses_client::request(body, &t, rw.facts)?;
+    let mut codes = match rw.facts {
+        Some(f) => facts::apply(&mut m, f),
+        None => vec![Adjustment("facts_missing".into())],
+    };
+    let (sc, nulls) = schema::rewrite(&mut m, rules);
+    codes.extend(sc);
+    let (mut v, tc) = if c.dialect == Dialect::OpenaiChat {
+        let (mut v, tc) = translate_request(&m, Dialect::OpenaiChat, &t)?;
+        if rw.facts.is_some() {
+            facts::write_effort(&m, &mut v, Dialect::OpenaiChat);
+        }
+        (v, tc)
+    } else {
+        (m, Vec::new())
+    };
+    let (b, mut adj) = model_body(&mut v, raw, true, c)?;
+    adj.extend(rc);
+    adj.extend(codes);
+    adj.extend(tc);
+    Ok((b, adj, nulls))
 }
 
 /// `model` := `upstream_model`; `provider.zdr = true` on an openrouter.ai host (§7.5), else
