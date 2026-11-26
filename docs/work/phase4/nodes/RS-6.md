@@ -10,7 +10,7 @@
 
 - Client policy stays the per-client config key `insert_markers.<agent>` read as today (`cache.rs:34`); the Codex default is P4-9 (K§6.4.2).
 - The marker is placed in `responses_attempt` (`forward.rs:977-1013`) in its Anthropic branch, after facts and the schema rewrite. `attempt_body` calls `responses_attempt` only for an Openai client and a non-Openai candidate (`forward.rs:897-899`), so that branch is the only place where the candidate is Anthropic and the client is Openai.
-- This node and RS-7 share no file (RS-7 changes `window.rs` and `tee.rs`), so they run in parallel after RS-5.
+- RS-7 also changes `forward.rs` (its premise check moved `tee.rs` out and `forward.rs` in) and depends on RS-6 in the graph, so RS-7 runs after this node.
 
 ## Plan
 
@@ -200,4 +200,14 @@ fn chat_upstream_no_markers() {
 
 ### Overlap
 
-Files: `cache.rs`, `forward.rs`, `tests/responses_cache.rs`. Open nodes: RS-14 (`forward.rs`) already depends on RS-6. RS-7 (`window.rs`, `tee.rs`; its node says no `forward.rs` change), RS-13, RS-12, PC-4, PC-7 and PC-11 share no file. No edge added.
+Files: `cache.rs`, `forward.rs`, `tests/responses_cache.rs`. Open nodes: RS-14 (`forward.rs`) already depends on RS-6. RS-7 (`window.rs`, `forward.rs`) depends on RS-6. RS-13, RS-12, PC-4, PC-7 and PC-11 share no file. No edge added.
+
+## Round 1 review
+
+Round 1 review of PR #176 at `ee14f787`: nits only. Round 2 on `phase-4--RS-6`.
+
+- F1 (`chat_upstream_no_markers` would still pass if marking moved before the chat translation): rejected. The test checks what the chat upstream receives, which is the observable behaviour. Today the Messages → chat translator drops `cache_control`, so both orders give the same body. If the translator ever forwards it, a misplaced marker reaches the chat body and this test fails.
+- F2 (route coverage): fixed (0655a9be). `responses_cache.rs`: `fallback_to_anthropic_gets_markers` (the `openai` candidate answers 500; its body has no marker, the `anthropic` fallback body has both), `streamed_request_gets_markers` (streamed 200 Messages SSE), `prompted_schema_inside_marked_system_block` (`structured_output = "none"`: the schema text ends the one marked `system` block). They passed on first run, as the behaviour was already right; with the `mark_upstream` call removed from `responses_attempt` all three fail.
+- F3 (`has_marker` scans the whole body, so a user key `cache_control` in a tool parameter schema, `output_config.format.schema` or a `tool_use` input turned markers off): fixed (0655a9be). `mark_upstream` now uses `has_placed_marker`, which looks only on `system` blocks, content blocks of `messages` and the top level of each `tools` entry. `CacheStage` keeps `has_marker`. Tests `cache::tests::mark_upstream_ignores_cache_control_in_user_values` (failed first) and `mark_upstream_leaves_a_marked_system_block`. K§6.4.2 row cache markers guard sentence rewritten as final text, with a change-log line.
+- F4 (stale citation `forward.rs:977-1013`): fixed (this commit). The row now cites `responses_attempt` at `forward.rs:988-1020`, and the Anthropic client's stage at `cache.rs:58-71` (it moved when `mark_upstream` was added).
+- Planning note on RS-7 (said no shared file): fixed (this commit), here and in Overlap.
