@@ -180,6 +180,17 @@ PC11 = [
     ("macos env name in a list", '["HOME","__CF_USER_TEXT_ENCODING"]', '["HOME","(os env omitted)"]', ["__CF"]),
 ]
 CASES += PC11
+# PC-13: the shell name and OS version lines of a Claude Code environment block.
+CASES += [
+    ("claude code env block", "Platform: darwin\n - Shell: zsh\n - OS Version: Darwin 25.6.0\n - Downloaded files",
+     "Platform: darwin\n - Shell: (omitted)\n - OS Version: (os omitted)\n - Downloaded files", ["zsh", "25.6.0"]),
+    ("claude code env block, json-escaped", "x\\n - Shell: bash\\n - OS Version: Linux 6.8.0-49-generic\\n - y",
+     "x\\n - Shell: (omitted)\\n - OS Version: (os omitted)\\n - y", ["bash", "6.8.0"]),
+    ("shell outside an env block kept", 'Shell: zsh is the default; "shell": "/bin/zsh"',
+     'Shell: zsh is the default; "shell": "/bin/zsh"', []),
+    ("env block placeholders kept", " - Shell: (omitted)\n - OS Version: (os omitted)",
+     " - Shell: (omitted)\n - OS Version: (os omitted)", []),
+]
 # T8: the macOS LocalHostName and ComputerName, when scutil gives them (4 characters or more).
 for k in ("LocalHostName", "ComputerName"):
     try:
