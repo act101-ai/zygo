@@ -204,11 +204,50 @@ CASES += [
      "Shell: (omitted)\nOS Version: (os omitted)", ["zsh", "25.6.0"]),
     ("env block, no dash after an escaped newline", "x\\nShell: fish\\nOS Version: Linux 6.8.0",
      "x\\nShell: (omitted)\\nOS Version: (os omitted)", ["fish", "6.8.0"]),
-    # Review round 1 F8: an escaped backslash then "n" is not a newline; an escaped backslash then an
-    # escaped newline is one.
-    ("env block, escaped backslash then n kept", "x\\\\n - Shell: zsh", "x\\\\n - Shell: zsh", []),
+    # Review round 2 G1 (replaces round 1 F8, fail closed): one or more backslashes then "n" or "r", a
+    # carriage return, or a \u000a escape starts a line.
+    ("G1: escaped backslash then n", "x\\\\n - Shell: zsh", "x\\\\n - Shell: (omitted)", ["zsh"]),
     ("env block, escaped backslash then escaped newline", "x\\\\\\n - Shell: zsh",
      "x\\\\\\n - Shell: (omitted)", ["zsh"]),
+    ("G1: plant.sse partial_json",
+     'data: {"delta":{"type":"input_json_delta","partial_json":"{\\"text\\": \\"a\\\\n - Shell: zsh\\\\n - OS Version: '
+     'Darwin 25.6.0\\"}"}}',
+     'data: {"delta":{"type":"input_json_delta","partial_json":"{\\"text\\": \\"a\\\\n - Shell: (omitted)\\\\n - '
+     'OS Version: (os omitted)\\"}"}}', ["zsh", "25.6.0"]),
+    ("G1: .summary.json doubly escaped", '{"summary": "a\\\\n - Shell: zsh\\\\n - OS Version: Darwin 25.6.0"}',
+     '{"summary": "a\\\\n - Shell: (omitted)\\\\n - OS Version: (os omitted)"}', ["zsh", "25.6.0"]),
+    ("G1: \\u000a escape", "x\\u000a - Shell: zsh\\u000A - OS Version: Darwin 25.6.0",
+     "x\\u000a - Shell: (omitted)\\u000A - OS Version: (os omitted)", ["zsh", "25.6.0"]),
+    ("G1: carriage return", "x\r - Shell: zsh\rOS Version: Darwin 25.6.0",
+     "x\r - Shell: (omitted)\rOS Version: (os omitted)", ["zsh", "25.6.0"]),
+    ("G1: escaped carriage return", "x\\r - Shell: zsh", "x\\r - Shell: (omitted)", ["zsh"]),
+    # Review round 2 G2: the dash form for any value; the dashless form only with a capital first
+    # letter and a host value. Prose and a YAML key are kept.
+    ("G2: dash form, any value", " - Shell: anything at all", " - Shell: (omitted)", ["anything"]),
+    ("G2: prose shell line kept", "Shell: run make first", "Shell: run make first", []),
+    ("G2: prose OS line kept", "OS version: check it is 14 or later", "OS version: check it is 14 or later", []),
+    ("G2: YAML shell key kept", "x\n  shell: bash\n", "x\n  shell: bash\n", []),
+    ("G2: dashless shell path", "Shell: /bin/zsh\nShell: /opt/homebrew/bin/fish",
+     "Shell: (omitted)\nShell: (omitted)", ["/bin/zsh", "fish"]),
+    ("G2: dashless OS values", "OS Version: macOS 15.1\nOS Version: Windows 10.0.26100",
+     "OS Version: (os omitted)\nOS Version: (os omitted)", ["15.1", "26100"]),
+    # Review round 2 G5: the key's own placeholder as the whole value; CRLF; anchored Stainless values.
+    ("G5: wrong placeholder on the shell line", " - Shell: (os omitted)", " - Shell: (omitted)", []),
+    ("G5: placeholder then text", " - Shell: (omitted) zsh", " - Shell: (omitted)", ["zsh"]),
+    ("G5: placeholder in upper case", " - OS Version: (OS OMITTED)", " - OS Version: (os omitted)", []),
+    ("G5: CRLF", "x\r\n - Shell: zsh\r\n - OS Version: Darwin 25.6.0\r\n",
+     "x\r\n - Shell: (omitted)\r\n - OS Version: (os omitted)\r\n", ["zsh", "25.6.0"]),
+    ("G5: Stainless wrong placeholder", '"x-stainless-arch": "(version omitted)"', '"x-stainless-arch": "(arch omitted)"',
+     []),
+    ("G5: Stainless placeholder then text", '"x-stainless-runtime-version": "(version omitted)v26"',
+     '"x-stainless-runtime-version": "(version omitted)"', ["v26"]),
+    ("G5: Stainless CRLF header line", "x-stainless-arch: arm64\r\nx-stainless-arch: (arch omitted)\r\n",
+     "x-stainless-arch: (arch omitted)\r\nx-stainless-arch: (arch omitted)\r\n", ["arm64"]),
+    # Review round 2 G8: quoted values and no-break spaces.
+    ("G8: quoted value", ' - Shell: "zsh"\nShell: "bash"', ' - Shell: "(omitted)"\nShell: "(omitted)"', ["zsh", "bash"]),
+    ("G8: escaped quoted value", 'x\\n - Shell: \\"zsh\\"', 'x\\n - Shell: \\"(omitted)\\"', ["zsh"]),
+    ("G8: no-break space", " - Shell: zsh\n - OS Version:\\u00a0Darwin 25.6.0",
+     " - Shell: (omitted)\n - OS Version:\\u00a0(os omitted)", ["zsh", "25.6.0"]),
     # Review round 1 F3: the Stainless SDK's architecture and runtime version headers.
     ("stainless arch and runtime version", '"x-stainless-arch": "arm64", "X-Stainless-Runtime-Version": "v26.12.1"',
      '"x-stainless-arch": "(arch omitted)", "X-Stainless-Runtime-Version": "(version omitted)"', ["arm64", "26.12.1"]),

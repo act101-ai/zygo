@@ -957,11 +957,69 @@ env_case "an escaped backslash then an escaped newline" 'x\\\n - Shell: zsh' 'sh
 env_case "Stainless arch" '    "x-stainless-arch": "arm64",' 'Stainless arch'
 env_case "Stainless runtime version" '{\"X-Stainless-Runtime-Version\":\"v26.12.1\"}' 'Stainless runtime version'
 
-CASE="PC-13 R1: placeholders in any form, an escaped backslash then n, and the OS family pass"
+CASE="PC-13 R1: placeholders in any form and the OS family pass"
 D=$(mk pc13r1ok)
-printf '%s\n' 'x\\n - Shell: zsh' "shell:${TAB}(omitted)" 'x\n - shell:\t(omitted)\nOS VERSION: (os omitted)\n' \
+printf '%s\n' "shell:${TAB}(omitted)" 'x\n - shell:\t(omitted)\nOS VERSION: (os omitted)\n' \
     '    "x-stainless-arch": "(arch omitted)",' '{\"x-stainless-runtime-version\":\"(version omitted)\"}' \
     '    "x-stainless-os": "MacOS",' > "$D/fixtures/claude-code/plant.txt"
+run "$D"
+expect_ok
+
+# PC-13 review round 2. G1 (fail closed): any run of backslashes then n or r, a carriage return or a
+# \u000a escape starts a line; the reviewer's .sse partial_json and .summary.json forms fail.
+CR=$(printf '\r')
+NBSP=$(printf '\302\240')
+# env_file <name> <file> <planted line> <failure text after "forbidden content ">: as env_case, in the
+# named file under fixtures/claude-code.
+env_file() {
+    CASE="PC-13 R2: $1"
+    D=$(mk "pc13r2_$N")
+    printf '%s\n' "$3" > "$D/fixtures/claude-code/$2"
+    run "$D"
+    expect_fail "forbidden content ($4): $(printf '%s\n' "fixtures/claude-code/$2:1:$3" | cut -c1-160)"
+}
+env_file "G1 .sse partial_json" plant.sse 'data: {"delta":{"type":"input_json_delta","partial_json":"{\"text\": \"a\\n - Shell: zsh\"}"}}' 'shell name'
+env_file "G1 .summary.json" plant.summary.json '{"summary": "a\\n - OS Version: Darwin 25.6.0"}' 'OS version'
+env_case "R2 G1 escaped backslash then n" 'x\\n - Shell: zsh' 'shell name'
+env_case "R2 G1 \\u000a escape" 'x\u000A - Shell: zsh' 'shell name'
+env_case "R2 G1 escaped carriage return" 'x\r - OS Version: Darwin 25.6.0' 'OS version'
+env_case "R2 G1 carriage return" "x${CR} - Shell: zsh" 'shell name'
+# G2: the dashless form with a capital first letter and a host value fails.
+env_case "R2 G2 dashless shell path" 'Shell: /opt/homebrew/bin/fish' 'shell name'
+env_case "R2 G2 dashless upper case key" 'x\nSHELL: zsh' 'shell name'
+env_case "R2 G2 dashless OS value" 'OS Version: macOS 15.1' 'OS version'
+env_case "R2 G2 dash form, any value" ' - Shell: anything at all' 'shell name'
+# G5: the key's own placeholder, case-sensitive, as the whole value.
+env_case "R2 G5 placeholder in upper case" ' - Shell: (OMITTED)' 'shell name'
+env_case "R2 G5 placeholder then text" ' - OS Version: (os omitted) Darwin' 'OS version'
+env_case "R2 G5 arch placeholder on the OS line" ' - OS Version: (arch omitted)' 'OS version'
+env_case "R2 G5 Stainless placeholder then text" '"x-stainless-arch": "(arch omitted)x"' 'Stainless arch'
+env_case "R2 G5 Stainless wrong placeholder" '"x-stainless-runtime-version": "(arch omitted)"' 'Stainless runtime version'
+env_case "R2 G5 Stainless placeholder in upper case" 'x-stainless-arch: (ARCH OMITTED)' 'Stainless arch'
+env_case "R2 G5 CRLF leak" "x\\n - Shell: zsh${CR}" 'shell name'
+# G7: the messaging socket pid.
+env_case "R2 G7 socket pid" '"/tmp/cc-socks/95709.sock"' 'socket pid'
+# G8: quoted values and no-break spaces.
+env_case "R2 G8 quoted value" ' - Shell: "zsh"' 'shell name'
+env_case "R2 G8 escaped quoted value" 'x\n - Shell: \"zsh\"' 'shell name'
+env_case "R2 G8 dashless quoted value" 'Shell: "bash"' 'shell name'
+env_case "R2 G8 no-break space" " - Shell:${NBSP}zsh" 'shell name'
+env_case "R2 G8 escaped no-break space" ' - OS Version: Darwin 25.6.0' 'OS version'
+
+CASE="PC-13 R2: prose, a YAML key, placeholders in every form and CRLF pass"
+D=$(mk pc13r2ok)
+printf '%s\n' 'Shell: run make first' 'OS version: check it is 14 or later' '  shell: bash' 'shell: zsh' \
+    "x\\n - Shell: (omitted)${CR}" " - OS Version: (os omitted)${CR}" ' - Shell: "(omitted)"' \
+    'x\n - Shell: \"(omitted)\"\n - OS Version: \"(os omitted)\"' " - Shell:${NBSP}(omitted)" \
+    "x-stainless-arch: (arch omitted)${CR}" '{\"x-stainless-arch\":\"(arch omitted)\"}' \
+    '"/tmp/cc-socks/<pid>.sock"' 'Shell: zshrc is read' > "$D/fixtures/claude-code/plant.txt"
+run "$D"
+expect_ok
+
+# G4: a 1 MiB run of backslashes, then an environment line with no "n", finishes (no time asserted).
+CASE="PC-13 R2: G4 a 1 MiB backslash run"
+D=$(mk pc13r2long)
+awk 'BEGIN { s = "\\"; while (length(s) < 1048576) s = s s; print s " - Shell: zsh" }' > "$D/fixtures/claude-code/plant.txt"
 run "$D"
 expect_ok
 
