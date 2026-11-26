@@ -101,6 +101,11 @@ fn target(input: &HookInput) -> Option<(String, String)> {
 /// O§7.8 "When PO2 fails": whether the agent shows a cleared `stderr` as empty. OS-34 sets it to the PO2 result.
 pub const PO2_STDERR_CLEARED: bool = true;
 
+/// O§7.13: whether a `PostToolUseFailure` hook output replaces the text the model sees after a failed Bash call.
+/// False, as the PO1 row of `docs/premises.md` (failed, Claude Code 2.1.332): `trim` ignores that event and the
+/// launcher registers no `trim` under it, so a failed Bash call passes unchanged.
+pub const PO1_HOLDS: bool = false;
+
 /// Options of the trim hook.
 #[derive(Debug, Clone, Copy)]
 pub struct TrimOpts {
