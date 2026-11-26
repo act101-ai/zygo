@@ -118,6 +118,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | OS-33 | Failed Bash calls on Claude Code, as PO1 decided | OS-28, OS-23 | DONE | judgment | plan 911576e7 · node f632354c, 662bb328, 425bb080, 03d0f9c1 · acceptance pass (hooks 4 passed, launch 1 passed) · PR #168 |
 | OS-42 | Runner dispatch under wrappers and unseen live output | OS-31, OS-32, FX-19 | DONE | judgment | 6d559322 · 30a091c8 · d286417c · acceptance pass (dispatch 9, libtest 20, pytest 18) · PR #196 |
 | OS-34 | Set the stderr branch as PO2 decided | OS-33, OS-24 | DONE | mechanical | plan bba3b8b4 · node 9cd2b7fa, 399ed252, 7b268ebc · acceptance pass (po2_ 3 passed; shaping_hook 29 passed) · PR #184 |
+| WD-18 | Session text: each member's job and the job sentence | WD-11, ML-9, ML-10, MS-20 | DONE | implementation | plan 97283bcc · node 445b4399, 875618e6, f4fcd2fd, dbff60d9 · acceptance pass (job_ 8 listed; session_text 51 passed) · PR #189 |
 
 ## Log
 
