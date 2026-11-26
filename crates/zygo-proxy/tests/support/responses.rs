@@ -9,8 +9,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use axum::extract::Request;
-use axum::response::Response;
 use bytes::Bytes;
 use http::{HeaderMap, StatusCode};
 use serde_json::Value;
@@ -42,14 +40,14 @@ struct Upstream {
     addr: SocketAddr,
     got: Arc<Mutex<Vec<Got>>>,
     reply: Arc<Mutex<Reply>>,
-    /// Set: the reply body is followed by a read error (`reply_cut`).
+    /// Set: the reply ends before its `content-length` (`reply_cut`).
     cut: Arc<AtomicBool>,
     _stop: tokio::sync::oneshot::Sender<()>,
 }
 
 impl Upstream {
     /// 127.0.0.1:0, own runtime thread, stopped on drop; records (path with query, headers, body) and answers the
-    /// current reply.
+    /// current reply in raw HTTP/1.1, one request per connection.
     fn start(reply: Reply) -> Upstream {
         let got: Arc<Mutex<Vec<Got>>> = Arc::default();
         let reply = Arc::new(Mutex::new(reply));
@@ -63,36 +61,69 @@ impl Upstream {
             let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
             rt.block_on(async move {
                 let l = tokio::net::TcpListener::from_std(l).unwrap();
-                let app = axum::Router::new().fallback(move |req: Request| {
-                    let (g3, r3, c3) = (g2.clone(), r2.clone(), c2.clone());
-                    async move {
-                        let path = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_default();
-                        let headers = req.headers().clone();
-                        let body = axum::body::to_bytes(req.into_body(), usize::MAX).await.unwrap().to_vec();
-                        g3.lock().unwrap().push((path, headers, body));
-                        let (status, ctype, b) = r3.lock().unwrap().clone();
-                        let body = if c3.load(Ordering::SeqCst) {
-                            // The yield lets hyper send the head and `b` before the error ends the connection.
-                            let cut = futures_util::stream::once(async {
-                                tokio::task::yield_now().await;
-                                Err(std::io::Error::other("cut"))
-                            });
-                            let first = futures_util::stream::iter([Ok::<Bytes, std::io::Error>(Bytes::from(b))]);
-                            axum::body::Body::from_stream(futures_util::StreamExt::chain(first, cut))
-                        } else {
-                            axum::body::Body::from(b)
-                        };
-                        Response::builder().status(status).header("content-type", ctype).body(body).unwrap()
+                let serve = async {
+                    loop {
+                        let Ok((s, _)) = l.accept().await else { continue };
+                        let (g3, r3, c3) = (g2.clone(), r2.clone(), c2.clone());
+                        tokio::spawn(async move {
+                            let _ = exchange(s, &g3, &r3, &c3).await;
+                        });
                     }
-                });
+                };
                 tokio::select! {
-                    _ = async { axum::serve(l, app).await } => {}
+                    _ = serve => {}
                     _ = rx => {}
                 }
             });
         });
         Upstream { addr, got, reply, cut, _stop: tx }
     }
+}
+
+/// One request read from `s` (its head, then `content-length` body bytes) and recorded; then the reply with
+/// `connection: close`. Cut: `content-length` is one byte more than the body sent, and the connection closes after the
+/// body, so the proxy reads the body and then a read error (an early end), with no timer.
+async fn exchange(mut s: tokio::net::TcpStream, got: &Mutex<Vec<Got>>, reply: &Mutex<Reply>, cut: &AtomicBool) -> std::io::Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 16 * 1024];
+    let end = loop {
+        if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            break i;
+        }
+        let n = s.read(&mut chunk).await?;
+        if n == 0 {
+            return Ok(());
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    };
+    let head = String::from_utf8_lossy(&buf[..end]).into_owned();
+    let mut lines = head.split("\r\n");
+    let path = lines.next().and_then(|l| l.split(' ').nth(1)).unwrap_or_default().to_string();
+    let mut headers = HeaderMap::new();
+    for l in lines {
+        let (k, v) = l.split_once(':').expect("a header line");
+        headers.append(http::HeaderName::from_bytes(k.trim().as_bytes()).unwrap(), http::HeaderValue::from_str(v.trim()).unwrap());
+    }
+    assert!(!headers.contains_key("transfer-encoding"), "the mock reads content-length bodies only: {headers:?}");
+    let len: usize = headers.get("content-length").map_or(0, |v| v.to_str().unwrap().parse().unwrap());
+    let mut body = buf[end + 4..].to_vec();
+    while body.len() < len {
+        let n = s.read(&mut chunk).await?;
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&chunk[..n]);
+    }
+    body.truncate(len);
+    got.lock().unwrap().push((path, headers, body));
+    let (status, ctype, b) = reply.lock().unwrap().clone();
+    let reason = StatusCode::from_u16(status).ok().and_then(|c| c.canonical_reason()).unwrap_or("Status");
+    let declared = b.len() + usize::from(cut.load(Ordering::SeqCst));
+    let head = format!("HTTP/1.1 {status} {reason}\r\ncontent-type: {ctype}\r\ncontent-length: {declared}\r\nconnection: close\r\n\r\n");
+    s.write_all(head.as_bytes()).await?;
+    s.write_all(&b).await?;
+    s.shutdown().await
 }
 
 struct Keys(HashMap<String, Secret>);
@@ -263,7 +294,8 @@ impl Harness {
         *self.up.reply.lock().unwrap() = (status, content_type.to_string(), body);
     }
 
-    /// As `reply_with`, then a read error after `body`: the proxy sees the upstream body fail partway through.
+    /// As `reply_with`, but the connection closes one byte before the declared `content-length`: the proxy reads
+    /// `body`, then a read error.
     pub fn reply_cut(&self, status: u16, content_type: &str, body: Vec<u8>) {
         *self.up.reply.lock().unwrap() = (status, content_type.to_string(), body);
         self.up.cut.store(true, Ordering::SeqCst);

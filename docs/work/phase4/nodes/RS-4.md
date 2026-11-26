@@ -1,7 +1,7 @@
 # RS-4 — Response side for Anthropic and chat upstreams: stream order, encoder after the tee, non-streaming path, errors after the first event
 
 **Spec:** docs/specs/2026-11-25-client-model-design.md K§6.4.2 (stage table row usage; the stream-order table rows Anthropic and chat), K§6.4.3 (the response side of Responses → Anthropic and Responses → chat; stream obligations 6 and 8), K§6.7 (upstream streams), K§11 items 14 (the after-the-first-event half, at the route) and 18; K-D48, K-D50
-**Files:** `crates/zygo-proxy/src/forward.rs`, `crates/zygo-proxy/tests/support/responses.rs`, `crates/zygo-proxy/tests/responses_forward.rs` (new)
+**Files:** `crates/zygo-proxy/src/forward.rs`, `crates/zygo-proxy/tests/support/responses.rs`, `crates/zygo-proxy/tests/responses_forward.rs` (new), `docs/specs/2026-11-25-client-model-design.md` (round 2: K§6.4.3 stream obligation 6, K§6.4.4, one change-log line)
 **Consumes:** `Encoder::new` (RS-2), `response` (RS-2), `ModelRoute::Responses` (RS-3), `Harness::start` (RS-3), `fixtures/codex/requests/` (PC-3)
 **Produces:** —
 **Acceptance:** `test "$(cargo test -q -p zygo-proxy --test responses_forward -- --list 2>/dev/null | grep -c ': test$')" -ge 6 && cargo test -p zygo-proxy --locked` → at least 6 tests in `responses_forward` (a count of 0 fails), then every `zygo-proxy` test target passes on ubuntu, macOS and Windows CI: a captured Codex request streamed through a Claude Code session to an Anthropic upstream returns Responses SSE and the usage row has the upstream Messages counts; Responses → chat reaches the chat mock, its stream returns as Responses SSE and the usage row is recorded (K§11 item 18); an upstream error event after the first event → one `response.failed` and no other terminal event (K§11 item 14, second half); a non-streaming request to each upstream returns one Response object with the same content; a non-2xx non-streaming answer keeps its status with an OpenAI error body; the existing Messages-client stream tests pass unchanged
@@ -168,3 +168,24 @@ Produces: nothing for later nodes. RS-5 builds on the `Encode` field of `Flow` (
 - **PC-12** is `TODO` in `graph.md:87`, although `nodes/PC-12.md` "Observed" on `origin/phase-4--PC-12` records PC17 and PC18 as verified. RS-4 depends on it in the graph.
 - **Files outside the Files line:** none.
 - **Overlap.** RS-5 shares `forward.rs` and `tests/support/responses.rs`, and runs after RS-4. RS-9 shares no file: it edits `responses_client.rs`, `responses_request.rs`, `responses_stream.rs` and the spec, and keeps the `Calls::of` and `Encoder::new` signatures. RS-8 shares no file: it edits `routes.rs`, `models.rs` and `responses_models.rs`.
+
+## Review round 1 findings
+
+Review of PR #165 at bcd6758b (1 important, 4 nits). Round 2 merges `origin/phase-4` at 8e4445d7 (RS-10 added). RS-9 (PR #161) is still open, so there is no namespaced map-back test yet.
+
+- F1 (important, fixed): `read_error_mid_stream_one_failed` passed with the read-error branch removed. Fix: the test asserts `error == {code: api_error, message: "upstream response failed"}` and that the `par` text delta comes before the `response.failed` event. Mutation check: with the branch (`next_chunk`, `Some(Err(_))`, `Encode::Stream`) removed, this test and the F3 test fail (the client body ends with an EOF error). With the branch restored, both pass.
+- F2 (nit, fixed): `reply_cut` no longer depends on hyper's poll order. The mock is now a raw HTTP/1.1 server on tokio (`exchange` in `tests/support/responses.rs`). It reads one request (the head and a `content-length` body), records it, and answers with `connection: close`. A cut reply declares a `content-length` one byte larger than the body it sends, then closes. There is no timer, and the signature of `reply_cut` is unchanged. `responses_forward`: 30 runs, 0 failures.
+- F3 (nit, fixed): a read error before the first whole event now gives `response.created`, `response.in_progress`, then `response.failed {api_error, "upstream response failed"}`. Before the fix, `finish` dispatched the partial line and gave `upstream event is not JSON`. `Streamed::read_failed` uses a spare encoder (same model, target and calls), started by an empty `message_start`. It does this only when the real encoder has emitted nothing, so the client sees one sequence from 0. Test: `read_error_before_first_event_failed`.
+- F4 (nit, fixed): after the encoder's terminal event, `next_chunk` keeps reading the upstream through the mapper and the tee to its end, and sends nothing more to the client. A client disconnect still drops `Flow`. Test: `encoder_failure_row_has_final_usage` (a 5 MiB `text_delta`, then `message_delta` `output_tokens: 4242`). The row has `(100, 30, 5, 4242)`; before the fix it had 1 output token.
+- F5 (nit, fixed): a translated Responses stream arms the tee's line mode, and `Streamed::line` rewrites each Messages `error` line before the encoder:
+  - The provider key is replaced with `[REDACTED]` before the encoder's 64-character cut, so no prefix of the key survives the cut either.
+  - An `invalid_request_error` whose message is a PC14 over-long form gets the code `context_length_exceeded`. Its `response.failed` message is then set back to the full message by the PC14 rule (`pc14_form`, now shared with `responses_error`). This also covers a chat upstream's context error, which the §7.6 mapping turns into `prompt is too long`.
+  - The line stages are not called on this route. The window stage arms only on the Messages route (`window.rs:130`), so nothing changes for the stages; RS-7 decides them for Responses.
+  - Spec: K§6.4.3 stream obligation 6 and K§6.4.4 are rewritten, with one change-log line (author's call).
+  - Tests: `in_stream_context_error_pc14_code` (both Anthropic forms, a message that only contains the phrase, and the chat mapping) and `in_stream_error_message_without_key` (a whole key, and a key across the cut).
+- Results (round 2):
+  - Acceptance: exit 0, with 14 tests in `responses_forward`.
+  - `cargo test -p zygo-proxy --locked`: 490 passed, 0 failed.
+  - `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings`: clean.
+  - `responses_forward`: 30 runs, 0 failures.
+  - Workspace: 2423 passed, 2 failed, 778 ignored. The 2 failures are the known `zygo --test guard_hook` environment failures under /private/tmp.

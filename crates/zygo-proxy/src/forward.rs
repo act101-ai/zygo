@@ -34,7 +34,7 @@ use crate::session::{InFlight, SessionState};
 use crate::tee::{CacheSplit, ErrorCapture, SseLine, Tee, Ticket, Usage, UsageSink, COPY_MAX, ERROR_BODY_MAX};
 use crate::translate::schema::{NullMap, RestoreFilter};
 use crate::translate::{
-    facts, is_response, responses_client, message_events, reasoning, schema, translate_error, translate_request, translate_response, SseEvent, StreamMapper,
+    facts, is_response, responses_client, message_events, reasoning, schema, scrub, translate_error, translate_request, translate_response, SseEvent, StreamMapper,
     Target,
 };
 use crate::window;
@@ -575,7 +575,7 @@ async fn run(
         let t = Target::of(c);
         let calls = calls.unwrap_or_default();
         if streamed {
-            Some(Encode::Stream(Box::new(responses_client::Encoder::new(&client_model, &t, calls))))
+            Some(Encode::Stream(Box::new(Streamed::new(&client_model, &t, calls, c.key.clone()))))
         } else {
             let (r, codes) = responses_client::response(msg.as_ref().unwrap_or(&Value::Null), &client_model, &t, &calls);
             adjustments.extend(codes);
@@ -594,7 +594,9 @@ async fn run(
         tee.keep_body();
     }
     // Only an SSE upstream body is rewritten (§10.2.6): not a whole body sent to the client as SSE.
-    if ctx.line_mode && status.is_success() && sse_upstream {
+    // A Responses stream is read in lines too: its upstream `error` lines are rewritten before the encoder (K§6.4.4).
+    let lines = ctx.line_mode || matches!(encode, Some(Encode::Stream(_)));
+    if lines && status.is_success() && sse_upstream {
         tee.arm_line_mode();
     }
     if tee.line_mode() {
@@ -635,9 +637,8 @@ async fn run(
 fn responses_error(status: StatusCode, body: &[u8], estimate: u64, key: Option<&str>) -> (StatusCode, Value) {
     let (s, m) = translate_error(status, body, estimate, key);
     let message = m["error"]["message"].as_str().unwrap_or_default();
-    if s == StatusCode::BAD_REQUEST && (message.starts_with("prompt is too long") || anthropic_limit_form(message)) {
-        let message = if message.starts_with("prompt is too long") { message.to_string() } else { pc14_message(message) };
-        let e = json!({"message": message, "type": "invalid_request_error", "param": "input", "code": "context_length_exceeded"});
+    if s == StatusCode::BAD_REQUEST && let Some(message) = pc14_form(message) {
+        let e = json!({"message": message, "type": "invalid_request_error", "param": "input", "code": CONTEXT_CODE});
         return (s, json!({ "error": e }));
     }
     (s, json!({ "error": m["error"] }))
@@ -653,6 +654,21 @@ fn pc14_message(m: &str) -> String {
         .take(PC14_MESSAGE_MAX)
         .map(|c| if c.is_control() || responses_client::is_format_or_separator(c) { '?' } else { c })
         .collect()
+}
+
+/// The error code with which Codex runs its own recovery for an over-long prompt (PC14, K§6.4.4).
+const CONTEXT_CODE: &str = "context_length_exceeded";
+
+/// An over-long prompt's message by the PC14 rule (K§6.4.4): a `prompt is too long` text as it is, or Anthropic's full
+/// `max_tokens` limit form cleaned (`pc14_message`); `None` for any other message.
+fn pc14_form(message: &str) -> Option<String> {
+    if message.starts_with("prompt is too long") {
+        Some(message.to_string())
+    } else if anthropic_limit_form(message) {
+        Some(pc14_message(message))
+    } else {
+        None
+    }
 }
 
 /// Anthropic's refusal when input plus `max_tokens` is over the window, in full (the form Claude Code parses).
@@ -1160,8 +1176,91 @@ async fn charge(sem: &Arc<Semaphore>, n: u32, deadline: tokio::time::Instant) ->
 /// A translated 2xx to a Responses client, after the tee (K§6.4.2 C3): the stream encoder, or a whole answer's
 /// Response object, sent when the upstream body ends.
 enum Encode {
-    Stream(Box<responses_client::Encoder>),
+    Stream(Box<Streamed>),
     Whole(Bytes),
+}
+
+/// The message of a read error on a started Responses stream (K§6.4.3 stream obligation 6).
+const READ_FAILED: &str = "upstream response failed";
+/// A Messages `message_start` with no fields: it starts the spare encoder.
+const EMPTY_START: &[u8] = b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{}}\n\n";
+
+/// A Responses stream after the tee (K§6.4.2): the encoder, and what the proxy adds around it.
+struct Streamed {
+    enc: responses_client::Encoder,
+    /// Starts and fails a stream that a read error ends before its first event: nothing reached the client yet.
+    spare: responses_client::Encoder,
+    /// Removed from an upstream error message, as the chat mapper does (`translate/sse.rs:420-424`).
+    key: Option<Secret>,
+    /// An upstream over-long prompt's message by the PC14 rule (K§6.4.4); the encoder cuts messages shorter.
+    context: Option<String>,
+}
+
+impl Streamed {
+    fn new(model: &str, t: &Target, calls: responses_client::Calls, key: Option<Secret>) -> Streamed {
+        let spare = responses_client::Encoder::new(model, t, calls.clone());
+        Streamed { enc: responses_client::Encoder::new(model, t, calls), spare, key, context: None }
+    }
+
+    /// A Messages `error` line before the encoder: its message without the provider key. An over-long prompt
+    /// (`invalid_request_error` with a PC14 form, K§6.4.4) gets the code `context_length_exceeded`.
+    fn line(&mut self, l: &mut SseLine) {
+        let Some(d) = l.0.strip_prefix(b"data:") else { return };
+        if !d.windows(7).any(|w| w == b"\"error\"") {
+            return;
+        }
+        let Ok(mut v) = serde_json::from_slice::<Value>(d) else { return };
+        if v.get("type").and_then(Value::as_str) != Some("error") {
+            return;
+        }
+        let Some(e) = v.get_mut("error").and_then(Value::as_object_mut) else { return };
+        let m = scrub(e.get("message").and_then(Value::as_str).unwrap_or_default(), self.key.as_ref().map(Secret::expose));
+        if e.get("type").and_then(Value::as_str) == Some("invalid_request_error")
+            && let Some(pc14) = pc14_form(&m)
+        {
+            e.insert("type".into(), json!(CONTEXT_CODE));
+            self.context = Some(pc14);
+        }
+        e.insert("message".into(), json!(m));
+        l.0 = format!("data: {v}").into_bytes();
+    }
+
+    /// The encoder's events for the tee's bytes (and its last ones at `end`), an over-long prompt's `response.failed`
+    /// with the PC14 message.
+    fn push(&mut self, out: &[u8], end: bool) -> Vec<SseEvent> {
+        let mut evs = self.enc.push(out);
+        if end {
+            evs.extend(self.enc.finish());
+        }
+        if let Some(m) = &self.context {
+            for ev in evs.iter_mut().filter(|ev| ev.event == "response.failed") {
+                let e = &mut ev.data["response"]["error"];
+                if e["code"] == CONTEXT_CODE {
+                    e["message"] = json!(m);
+                }
+            }
+        }
+        evs
+    }
+
+    /// A read error: one `response.failed` with `READ_FAILED`, the stream started first when it was not (stream
+    /// obligation 6); nothing after a terminal event.
+    fn read_failed(&mut self) -> Vec<SseEvent> {
+        if self.enc.ended() {
+            return Vec::new();
+        }
+        let evs = self.enc.fail("api_error", READ_FAILED);
+        if !evs.is_empty() {
+            return evs;
+        }
+        let mut evs = self.spare.push(EMPTY_START);
+        evs.extend(self.spare.fail("api_error", READ_FAILED));
+        evs
+    }
+}
+
+fn sse_bytes(evs: &[SseEvent]) -> Bytes {
+    Bytes::from(evs.iter().flat_map(SseEvent::to_bytes).collect::<Vec<u8>>())
 }
 
 /// The tee's Messages bytes as the client's bytes: unchanged with no encoder; the encoder's Responses events (and its
@@ -1169,13 +1268,7 @@ enum Encode {
 fn encoded(encode: &mut Option<Encode>, out: Bytes, end: bool) -> Bytes {
     match encode {
         None => out,
-        Some(Encode::Stream(e)) => {
-            let mut evs = e.push(&out);
-            if end {
-                evs.extend(e.finish());
-            }
-            Bytes::from(evs.iter().flat_map(SseEvent::to_bytes).collect::<Vec<u8>>())
-        }
+        Some(Encode::Stream(s)) => sse_bytes(&s.push(&out, end)),
         Some(Encode::Whole(b)) if end => std::mem::take(b),
         Some(Encode::Whole(_)) => Bytes::new(),
     }
@@ -1234,8 +1327,8 @@ impl Drop for Flow {
             self.pending.upstream_error = Some(ErrorCapture { head, credential, session: self.pending.session.clone() });
         }
         // The encoder's codes (K§6.4.3 obligations 2, 3) reach the row.
-        if let Some(Encode::Stream(e)) = &self.encode {
-            self.rctx.adjustments.extend(e.adjustments());
+        if let Some(Encode::Stream(s)) = &self.encode {
+            self.rctx.adjustments.extend(s.enc.adjustments());
         }
         // Codes a line stage added (§10.2.3) reach the row, not the headers.
         self.pending.row.adjustments = names(&self.rctx.adjustments);
@@ -1249,7 +1342,12 @@ async fn next_chunk(mut f: Flow) -> Option<(Result<Bytes, std::io::Error>, Flow)
         // The stages see the upstream numbers up to and including this line.
         let mut on_line = |l: &mut SseLine| {
             rctx.usage.observe(&l.0);
-            pipeline.on_response_line(rctx, l)
+            match encode {
+                // A Responses stream: its error lines only. The line stages are armed on the Messages route only
+                // (`window.rs:130`).
+                Some(Encode::Stream(s)) => s.line(l),
+                _ => pipeline.on_response_line(rctx, l),
+            }
         };
         let out = match next {
             Some(Ok(chunk)) => match mapper {
@@ -1272,15 +1370,12 @@ async fn next_chunk(mut f: Flow) -> Option<(Result<Bytes, std::io::Error>, Flow)
             Some(Err(_)) => {
                 *done = true;
                 *failed = true;
-                // A started Responses stream ends with one terminal event (K§6.4.3 stream obligation 6).
-                if let Some(Encode::Stream(e)) = encode {
-                    let mut evs = e.fail("api_error", "upstream response failed");
-                    if !e.ended() {
-                        evs.extend(e.finish());
-                    }
-                    return Some((Ok(Bytes::from(evs.iter().flat_map(SseEvent::to_bytes).collect::<Vec<u8>>())), f));
+                // A Responses stream ends with one terminal event (K§6.4.3 stream obligation 6).
+                if let Some(Encode::Stream(s)) = encode {
+                    let b = sse_bytes(&s.read_failed());
+                    return Some((Ok(b), f));
                 }
-                return Some((Err(std::io::Error::other("upstream response failed")), f));
+                return Some((Err(std::io::Error::other(READ_FAILED)), f));
             }
             None => {
                 let mut out = BytesMut::new();
@@ -1295,12 +1390,9 @@ async fn next_chunk(mut f: Flow) -> Option<(Result<Bytes, std::io::Error>, Flow)
                 out.freeze()
             }
         };
+        // After the encoder's terminal event the upstream is still read to its end, through the tee, for the usage
+        // row; the client gets nothing more.
         let out = encoded(encode, out, *done);
-        // The encoder's terminal event: the upstream is no longer read.
-        if !*done && matches!(encode, Some(Encode::Stream(e)) if e.ended()) {
-            tee.finish(&mut on_line);
-            *done = true;
-        }
         f.rctx.usage = f.tee.usage();
         if !out.is_empty() {
             return Some((Ok(out), f));

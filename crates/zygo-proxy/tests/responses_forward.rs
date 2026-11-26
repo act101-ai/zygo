@@ -384,17 +384,115 @@ fn non_2xx_non_streaming_keeps_status_openai_error() {
     assert_eq!(oai_err(&b), json!({"type":"rate_limit_error","message":"slow down"}));
 }
 
-#[test] // stream obligation 6: a read error after the start → one response.failed, last
+#[test] // stream obligation 6: a read error after the start → one response.failed, last, with the read error's message
 fn read_error_mid_stream_one_failed() {
     let h = start(A);
     h.reply_cut(200, SSE, msg_sse(&[message_start(), text_start(0), text_delta(0, "par")]));
     let (s, _, b) = h.post(R, &codex_request("after-custom-tool-call-output"));
     assert_eq!(s, 200);
     let evs = events(&b);
-    assert_eq!(terminals(&evs).len(), 1, "{:?}", names(&evs));
+    let n = names(&evs);
+    assert_eq!(terminals(&evs).len(), 1, "{n:?}");
+    let delta = n.iter().position(|e| *e == "response.output_text.delta").expect("the text delta");
+    assert_eq!(evs[delta].1["delta"], "par");
     let (last, d) = evs.last().unwrap();
     assert_eq!(last, "response.failed");
-    assert_eq!(d["response"]["error"]["code"], "api_error");
+    assert!(delta < evs.len() - 1);
+    assert_eq!(d["response"]["error"], json!({"code":"api_error","message":"upstream response failed"}));
+}
+
+#[test] // review round 1 F3: a read error before the first whole event → the stream starts, then fails with the read error
+fn read_error_before_first_event_failed() {
+    let h = start(A);
+    let mut part = msg_sse(&[message_start()]);
+    part.truncate(30);
+    h.reply_cut(200, SSE, part);
+    let (s, _, b) = h.post(R, &codex_request("after-custom-tool-call-output"));
+    assert_eq!(s, 200);
+    let evs = events(&b);
+    assert_eq!(names(&evs), ["response.created", "response.in_progress", "response.failed"]);
+    for (i, (_, d)) in evs.iter().enumerate() {
+        assert_eq!(d["sequence_number"], json!(i), "{d}");
+    }
+    assert_eq!(evs[2].1["response"]["error"], json!({"code":"api_error","message":"upstream response failed"}));
+}
+
+#[test] // review round 1 F4: after the encoder's terminal event the upstream is read to its end for the usage row
+fn encoder_failure_row_has_final_usage() {
+    let h = start(A);
+    let big = "x".repeat(5 << 20);
+    let evs = [
+        message_start(),
+        text_start(0),
+        text_delta(0, &big),
+        stop(0),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4242}}),
+        json!({"type":"message_stop"}),
+    ];
+    h.reply_with(200, SSE, msg_sse(&evs));
+    let (s, _, b) = h.post(R, &codex_request("after-custom-tool-call-output"));
+    assert_eq!(s, 200);
+    let evs = events(&b);
+    assert_eq!(terminals(&evs).len(), 1, "{:?}", names(&evs));
+    assert_eq!(evs.last().unwrap().0, "response.failed");
+    let rows = h.usage_rows();
+    assert_eq!(counts(&rows[0]), (100, 30, 5, 4242));
+}
+
+/// An Anthropic stream that fails after its first event with `error`.
+fn failing(error: Value) -> Vec<u8> {
+    msg_sse(&[message_start(), text_start(0), text_delta(0, "par"), json!({"type":"error","error":error})])
+}
+
+#[test] // review round 1 F5, K§6.4.4: an in-stream context-limit error gets the PC14 code and the PC14 message rule
+fn in_stream_context_error_pc14_code() {
+    let h = start(A);
+    let limit = "input length and `max_tokens` exceed context limit: 190000 + 32000 > 200000";
+    let long = "prompt is too long: 210000 tokens > 200000 maximum";
+    for m in [limit, long] {
+        h.reply_with(200, SSE, failing(json!({"type":"invalid_request_error","message":m})));
+        let (s, _, b) = h.post(R, &codex_request("after-custom-tool-call-output"));
+        assert_eq!(s, 200);
+        let evs = events(&b);
+        assert_eq!(terminals(&evs).len(), 1);
+        let (last, d) = evs.last().unwrap();
+        assert_eq!(last, "response.failed");
+        assert_eq!(d["response"]["error"], json!({"code":"context_length_exceeded","message":m}));
+    }
+    // A message that only contains the phrase is an ordinary error.
+    let other = "note: prompt is too long for the cache";
+    h.reply_with(200, SSE, failing(json!({"type":"invalid_request_error","message":other})));
+    let (_, _, b) = h.post(R, &codex_request("after-custom-tool-call-output"));
+    assert_eq!(events(&b).last().unwrap().1["response"]["error"]["code"], "invalid_request_error");
+
+    // A chat upstream's context error (the §7.6 mapping) too.
+    let h = start(C);
+    let chunks = [
+        chunk(json!({"role":"assistant","content":"par"}), Value::Null),
+        json!({"error":{"message":"This model's maximum context length is 1000 tokens. However, your messages resulted in 1200 tokens.","code":"context_length_exceeded"}}),
+    ];
+    h.reply_with(200, SSE, chat_sse(&chunks));
+    let (_, _, b) = h.post(R, &codex_request("first-turn"));
+    let evs = events(&b);
+    assert_eq!(terminals(&evs).len(), 1);
+    let e = &evs.last().unwrap().1["response"]["error"];
+    assert_eq!(*e, json!({"code":"context_length_exceeded","message":"prompt is too long: 1200 tokens > 1000 maximum"}));
+}
+
+#[test] // review round 1 F5: the provider key never reaches the client in an in-stream error, whole or cut
+fn in_stream_error_message_without_key() {
+    let h = start(A);
+    let key = h.provider_key().to_string();
+    h.reply_with(200, SSE, failing(json!({"type":"authentication_error","message":format!("bad key {key}")})));
+    let (_, _, b) = h.post(R, &codex_request("after-custom-tool-call-output"));
+    let evs = events(&b);
+    assert_eq!(evs.last().unwrap().1["response"]["error"], json!({"code":"authentication_error","message":"bad key [REDACTED]"}));
+    // The key across the encoder's 64-character cut: no prefix of it either.
+    h.reply_with(200, SSE, failing(json!({"type":"api_error","message":format!("{}{key}", "y".repeat(50))})));
+    let (_, _, b) = h.post(R, &codex_request("after-custom-tool-call-output"));
+    let text = String::from_utf8_lossy(&b);
+    assert!(!text.contains(&key[..10]), "{text}");
+    assert_eq!(events(&b).last().unwrap().0, "response.failed");
 }
 
 #[test] // base §7.6: an injected null is removed on the way back to a Responses client
