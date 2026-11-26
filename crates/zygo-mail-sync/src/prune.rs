@@ -23,17 +23,18 @@ pub enum Pruned {
     Done { removed: usize },
     /// Another push came after the base: the lease failed and the prune is skipped in this pass (S§9 Push).
     LeaseLost,
-    /// Not due: the step-16 value of `sync.rs`, never returned by [`run`].
+    /// Not due (S§9 When); never returned by [`run`].
     NotDue,
 }
 
 /// S§9 When: `true` when `forced` (`zygo mail sync --prune`), when the own ack has more than [`OWN_ACK_DUE`] entries,
-/// or when `git rev-list --count <base>` is [`COMMITS_DUE`] or more.
+/// or when `git rev-list --count <base>` is [`COMMITS_DUE`] or more. The walk stops at [`COMMITS_DUE`] commits.
 pub fn due(wt: &Path, base: &str, own_ack_len: usize, forced: bool, deadline: Instant) -> Result<bool, BranchError> {
     if forced || own_ack_len > OWN_ACK_DUE {
         return Ok(true);
     }
-    let w = crate::git::run(wt, &["rev-list", "--count", base, "--"], deadline)
+    let max = format!("--max-count={COMMITS_DUE}");
+    let w = crate::git::run(wt, &["rev-list", "--count", &max, base, "--"], deadline)
         .map_err(|e| BranchError::Git(e, "rev-list"))?;
     let failed = BranchError::Git(RunError::Failed, "rev-list");
     if !w.ok {
@@ -49,7 +50,7 @@ pub fn due(wt: &Path, base: &str, own_ack_len: usize, forced: bool, deadline: In
 }
 
 /// S§9 Tree, Commit, Push, Only its own branch: a commit with no parent of the tree of `base` less each message file
-/// `<addr>/<ULID>.json` (not a tree) whose ULID the valid ack of the host of `<addr>` lists; a refused ack lists
+/// `<addr>/<ULID>.json` (a regular-file blob, mode `100644` or `100755`) whose ULID the valid ack of the host of `<addr>` lists; a refused ack lists
 /// nothing (S§7.4 Validation). Just before the force push, `branch` must be a zygo branch name and `base` must have
 /// the marker (S-C3); else `Refused("branch")` or `Refused("marker")`. The push has `base` as lease: a failed lease is
 /// `LeaseLost`; any other failed push is `Git(Failed, "push")`.
@@ -71,7 +72,7 @@ pub fn run(wt: &Path, remote: &str, branch: &str, base: &str, meta: &TipMeta, de
         let prefix = format!("{f}/");
         branch::ls(wt, base, Some(&prefix), deadline, &mut |e| {
             let listed = e.path.strip_prefix(&prefix).and_then(address::ulid_file).is_some_and(|u| set.contains(&u));
-            if e.kind != "tree" && listed {
+            if e.kind == "blob" && matches!(e.mode.as_str(), "100644" | "100755") && listed {
                 removes.push(Change::Remove { path: e.path });
             }
             Flow::Go

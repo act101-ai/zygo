@@ -88,6 +88,8 @@ const GATE_RECORD_LINE: &str = "zygo: mail sync cannot run: the workspace record
 const GATE_CONFIG_LINE: &str = "zygo: mail sync cannot run: the config does not load";
 /// S§8.3 step 15: the line after the fifth move of the branch.
 const MOVED_LINE: &str = "zygo: the side branch moved 5 times during the sync; try again";
+/// S§9 Push: the note of a forced prune whose lease failed.
+const PRUNE_MOVED_NOTE: &str = "prune skipped: the branch moved; run again";
 /// The poll of a lock that another holder has, as the workspace lock helper.
 const LOCK_POLL: Duration = Duration::from_millis(5);
 
@@ -344,7 +346,7 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
             Pushed::Other(_) => return Err(stop("push")),
         }
     };
-    prune_step(c, &base, &base_meta, &identity, forced, deadline)?;
+    prune_step(c, report, &base, &base_meta, &identity, forced, deadline)?;
     let mut st = state::load(sp).map_err(|_| stop("state"))?;
     st.last_ok = Some(env.clock.now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()));
     st.last_error = None;
@@ -353,19 +355,33 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
 
 /// S§8.3 step 16, S§9 When and Base: the prune of `base` (this pass's push, else the fetched tip) when forced, when
 /// the longest valid own ack of this identity has more than [`prune::OWN_ACK_DUE`] entries, or at
-/// [`prune::COMMITS_DUE`] commits. A lost lease is no error and writes no line: the next pass tries again (S§9).
-fn prune_step(c: &Ctx, base: &str, meta: &TipMeta, identity: &str, forced: bool, deadline: Instant)
-    -> Result<Pruned, Fail> {
+/// [`prune::COMMITS_DUE`] commits. A done prune adds the note `pruned <n> files`. A lost lease writes no line (the
+/// next pass tries again, S§9), but a forced prune notes it. A failed count, commit or push skips the prune and adds
+/// the note `prune skipped (<check>)`: the pass ends as without a prune (D11). A failed branch-name or `ZYGO-MAIL`
+/// check stops the pass (S-C3).
+fn prune_step(c: &Ctx, report: &mut Report, base: &str, meta: &TipMeta, identity: &str, forced: bool,
+    deadline: Instant) -> Result<(), Fail> {
     let own_len = own_hosts(meta, identity, &c.s.host).iter()
         .filter_map(|h| own_ack(meta, h, identity))
         .map(|a| a.imported.len())
         .max()
         .unwrap_or(0);
-    if !prune::due(&c.sp.worktree, base, own_len, forced, deadline)? {
-        return Ok(Pruned::NotDue);
+    let pruned = match prune::due(&c.sp.worktree, base, own_len, forced, deadline) {
+        Ok(false) => return Ok(()),
+        Ok(true) => {
+            c.env.seam.at("before_prune_push")?;
+            prune::run(&c.sp.worktree, &c.s.remote, &c.s.branch, base, meta, deadline)
+        }
+        Err(e) => Err(e),
+    };
+    match pruned {
+        Ok(Pruned::Done { removed }) => report.notes.push(format!("pruned {removed} files")),
+        Ok(Pruned::LeaseLost) if forced => report.notes.push(PRUNE_MOVED_NOTE.into()),
+        Ok(_) => {}
+        Err(e @ BranchError::Refused("branch" | "marker")) => return Err(e.into()),
+        Err(e) => report.notes.push(format!("prune skipped ({})", branch_check(&e))),
     }
-    c.env.seam.at("before_prune_push")?;
-    Ok(prune::run(&c.sp.worktree, &c.s.remote, &c.s.branch, base, meta, deadline)?)
+    Ok(())
 }
 
 /// S§8.3 step 5, S§8.2, S§11: the remote is one that `git remote` lists, then the public check of its URLs. `Public`

@@ -21,6 +21,7 @@ use zygo_mail_sync::branch::{self, BranchError, Fetched};
 use zygo_mail_sync::env::{self, Crash, Env, Seam, Spawner, Verdict, Wake};
 use zygo_mail_sync::identity::{read_meta, TipMeta};
 use zygo_mail_sync::prune::{self, Pruned, COMMITS_DUE, OWN_ACK_DUE};
+use zygo_mail_sync::state;
 use zygo_mail_sync::sync::{run, run_with, Mode, Opts, Report, SyncError};
 use zygo_redact::DeadlinePolicy;
 use zygo_workspace::state::Workspace;
@@ -70,6 +71,8 @@ fn t2_due_at_1000_commits_over_100000_entries_or_forced() {
     assert_eq!(prune::due(&m.root, &c999, 0, true, far()), Ok(true));
     let c1000 = grow(&m.root, "refs/heads/t", 1);
     assert_eq!(prune::due(&m.root, &c1000, 0, false, far()), Ok(true));
+    let c1500 = grow(&m.root, "refs/heads/t", 500); // MS-14 review F7: the bounded count still answers 1000 or more
+    assert_eq!(prune::due(&m.root, &c1500, 0, false, far()), Ok(true));
 }
 
 /// The injected fixed clock (S-C9).
@@ -203,8 +206,8 @@ fn fetched(m: &Machine) -> String {
     }
 }
 
-/// A new commit on the bare tip: `adds` (path, bytes) put in and `removes` taken out of the tip's tree.
-fn edit_tip(r: &Remote, adds: &[(&str, &[u8])], removes: &[&str]) {
+/// A new commit on the bare tip: `adds` (mode, path, bytes) put in and `removes` taken out of the tip's tree.
+fn edit_tip(r: &Remote, adds: &[(&str, &str, &[u8])], removes: &[&str]) {
     let tip = r.tip(BRANCH).unwrap();
     let idx = r.dir.path().join("edit-index");
     let _ = fs::remove_file(&idx);
@@ -214,9 +217,9 @@ fn edit_tip(r: &Remote, adds: &[(&str, &[u8])], removes: &[&str]) {
         String::from_utf8(o.stdout).unwrap().trim_end().to_string()
     };
     g(&["read-tree", &tip]);
-    for (path, bytes) in adds {
+    for (mode, path, bytes) in adds {
         let b = blob(&r.bare, bytes);
-        g(&["update-index", "--add", "--cacheinfo", &format!("100644,{b},{path}")]);
+        g(&["update-index", "--add", "--cacheinfo", &format!("{mode},{b},{path}")]);
     }
     if !removes.is_empty() {
         // Mode 0 removes the entry; `--force-remove` needs a work tree, which a bare repository has not.
@@ -271,7 +274,7 @@ fn t11_a_refused_ack_is_empty_for_the_prune() {
         let u0 = send(&a, "alice", ("bob", "b"), "zero");
         sync(&a);
         sync(&b);
-        edit_tip(&r, &[(&format!("carol@c/{u}.json"), b"{}"), ("ack/c.json", &ack)], &[]);
+        edit_tip(&r, &[("100644", &format!("carol@c/{u}.json"), b"{}"), ("100644", "ack/c.json", &ack)], &[]);
         let base = fetched(&a);
         let meta = read_meta(&a.wt, &base, far(), &mut |_| {}).unwrap();
         assert!(meta.acks["c"].value.is_err(), "{case}");
@@ -486,4 +489,64 @@ fn sp5_plain_fetch_after_a_prune() {
     assert_eq!(git(&b.root, &["symbolic-ref", "HEAD"]), "refs/heads/main");
     assert_eq!(git(&b.root, &["rev-parse", "HEAD"]), work);
     assert_eq!(git(&b.root, &["status", "--porcelain"]), "");
+}
+
+#[test] // MS-14 review F1, S§9 Push (D11): a prune push the server refuses skips the prune, not the pass
+fn t13_a_refused_prune_push_skips_the_prune_not_the_pass() {
+    let (r, a, _b) = pair();
+    git(&r.bare, &["config", "receive.denyNonFastForwards", "true"]);
+    grow(&r.bare, "refs/heads/zygo/mail", 999 - count(&r));
+    let u1 = send(&a, "alice", ("bob", "b"), "one");
+    let rep = sync(&a);
+    assert_eq!(rep.pushed, 1);
+    assert_eq!(rep.notes, vec!["prune skipped (push)".to_string()]);
+    assert_eq!(count(&r), 1000);
+    assert!(at_tip(&r, "bob@b", u1));
+    assert!(!a.sp().outbox.join(format!("{u1}.json")).exists());
+    let st = state::load(&a.sp()).unwrap();
+    assert_eq!((st.last_ok, st.last_error), (Some(T0), None));
+}
+
+#[test] // MS-14 review F2: a forced prune that is done says so
+fn t14_a_forced_prune_reports_the_files_it_removed() {
+    let (r, a, b) = pair();
+    let u0 = send(&a, "alice", ("bob", "b"), "zero");
+    sync(&a);
+    sync(&b);
+    assert_eq!(prune_now(&a, T0).notes, vec!["pruned 1 files".to_string()]);
+    assert_eq!(count(&r), 1);
+    assert!(!at_tip(&r, "bob@b", u0));
+}
+
+#[test] // MS-14 review F2: a forced prune that loses its lease says to run again
+fn t15_a_forced_prune_that_loses_the_lease_says_run_again() {
+    let (r, a, _b) = pair();
+    let r = Arc::new(r);
+    let (r2, moved) = (r.clone(), Arc::new(Mutex::new(None)));
+    let m2 = moved.clone();
+    let h = Hook::new(move |p| {
+        if p == "before_prune_push" {
+            *m2.lock().unwrap() = Some(advance(&r2, BRANCH));
+        }
+        Ok(())
+    });
+    let rep = run_with(&env_at(&a, h, T0), WS_ID, Mode::Cli, &Opts { prune: true }).unwrap();
+    assert_eq!(rep.notes, vec!["prune skipped: the branch moved; run again".to_string()]);
+    assert_eq!(r.tip(BRANCH), moved.lock().unwrap().clone());
+}
+
+#[test] // MS-14 review F6, S§9 Tree "Nothing else is removed": only regular-file blobs are message files
+fn t16_an_acknowledged_symlink_entry_stays() {
+    let (r, a, b) = pair();
+    let u0 = send(&a, "alice", ("bob", "b"), "zero");
+    let u1 = send(&a, "alice", ("bob", "b"), "one");
+    sync(&a);
+    sync(&b);
+    assert!(imported(&r, "ack/b.json").is_superset(&BTreeSet::from([u0.to_string(), u1.to_string()])));
+    edit_tip(&r, &[("120000", &format!("bob@b/{u0}.json"), b"x"), ("100755", &format!("bob@b/{u1}.json"), b"{}")], &[]);
+    let base = fetched(&a);
+    let meta = read_meta(&a.wt, &base, far(), &mut |_| {}).unwrap();
+    assert_eq!(prune::run(&a.wt, "origin", BRANCH, &base, &meta, far()), Ok(Pruned::Done { removed: 1 }));
+    assert!(at_tip(&r, "bob@b", u0));
+    assert!(!at_tip(&r, "bob@b", u1));
 }
