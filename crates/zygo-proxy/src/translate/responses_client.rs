@@ -645,14 +645,19 @@ enum ToolKind {
 /// Each Messages tool name of the request and its kind, from `tools[]` (`function`, `custom`, and the nested
 /// `function` tools of `namespace`, under the flat name) and from `input[]` (`function_call`, under the flat name
 /// when it has a string `namespace`; `custom_tool_call`). A name of a `custom` tool and of a function is `Custom` (a
-/// custom history call of a sent function's name returns as custom). A name of a namespaced pair and of anything else
-/// (a plain tool, or another pair) → `400 "input: two tools have the same name"` (fail closed: the call could not
-/// return under one kind). Malformed entries, which `request` refuses, are ignored.
+/// custom history call of a sent function's name returns as custom). A plain `function_call` of the flat name of a
+/// pair the request sends in `tools` is that tool (Codex before 0.172 named MCP tools `mcp__<server>__<tool>`; a
+/// session resumed across an upgrade holds such calls), so it binds to the pair. Any other name of a namespaced pair
+/// and of anything else (a plain tool, another pair, or a plain call with no sent pair) → `400 "input: two tools have
+/// the same name"` (fail closed: the call could not return under one kind). Malformed entries, which `request`
+/// refuses, are ignored.
 fn table(req: &Value) -> Result<HashMap<String, ToolKind>, ZygoError> {
     fn list<'a>(v: &'a Value, k: &str) -> &'a [Value] {
         v.get(k).and_then(Value::as_array).map_or(&[][..], Vec::as_slice)
     }
     let mut out: HashMap<String, ToolKind> = HashMap::new();
+    // The flat names of the nested tools sent in `tools`.
+    let mut sent: HashSet<String> = HashSet::new();
     let mut add = |name: String, kind: ToolKind| -> Result<(), ZygoError> {
         use ToolKind::{Custom, Function};
         let merged = match (out.get(&name), &kind) {
@@ -671,6 +676,7 @@ fn table(req: &Value) -> Result<HashMap<String, ToolKind>, ZygoError> {
             (Some("namespace"), Some(ns)) => {
                 for x in list(t, "tools").iter().filter(|x| s(x, "type") == Some("function")) {
                     if let Some(n) = s(x, "name") {
+                        sent.insert(flat_name(ns, n));
                         add(flat_name(ns, n), ToolKind::Namespaced(ns.to_owned(), n.to_owned()))?;
                     }
                 }
@@ -683,6 +689,7 @@ fn table(req: &Value) -> Result<HashMap<String, ToolKind>, ZygoError> {
             (Some("function_call"), Some(n), Some(ns)) => {
                 add(flat_name(ns, n), ToolKind::Namespaced(ns.to_owned(), n.to_owned()))?
             }
+            (Some("function_call"), Some(n), None) if sent.contains(n) => {}
             (Some("function_call"), Some(n), None) => add(n.to_owned(), ToolKind::Function)?,
             (Some("custom_tool_call"), Some(n), _) => add(n.to_owned(), ToolKind::Custom)?,
             _ => {}

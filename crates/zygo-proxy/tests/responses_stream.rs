@@ -940,3 +940,19 @@ fn namespace_call_maps_back_one_kind_for_events_and_item() {
     assert_eq!(r["output"][0]["name"], "mcp__zygo__compact");
     assert!(r["output"][0].get("namespace").is_none(), "{}", r["output"][0]);
 }
+
+#[test]
+fn namespace_call_maps_back_after_resumed_plain_history_call() {
+    // A plain history call of a sent pair's flat name (pre-0.172 MCP naming): a new model call of it still returns
+    // with `name` and `namespace`.
+    let body = json!({"model":"role-x","max_output_tokens":100,
+        "tools":[{"type":"namespace","name":"mcp__zygo","tools":[{"type":"function","name":"compact"}]}],
+        "input":[user("go"), {"type":"function_call","call_id":"c1","name":"mcp__zygo__compact","arguments":"{}"},
+            {"type":"function_call_output","call_id":"c1","output":"r"}, user("next")]});
+    assert!(request(&body, &tgt(), None).is_ok());
+    let msg = json!({"content":[{"type":"tool_use","id":"t","name":"mcp__zygo__compact","input":{}}],
+        "stop_reason":"tool_use","usage":{}});
+    let (r, _) = response(&msg, "role-x", &tgt(), &Calls::of(&body));
+    assert_eq!(r["output"][0]["name"], "compact");
+    assert_eq!(r["output"][0]["namespace"], "mcp__zygo");
+}

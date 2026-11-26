@@ -1054,8 +1054,11 @@ fn namespace_tools_flatten_history_collision_400() {
         ),
         // Two history pairs with one flat name.
         (json!([]), vec![json!({"name":"c","namespace":"a__b"}), json!({"name":"b__c","namespace":"a"})]),
-        // A plain history call of the flat name.
+        // A plain history call of the flat name of a history-only pair (no sent namespaced pair), either order.
         (json!([]), vec![json!({"name":"ns__x"}), json!({"name":"x","namespace":"ns"})]),
+        (json!([]), vec![json!({"name":"x","namespace":"ns"}), json!({"name":"ns__x"})]),
+        // ... also when a plain or custom tool of another name is sent.
+        (json!([{"type":"function","name":"f"}]), vec![json!({"name":"x","namespace":"ns"}), json!({"name":"ns__x"})]),
     ];
     for (tools, calls) in cases {
         let b = ns_history(tools, &calls);
@@ -1089,4 +1092,21 @@ fn namespace_tools_flatten_tool_choice_namespace_type_400() {
     let mut b = base.clone();
     b["tool_choice"] = json!({"type":"function","name":"multi_agent_v1__spawn_agent","namespace":null});
     assert_eq!(tr(&b).0["tool_choice"], json!({"type":"tool","name":"multi_agent_v1__spawn_agent"}));
+}
+
+#[test]
+fn namespace_tools_flatten_resumed_plain_history_call() {
+    // Codex before 0.172 named MCP tools `mcp__<server>__<tool>`: a session resumed across an upgrade holds a plain
+    // call of the flat name of a pair the request now sends. It is the same tool: accepted, bound to that definition.
+    let tools = json!([{"type":"namespace","name":"mcp__zygo","tools":[{"type":"function","name":"compact"}]}]);
+    for calls in [
+        vec![json!({"name":"mcp__zygo__compact"})],
+        vec![json!({"name":"mcp__zygo__compact"}), json!({"name":"compact","namespace":"mcp__zygo"})],
+        vec![json!({"name":"compact","namespace":"mcp__zygo"}), json!({"name":"mcp__zygo__compact"})],
+    ] {
+        let (m, codes) = rq(&ns_history(tools.clone(), &calls)).unwrap();
+        assert_eq!(m["tools"], json!([{"name":"mcp__zygo__compact","input_schema":{"type":"object"}}]));
+        assert!(blocks(&m).iter().filter(|b| b["type"] == "tool_use").all(|b| b["name"] == "mcp__zygo__compact"));
+        assert!(!codes.iter().any(|c| c.starts_with("tools_from_history:")), "{codes:?}");
+    }
 }
