@@ -92,6 +92,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | OS-29 | Kind views for diff, json and log (pipeline step 4) | OS-15, OS-18 | DONE | judgment | node commits 2438240c, 89da3536; acceptance: shape_kind_view 24/24, shape_pipeline 17/17; floor ws 3424/0 |
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | DONE | implementation | d19e88f5, 0b457de5 · acc 12/12, 1/1, 234/234 · PR #149 |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | DONE | mechanical | node commits 9633f4b9, 3b88581f; acceptance: grep -c "^\| PO2 \|" docs/premises.md → 1, po2-result.json present; floor ws 3394/0 |
+| MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | DONE | judgment | e7987782, f30700e9, bec4c680 · outbox 29/0 ; floor green · PR #111 |
 
 ## Log
 

@@ -1130,3 +1130,67 @@ fn pw11_ws_run_leaves_a_working_interactive_shell() {
         down(&h, &ws.name);
     }
 }
+
+/// `git -C <dir> <args>` with no user or system config, no signing and a fixed identity; asserts success.
+fn fx14_git(dir: &Path, args: &[&str]) {
+    let o = std::process::Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .args(["-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-C"])
+        .arg(dir)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .expect("git on PATH");
+    assert!(o.status.success(), "git {args:?}: {}", text(&o.stderr));
+}
+
+/// R§9.4, FX-14 (1): `zygo up` in a session reads the team `[limits] max_members` of the session `team.toml` through
+/// `with_team`: a start above it is refused with the R§9.4 line, after the team-layer warning. The user default is 8,
+/// so the refusal of 5 agents proves the team value. Kills: `run` loading with `team: None` only.
+#[test]
+fn up_reads_the_team_max_members_of_the_session() {
+    use zygo_config::repo_def::{approve_workspace_in, check_default, SystemGit, Use};
+    let h = Harness::no_tmux();
+    let tmux = h.bin.join("tmux");
+    std::fs::write(
+        &tmux,
+        "#!/bin/sh\nfor a in \"$@\"; do if [ \"$a\" = -V ]; then echo 'tmux 3.4'; exit 0; fi; done\n\
+         echo 'no server running on /tmp/zygo-none/s' >&2\nexit 1\n",
+    )
+    .unwrap();
+    ready_exe(&tmux);
+    std::os::unix::fs::symlink(which::which("git").unwrap(), h.bin.join("git")).unwrap();
+    let root = h.root().to_path_buf();
+    let w = root.join("w");
+    std::fs::create_dir_all(w.join(".zygo")).unwrap();
+    fx14_git(&root, &["init", "-q", "--bare", "-b", "main", "o.git"]);
+    fx14_git(&w, &["init", "-q", "-b", "main"]);
+    std::fs::write(w.join(".zygo/workspace.toml"), "version = 1\n").unwrap();
+    fx14_git(&w, &["add", ".zygo/workspace.toml"]);
+    fx14_git(&w, &["commit", "-q", "-m", "c"]);
+    fx14_git(&w, &["remote", "add", "origin", "../o.git"]);
+    fx14_git(&w, &["push", "-q", "origin", "main"]);
+    fx14_git(&root, &["clone", "-q", "o.git", "app"]);
+    let app = root.join("app");
+    let id = zygo_workspace::identity::workspace_id(&app.join(".git").canonicalize().unwrap());
+    let Use::NotApproved { digest, .. } = check_default(&app, &id, &h.paths.approvals_file, &SystemGit) else {
+        panic!("not NotApproved")
+    };
+    approve_workspace_in(&h.paths.approvals_file, &id, &digest).unwrap();
+    let s = root.join("s");
+    std::fs::create_dir_all(&s).unwrap();
+    std::fs::write(s.join("team.toml"), "[limits]\nmax_members = 4\n[loadout.x]\n").unwrap();
+    let o = h.zygo(&["up", "--no-attach"], &[("ZYGO_SESSION_DIR", s.as_os_str())]).current_dir(&app).output().unwrap();
+    assert_eq!(
+        (o.status.code(), text(&o.stdout), text(&o.stderr)),
+        (
+            Some(1),
+            String::new(),
+            "zygo: [loadout] and [workspace] are read from user config only; ignored\n\
+             zygo: this repository's workspace files start 5 agents; [limits] max_members is 4; nothing started\n"
+                .to_string()
+        )
+    );
+    assert!(!h.store(&id).dir().join("workspace.json").exists());
+}
