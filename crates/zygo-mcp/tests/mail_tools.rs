@@ -180,7 +180,11 @@ fn send_unknown_target_names_the_known_names() {
     let t = tools(&x, MailConfig::default());
     assert_eq!(tool(&t, "mail_send").call(send_args("bob")),
         Err(ToolError::Failed("zygo: unknown target; known names: elena, lead".into())));
-    assert!(!mail_dir(&x.p, ID).exists() || fs::read_dir(mail_dir(&x.p, ID)).unwrap().next().is_none());
+    // M§5 P1 (FX-13): the send takes mail/lock before it resolves `to`, so mail/ can hold `lock`, and nothing else.
+    let left: Vec<String> = fs::read_dir(mail_dir(&x.p, ID))
+        .map(|rd| rd.map(|e| e.unwrap().file_name().into_string().unwrap()).collect())
+        .unwrap_or_default();
+    assert!(left.iter().all(|n| n == "lock"), "{left:?}");
     assert!(woke(&x).is_empty());
 }
 
