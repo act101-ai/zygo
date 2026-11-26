@@ -58,6 +58,7 @@ pub static VERBS: &[Verb] = &[
     Verb { spec: &VERB_SPECS[15], handler: super::ls::verb },
     Verb { spec: &VERB_SPECS[16], handler: super::workspace::verb },
     Verb { spec: &VERB_SPECS[17], handler: super::decision::verb },
+    Verb { spec: &VERB_SPECS[18], handler: super::mail::verb },
 ];
 
 /// One session setting (§17.1, §6.1 layer 7).
