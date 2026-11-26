@@ -426,9 +426,10 @@ pub(crate) fn public_check(c: &Ctx, report: &mut Report, deadline: Instant) -> R
 
 /// S§8.3 step 11, S§8.6 "At commit": the outbox files in ULID order, at most [`OUTBOX_CAP`] readable ones. A file
 /// that cannot be read (a link, a FIFO, over `FILE_MAX`, not JSON, or a `to` that is no address) moves to
-/// `refused/`, with one log line, and takes no cap slot. So does a file whose `to` host has no registry in `meta`, the
-/// fetched tip (review F1: a stale member cache after a rename), with the check `no-host` and the notice to the
-/// sender, after the tip check; a bootstrap tip (`None`) holds no registry yet and refuses nothing (S§19 #8). A
+/// `refused/`, with one log line, and takes no cap slot. So does a file whose `to` host no machine reads at `meta`,
+/// the fetched tip ([`read_host`]; review F1: a stale member cache after a rename): when its path is at the tip it
+/// is deleted, else, while the pass deadline holds, it moves with the check `no-host` and the notice to the sender;
+/// a bootstrap tip (`None`) holds no registry yet and refuses nothing (S§19 #8). A
 /// file whose path is at the tip was pushed before and is deleted now. Else, while the pass deadline holds, the
 /// secret pass: clear, an add of its bytes at `<to>/<ULID>.json` (and the file in the returned list, deleted after
 /// the push); a finding, the move to `refused/` and the notice to the sender, whose keys go into `notified`; could
@@ -442,7 +443,7 @@ fn outbox(c: &Ctx, tip: &str, meta: Option<&TipMeta>, (deadline, pass_end): (Ins
             break;
         }
         match read_message(&p) {
-            Some((_, _, to)) if meta.is_some_and(|m| !m.registries.contains_key(host_of(&to))) => {
+            Some((_, _, to)) if meta.is_some_and(|m| !read_host(m, host_of(&to))) => {
                 no_host.push((id, p, format!("{to}/{id}.json"), to));
             }
             Some((bytes, value, to)) => items.push((id, p, bytes, value, format!("{to}/{id}.json"), to)),
@@ -465,6 +466,9 @@ fn outbox(c: &Ctx, tip: &str, meta: Option<&TipMeta>, (deadline, pass_end): (Ins
         if at_tip.contains(&path) {
             let _ = std::fs::remove_file(&p);
             continue;
+        }
+        if Instant::now() >= deadline || c.env.clock.now() >= pass_end {
+            return Err(stop("deadline"));
         }
         c.log(&format!("mail sync: outbox {id}: no-host"));
         let h = host_of(&to);
@@ -495,6 +499,12 @@ fn outbox(c: &Ctx, tip: &str, meta: Option<&TipMeta>, (deadline, pass_end): (Ins
         }
     }
     Ok((changes, sent))
+}
+
+/// No-host review F1, F2: some machine reads `*@<h>/` at `meta`, the fetched tip: `h` has a valid registry (S§7.3),
+/// or a valid ack, which keeps an old host an own host of its renamed workspace (S§7.6 "Rename", S§8.5).
+fn read_host(meta: &TipMeta, h: &str) -> bool {
+    meta.registries.get(h).is_some_and(|r| r.value.is_ok()) || meta.acks.get(h).is_some_and(|a| a.value.is_ok())
 }
 
 /// The host part of the address `to`.

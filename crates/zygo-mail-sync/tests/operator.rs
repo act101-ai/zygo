@@ -7,7 +7,7 @@ use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use common::{blob, git, git_in, tip_file, Machine, Remote, ALICE, BOB, WS_ID};
+use common::{blob, commit_tree, git, git_in, plain, tip_file, Machine, Remote, ALICE, BOB, WS_ID};
 use serde_json::Value;
 use ulid::Ulid;
 use zygo_config::{LoadContext, MailConfig};
@@ -447,4 +447,84 @@ fn pushed_mail_to_a_since_renamed_host_is_not_refused() {
         d.map(|e| fs::read(e.unwrap().path()).unwrap())
             .any(|b| serde_json::from_slice::<Value>(&b).unwrap()["from"] == "zygo")
     }));
+}
+
+/// The notices from `zygo` in `mail/<key>/new/` of `m`.
+fn notices(m: &Machine, key: &str) -> Vec<Value> {
+    let Ok(d) = fs::read_dir(m.sp().mail.join(key).join("new")) else { return Vec::new() };
+    d.map(|e| serde_json::from_slice::<Value>(&fs::read(e.unwrap().path()).unwrap()).unwrap())
+        .filter(|v| v["from"] == "zygo")
+        .collect()
+}
+
+/// A new remote tip with `path` set to `bytes` and each of `removes` gone, on a scratch index of the bare repository.
+fn rewrite(r: &Remote, path: &str, bytes: &[u8], removes: &[&str]) {
+    use std::io::Write;
+    let tip = r.tip(BRANCH).unwrap();
+    let idx = r.dir.path().join("rewrite-index");
+    let b = blob(&r.bare, bytes);
+    let mut info = format!("100644 {b}\t{path}\n");
+    for p in removes {
+        info.push_str(&format!("0 {}\t{p}\n", "0".repeat(40))); // mode 0 removes the entry
+    }
+    assert!(plain(&r.bare).env("GIT_INDEX_FILE", &idx).args(["read-tree", &tip]).status().unwrap().success());
+    let mut ch = plain(&r.bare).env("GIT_INDEX_FILE", &idx).args(["update-index", "--index-info"])
+        .stdin(std::process::Stdio::piped()).spawn().unwrap();
+    ch.stdin.take().unwrap().write_all(info.as_bytes()).unwrap();
+    assert!(ch.wait().unwrap().success());
+    let out = plain(&r.bare).env("GIT_INDEX_FILE", &idx).arg("write-tree").output().unwrap();
+    let tree = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    let c = commit_tree(&r.bare, &tree, Some(&tip));
+    git(&r.bare, &["update-ref", &format!("refs/heads/{BRANCH}"), &c]);
+}
+
+#[test] // S§8.3 step 11, S§7.6 Rename, S§8.5 Candidates, S§19 #19 (no-host review F1): the old ack keeps the old host read
+fn mail_to_an_old_host_whose_ack_remains_is_pushed() {
+    let (r, a, b) = pair();
+    for _ in 0..2 {
+        send(&a, "alice", ("bob", "b"));
+    }
+    sync(&a);
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    assert!(file(&r, "ack/b.json").is_some()); // the files wait at the tip: the old ack stays
+    let id = send(&a, "alice", ("bob", "b")); // A's member cache is stale
+    sync(&a);
+    assert!(file(&r, &format!("bob@b/{id}.json")).is_some());
+    assert!(!a.sp().refused.join(format!("{id}.json")).exists());
+    assert!(notices(&a, ALICE).is_empty());
+    assert_eq!(sync(&b).delivered, 1);
+    assert!(new_ids(&b, BOB).contains(&format!("{id}.json")));
+}
+
+#[test] // S§8.3 step 11, S§7.3 Validation (no-host review F2): a registry that is not used counts as none
+fn mail_to_a_host_with_an_invalid_registry_is_refused() {
+    let (r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"));
+    rewrite(&r, "registry/b.json", b"{}", &["ack/b.json"]);
+    sync(&a);
+    assert!(a.sp().refused.join(format!("{id}.json")).is_file());
+    assert_eq!(file(&r, &format!("bob@b/{id}.json")), None);
+    assert!(a.errors().contains(&format!("mail sync: outbox {id}: no-host")), "{}", a.errors());
+    assert_eq!(notices(&a, ALICE).len(), 1);
+}
+
+/// A clock that adds `.1` seconds at each read, starting at `.0`.
+struct Stepping(AtomicU64, u64);
+impl env::Clock for Stepping {
+    fn now(&self) -> SystemTime { UNIX_EPOCH + Duration::from_secs(self.0.fetch_add(self.1, Ordering::SeqCst)) }
+}
+
+#[test] // S§8.3 step 4, step 11 (no-host review F3): the pass deadline stops the no-host refusals; the rest stays
+fn deadline_stops_the_no_host_refusals() {
+    let (_r, a, b) = pair();
+    b.config(Some("b2"), "");
+    sync(&b);
+    let ids: Vec<Ulid> = (0..3).map(|_| send(&a, "alice", ("bob", "b"))).collect();
+    let mut e = env(&a);
+    e.clock = Box::new(Stepping(AtomicU64::new(T0), 50));
+    let err = run(&e, WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!(err, SyncError::Stopped { line: "zygo: mail sync stopped (deadline); the outbox is kept".into(), check: "deadline" });
+    assert!(ids.iter().any(|id| a.sp().outbox.join(format!("{id}.json")).is_file()));
 }
