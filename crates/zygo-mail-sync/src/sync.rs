@@ -172,9 +172,10 @@ pub fn run_with(env: &Env, ws_id: &str, mode: Mode, opts: &Opts) -> Result<Repor
             Err(_) if c.state_gone() => return forgotten(mode, report),
             Err(f) => return Err(c.stopped(f, false)),
         };
-        if c.forgotten(&lock) {
-            drop(lock);
-            return forgotten(mode, report);
+        match c.recheck(&lock) {
+            Recheck::Same => {}
+            Recheck::Forgotten => return forgotten(mode, report),
+            Recheck::Unreadable => return Err(record_error()),
         }
         let held = (|| {
             state::take_again(&c.sp).map_err(|_| stop("again"))?;
@@ -245,23 +246,31 @@ impl Ctx<'_> {
 
     pub(crate) fn log(&self, line: &str) { self.store.log_error(line) }
 
-    /// S§8.3 step 3 (MS-21 review F1, R2-2): under the lock `lock`, before any write, `zygo ws forget` ran while this
-    /// sync waited: the workspace record (read as the gate reads it) is gone, or it is not the gate's workspace (its
-    /// id, name, common folder or main worktree differ, or, on unix, its state folder is a new one); or (unix) `lock`
-    /// is no longer the file at `mail/sync/lock` (the forget unlinked the file this sync waited on). A record change
-    /// that keeps the workspace (its phase, its snapshot count, its members) is not a forget.
-    fn forgotten(&self, lock: &File) -> bool {
+    /// S§8.3 step 3 (MS-21 review F1, R2-2, R2-3): under the lock `lock`, before any write. `Forgotten`: `zygo ws
+    /// forget` ran while this sync waited: (unix) `lock` is no longer the file at `mail/sync/lock` (the forget
+    /// unlinked the file this sync waited on), or the workspace record (read as the gate reads it) is gone or is not
+    /// the gate's workspace (its id, name, common folder or main worktree differ, or, on unix, its state folder is a
+    /// new one). `Unreadable`: the record cannot be read, as at the gate. A record change that keeps the workspace
+    /// (its phase, its snapshot count, its members) is `Same`.
+    fn recheck(&self, lock: &File) -> Recheck {
+        if !lock_is_at(lock, &self.sp.lock) {
+            return Recheck::Forgotten;
+        }
         let same_dir = match &self.state_dir {
             Some(d) => file_id(d.metadata()).is_some_and(|id| file_id(std::fs::symlink_metadata(self.store.dir())) == Some(id)),
             None => true,
         };
-        let same = |ws: &Workspace| {
-            (&ws.id, &ws.name, &ws.common_dir, &ws.main_root)
-                == (&self.ws.id, &self.ws.name, &self.ws.common_dir, &self.ws.main_root)
-                && same_dir
-        };
-        let record_kept = matches!(self.store.read(), Ok(Some(ws)) if ws.id == self.ws_id && same(&ws));
-        !record_kept || !lock_is_at(lock, &self.sp.lock)
+        match self.store.read() {
+            Err(_) => Recheck::Unreadable,
+            Ok(Some(ws))
+                if same_dir
+                    && (&ws.id, &ws.name, &ws.common_dir, &ws.main_root)
+                        == (&self.ws.id, &self.ws.name, &self.ws.common_dir, &self.ws.main_root) =>
+            {
+                Recheck::Same
+            }
+            Ok(_) => Recheck::Forgotten,
+        }
     }
 
     /// S§8.3 steps 2-3 (MS-21 review R2-1): the state folder `<workspaces_dir>/<id>/` is gone, so `zygo ws forget`
@@ -271,6 +280,16 @@ impl Ctx<'_> {
         matches!(std::fs::symlink_metadata(self.store.dir()), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
     }
 }
+
+/// S§8.3 step 3: what [`Ctx::recheck`] found under the lock.
+enum Recheck {
+    Same,
+    Forgotten,
+    Unreadable,
+}
+
+/// S§8.3 step 1: the stop of a workspace record that cannot be read (no write, exit 0 for a child).
+fn record_error() -> SyncError { SyncError::Stopped { line: GATE_RECORD_LINE.into(), check: "workspace" } }
 
 /// S§8.3 step 3 (MS-21 review F1): the stop of a CLI sync whose workspace was forgotten. It writes nothing: no
 /// `errors.log` line and no `state.json` (the state folder is gone, and a write would make it again).
@@ -291,7 +310,7 @@ fn forgotten(mode: Mode, report: Report) -> Result<Report, SyncError> {
 /// [`SyncError::exit_code`] gives exit 0 for a child.
 fn gate<'a>(env: &'a Env, ws_id: &'a str) -> Result<Ctx<'a>, SyncError> {
     let store = Store::open(&env.paths, ws_id);
-    let record = || SyncError::Stopped { line: GATE_RECORD_LINE.into(), check: "workspace" };
+    let record = record_error;
     let sp = SyncPaths::new(&env.paths, ws_id).map_err(|_| record())?;
     let Ok(Some(ws)) = store.read() else { return Err(record()) };
     let ctx = LoadContext { paths: env.paths.clone(), repo: Some(ws.main_root.clone()), team: None };
@@ -341,8 +360,11 @@ pub(crate) fn locked<T>(env: &Env, ws_id: &str, f: impl FnOnce(&Ctx) -> Result<T
     let c = gate(env, ws_id)?;
     env.seam.at("after_gate").map_err(|e| c.stopped(e.into(), false))?;
     let out = match take_lock(&c.sp, Mode::Cli, &*env.clock) {
-        Ok(Some(lock)) if c.forgotten(&lock) => return Err(forgotten_error()),
-        Ok(Some(_lock)) => f(&c).map_err(|e| c.stopped(e, true)),
+        Ok(Some(lock)) => match c.recheck(&lock) {
+            Recheck::Same => f(&c).map_err(|e| c.stopped(e, true)),
+            Recheck::Forgotten => return Err(forgotten_error()),
+            Recheck::Unreadable => return Err(record_error()),
+        },
         Ok(None) => return Err(SyncError::Busy),
         Err(_) if c.state_gone() => return Err(forgotten_error()),
         Err(f) => return Err(c.stopped(f, false)),

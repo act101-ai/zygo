@@ -865,6 +865,30 @@ fn cli_run_whose_lock_file_was_made_again_stops_as_forgotten() {
     assert!(fs::symlink_metadata(&sp.identity).is_err() && fs::symlink_metadata(&sp.worktree).is_err());
 }
 
+#[test] // S§8.3 step 3 (MS-21 review R2-3): a record that cannot be read after the wait is the gate's record stop
+fn cli_run_whose_record_became_newer_during_the_wait_is_the_record_stop() {
+    let _g = exclusive();
+    let (_r, a) = one();
+    let sp = a.sp();
+    fs::create_dir_all(&sp.sync).unwrap();
+    fs::File::create(&sp.lock).unwrap();
+    let held = take(&sp.lock);
+    let file = a.paths.workspaces_dir().join(WS_ID).join("workspace.json");
+    let newer: Box<dyn FnOnce() + Send> = Box::new(move || {
+        let mut v: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        v["version"] = json!(v["version"].as_u64().unwrap() + 1);
+        fs::write(&file, serde_json::to_vec(&v).unwrap()).unwrap();
+        drop(held);
+    });
+    let e = Env { clock: Box::new(ForgetClock::new(T0, newer)), ..plain_env(&a) };
+    let err = run(&e, WS_ID, Mode::Cli).unwrap_err();
+    let line = "zygo: mail sync cannot run: the workspace record cannot be read";
+    assert_eq!(err, SyncError::Stopped { line: line.into(), check: "workspace" });
+    assert_eq!((err.exit_code(Mode::Cli), err.exit_code(Mode::Child)), (1, 0));
+    assert!(fs::symlink_metadata(&sp.identity).is_err());
+    assert_eq!(a.errors(), "");
+}
+
 #[test] // S§8.3 steps 3 and 17 (MS-21 review F1): a child whose record goes before its next pass ends silently, Ok
 fn child_pass_after_the_record_went_does_not_run() {
     let _g = exclusive();
