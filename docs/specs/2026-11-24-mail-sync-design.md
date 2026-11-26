@@ -270,7 +270,7 @@ Reasons **(author)**:
 
 ### 8.4 Rate limit
 
-**(author)** A hook starts the sync child only when `now - last_start` is `[mail] sync_gap` (default `60s`) or more. `last_start` is the Unix time in its own file, `mail/sync/last_start`; the hook reads it and writes the new value (atomic) before the spawn. A separate file keeps the hook and the sync from writing one file. Two hooks that read at the same time can both start a child; the lock and mark of S§8.3 make the second one a mark or a second pass. The clock is a parameter (S-C9).
+**(author)** A hook starts the sync child only when `now - last_start` is `[mail] sync_gap` (default `60s`) or more, or when `last_start` is later than `now` (a clock set back, or a corrupt file). `last_start` is the Unix time in its own file, `mail/sync/last_start`; the hook reads it and writes the new value (atomic) before the spawn. A separate file keeps the hook and the sync from writing one file. Two hooks that read at the same time can both start a child; the lock and mark of S§8.3 make the second one a mark or a second pass. The clock is a parameter (S-C9).
 
 ### 8.5 Import (P3-4 receive side)
 
@@ -555,3 +555,4 @@ Each check is a test or a command. A "machine" in a test is one `HOME` with its 
 - 2026-11-25 · S§8.3 · author's call · load/save disagree on a bad entry: a state.json with one value outside the rules loaded, and then every later save failed, so the pass could never write its state again; the read now refuses such a file as it refuses a non-object.
 - 2026-11-25 · S§8.5 · author's call · a file staged by a crash during the write is deleted and imported again, not delivered.
 - 2026-11-25 · S§8.5 · author's call · reading a folder stops at its target's inbox room, so one full inbox does not stop import for the others.
+- 2026-11-25 · S§8.4 · author's call · a last_start later than now no longer stops hook starts until the clock passes it (MS-16 review F2).
