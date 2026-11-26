@@ -9,7 +9,7 @@ use zygo_config::Dialect;
 use zygo_proxy::pipeline::Adjustment;
 use zygo_proxy::tee::HOLD_MAX;
 use zygo_proxy::translate::reasoning::decode_thinking;
-use zygo_proxy::translate::responses_client::{request, response, Calls, Encoder};
+use zygo_proxy::translate::responses_client::{request, response, Calls, Encoder, REFUSAL_TEXT};
 use zygo_proxy::translate::sse::SseEvent;
 use zygo_proxy::translate::{translate_response, Target};
 
@@ -745,7 +745,6 @@ fn f3_f6_custom_tool_input_past_hold_max_fails() {
 fn f4_stop_reasons() {
     for (reason, event, status, detail) in [
         ("model_context_window_exceeded", "response.incomplete", "incomplete", Some("max_output_tokens")),
-        ("refusal", "response.incomplete", "incomplete", Some("content_filter")),
         ("pause_turn", "response.completed", "completed", None),
         ("end_turn", "response.completed", "completed", None),
         ("stop_sequence", "response.completed", "completed", None),
@@ -768,6 +767,77 @@ fn f4_stop_reasons() {
             }
         }
     }
+}
+
+// ---- RS-12: a refusal ends with a text item Codex does not retry (K§6.4.3 stream obligation 5, PC19) ----
+
+#[test]
+fn refusal_maps_to_completed_with_text_item() {
+    let mut ev = vec![message_start()];
+    ev.extend(text_block(0, &["pc"]));
+    ev.extend(end("refusal"));
+    let mut e = enc();
+    let evs = run(&mut e, &ev);
+    assert_sequence(&evs);
+    let tail: Vec<String> = types(&evs)[evs.len() - 7..].to_vec();
+    assert_eq!(
+        tail,
+        [
+            "response.output_item.added",
+            "response.content_part.added",
+            "response.output_text.delta",
+            "response.output_text.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "response.completed"
+        ]
+    );
+    let items = items_done(&evs);
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["content"], json!([{"type":"output_text","text":"pc","annotations":[]}]));
+    assert_eq!(
+        norm(&items[1]),
+        json!({"type":"message","role":"assistant","status":"completed",
+            "content":[{"type":"output_text","text":REFUSAL_TEXT,"annotations":[]}]})
+    );
+    let n = evs.len();
+    for ev in &evs[n - 7..n - 1] {
+        assert_eq!(ev.data["output_index"], json!(1), "{}", ev.event);
+    }
+    assert_eq!(evs[n - 5].data["delta"], REFUSAL_TEXT);
+    assert_eq!(evs[n - 4].data["text"], REFUSAL_TEXT);
+    let r = &evs[n - 1].data["response"];
+    assert_eq!(r["status"], "completed");
+    assert!(r.get("incomplete_details").is_none());
+    assert_eq!(r["output"], json!([]));
+    assert_eq!(r["usage"]["output_tokens"], 7);
+    assert_eq!(terminals(&evs).len(), 1);
+    assert!(e.ended());
+    assert_eq!(e.adjustments(), vec![]);
+    // No content block: the refusal item alone, at output_index 0.
+    let mut ev0 = vec![message_start()];
+    ev0.extend(end("refusal"));
+    let items0 = items_done(&run(&mut enc(), &ev0));
+    assert_eq!(items0.len(), 1);
+    assert_eq!(items0[0]["content"][0]["type"], "output_text");
+    // Non-streamed: the same items, completed.
+    let msg = json!({"content":[{"type":"text","text":"pc"}],"stop_reason":"refusal","usage":{"output_tokens":7}});
+    let (r, codes) = response(&msg, "role-x", &tgt(), &Calls::default());
+    assert_eq!(r["status"], "completed");
+    assert!(r.get("incomplete_details").is_none());
+    assert_eq!(norm(&r["output"]), norm(&Value::Array(items)));
+    assert_eq!(codes, vec![]);
+}
+
+#[test]
+fn refusal_echo_maps_to_assistant_text() {
+    // Codex's turn-2 request after the chosen ending (run 1): the refused turn comes back in the history.
+    let mut body = record("encoder/requests/rfc-next.json");
+    body["max_output_tokens"] = json!(100);
+    let (m, _) = request(&body, &tgt(), None).unwrap();
+    let text = m["messages"].to_string();
+    assert!(text.contains("pc12-turn-rfc-end"), "{text}");
+    assert!(text.contains(REFUSAL_TEXT), "{text}");
 }
 
 #[test]

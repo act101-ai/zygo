@@ -869,18 +869,17 @@ fn response_object(ulid: &str, model: &str, status: &str) -> Value {
     json!({"id":format!("resp_{ulid}"),"object":"response","model":model,"status":status,"output":[]})
 }
 
+/// The text of the item that ends a `refusal` stop (stream obligation 5): Codex 0.172.0 shows it once and does not send
+/// the request again (PC19), where `response.incomplete` `content_filter` made it retry.
+pub const REFUSAL_TEXT: &str = "The upstream model refused this request (stop_reason: refusal).";
+
 /// The terminal form of R for `stop_reason` (stream obligation 5): `max_tokens` and
-/// `model_context_window_exceeded` → incomplete with `max_output_tokens`, `refusal` → incomplete with
-/// `content_filter`, any other (`pause_turn` too: its server tools are dropped) → completed.
+/// `model_context_window_exceeded` → incomplete with `max_output_tokens`, any other (`refusal`, after its
+/// `REFUSAL_TEXT` item; `pause_turn` too: its server tools are dropped) → completed.
 fn finished(mut r: Value, stop_reason: Option<&str>, u: Usage) -> Value {
-    let reason = match stop_reason {
-        Some("max_tokens" | "model_context_window_exceeded") => Some("max_output_tokens"),
-        Some("refusal") => Some("content_filter"),
-        _ => None,
-    };
-    if let Some(reason) = reason {
+    if matches!(stop_reason, Some("max_tokens" | "model_context_window_exceeded")) {
         r["status"] = json!("incomplete");
-        r["incomplete_details"] = json!({"reason":reason});
+        r["incomplete_details"] = json!({"reason":"max_output_tokens"});
     } else {
         r["status"] = json!("completed");
     }
@@ -950,6 +949,9 @@ pub fn response(msg: &Value, model: &str, t: &Target, calls: &Calls) -> (Value, 
             ty => dropped |= is_server_tool(ty),
         }
     }
+    if s(msg, "stop_reason") == Some("refusal") {
+        output.push(text_item(&item_id("msg", &ulid, output.len()), Some(REFUSAL_TEXT)));
+    }
     let u = usage_fields(msg.get("usage"));
     let mut r = finished(response_object(&ulid, model, "completed"), s(msg, "stop_reason"), u);
     r["output"] = Value::Array(output);
@@ -1018,8 +1020,10 @@ impl Block {
 ///      type: no event.
 /// 3. Exactly one terminal event. At `message_stop`: `response.completed {response: R, status completed, usage}`, or
 ///    `response.incomplete {response: R, status incomplete, incomplete_details: {reason}, usage}` with reason
-///    `max_output_tokens` for `stop_reason` `max_tokens` or `model_context_window_exceeded` and `content_filter` for
-///    `refusal` (`pause_turn` and the rest complete). On an upstream `error` event (its message cut as a 400 echo),
+///    `max_output_tokens` for `stop_reason` `max_tokens` or `model_context_window_exceeded` (`refusal`, `pause_turn`
+///    and the rest complete). For `refusal`, after the done events of an open block, one more `message` item carries
+///    `REFUSAL_TEXT` as one `output_text` part, with the events of a text block (item 2); Codex 0.172.0 shows it once
+///    and does not send the request again (PC19). On an upstream `error` event (its message cut as a 400 echo),
 ///    unparsable `data`, held bytes over `HOLD_MAX` (the message names the largest held part: stream line, event,
 ///    content block, tool call), `fail` or an early end: `response.failed {response: R, status failed, error: {code,
 ///    message}}`.
@@ -1268,6 +1272,12 @@ impl Encoder {
             }
             "message_stop" => {
                 self.close(out);
+                if self.stop_reason.as_deref() == Some("refusal") {
+                    self.refusal(out);
+                    if self.ended {
+                        return; // its text passed HOLD_MAX: response.failed was the terminal event
+                    }
+                }
                 let r = finished(self.r("in_progress"), self.stop_reason.as_deref(), self.usage);
                 let name = if r["status"] == "incomplete" { "response.incomplete" } else { "response.completed" };
                 self.emit(name, json!({"response":r}), out);
@@ -1366,6 +1376,14 @@ impl Encoder {
             _ => {}
         }
         self.open = Some(b);
+    }
+
+    /// The refusal item (obligation 5): the events of a text block that holds `REFUSAL_TEXT`, at the next
+    /// `output_index`. Called at `message_stop`, after `close`, so no block is open.
+    fn refusal(&mut self, out: &mut Vec<SseEvent>) {
+        self.open_block(0, &json!({"type":"text","text":""}), out);
+        self.delta(0, &json!({"type":"text_delta","text":REFUSAL_TEXT}), out);
+        self.close(out);
     }
 
     /// The open block's done events, if one is open.
