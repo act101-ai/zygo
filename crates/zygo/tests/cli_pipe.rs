@@ -1,7 +1,8 @@
 //! N45: a command whose stdout reader is gone ends quietly (no panic line, no signal), with its normal exit status.
 //! A pipe whose read end is closed before the spawn makes every stdout write fail with EPIPE.
 //! N48: the same for stderr: a command that writes an error line there keeps its §8.2 exit code (not 101).
-use std::io::Write;
+mod common;
+
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
@@ -27,7 +28,7 @@ fn spawn(args: &[&str], stdin: &[u8], home: &Path) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    common::write_stdin(child.stdin.take().unwrap(), stdin);
     child.wait_with_output().unwrap()
 }
 

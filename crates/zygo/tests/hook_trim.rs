@@ -1,4 +1,5 @@
-use std::io::Write;
+mod common;
+
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use serde_json::{json, Value};
@@ -17,7 +18,7 @@ fn zygo(d: &Path, sd: &SessionDir, args: &[&str], input: &[u8]) -> Output {
         .env("HOME", d).env("LOCALAPPDATA", d.join("local")).env("APPDATA", d.join("roaming"))
         .env("ZYGO_SESSION_DIR", &sd.root).env_remove("ZYGO_AGENT").current_dir(d)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    c.stdin.take().unwrap().write_all(input).unwrap();
+    common::write_stdin(c.stdin.take().unwrap(), input);
     c.wait_with_output().unwrap()
 }
 fn post_bash(stdout: &str) -> Vec<u8> {     // fixture shape of PostToolUse-Bash-main.json

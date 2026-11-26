@@ -1,4 +1,5 @@
-use std::io::Write;
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -29,7 +30,7 @@ fn hook(home: &Path, sd: &SessionDir, event: Option<&str>, stdin: &[u8]) -> (Opt
     cmd.env("HOME", home).env("LOCALAPPDATA", home).env("APPDATA", home).env("ZYGO_CONFIG", home.join("config.toml"))
         .env("ZYGO_SESSION_DIR", &sd.root).env_remove("ZYGO_AGENT").current_dir(home);
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    common::write_stdin(child.stdin.take().unwrap(), stdin);
     let out = child.wait_with_output().unwrap();
     (out.status.code(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
 }

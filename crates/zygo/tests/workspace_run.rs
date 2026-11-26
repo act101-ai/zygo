@@ -220,7 +220,7 @@ fn au15_without_shell_ws_run_execs_bin_sh() {
     c.env_remove("SHELL").stdin(std::process::Stdio::piped());
     let mut child = Guarded::spawn(c);
     let out = h.root().join("sh-cwd");
-    std::io::Write::write_all(&mut child.stdin().unwrap(), format!("pwd > '{}'\n", out.display()).as_bytes()).unwrap();
+    common::write_stdin(child.stdin().unwrap(), format!("pwd > '{}'\n", out.display()).as_bytes());
     assert!(child.wait("ws run").success());
     assert_eq!(std::fs::read_to_string(&out).unwrap().trim_end(), h.repo().to_str().unwrap());
 }
@@ -901,7 +901,7 @@ fn h14_an_early_exit_keeps_the_id_that_the_hook_recorded() {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .unwrap();
-        std::io::Write::write_all(&mut hook.stdin.take().unwrap(), stdin.to_string().as_bytes()).unwrap();
+        common::write_stdin(hook.stdin.take().unwrap(), stdin.to_string().as_bytes());
         assert_eq!(output_child(hook, "zygo hook workspace").status.code(), Some(0));
     }
     common::stub_control(&c, "exit 0").unwrap();

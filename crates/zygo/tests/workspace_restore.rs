@@ -755,7 +755,7 @@ fn w18_30_a_result_survives_down_up_and_the_sweep() {
     let mut c = h.zygo(&["hook", "trim"], &[("ZYGO_SESSION_DIR", s1.as_os_str())]);
     c.stdin(Stdio::piped());
     let mut g = Guarded::spawn(c);
-    g.stdin().unwrap().write_all(&input).unwrap();
+    common::write_stdin(g.stdin().unwrap(), &input);
     let o = g.output("hook trim");
     assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
     let v: Value = serde_json::from_slice(&o.stdout).unwrap_or_else(|e| panic!("{e}: {}", text(&o.stdout)));
@@ -781,7 +781,7 @@ fn w18_30_a_result_survives_down_up_and_the_sweep() {
     let mut c = h.zygo(&["mcp", "--agent", "claude-code"], &[("ZYGO_SESSION_DIR", s2.as_os_str())]);
     c.stdin(Stdio::piped());
     let mut g = Guarded::spawn(c);
-    g.stdin().unwrap().write_all(req.as_bytes()).unwrap();
+    common::write_stdin(g.stdin().unwrap(), req.as_bytes());
     let o = g.output("mcp");
     let replies: Vec<Value> = text(&o.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
     let r2 = replies.iter().find(|r| r["id"] == 2).unwrap_or_else(|| panic!("{}{}", text(&o.stdout), text(&o.stderr)));

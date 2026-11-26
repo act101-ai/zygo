@@ -1,6 +1,5 @@
 //! N28 acceptance (§20 #17): the `/zygo:` dispatcher, `compact`, `help`, `status` and the status line, slash and CLI.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -17,6 +16,7 @@ use zygo_proxy::client::{SessionClient, WindowArg};
 use zygo_proxy::session::SessionRequest;
 use zygo_proxy::{Proxy, ProxyHandle};
 
+mod common;
 #[cfg(unix)]
 mod member_fixture;
 #[cfg(unix)]
@@ -150,7 +150,7 @@ fn zygo(home: &Path, args: &[&str], env: &Env, stdin: &[u8]) -> (i32, String, St
     cmd.env_remove("ZYGO_WORKSPACE");
     cmd.envs(env.vars.iter().copied());
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    common::write_stdin(child.stdin.take().unwrap(), stdin);
     let out = child.wait_with_output().unwrap();
     (out.status.code().unwrap(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
 }
@@ -183,6 +183,22 @@ fn reason(out: &str) -> String {
 
 fn compact_of(h: &ProxyHandle, id: &str) -> Option<WindowArg> {
     h.session(id).unwrap().status().compact
+}
+
+/// TF-1: a child that exits before it reads stdin closes the pipe; the write then gets `BrokenPipe`, which
+/// `write_stdin` ignores. The child is reaped before the write, so the write cannot race the exit.
+#[test]
+fn stdin_write_to_an_exited_child_is_not_an_error() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_zygo"))
+        .arg("--version")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.take().unwrap();
+    child.wait().unwrap();
+    common::write_stdin(stdin, &vec![b'x'; 1 << 20]);
 }
 
 #[test]

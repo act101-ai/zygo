@@ -1,4 +1,5 @@
-use std::io::Write;
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -26,7 +27,7 @@ fn hook(home: &Path, sd: &SessionDir, stdin: &[u8]) -> (Option<i32>, String, Str
     cmd.env("HOME", home).env("LOCALAPPDATA", home).env("APPDATA", home).env("ZYGO_CONFIG", home.join("config.toml"))
         .env("ZYGO_SESSION_DIR", &sd.root).env_remove("ZYGO_AGENT").current_dir(home);
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    common::write_stdin(child.stdin.take().unwrap(), stdin);
     let out = child.wait_with_output().unwrap();
     (out.status.code(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
 }
@@ -102,7 +103,7 @@ fn binary_guard_scope_enforce_denies_and_exempts_tmpdir() {
             .env("ZYGO_SESSION_DIR", &sd.root).env("TMPDIR", home.join("scratch")).env("TMP", home.join("scratch"))
             .env("TEMP", home.join("scratch")).env("GIT_CEILING_DIRECTORIES", &base).env_remove("ZYGO_AGENT").current_dir(home);
         let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-        child.stdin.take().unwrap().write_all(v.to_string().as_bytes()).unwrap();
+        common::write_stdin(child.stdin.take().unwrap(), v.to_string().as_bytes());
         let out = child.wait_with_output().unwrap();
         (out.status.code(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
     };
@@ -204,7 +205,7 @@ fn d2(p: Probe) -> [(Option<i32>, String, String); 2] {
             .env_remove("ZYGO_AGENT").current_dir(&home);
         for (k, v) in p.env { cmd.env(k, v); }
         let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-        child.stdin.take().unwrap().write_all(v.to_string().as_bytes()).unwrap();
+        common::write_stdin(child.stdin.take().unwrap(), v.to_string().as_bytes());
         let out = child.wait_with_output().unwrap();
         (out.status.code(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
     };
@@ -447,7 +448,7 @@ fn binary_guard_no_git_says_unread_only_in_a_repository() {
             .env("ZYGO_CONFIG", home.join("config.toml")).env("ZYGO_SESSION_DIR", &sd.root).env("PATH", "")
             .env_remove("ZYGO_AGENT").current_dir(home);
         let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-        child.stdin.take().unwrap().write_all(w.to_string().as_bytes()).unwrap();
+        common::write_stdin(child.stdin.take().unwrap(), w.to_string().as_bytes());
         let out = child.wait_with_output().unwrap();
         (out.status.code(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
     };

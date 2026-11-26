@@ -859,7 +859,6 @@ pub fn activity(sdir: &Path) -> Value {
 /// One `tools/call` of `tool` with `args` on `zygo mcp --agent claude-code` for the session folder `sdir` (after
 /// `initialize`, protocol `2025-06-18`, and `notifications/initialized`; E1 step 15). Returns the reply with id 2.
 pub fn mcp_call(h: &Harness, sdir: &Path, tool: &str, args: Value) -> Value {
-    use std::io::Write;
     let call = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": tool, "arguments": args}});
     let req = format!(
         "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{{\"protocolVersion\":\"2025-06-18\"}}}}\n\
@@ -868,7 +867,7 @@ pub fn mcp_call(h: &Harness, sdir: &Path, tool: &str, args: Value) -> Value {
     let mut c = h.zygo(&["mcp", "--agent", "claude-code"], &[("ZYGO_SESSION_DIR", sdir.as_os_str())]);
     c.stdin(Stdio::piped());
     let mut g = Guarded::spawn(c);
-    g.stdin().unwrap().write_all(req.as_bytes()).unwrap();
+    crate::common::write_stdin(g.stdin().unwrap(), req.as_bytes());
     let o = g.output("mcp");
     let replies: Vec<Value> = text(&o.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
     replies.into_iter().find(|r| r["id"] == 2).unwrap_or_else(|| panic!("no reply 2: {}{}", text(&o.stdout), text(&o.stderr)))

@@ -758,7 +758,7 @@ mod start {
         let g = COPY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut child = cmd.spawn().unwrap();
         drop(g);
-        child.stdin.take().unwrap().write_all(b"y\n").unwrap();
+        common::write_stdin(child.stdin.take().unwrap(), b"y\n");
         let o = child.wait_with_output().unwrap();
         assert_eq!(o.status.code(), Some(0), "{}", err(&o));
         assert_eq!(err(&o), format!("{} updated to {NEW}; relaunch zygo\n", prompt(NEW)));
@@ -930,7 +930,7 @@ mod workspace_check {
         assert!(locked(|| srv.run(&["list-sessions"])).is_err(), "a pane started before the answer");
         assert_eq!(state_entries(&h), 0);
         assert!(!out.exists());
-        stdin.write_all(b"n\n").unwrap();
+        common::write_stdin(&mut stdin, b"n\n");
         drop(stdin);
         let o = g.output("zygo up");
         assert_eq!(o.status.code(), Some(0), "{}", err(&o));
@@ -956,7 +956,7 @@ mod workspace_check {
         let mut c = checked(c, &base);
         c.current_dir(h.repo()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = locked(|| Guarded::spawn(c));
-        child.stdin().unwrap().write_all(b"y\n").unwrap();
+        common::write_stdin(child.stdin().unwrap(), b"y\n");
         let o = child.output("zygo up");
         assert_eq!(o.status.code(), Some(0), "{}", err(&o));
         assert_eq!(err(&o), format!("{} updated to {NEW}; relaunch zygo\n", prompt(NEW)));
@@ -995,7 +995,7 @@ mod workspace_check {
         let mut c = checked(h.zygo(&["up", "--all"], &[("TMUX", tmux.as_os_str()), ("SHELL", sh)]), &base);
         c.current_dir(h.root()).stdin(Stdio::piped());
         let mut g = locked(|| Guarded::spawn(c));
-        g.stdin().unwrap().write_all(b"n\n").unwrap();
+        common::write_stdin(g.stdin().unwrap(), b"n\n");
         let o = g.output("zygo up --all");
         assert_eq!(o.status.code(), Some(0), "{}", err(&o));
         assert_eq!(err(&o).matches(&prompt(NEW)).count(), 1, "{}", err(&o));
@@ -1103,7 +1103,7 @@ mod workspace_check {
         c.current_dir(h.root()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let t0 = std::time::Instant::now();
         let mut child = locked(|| Guarded::spawn(c));
-        child.stdin().unwrap().write_all(answer).unwrap();
+        common::write_stdin(child.stdin().unwrap(), answer);
         let o = child.output("ws run");
         Run { o, out, took: t0.elapsed() }
     }

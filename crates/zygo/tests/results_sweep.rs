@@ -1,7 +1,8 @@
 //! N71: the results sweep (§10.1) runs at every `zygo` command except hooks and `zygo mcp`. Every run uses a scratch
 //! HOME and cache; no agent is started.
+mod common;
+
 use std::ffi::OsStr;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
@@ -47,7 +48,7 @@ fn zygo_env(home: &Path, args: &[&str], stdin: &[u8], extra: &[(&str, &OsStr)]) 
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     for (k, v) in extra { cmd.env(k, v); }
     let mut c = cmd.spawn().unwrap();
-    c.stdin.take().unwrap().write_all(stdin).unwrap();
+    common::write_stdin(c.stdin.take().unwrap(), stdin);
     c.wait_with_output().unwrap()
 }
 
