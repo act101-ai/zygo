@@ -203,10 +203,12 @@ run_claude_stream() {
 }
 
 # scrub <file>: write a fixture copy to stdout with machine paths and prompt text omitted. One id
-# map per part ($N2_SCRATCH/scrub-ids.json, PC-11): a Codex item id or ULID gets the same placeholder
-# in every file of the part, and different ids different ones.
+# map per part ($N2_SCRATCH/scrub-ids-<part>.json, PC-11 review round 2; <part> is the name of the
+# script that sourced lib.sh, $0 without .sh): a Codex item id or ULID gets the same placeholder in
+# every file of the part, and different ids different ones. Other parts of the run have own maps.
 scrub() {
-  SCRUB_IDMAP="$N2_SCRATCH/scrub-ids.json" python3 -I "$PREMISES_DIR/scrub.py" "$RUN" "$1"
+  _n2_part=${0##*/}
+  SCRUB_IDMAP="$N2_SCRATCH/scrub-ids-${_n2_part%.sh}.json" python3 -I "$PREMISES_DIR/scrub.py" "$RUN" "$1"
 }
 
 # --- Codex (node PC-2) ---------------------------------------------------------------------------
