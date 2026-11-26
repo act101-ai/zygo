@@ -165,25 +165,29 @@ pub fn run(a: MailArgs) -> i32 {
     }
 }
 
-/// `zygo mail watch` (M-G5, M§8): each `poll`, the new messages of `key` under `dir`; when there are any, one line
-/// `<id> <from> <subject>` per message on `out`, exit 0, nothing moved. Exit 1 when `timeout` has passed since the
-/// first `now()` with no mail (no line), or on a read error (its text on stderr). The list comes before the clock, so
-/// mail already in `new/` returns 0 even with a zero timeout (A4). A write error on `out` is ignored (A7).
+/// `zygo mail watch` (M-G5, M§8): each `poll`, the count of files in `new/` of `key` under `dir`; when a file has
+/// landed, one line `<id> <from> <subject>` per message that parses on `out` (none when no file parses), exit 0,
+/// nothing moved. Exit 1 when `timeout` has passed since the first `now()` with no file (no line), on a read error
+/// (its text on stderr), or when the write to `out` fails (A7). The count comes before the clock, so mail already in
+/// `new/` returns 0 even with a zero timeout (A4).
 pub fn watch(dir: &Path, key: &str, timeout: Duration, poll: Duration, now: &dyn Fn() -> Instant, out: &mut dyn Write) -> i32 {
     let start = now();
     loop {
-        match store::list(dir, key) {
+        match store::unread(dir, key).and_then(|n| if n > 0 { store::list(dir, key).map(Some) } else { Ok(None) }) {
             Err(e) => {
                 print_err(&format!("{e}\n"));
                 return 1;
             }
-            Ok(l) if !l.is_empty() => {
+            Ok(Some(l)) => {
                 let text: String =
                     l.iter().map(|s| format!("{} {} {}\n", esc(&s.id), esc(&s.from), esc(&s.subject))).collect();
-                let _ = out.write_all(text.as_bytes()).and_then(|()| out.flush());
+                if let Err(e) = out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
+                    print_err(&format!("zygo mail watch: cannot write: {}\n", esc(&e.to_string())));
+                    return 1;
+                }
                 return 0;
             }
-            Ok(_) => {}
+            Ok(None) => {}
         }
         if now().duration_since(start) >= timeout {
             return 1;
@@ -362,6 +366,12 @@ mod tests {
     fn slash_git_bound_is_that_of_workspace_status() {
         assert_eq!(super::SLASH_GIT_BOUND, std::time::Duration::from_secs(2));
         assert!(super::SLASH_GIT_BOUND < zygo_workspace::up::GIT_BOUND);
+    }
+
+    /// M§13 #7: a send is seen within 1 s, so the CLI poll is at most 1 s. Nothing waits.
+    #[test]
+    fn watch_poll_is_at_most_1s() {
+        assert!(super::WATCH_POLL <= std::time::Duration::from_secs(1));
     }
 }
 

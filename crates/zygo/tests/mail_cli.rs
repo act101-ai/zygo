@@ -467,6 +467,81 @@ mod unix {
         assert_eq!(out(&o), "");
         assert!(err(&o).starts_with("zygo: mail: ") && err(&o).ends_with('\n') && err(&o).lines().count() == 1, "{}", err(&o));
     }
+    #[test] // R1: M§8 "until a file lands in new/": a file that does not parse ends the watch with no line
+    fn watch_exits_0_with_no_line_on_a_malformed_file_alone() {
+        let h = Harness::no_tmux();
+        let _w = ws(&h);
+        let bad = file_at(&h, "new", "01J0000000000000000000000A.json");
+        std::fs::write(&bad, "not json").unwrap();
+        let t = Instant::now();
+        let to = Duration::from_secs(1500);
+        // The second call is at the timeout, so a watch that skips the file ends with 1 and never loops on.
+        let c = Clock { times: vec![t, t + to], calls: Cell::new(0) };
+        let mut o = Vec::new();
+        assert_eq!(zygo::cmd::mail::watch(&dir(&h), KEY, to, Duration::ZERO, &|| c.now(), &mut o), 0);
+        assert!(o.is_empty(), "{}", String::from_utf8_lossy(&o));
+        assert!(exists(&bad));
+    }
+
+    #[test] // R1: only the parsed message is printed
+    fn watch_prints_only_the_valid_line_next_to_a_malformed_file() {
+        let h = Harness::no_tmux();
+        let w = ws(&h);
+        let id = put(&h, &w, "elena", "s1", "b1", 1);
+        std::fs::write(file_at(&h, "new", "01J0000000000000000000000A.json"), "not json").unwrap();
+        let c = Clock { times: vec![Instant::now()], calls: Cell::new(0) };
+        let mut o = Vec::new();
+        assert_eq!(zygo::cmd::mail::watch(&dir(&h), KEY, Duration::from_secs(1500), Duration::ZERO, &|| c.now(), &mut o), 0);
+        assert_eq!(String::from_utf8(o).unwrap(), format!("{id} cli s1\n"));
+        assert_eq!(store::unread(&dir(&h), KEY).unwrap(), 2);
+    }
+
+    /// A writer whose every write fails with `BrokenPipe`.
+    struct Broken;
+
+    impl std::io::Write for Broken {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+    }
+
+    #[test] // R2: a failed write is not a success
+    fn watch_exits_1_when_the_write_fails() {
+        let h = Harness::no_tmux();
+        let w = ws(&h);
+        put(&h, &w, "elena", "s1", "b1", 1);
+        let c = Clock { times: vec![Instant::now()], calls: Cell::new(0) };
+        assert_eq!(zygo::cmd::mail::watch(&dir(&h), KEY, Duration::from_secs(1500), Duration::ZERO, &|| c.now(), &mut Broken), 1);
+        assert_eq!(store::unread(&dir(&h), KEY).unwrap(), 1);
+    }
+
+    #[test] // R6 (A2): two hand-started members share one name
+    fn watch_cli_refuses_a_name_of_two_members() {
+        let h = Harness::no_tmux();
+        // Hand starts can give one name to two panes; the record holds nothing more than the name.
+        h.seed(WS_ID, &mut |w| {
+            for k in [KEY, KEY2] {
+                w.members.insert(k.to_string(), MemberRecord { name: Some("twin".into()), ..MemberRecord::new(Agent::ClaudeCode) });
+            }
+        });
+        let o = run(&h, &["mail", "watch", "twin", "--timeout", "0s"], &[]);
+        assert_eq!(o.status.code(), Some(2));
+        assert_eq!(err(&o), "zygo mail watch: twin is not one member\n");
+        assert_eq!(out(&o), "");
+    }
+
+    #[test] // R6 (A2): `all` with no members resolves to no target
+    fn watch_cli_refuses_all_in_a_workspace_with_no_members() {
+        let h = Harness::no_tmux();
+        h.seed(WS_ID, &mut |_| {});
+        let o = run(&h, &["mail", "watch", "all", "--timeout", "0s"], &[]);
+        assert_eq!(o.status.code(), Some(2));
+        assert_eq!(err(&o), "zygo mail watch: all is not one member\n");
+        assert_eq!(out(&o), "");
+    }
 }
 
 #[cfg(windows)]
