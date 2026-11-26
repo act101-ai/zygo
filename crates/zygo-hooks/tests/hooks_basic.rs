@@ -205,8 +205,9 @@ const TRIM_SEVEN: [&str; 7] = ["ts", "session", "agent_id", "tool", "kind", "sto
     assert_eq!(dir_names(&e.dir.root), ["overrides.json", "results", "view.json"]);
     assert_eq!(dir_names(&e.dir.results()).len(), 2);                  // <id> and <id>.json
 }
-#[test] fn trim_bash_counts_stdout_only() {   // (reg)
+#[test] fn trim_bash_counts_stdout_only() {   // (reg) O§9: shape = false counts stdout only
     let e = env(true);
+    let mut sv = SessionView::load(&e.dir).unwrap(); sv.shape = false; sv.save(&e.dir).unwrap();
     let mut v = bash("small"); v["tool_response"]["stderr"] = json!("e".repeat(100_000));
     assert_eq!(out(run_trim(&v, &e)), "");
 }
@@ -373,13 +374,13 @@ fn trim_guard(e: &Env, b: &[u8]) -> (String, i32) { guarded(&|b| trim::trim_in(&
     assert!(o["stdout"].as_str().unwrap().contains("[zygo trimmed this output:"));
     assert_eq!(result_ids(&e).len(), 1);
 }
-#[test] fn trim_row_bash_records_result_id_and_size_shaper() {      // O§7.9: result_id = stored id, shaper "size", command null
+#[test] fn trim_row_bash_records_result_id_and_size_shaper() {      // O§7.9: result_id = stored id, shaper "size", command = O§7.2 name
     let e = env(true); usage_ready(&e);
     let o = updated(&out(run_trim(&bash(&lines(5000)), &e)));
     let view = o["stdout"].as_str().unwrap();
     let id = marker_id(view);
     assert_eq!(result_ids(&e), std::slice::from_ref(&id));
-    assert_eq!(trim_rows(&e), [("sess-1".to_string(), "Bash".to_string(), 105000, view.len() as i64, Some(id), None, Some("size".to_string()))]);
+    assert_eq!(trim_rows(&e), [("sess-1".to_string(), "Bash".to_string(), 105000, view.len() as i64, Some(id), Some("other".to_string()), Some("size".to_string()))]);
 }
 #[test] fn trim_row_read_records_result_id_and_size_shaper() {      // O§7.9: shaper "size" for a trim of another tool too
     let e = env(true); usage_ready(&e);
