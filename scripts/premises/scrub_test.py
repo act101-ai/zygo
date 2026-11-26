@@ -389,11 +389,25 @@ def main():
         got = scrub_env(t, {"SCRUB_FIXED": "1", "SCRUB_USER": "zzuserq", "SCRUB_HOSTS": "zzhostq"})
         if got != "user on host; %s on %s\n" % (user, host):
             bad.append("fixed user and host names: output not as wanted [not shown]")
+        # Review round 2 G4: the user-name rule is case-insensitive and matches whole words only;
+        # a user name of "user" (any case) changes nothing.
+        with open(t, "w") as f:
+            f.write("Zzuserq ZZUSERQ zzuserqx x_zzuserq User\n")
+        got = [scrub_env(t, {"SCRUB_FIXED": "1", "SCRUB_USER": n, "SCRUB_HOSTS": ""}) for n in ("zzuserq", "user")]
+        if got != ["user user zzuserqx x_zzuserq User\n", "Zzuserq ZZUSERQ zzuserqx x_zzuserq User\n"]:
+            bad.append("user name any case, whole word: got %r" % (got,))
+        # Review round 2 G2: a Codex item id in upper-case hex is scrubbed like a lower-case one.
+        t = os.path.join(d, "upper.json")
+        with open(t, "w") as f:
+            json.dump({"x": "msg_" + I1.upper(), "y": "fco_" + I1}, f)
+        got = json.loads(scrub(t))
+        if got != {"x": "msg_placeholder0001", "y": "fco_placeholder0001"}:
+            bad.append("upper-case item id: got %r" % (got,))
     for b in bad:
         print("scrub test fail: " + b)
     if bad:
         sys.exit(1)
-    print("scrub tests: ok (%d)" % (len(CASES) + 14))
+    print("scrub tests: ok (%d)" % (len(CASES) + 16))
 
 
 main()

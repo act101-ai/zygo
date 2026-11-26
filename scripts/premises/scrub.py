@@ -56,6 +56,9 @@ r"""Fixture hygiene for N2: scrub.py <run dir> <file> -> scrubbed copy on stdout
   environment_context block. SCRUB_FIXED=1: the user name from SCRUB_USER (default "user"), the host
   names from SCRUB_HOSTS (blank-separated, default none), and no rule for the home or checkout path,
   so the result does not depend on the machine.
+- PC-11 review round 2: the user-name rule matches the name in any case, as a whole word (a user
+  name of "user", any case, changes nothing); a Codex item id matches in any case (msg_, fco_, ctco_
+  + UUID; the same id in two cases gets one placeholder).
 """
 import getpass
 import json
@@ -177,7 +180,7 @@ UTC_NAMES = {"utc", "etc/utc", "gmt", "etc/gmt", "utc+0", "utc+00:00"}
 SHELL_TAG = re.compile(r"((?:<|\\u003[cC]|&lt;)shell(?:>|\\u003[eE]|&gt;))(?:\\/|[^<&\\\n]){1,200}"
                        r"((?:<|\\u003[cC]|&lt;)\\?/shell)")
 # PC-11: Codex item ids (UUIDv7, time-bearing); "_" is a word character, so UUID does not match them.
-ITEM_ID = re.compile(B + r"(msg|fco|ctco)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+ITEM_ID = re.compile(B + r"(msg|fco|ctco)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
 # PC-11: an OS sandbox name as a "sandbox" value (x-codex-turn-metadata, plain or JSON-escaped).
 SANDBOX = re.compile(r"(\\?\"sandbox\\?\"\s*:\s*\\?\")(?:seatbelt|landlock|linux_seccomp|seccomp|bwrap|bubblewrap|"
                      r"windows_sandbox|restricted_token|windows_restricted_token|elevated)(?=\\?\")")
@@ -220,10 +223,11 @@ def s(text):
     text = re.sub(r"/private/tmp(?![A-Za-z0-9_./-])", "/tmp", text)
     for h in HOSTS:  # before the user rule: a host name may hold the user name
         text = re.sub(r"(?:(?<![A-Za-z0-9_-])|(?<=\\[nrtbf]))%s(?![A-Za-z0-9_-])" % re.escape(h), "host", text, flags=re.I)
-    text = re.sub(B + r"%s\b" % re.escape(user), "user", text)
+    if user.lower() != "user":
+        text = re.sub(B + r"%s\b" % re.escape(user), "user", text, flags=re.I)
     text = re.sub(r"Attribution for git commits.*?(?=</system-reminder>)", "Harness text.\n", text, flags=re.S)
     text = CF_ENV.sub("(os env omitted)", text)
-    text = ITEM_ID.sub(lambda m: ids(m.group(1), m.group(0)), text)
+    text = ITEM_ID.sub(lambda m: ids(m.group(1).lower(), m.group(0).lower()), text)
     text = ULID.sub(lambda m: m.group(1) + ids("ulid", m.group(2)), text)
     text = UUID.sub(lambda m: ids("uuid", m.group(0)), text)
     text = SES.sub(lambda m: ids("ses", m.group(0)), text)
