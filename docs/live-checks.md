@@ -4,6 +4,7 @@ Checks on the real pinned agents, one dated result per check. A pinned agent ver
 
 Claude Code: 2.1.328 or later
 OpenCode: 1.18.16 or later
+Codex: 0.172.0 or later
 
 ## Method
 
@@ -145,6 +146,19 @@ PATH="$HOME/.opencode/bin:$PATH" sh scripts/premises/live-attribution.sh [login 
 - Tools: `Write`, and `Bash` only for `git add` and `git commit` (no `--yolo`). Spend: at most 8 turns on haiku in each of the two sign-in runs (the `bare` run stops before its first request).
 - It prints one `LIVE <id> pass|fail|recorded (agent <version>): …` line for each of FIX21-LOGIN, FIX21-BARE-ZYGO, FIX21-BARE and FIX21-MOCK, and writes `fixtures/claude-code/live/fix21-login.json`, `fix21-bare.json` and `fix21-mock.json`.
 
+## LC-CX1 (Codex update notice)
+
+K§6.3.7 PC16, K§6.5.4. No script yet. Owner-run only, never by an agent and never in CI. No key and no login: the check reads Codex's own update notice, not a model reply. The owner does these steps, in this order:
+
+1. Make a scratch folder, and set `HOME` and `CODEX_HOME` to folders in it (as `codex_env` in `scripts/premises/lib.sh` does), so `~/.codex` is never read. Touch a stamp file before the run.
+2. Do not run `codex login`, and give no real token: the provider key, if any, is the dummy key of the mock.
+3. Run the same steps with a stub `codex` first on `PATH` (a script that prints its `HOME`, `CODEX_HOME` and proxy variables and exits), to see the isolation before the real Codex starts.
+4. Set `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` to `scripts/premises/mock_upstream.py`, which refuses and records each `CONNECT` (`connect.txt`). The one exception for this check: real network to the release host `api.github.com` (port 443), which PC16 inferred as Codex's release source. It is the only allowed external host; every other host stays refused.
+5. Before the run, `pgrep` finds no Codex or `codex app-server` process and no Codex daemon socket. Start the TUI with no `check_for_update_on_startup` key, against a Codex older than the newest release; record the notice text. After the run, `find ~/.codex -newer <stamp>` prints nothing, and no Codex, app-server, mock or daemon process of the run is left running.
+6. Scrub what is kept with `scrub.py`, then run the privacy grep on it: the user name, a macOS home or temporary path (the forms of the `macOS home path` and `temporary path` scans of `scripts/check-premises.sh`), `Mac OS`, a timezone region (`America/`), the scratch folder path; then `python3 -I scripts/premises/rescrub_codex.py --check codex` and `N2_FORBIDDEN_NAMES=<user name> sh scripts/check-premises.sh`.
+
+Pass: the TUI shows Codex's update notice; `connect.txt` names no external host but `api.github.com`.
+
 ## Results
 
 | Id | Check | Agent | Version | Date | Result | Evidence |
@@ -193,3 +207,4 @@ PATH="$HOME/.opencode/bin:$PATH" sh scripts/premises/live-attribution.sh [login 
 | FIX21-BARE-ZYGO | `zygo claude --passthrough -- --bare` (§12.3) | Claude Code | 2.1.330 | 2026-11-22 | recorded | Exit 2: "zygo: --passthrough does not work with --bare: bare mode reads only API keys" |
 | FIX21-BARE | Claude Code alone, `--bare` with zygo's two attribution keys in `--settings`, commits on the stored login | Claude Code | 2.1.330 | 2026-11-22 | fail: cannot sign in | Exit 1, stdout "Not logged in · Please run /login": bare mode reads only `ANTHROPIC_API_KEY` or an `apiKeyHelper` (`claude --help`). No request was sent. `fixtures/claude-code/live/fix21-bare.json`; FIX21-MOCK covers bare mode |
 | FIX21-MOCK | Claude Code's commit attribution text is in no request of a zygo session, with or without `--bare` (§8.5) | Claude Code | 2.1.330 | 2026-11-22 | pass | Linux; mock upstream. Control (Claude Code alone): 1 of 2 requests, the main one (12 tools), holds the commit attribution reminder with the noreply address in angle brackets; control `--bare` (recorded): 0 of 2, its main request has Bash, Edit and Read; zygo: 0 of 1 (12 tools, Bash among them); zygo `--bare`: 0 of 1 (9 tools, Bash among them). `fixtures/claude-code/live/fix21-mock.json` |
+| LC-CX1 | Codex's own update notice against a real newer Codex release: with no `check_for_update_on_startup` key, a TUI start shows the notice text (K§6.3.7 PC16, K§6.5.4) | Codex | — | — | not run: owner-run (K§6.3.7 PC16) | No script yet. Owner-run only, never by an agent and never in CI; steps in section LC-CX1 above (temporary `HOME` and `CODEX_HOME`, no login, stub `codex` first, proxies at the mock with `api.github.com` the only allowed external host, process and `~/.codex` checks before and after, privacy grep). PC16 (`docs/premises.md`) measured the release-source request against the mock: inferred `api.github.com:443`, path not visible. |

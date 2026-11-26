@@ -7,7 +7,7 @@ use zygo_config::Facts;
 use zygo_core::ids::ulid;
 
 use super::reasoning::{decode_thinking, encode_thinking, MARK_MAX};
-use super::sse::SseEvent;
+use super::sse::{SseEvent, CALLS_DROPPED};
 use super::{input_of, s, Target, DOC_OMITTED};
 use crate::errors::ZygoError;
 use crate::pipeline::Adjustment;
@@ -869,18 +869,27 @@ fn response_object(ulid: &str, model: &str, status: &str) -> Value {
     json!({"id":format!("resp_{ulid}"),"object":"response","model":model,"status":status,"output":[]})
 }
 
+/// The text of the item that ends a text-only `refusal` stop (stream obligation 5): Codex 0.172.0 shows it once and
+/// does not send the request again (PC19), where `response.incomplete` `content_filter` made it retry. Also the error
+/// message of a refusal after a call item.
+pub const REFUSAL_TEXT: &str = "The upstream model refused this request (stop_reason: refusal).";
+
+// The refusal item is held as a text block: far under HOLD_MAX, so it never ends the stream (obligation 9).
+const _: () = assert!(REFUSAL_TEXT.len() * 1024 < HOLD_MAX);
+
 /// The terminal form of R for `stop_reason` (stream obligation 5): `max_tokens` and
-/// `model_context_window_exceeded` → incomplete with `max_output_tokens`, `refusal` → incomplete with
-/// `content_filter`, any other (`pause_turn` too: its server tools are dropped) → completed.
-fn finished(mut r: Value, stop_reason: Option<&str>, u: Usage) -> Value {
-    let reason = match stop_reason {
-        Some("max_tokens" | "model_context_window_exceeded") => Some("max_output_tokens"),
-        Some("refusal") => Some("content_filter"),
-        _ => None,
-    };
-    if let Some(reason) = reason {
+/// `model_context_window_exceeded` → incomplete with `max_output_tokens`; `refusal` after a call item (`call`) →
+/// failed with code `invalid_prompt` and `REFUSAL_TEXT` (inferred, not measured: Codex runs no tool of a failed
+/// response, as PC18 `xt` measured for another failure; calls closed before the refusal already reached the client
+/// in their done events); any other (a text-only
+/// `refusal`, after its `REFUSAL_TEXT` item; `pause_turn` too: its server tools are dropped) → completed.
+fn finished(mut r: Value, stop_reason: Option<&str>, call: bool, u: Usage) -> Value {
+    if matches!(stop_reason, Some("max_tokens" | "model_context_window_exceeded")) {
         r["status"] = json!("incomplete");
-        r["incomplete_details"] = json!({"reason":reason});
+        r["incomplete_details"] = json!({"reason":"max_output_tokens"});
+    } else if stop_reason == Some("refusal") && call {
+        r["status"] = json!("failed");
+        r["error"] = json!({"code":"invalid_prompt","message":REFUSAL_TEXT});
     } else {
         r["status"] = json!("completed");
     }
@@ -894,8 +903,8 @@ fn is_server_tool(ty: &str) -> bool {
 }
 
 /// The adjustment codes of one response: `server_tool_dropped` (obligation 3), `reasoning_unmarked:<n>` (obligation
-/// 2).
-fn codes(dropped: bool, unmarked: usize) -> Vec<Adjustment> {
+/// 2), `refusal_call_dropped:<n>` for the chat calls dropped at `content_filter` (`CALLS_DROPPED`, obligation 5).
+fn codes(dropped: bool, unmarked: usize, calls_dropped: u64) -> Vec<Adjustment> {
     let mut out = Vec::new();
     if dropped {
         out.push(Adjustment("server_tool_dropped".into()));
@@ -903,7 +912,15 @@ fn codes(dropped: bool, unmarked: usize) -> Vec<Adjustment> {
     if unmarked > 0 {
         out.push(Adjustment(format!("reasoning_unmarked:{unmarked}")));
     }
+    if calls_dropped > 0 {
+        out.push(Adjustment(format!("refusal_call_dropped:{calls_dropped}")));
+    }
     out
+}
+
+/// The `CALLS_DROPPED` count of a Messages body or `message_delta`; 0 when absent.
+fn calls_dropped(v: &Value) -> u64 {
+    v.get(CALLS_DROPPED).and_then(Value::as_u64).unwrap_or(0)
 }
 
 /// The `response.failed` messages of obligation 9, by the held bytes that would pass `HOLD_MAX`: a partial line, the
@@ -925,11 +942,14 @@ const EVENTS: [&str; 7] = [
 ];
 
 /// A Messages body as one Response object (stream obligation 8), with its adjustment codes; the items are those of
-/// the stream's `output_item.done` events.
+/// the stream's `output_item.done` events. A body holds whole blocks only, so each call in it is closed and kept,
+/// also at a refusal; no open or cut call can reach `output`. Calls a chat `content_filter` dropped (`CALLS_DROPPED`)
+/// count as call items for the ending.
 pub fn response(msg: &Value, model: &str, t: &Target, calls: &Calls) -> (Value, Vec<Adjustment>) {
     let ulid = ulid();
     let mut output = Vec::new();
-    let (mut dropped, mut unmarked) = (false, 0);
+    let cut = calls_dropped(msg);
+    let (mut dropped, mut unmarked, mut call) = (false, 0, cut > 0);
     for b in msg.get("content").and_then(Value::as_array).into_iter().flatten() {
         let oi = output.len();
         let str_of = |k: &str| s(b, k).unwrap_or("");
@@ -946,14 +966,18 @@ pub fn response(msg: &Value, model: &str, t: &Target, calls: &Calls) -> (Value, 
             "tool_use" => {
                 let args = b.get("input").map_or_else(|| "{}".to_owned(), Value::to_string);
                 output.push(calls.item(&ulid, oi, str_of("id"), str_of("name"), Some(&args)));
+                call = true;
             }
             ty => dropped |= is_server_tool(ty),
         }
     }
+    if s(msg, "stop_reason") == Some("refusal") && !call {
+        output.push(text_item(&item_id("msg", &ulid, output.len()), Some(REFUSAL_TEXT)));
+    }
     let u = usage_fields(msg.get("usage"));
-    let mut r = finished(response_object(&ulid, model, "completed"), s(msg, "stop_reason"), u);
+    let mut r = finished(response_object(&ulid, model, "completed"), s(msg, "stop_reason"), call, u);
     r["output"] = Value::Array(output);
-    (r, codes(dropped, unmarked))
+    (r, codes(dropped, unmarked, cut))
 }
 
 enum Kind {
@@ -1018,8 +1042,18 @@ impl Block {
 ///      type: no event.
 /// 3. Exactly one terminal event. At `message_stop`: `response.completed {response: R, status completed, usage}`, or
 ///    `response.incomplete {response: R, status incomplete, incomplete_details: {reason}, usage}` with reason
-///    `max_output_tokens` for `stop_reason` `max_tokens` or `model_context_window_exceeded` and `content_filter` for
-///    `refusal` (`pause_turn` and the rest complete). On an upstream `error` event (its message cut as a 400 echo),
+///    `max_output_tokens` for `stop_reason` `max_tokens` or `model_context_window_exceeded` (`refusal`, `pause_turn`
+///    and the rest complete). For `refusal`, after the done events of an open block, one more `message` item carries
+///    `REFUSAL_TEXT` as one `output_text` part, with the events of a text block (item 2); Codex 0.172.0 shows it once
+///    and does not send the request again (PC19). A `refusal` after a `function_call` or `custom_tool_call` item
+///    instead ends in `response.failed {response: R, status failed, error: {code: invalid_prompt, message:
+///    REFUSAL_TEXT}, usage}`. A call item still open at the refusal (its arguments may be cut) gets no done events:
+///    it is dropped as on every other failure path (PC18 `xt` measured no tool run); another open block gets its
+///    done events first. Calls closed before the refusal stay as sent: their done events already reached the
+///    client. A `message_delta` with `CALLS_DROPPED` (chat calls dropped at `content_filter`, never sent) counts as
+///    a call item: the refusal ends in `response.failed`, adjustment `refusal_call_dropped:<n>`. That Codex runs no
+///    tool of the failed response is inferred, not measured (obligation 5). On an
+///    upstream `error` event (its message cut as a 400 echo),
 ///    unparsable `data`, held bytes over `HOLD_MAX` (the message names the largest held part: stream line, event,
 ///    content block, tool call), `fail` or an early end: `response.failed {response: R, status failed, error: {code,
 ///    message}}`.
@@ -1040,6 +1074,11 @@ pub struct Encoder {
     next_oi: usize,
     usage: Usage,
     stop_reason: Option<String>,
+    /// A call item was opened, or a chat `content_filter` dropped calls (a `refusal` then ends in `response.failed`,
+    /// obligation 5).
+    call: bool,
+    /// The `CALLS_DROPPED` count of `message_delta`.
+    calls_dropped: u64,
     dropped: bool,
     unmarked: usize,
 }
@@ -1060,6 +1099,8 @@ impl Encoder {
             next_oi: 0,
             usage: [0; 4],
             stop_reason: None,
+            call: false,
+            calls_dropped: 0,
             dropped: false,
             unmarked: 0,
         }
@@ -1133,9 +1174,9 @@ impl Encoder {
     }
 
     /// `server_tool_dropped`, once, when a server tool block was dropped (obligation 3); `reasoning_unmarked:<n>` for
-    /// the reasoning items sent with no mark (obligation 2).
+    /// the reasoning items sent with no mark (obligation 2); `refusal_call_dropped:<n>` (obligation 5).
     pub fn adjustments(&self) -> Vec<Adjustment> {
-        codes(self.dropped, self.unmarked)
+        codes(self.dropped, self.unmarked, self.calls_dropped)
     }
 
     /// One line, `\r` stripped: a `data` line is held, a blank line dispatches the held event, others are ignored.
@@ -1262,14 +1303,30 @@ impl Encoder {
                 if let Some(r) = v.get("delta").and_then(|d| s(d, "stop_reason")) {
                     self.stop_reason = Some(r.to_owned());
                 }
+                self.calls_dropped += calls_dropped(&v);
+                self.call |= self.calls_dropped > 0;
                 for (have, new) in self.usage.iter_mut().zip(usage_fields(v.get("usage"))) {
                     *have = (*have).max(new);
                 }
             }
             "message_stop" => {
+                // A call still open at a refusal gets no done events: dropped as on every other failure path (PC18
+                // `xt`, obligation 5). A call closed before it already reached the client.
+                if self.stop_reason.as_deref() == Some("refusal")
+                    && self.open.as_ref().is_some_and(|b| matches!(b.kind, Kind::Call { .. }))
+                {
+                    self.open = None;
+                }
                 self.close(out);
-                let r = finished(self.r("in_progress"), self.stop_reason.as_deref(), self.usage);
-                let name = if r["status"] == "incomplete" { "response.incomplete" } else { "response.completed" };
+                if self.stop_reason.as_deref() == Some("refusal") && !self.call {
+                    self.refusal(out);
+                }
+                let r = finished(self.r("in_progress"), self.stop_reason.as_deref(), self.call, self.usage);
+                let name = match r["status"].as_str() {
+                    Some("incomplete") => "response.incomplete",
+                    Some("failed") => "response.failed",
+                    _ => "response.completed",
+                };
                 self.emit(name, json!({"response":r}), out);
                 self.ended = true;
             }
@@ -1294,6 +1351,7 @@ impl Encoder {
                 let (call_id, name) = (str_of("id").to_owned(), str_of("name").to_owned());
                 let item = self.calls.item(&self.ulid, oi, &call_id, &name, None);
                 let args = cb.get("input").map_or_else(|| "{}".to_owned(), Value::to_string);
+                self.call = true;
                 (Kind::Call { custom: self.calls.is_custom(&name), call_id, name, delta: false }, args, item)
             }
             ty => {
@@ -1366,6 +1424,14 @@ impl Encoder {
             _ => {}
         }
         self.open = Some(b);
+    }
+
+    /// The refusal item (obligation 5): the events of a text block that holds `REFUSAL_TEXT`, at the next
+    /// `output_index`. Called at `message_stop`, after `close`, so no block is open.
+    fn refusal(&mut self, out: &mut Vec<SseEvent>) {
+        self.open_block(0, &json!({"type":"text","text":""}), out);
+        self.delta(0, &json!({"type":"text_delta","text":REFUSAL_TEXT}), out);
+        self.close(out);
     }
 
     /// The open block's done events, if one is open.

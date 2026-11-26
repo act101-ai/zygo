@@ -709,6 +709,80 @@ fn streamed_request_json_answer_keeps_redacted_drops_server_tool() {
     assert_eq!(rows[0].adjustments.iter().filter(|a| *a == "server_tool_dropped").count(), 1, "{:?}", rows[0].adjustments);
 }
 
+/// The one terminal event of `evs`: `response.failed` `invalid_prompt` with the refusal text (RS-12, ending rfd).
+fn assert_rfd(evs: &[(String, Value)]) {
+    let t = terminals(evs);
+    assert_eq!(t.len(), 1, "{:?}", names(evs));
+    let (last, d) = evs.last().unwrap();
+    assert_eq!(last, "response.failed", "{:?}", names(evs));
+    assert_eq!(d["response"]["status"], "failed");
+    assert_eq!(d["response"]["error"]["code"], "invalid_prompt");
+    assert!(!names(evs).contains(&"response.completed"), "{:?}", names(evs));
+}
+
+// RS-12 round 3 review H1, H2: chat content_filter while a call is held (its arguments cut) → the call is dropped, no
+// event carries it, the ending is response.failed invalid_prompt (rfd), and the row has refusal_call_dropped:1;
+// streamed or a JSON body.
+#[test]
+fn chat_refusal_mid_call_drops_the_call_then_fails() {
+    let h = start(C);
+    let cut = "{\"cmd\":";
+    let mut chunks = CHAT_CHUNKS(cut);
+    chunks[3] = chunk(json!({}), json!("content_filter"));
+    h.reply_with(200, SSE, chat_sse(&chunks));
+    let (s, _, b) = h.post(R, &codex_request("first-turn"));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    let evs = events(&b);
+    assert_rfd(&evs);
+    assert!(!names(&evs).iter().any(|n| n.contains("function_call")), "{:?}", names(&evs));
+    assert!(!evs.iter().any(|(_, d)| d.to_string().contains("call_1")), "{:?}", names(&evs));
+    let types: Vec<String> = done_items(&evs).iter().map(|i| i["type"].as_str().unwrap().to_owned()).collect();
+    assert_eq!(types, ["message"]);
+    let rows = h.usage_rows();
+    assert!(rows.last().unwrap().adjustments.contains(&"refusal_call_dropped:1".to_owned()), "{:?}", rows.last().unwrap().adjustments);
+
+    let mut j = CHAT_JSON(cut);
+    j["choices"][0]["finish_reason"] = json!("content_filter");
+    h.reply_with(200, JSON, serde_json::to_vec(&j).unwrap());
+    let (s, _, b) = h.post(R, &with_stream(codex_request("first-turn"), false));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    let r: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(r["status"], "failed");
+    assert_eq!(r["error"]["code"], "invalid_prompt");
+    let types: Vec<&str> = r["output"].as_array().unwrap().iter().map(|i| i["type"].as_str().unwrap()).collect();
+    assert_eq!(types, ["message"]);
+    let rows = h.usage_rows();
+    assert!(rows.last().unwrap().adjustments.contains(&"refusal_call_dropped:1".to_owned()), "{:?}", rows.last().unwrap().adjustments);
+}
+
+#[test] // RS-12 round 1 review F1: a JSON 2xx with a tool_use and stop_reason refusal → response.failed, streamed or not
+fn json_refusal_after_tool_call_fails() {
+    let h = start(A);
+    let mut m = MSG_JSON(false);
+    m["stop_reason"] = json!("refusal");
+    let req = codex_request("after-custom-tool-call-output");
+    h.reply_with(200, JSON, serde_json::to_vec(&m).unwrap());
+    let (s, hd, b) = h.post(R, &with_stream(req.clone(), true));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    assert!(hv(&hd, "content-type").starts_with(SSE), "{hd:?}");
+    let evs = events(&b);
+    assert_rfd(&evs);
+    let types: Vec<String> = done_items(&evs).iter().map(|i| i["type"].as_str().unwrap().to_owned()).collect();
+    assert_eq!(types, ["message", "function_call", "custom_tool_call"]);
+    // G7: the rfd terminal event carries the usage the other endings carry for the same counts, and the row has them.
+    assert_eq!(terminals(&evs)[0].1["response"]["usage"], msg_usage());
+    let rows = h.usage_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(counts(&rows[0]), (100, 30, 5, 42));
+
+    h.reply_with(200, JSON, serde_json::to_vec(&m).unwrap());
+    let (s, _, b) = h.post(R, &with_stream(req, false));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    let r: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(r["status"], "failed");
+    assert_eq!(r["error"]["code"], "invalid_prompt");
+}
+
 #[test] // RS-13, K§6.4.3 stream obligation 8: a JSON 2xx whose tool_use input is 1.5 MiB of `"` reaches a streamed request whole
 fn streamed_json_answer_keeps_large_tool_input() {
     let h = start(A);

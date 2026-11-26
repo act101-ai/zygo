@@ -35,8 +35,8 @@ use crate::session::{InFlight, SessionState};
 use crate::tee::{CacheSplit, ErrorCapture, SseLine, Tee, Ticket, Usage, UsageSink, COPY_MAX, ERROR_BODY_MAX, HOLD_MAX};
 use crate::translate::schema::{NullMap, RestoreFilter};
 use crate::translate::{
-    facts, is_response, responses_client, message_events, reasoning, schema, scrub, translate_error, translate_request, translate_response, SseEvent, StreamMapper,
-    Target,
+    facts, is_response, responses_client, message_events, reasoning, schema, scrub, take_calls_dropped, translate_error, translate_request, translate_response,
+    SseEvent, StreamMapper, Target,
 };
 use crate::window;
 use crate::Url;
@@ -284,6 +284,12 @@ impl Drop for Pending {
 
 fn names(a: &[Adjustment]) -> Vec<String> {
     a.iter().map(|a| a.0.clone()).collect()
+}
+
+/// `refusal_call_dropped:<n>` for a Messages client whose `n > 0` calls were dropped at a refusal (K§6.4.3 stream
+/// obligation 5); none for 0.
+fn call_dropped_code(n: u64) -> Option<Adjustment> {
+    (n > 0).then(|| Adjustment(format!("refusal_call_dropped:{n}")))
 }
 
 fn ms(app: &App, start: Instant) -> u64 {
@@ -605,7 +611,8 @@ async fn run(
         raw
     } else if status.is_success() && streamed {
         // An Anthropic upstream already sends Messages SSE (a Responses client): no mapper (K§6.4.2).
-        mapper = (c.dialect != Dialect::Anthropic).then(|| StreamMapper::new(c.dialect, &Target::of(c)).errors(estimate, key));
+        mapper = (c.dialect != Dialect::Anthropic)
+            .then(|| StreamMapper::new(c.dialect, &Target::of(c)).errors(estimate, key).calls_dropped_key(ctx.dialect == Dialect::Openai));
         restore = armed.then(|| RestoreFilter::new(nulls));
         raw
     } else {
@@ -621,6 +628,9 @@ async fn run(
             let mut m = if anthropic { v } else { translate_response(&v, c.dialect, &Target::of(c)) };
             if armed {
                 nulls.restore_message(&mut m);
+            }
+            if ctx.dialect == Dialect::Anthropic {
+                adjustments.extend(call_dropped_code(take_calls_dropped(&mut m)));
             }
             msg = (ctx.dialect == Dialect::Openai).then(|| m.clone());
             m
@@ -1641,6 +1651,12 @@ impl Drop for Flow {
         // The encoder's codes (K§6.4.3 obligations 2, 3) reach the row.
         if let Some(Encode::Stream(s)) = &self.encode {
             self.rctx.adjustments.extend(s.enc.adjustments());
+        }
+        // A Messages client: the calls the mapper dropped at a refusal reach the row (K§6.4.3 obligation 5).
+        if self.encode.is_none()
+            && let Some(m) = &self.mapper
+        {
+            self.rctx.adjustments.extend(call_dropped_code(m.calls_dropped()));
         }
         // A 2xx Responses stream with no usage read: the zero counts are marked (K§6.4.2 C3).
         if self.rctx.status.is_success() && self.tee.usage_unread() {
