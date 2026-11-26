@@ -676,18 +676,44 @@ fn forget_run(
     remove(paths, &store, &id, &label, op).map_err(ForgetError::Line)
 }
 
-/// S§7.6 step 1 (MS-21): the lock of `mail/sync/lock` (the sync's lock, `SyncPaths::lock` of `zygo-mail-sync`), taken
-/// at once, when `mail/sync/` is a real folder; `None` when it is not (no sync ever ran, so nothing is made). Held by
-/// a sync: `zygo: a mail sync runs for <label>; try again` (exit 1).
+/// S§7.6 step 1 (MS-21): the lock of `mail/sync/lock` (the sync's lock, `SyncPaths::lock` of `zygo-mail-sync`),
+/// taken at once. `mail/`, `mail/sync/` (each `0700`) and the lock file (`0600`) are made when missing, and no link is
+/// followed, so a sync that starts meanwhile waits for this lock and then finds the workspace gone (review F1).
+/// `None` when `mail/` or `mail/sync/` is a link or not a folder: the workspace has no mail, and nothing is made
+/// through the link (review F3). Held by a sync: `zygo: a mail sync runs for <label>; try again` (exit 1).
 fn sync_lock(paths: &Paths, id: &str, label: &str) -> Result<Option<fs::File>, ForgetError> {
-    let dir = mail_dir(paths, id).join("sync");
-    if !fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+    let fail = |e: std::io::Error| ForgetError::Line(format!("zygo: cannot forget {label}: {e}"));
+    let mail = mail_dir(paths, id);
+    let dir = mail.join("sync");
+    if !real_dir(&mail).map_err(fail)? || !real_dir(&dir).map_err(fail)? {
         return Ok(None);
     }
     match lock_file(&dir.join("lock"), Duration::ZERO) {
         Ok(Some(f)) => Ok(Some(f)),
         Ok(None) => Err(ForgetError::Line(format!("zygo: a mail sync runs for {label}; try again"))),
-        Err(e) => Err(ForgetError::Line(format!("zygo: cannot forget {label}: {e}"))),
+        Err(e) => Err(fail(e)),
+    }
+}
+
+/// Whether `dir` is a real folder, made `0700` when missing (its parent must be a real folder). A link or a file at
+/// `dir` is `false`; no link is followed (`symlink_metadata`, and `mkdir` does not follow one).
+fn real_dir(dir: &Path) -> std::io::Result<bool> {
+    match fs::symlink_metadata(dir) {
+        Ok(m) => return Ok(m.is_dir()),
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        Err(_) => {}
+    }
+    let mut b = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        b.mode(0o700);
+    }
+    match b.create(dir) {
+        Ok(()) => Ok(true),
+        // A sync made it meanwhile: look again, still without following a link.
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(fs::symlink_metadata(dir)?.is_dir()),
+        Err(e) => Err(e),
     }
 }
 

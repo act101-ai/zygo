@@ -2079,7 +2079,7 @@ fn forget_runs_before_remove_under_the_sync_lock_before_any_delete() {
     assert!(fs::symlink_metadata(p.workspaces_dir().join(ID)).is_err() && !cache(&p, ID).exists());
 }
 
-#[test] // S§7.6 step 2: a "no" keeps everything, exit 0; with no mail/sync/ no lock file is made
+#[test] // S§7.6 step 2: a "no" keeps everything, exit 0; only the sync lock that forget made stays
 fn forget_keeps_everything_when_before_remove_says_no() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -2096,7 +2096,59 @@ fn forget_keeps_everything_when_before_remove_says_no() {
     assert_eq!(state_bytes(&p, ID), bytes);
     assert!(cache(&p, ID).join("results/kaaaaaaaa/r1").exists());
     assert_eq!(mail_store::unread(&mail_dir(&p, ID), "kaaaaaaaa").unwrap(), 1);
-    assert!(fs::symlink_metadata(mail_dir(&p, ID).join("sync")).is_err());
+    let sync = mail_dir(&p, ID).join("sync");
+    assert_eq!(common_names(&sync), vec!["lock".to_string()]);
+}
+
+/// The names in folder `dir`, sorted.
+fn common_names(dir: &Path) -> Vec<String> {
+    let mut v: Vec<String> = fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    v.sort();
+    v
+}
+
+/// The permission bits of `path`, not following a link.
+fn bits(path: &Path) -> u32 { fs::symlink_metadata(path).unwrap().permissions().mode() & 0o7777 }
+
+#[test] // S§7.6 step 1 (MS-21 review F1): with no mail/sync/, forget makes mail/ and mail/sync/ (0700) and the lock
+        // (0600) and holds the lock during before_remove, so a first sync waits for it
+fn forget_with_no_sync_folder_makes_and_holds_the_sync_lock() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    ws_state(&p, ID, "app", &t.join("r/app"), |_| {});
+    let mail = mail_dir(&p, ID);
+    assert!(fs::symlink_metadata(&mail).is_err());
+    let lock = mail.join("sync/lock");
+    let mut seen = Vec::new();
+    let mut before = |_: &Workspace| {
+        let held = fs::symlink_metadata(&lock).is_ok_and(|m| m.is_file()) && !lock_free(&lock);
+        seen.push((held, bits(&mail), bits(&mail.join("sync")), bits(&lock)));
+        Ok(true)
+    };
+    assert_eq!(forget_with(&p, &t.join("none"), None, "app", &mut before), (0, "zygo: forgot app\n".to_string(), String::new()));
+    assert_eq!(seen, vec![(true, 0o700, 0o700, 0o600)]);
+    assert!(fs::symlink_metadata(p.workspaces_dir().join(ID)).is_err());
+}
+
+#[test] // S§7.6 step 1 (MS-21 review F3): a mail/ that is a link or not a folder is not followed: no mail, no lock
+fn forget_does_not_follow_a_mail_link() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let elsewhere = t.join("elsewhere");
+    fs::create_dir_all(elsewhere.join("sync")).unwrap();
+    ws_state(&p, ID, "app", &t.join("r/app"), |_| {});
+    std::os::unix::fs::symlink(&elsewhere, mail_dir(&p, ID)).unwrap();
+    ws_state(&p, OTHER, "bee", &t.join("r/bee"), |_| {});
+    fs::write(mail_dir(&p, OTHER), b"x").unwrap();
+    for name in ["app", "bee"] {
+        assert_eq!(forget_run(&p, &t.join("none"), None, name), (0, format!("zygo: forgot {name}\n"), String::new()));
+    }
+    assert_eq!(common_names(&elsewhere), vec!["sync".to_string()]);
+    assert!(common_names(&elsewhere.join("sync")).is_empty());
 }
 
 #[test] // S§7.6 steps 2-3: an Err of before_remove refuses with exit 1 and its reason; nothing deleted

@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use common::{advance, blob, commit_tree, git, live, plain, tip_file, tree_literally, Machine, Remote, ALICE, BOB, WS_ID};
+use common::{advance, blob, commit_tree, git, live, plain, tip_file, tree_literally, ForgetClock, Machine, Remote, ALICE, BOB, WS_ID};
 use serde_json::{json, Value};
 use ulid::Ulid;
 use zygo_config::{Config, LoadContext, MailConfig, SyncOff};
@@ -737,6 +737,46 @@ fn cli_run_with_a_held_lock_is_busy_after_the_wait_and_exits_1() {
     assert_eq!(err.exit_code(Mode::Cli), 1);
     assert!(a.sp().again.exists()); // S§8.3 step 2: the holder sees the mark
     drop(held);
+}
+
+#[test] // S§8.3 step 3 (MS-21 review F1): a CLI run that waited for the lock of a forget writes nothing after it
+fn cli_run_that_waited_for_a_forget_writes_nothing() {
+    let _g = exclusive();
+    let (_r, a) = one();
+    let sp = a.sp();
+    fs::create_dir_all(&sp.sync).unwrap();
+    fs::File::create(&sp.lock).unwrap();
+    let held = take(&sp.lock);
+    let state = a.paths.workspaces_dir().join(WS_ID);
+    let (state2, cache) = (state.clone(), a.paths.workspace_cache_dir().join(WS_ID));
+    let forget: Box<dyn FnOnce() + Send> = Box::new(move || {
+        fs::remove_dir_all(&state2).unwrap();
+        let _ = fs::remove_dir_all(&cache);
+        drop(held);
+    });
+    let e = Env { clock: Box::new(ForgetClock::new(T0, forget)), ..plain_env(&a) };
+    let err = run(&e, WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!(err, SyncError::Stopped { line: "zygo: the workspace was forgotten; nothing synced".into(), check: "forgotten" });
+    assert_eq!(err.exit_code(Mode::Cli), 1);
+    assert!(fs::symlink_metadata(&state).is_err(), "the state folder was made again");
+    assert!(fs::symlink_metadata(&sp.identity).is_err() && fs::symlink_metadata(&sp.worktree).is_err());
+    assert_eq!(git(&a.root, &["worktree", "list", "--porcelain"]).matches("worktree ").count(), 1);
+}
+
+#[test] // S§8.3 steps 3 and 17 (MS-21 review F1): a child whose record goes before its next pass ends silently, Ok
+fn child_pass_after_the_record_went_does_not_run() {
+    let _g = exclusive();
+    let (_r, a, _b) = pair();
+    let a = Arc::new(a);
+    let a2 = a.clone();
+    let h = counting(Arc::default(), move |p, n| {
+        if p == "after_release" && n == 1 {
+            mark_again(&a2.sp()).unwrap();
+            fs::remove_file(a2.paths.workspaces_dir().join(WS_ID).join("workspace.json")).unwrap();
+        }
+    });
+    assert_eq!(run(&hook_env(&a, h), WS_ID, Mode::Child).unwrap().passes, 1);
+    assert!(a.sp().again.exists(), "a second pass took the mark");
 }
 
 #[test] // S§19 #16a

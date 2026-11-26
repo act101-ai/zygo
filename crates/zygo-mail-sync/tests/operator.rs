@@ -7,7 +7,7 @@ use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use common::{blob, commit_tree, git, git_in, plain, tip_file, Machine, Remote, ALICE, BOB, WS_ID};
+use common::{blob, commit_tree, git, git_in, plain, tip_file, ForgetClock, Machine, Remote, ALICE, BOB, WS_ID};
 use serde_json::Value;
 use ulid::Ulid;
 use zygo_config::{LoadContext, MailConfig};
@@ -225,6 +225,26 @@ fn twin() -> (Remote, Machine, Machine, Machine) {
     assert_eq!(sync(&c).delivered, 1);
     assert_eq!(stopped(run(&env(&a), WS_ID, Mode::Cli).unwrap_err()), (TWIN.to_string(), "twin"));
     (r, a, b, c)
+}
+
+#[test] // S§8.3 step 3 (MS-21 review F1): an operator command that waited for the lock of a forget writes nothing
+fn new_identity_that_waited_for_a_forget_writes_nothing() {
+    let r = Remote::new();
+    let a = machine(&r, "a", &[(ALICE, "alice")]);
+    sync(&a);
+    let held = fs::OpenOptions::new().read(true).write(true).open(a.sp().lock).unwrap();
+    fs4::FileExt::try_lock(&held).unwrap();
+    let state = a.paths.workspaces_dir().join(WS_ID);
+    let (state2, cache) = (state.clone(), a.paths.workspace_cache_dir().join(WS_ID));
+    let forget: Box<dyn FnOnce() + Send> = Box::new(move || {
+        fs::remove_dir_all(&state2).unwrap();
+        fs::remove_dir_all(&cache).unwrap();
+        drop(held);
+    });
+    let e = Env { clock: Box::new(ForgetClock::new(T0, forget)), ..env(&a) };
+    let err = new_identity(&e, WS_ID).unwrap_err();
+    assert_eq!(err, SyncError::Stopped { line: "zygo: the workspace was forgotten; nothing synced".into(), check: "forgotten" });
+    assert!(fs::symlink_metadata(&state).is_err(), "the state folder was made again");
 }
 
 #[test] // S§19 #11 --new-identity part, S§7.6 --new-identity

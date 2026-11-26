@@ -88,6 +88,8 @@ const REMOTE_LINE: &str = "zygo: no such remote";
 /// S§8.3 step 1: the CLI lines of a gate failure (author's text; review F5).
 const GATE_RECORD_LINE: &str = "zygo: mail sync cannot run: the workspace record cannot be read";
 const GATE_CONFIG_LINE: &str = "zygo: mail sync cannot run: the config does not load";
+/// S§8.3 step 3: the CLI line of a sync whose workspace was forgotten while it waited for the lock (MS-21 review F1).
+const FORGOTTEN_LINE: &str = "zygo: the workspace was forgotten; nothing synced";
 /// S§8.3 step 15: the line after the fifth move of the branch.
 pub(crate) const MOVED_LINE: &str = "zygo: the side branch moved 5 times during the sync; try again";
 /// S§9 Push: the note of a forced prune whose lease failed.
@@ -160,6 +162,13 @@ pub fn run_with(env: &Env, ws_id: &str, mode: Mode, opts: &Opts) -> Result<Repor
             Ok(None) => return Err(SyncError::Busy),
             Err(f) => return Err(c.stopped(f, false)),
         };
+        if c.forgotten() {
+            drop(lock);
+            return match mode {
+                Mode::Child => Ok(report),
+                Mode::Cli => Err(forgotten_error()),
+            };
+        }
         let held = (|| {
             state::take_again(&c.sp).map_err(|_| stop("again"))?;
             pass(&c, &mut report, first, first && opts.prune)?;
@@ -228,7 +237,15 @@ impl Ctx<'_> {
     }
 
     pub(crate) fn log(&self, line: &str) { self.store.log_error(line) }
+
+    /// S§8.3 step 3 (MS-21 review F1): under the lock, before any write: the workspace record is gone or no longer
+    /// holds this id (read as the gate reads it), so `zygo ws forget` ran while this sync waited for the lock.
+    fn forgotten(&self) -> bool { !matches!(self.store.read(), Ok(Some(ws)) if ws.id == self.ws_id) }
 }
+
+/// S§8.3 step 3 (MS-21 review F1): the stop of a CLI sync whose workspace was forgotten. It writes nothing: no
+/// `errors.log` line and no `state.json` (the state folder is gone, and a write would make it again).
+fn forgotten_error() -> SyncError { SyncError::Stopped { line: FORGOTTEN_LINE.into(), check: "forgotten" } }
 
 /// S§8.3 step 1: the workspace record, the config (layers 1-4, the main worktree as the repository) and the sync
 /// settings. A gate failure takes no action, so nothing is written, not even an `errors.log` line: sync off is
@@ -254,6 +271,7 @@ fn gate<'a>(env: &'a Env, ws_id: &'a str) -> Result<Ctx<'a>, SyncError> {
 pub(crate) fn locked<T>(env: &Env, ws_id: &str, f: impl FnOnce(&Ctx) -> Result<T, Fail>) -> Result<T, SyncError> {
     let c = gate(env, ws_id)?;
     let out = match take_lock(&c.sp, Mode::Cli, &*env.clock) {
+        Ok(Some(_lock)) if c.forgotten() => return Err(forgotten_error()),
         Ok(Some(_lock)) => f(&c).map_err(|e| c.stopped(e, true)),
         Ok(None) => return Err(SyncError::Busy),
         Err(f) => return Err(c.stopped(f, false)),
