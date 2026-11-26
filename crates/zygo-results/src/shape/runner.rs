@@ -75,6 +75,18 @@ static GO_RESULT: LazyLock<Regex> =
 static GO_PACKAGE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^((ok|FAIL|PASS)([ \t].*)?|panic:.*|exit status .*)$").unwrap());
 
+/// `TEST_FAILED` on a whole text: whether one of its lines is a libtest failed test line.
+static TEST_FAILED_ANY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^test \S+ \.\.\. FAILED$").unwrap());
+
+/// `PY_FAILURE` on a whole text: whether one of its lines opens a pytest failure section.
+static PY_FAILURE_ANY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^=+ (FAILURES|ERRORS|PASSES|short test summary info) =+$").unwrap());
+
+/// `GO_MARK` or `GO_RESULT` on a whole text: whether one of its lines can give a go test line an owner.
+static GO_OWNER_ANY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^=== (RUN|PAUSE|CONT|NAME)[ \t]+\S+$|^[ \t]*--- (PASS|FAIL|SKIP): \S+ \(.*\)$").unwrap()
+});
+
 /// The last line of `text`, without one final `\n` (O§7.6 "a last line"). A text that ends in a blank line
 /// has an empty last line.
 fn last_line(text: &str) -> &str {
@@ -149,17 +161,76 @@ fn section(r: Runner, text: &str) -> Vec<bool> {
 /// has its summary in `text`.
 pub fn view(text: &str, runners: &[Runner]) -> Option<(String, Vec<Step>, Shaper)> {
     let r = runners.iter().copied().find(|&r| has_summary(r, text))?;
-    let mut keep = vec![false; text.split_inclusive('\n').count()];
-    for o in [Runner::Libtest, Runner::Pytest, Runner::Gotest].into_iter().filter(|&o| o != r) {
-        for (k, s) in keep.iter_mut().zip(section(o, text)) {
-            *k |= s;
-        }
-    }
+    let keep = other_sections(r, text);
     match r {
         Runner::Libtest => libtest_kept(text, &keep).map(|(v, s)| (v, s, Shaper::Libtest)),
         Runner::Pytest => pytest_kept(text, &keep).map(|(v, s)| (v, s, Shaper::Pytest)),
         Runner::Gotest => gotest_kept(text, &keep).map(|(v, s)| (v, s, Shaper::Gotest)),
     }
+}
+
+/// Whether `text` can have a line in a failure section of `r`: false only when `section(r, text)` is all false.
+fn may_have_section(r: Runner, text: &str) -> bool {
+    match r {
+        Runner::Libtest => text.contains("failures:") || text.contains("---- ") || TEST_FAILED_ANY.is_match(text),
+        Runner::Pytest => PY_FAILURE_ANY.is_match(text),
+        Runner::Gotest => GO_OWNER_ANY.is_match(text),
+    }
+}
+
+/// One flag per `split_inclusive('\n')` line: the union of the failure sections of the runners other than `r`;
+/// empty when `may_have_section` is false for each of them.
+fn other_sections(r: Runner, text: &str) -> Vec<bool> {
+    let mut keep = Vec::new();
+    for o in [Runner::Libtest, Runner::Pytest, Runner::Gotest]
+        .into_iter()
+        .filter(|&o| o != r && may_have_section(o, text))
+    {
+        if keep.is_empty() {
+            keep = vec![false; text.split_inclusive('\n').count()];
+        }
+        for (k, s) in keep.iter_mut().zip(section(o, text)) {
+            *k |= s;
+        }
+    }
+    keep
+}
+
+/// For a line that matches `TEST_HIDDEN`: whether group 1 is `ok`.
+fn libtest_ok(bare: &str) -> bool {
+    bare.strip_prefix("test ")
+        .and_then(|r| r.strip_suffix(" ... ok"))
+        .is_some_and(|n| !n.is_empty() && !n.contains(char::is_whitespace))
+}
+
+/// `GO_SUMMARY.is_match(bare)`, with the first-byte pre-check.
+fn go_summary_line(bare: &str) -> bool {
+    matches!(bare.as_bytes().first(), Some(b'o' | b'F' | b'?')) && GO_SUMMARY.is_match(bare)
+}
+
+/// `GO_PACKAGE.is_match(bare)`, with the first-byte pre-check.
+fn go_package_line(bare: &str) -> bool {
+    matches!(bare.as_bytes().first(), Some(b'o' | b'F' | b'P' | b'p' | b'e')) && GO_PACKAGE.is_match(bare)
+}
+
+/// `GO_MARK` group 2, or `None` when `GO_MARK` does not match.
+fn go_mark(bare: &str) -> Option<&str> {
+    if !bare.starts_with("=== ") || !GO_MARK.is_match(bare) {
+        return None;
+    }
+    let r = &bare[4..];
+    let kind = r.find([' ', '\t'])?;
+    Some(r[kind..].trim_start_matches([' ', '\t']))
+}
+
+/// `GO_RESULT` groups 1 and 2, or `None` when `GO_RESULT` does not match.
+fn go_result(bare: &str) -> Option<(&str, &str)> {
+    let rest = bare.trim_start_matches([' ', '\t']);
+    if !rest.starts_with("--- ") || !GO_RESULT.is_match(bare) {
+        return None;
+    }
+    let name = rest[10..].split(' ').next().unwrap_or("");
+    Some((&rest[4..8], name))
 }
 
 enum Piece<'a> {
@@ -203,14 +274,14 @@ fn libtest_kept(text: &str, keep: &[bool]) -> Option<(String, Vec<Step>)> {
             if SUMMARY.is_match(bare) || BINARY.is_match(bare) {
                 open = false;
             }
-        } else if let Some(c) = TEST_HIDDEN.captures(bare) {
+        } else if bare.starts_with("test ") {
             if !open {
                 groups.push((0, 0));
                 pieces.push(Piece::Tests(groups.len() - 1));
                 open = true;
             }
             let g = groups.last_mut().expect("a group is open");
-            if &c[1] == "ok" {
+            if libtest_ok(bare) {
                 g.0 += 1;
             } else {
                 g.1 += 1;
@@ -333,7 +404,7 @@ fn go_lines(text: &str) -> Vec<GoLine> {
         while open.last().is_some_and(|&(_, d)| d >= depth) {
             open.pop();
         }
-        let summary = GO_SUMMARY.is_match(bare);
+        let summary = go_summary_line(bare);
         let o = if bare == "[stderr]" || (summary && !bare.starts_with('?')) {
             pkg += 1;
             cur = None;
@@ -341,16 +412,16 @@ fn go_lines(text: &str) -> Vec<GoLine> {
             None
         } else if summary && cur.is_none() {
             None
-        } else if GO_PACKAGE.is_match(bare) {
+        } else if go_package_line(bare) {
             cur = None;
             open.clear();
             None
-        } else if let Some(c) = GO_MARK.captures(bare).filter(|_| !cr) {
-            cur = Some((pkg, c.get(2).expect("group 2").as_str()));
+        } else if let Some(name) = go_mark(bare).filter(|_| !cr) {
+            cur = Some((pkg, name));
             cur
-        } else if let Some(c) = GO_RESULT.captures(bare).filter(|_| !cr) {
-            let key = (pkg, c.get(2).expect("group 2").as_str());
-            let ok = &c[1] != "FAIL";
+        } else if let Some((res, name)) = go_result(bare).filter(|_| !cr) {
+            let key = (pkg, name);
+            let ok = res != "FAIL";
             passed.entry(key).and_modify(|p| *p &= ok).or_insert(ok);
             open.push((key, depth));
             let within = |n: &str| n == key.1 || n.strip_prefix(key.1).is_some_and(|r| r.starts_with('/'));
@@ -442,4 +513,85 @@ fn gotest_kept(text: &str, keep: &[bool]) -> Option<(String, Vec<Step>)> {
         return None;
     }
     Some((out, vec![Step::PassedTestsHidden]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Edge lines of changes A, B and D (OS-47 triage): Unicode white space in names, `\r` endings, the dedup
+    /// counted form, near-miss prefixes, indented results, and package lines.
+    const LINES: &[&str] = &[
+        "test a ... ok", "test a ... ignored", "test a ... ignored, x ... ok", "test a ... ignored, ",
+        "test a ... ok ", "test  ... ok", "test ... ok", "test a b ... ok", "test b\u{2003}c ... ok",
+        "test d\u{a0}e ... ok", "test e\u{85}f ... ok", "test g\u{180e}h ... ok", "test i\u{200b}j ... ok",
+        "test f ... ok\r", "test g ... ok [repeated 3 times]", "test i ... okay", "test ok ... ok",
+        "test a ... FAILED", "   Compiling zygo v0.1.0", "test result: ok. 1 passed; 0 failed;",
+        "=== RUN\tTestX", "=== RUN   TestX", "=== RUNNER TestY", "=== RUN", "=== RUN ", "=== RUN   a b",
+        "=== RUN   a\u{2003}b", "=== PAUSE TestX", "=== CONT  TestX", "=== NAME  TestX", "=== RUN   TestZ\r",
+        " === RUN   TestX", "--- PASS: TestX (0.00s)", "--- PASSX: TestX (0.00s)",
+        "    --- PASS: TestX/sub (0.00s)", "\t--- FAIL: TestX (1.2s)", "--- SKIP: TestX (0.00s)",
+        "--- PASS: TestX\u{2003}(0.00s)", "--- PASS: TestX  (0.00s)", "--- PASS: TestX (0.00s) tail",
+        "--- FAIL: TestX (0.00s)\r", "--- PASS:  TestX (0.00s)", "--- PASS: \u{e9}t\u{e9} (0.00s)", "[stderr]",
+        "ok", "okay", "ok  \texample.com/x\t0.1s", "ok example.com/x", "FAIL", "FAIL\texample.com/x\t0.1s",
+        "FAILED", "PASS", "PASSED", "panic: boom", "exit status 1", "exit status",
+        "?   \texample.com/none\t[no test files]", "? ", "", "=== FAILURES ===",
+        "==== short test summary info ====", "= PASSES =", "failures:", "    boom", "---- boom stdout ----",
+    ];
+
+    #[test]
+    fn runner_fast_path_libtest_test_line_and_ok_match_test_hidden() {
+        for line in LINES {
+            if hidden_by(Runner::Libtest, line) {
+                assert_eq!(line.starts_with("test "), TEST_HIDDEN.is_match(line), "{line:?}");
+            }
+            if let Some(c) = TEST_HIDDEN.captures(line) {
+                assert_eq!(libtest_ok(line), &c[1] == "ok", "{line:?}");
+            }
+        }
+        assert!(libtest_ok("test a ... ok") && !libtest_ok("test a ... ignored, x ... ok"));
+    }
+
+    #[test]
+    fn runner_fast_path_go_guards_give_the_regex_answers() {
+        for line in LINES {
+            assert_eq!(go_summary_line(line), GO_SUMMARY.is_match(line), "{line:?}");
+            assert_eq!(go_package_line(line), GO_PACKAGE.is_match(line), "{line:?}");
+            assert_eq!(go_mark(line), GO_MARK.captures(line).map(|c| c.get(2).expect("group 2").as_str()), "{line:?}");
+            let want = GO_RESULT.captures(line).map(|c| (c.get(1).expect("1").as_str(), c.get(2).expect("2").as_str()));
+            assert_eq!(go_result(line), want, "{line:?}");
+        }
+        assert_eq!(go_mark("=== RUN\tTestX"), Some("TestX"));
+        assert_eq!(go_result("    --- PASS: TestX/sub (0.00s)"), Some(("PASS", "TestX/sub")));
+    }
+
+    #[test]
+    fn runner_fast_path_section_guard_keeps_every_section() {
+        let all = [Runner::Libtest, Runner::Pytest, Runner::Gotest];
+        let mut texts: Vec<String> =
+            LINES.iter().flat_map(|l| [l.to_string(), format!("{l}\n"), format!("x\n{l}\ny\n")]).collect();
+        texts.push(LINES.join("\n"));
+        texts.push(LINES.join("\r\n"));
+        for t in &texts {
+            for o in all {
+                if section(o, t).contains(&true) {
+                    assert!(may_have_section(o, t), "{o:?} {t:?}");
+                }
+            }
+            for r in all {
+                // the mask of `view` at 442defa3: both other runners, unguarded
+                let mut old = vec![false; t.split_inclusive('\n').count()];
+                for o in all.into_iter().filter(|&o| o != r) {
+                    for (k, s) in old.iter_mut().zip(section(o, t)) {
+                        *k |= s;
+                    }
+                }
+                let new = other_sections(r, t);
+                assert!(new == old || (new.is_empty() && !old.contains(&true)), "{r:?} {t:?}");
+            }
+        }
+        for o in all {
+            assert!(!may_have_section(o, "test a ... ok\n"), "{o:?}");
+        }
+    }
 }

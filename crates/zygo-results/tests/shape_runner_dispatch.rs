@@ -273,3 +273,145 @@ fn addopts_override_and_spaced_p_turn_the_pytest_view_off() {
         assert_eq!(run(B, cmd).shaper, Some(Shaper::Pytest), "{cmd}");
     }
 }
+
+// ---- OS-47: the fast path of the runner view leaves every view unchanged (O§7.6, O§8.5) ----
+
+/// Edge lines of the three fast-path changes: libtest lines that the `ok` slice must read as the regex does, and go
+/// lines that the first-byte and prefix guards must not skip.
+const EDGE: &str = concat!(
+    "running 9 tests\n",
+    "test a ... ok\n",
+    "test a ... ignored, x ... ok\n",
+    "test b\u{2003}c ... ok\n",
+    "test d\u{a0}e ... ok\n",
+    "test f ... ok\r\n",
+    "test g ... ok [repeated 3 times]\n",
+    "test h ... ignored\n",
+    "test i ... okay\n",
+    "test j ... ok\n",
+    "   Compiling zygo v0.1.0\n",
+    "\n",
+    "test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+    "=== RUN\tTestX\n",
+    "    x_test.go:3: log\n",
+    "=== RUNNER TestY\n",
+    "--- PASSX: TestX (0.00s)\n",
+    "    --- PASS: TestX/sub (0.00s)\n",
+    "--- PASS: TestX (0.00s)\n",
+    "=== RUN   TestZ\r\n",
+    "=== RUN   TestW\n",
+    "    w_test.go:9: no result\n",
+    "[stderr]\n",
+    "?   \texample.com/none\t[no test files]\n",
+    "okay\n",
+    "ok  \texample.com/x\t0.1s\n",
+);
+
+/// The libtest view of `EDGE` at 442defa3.
+const EDGE_LIB_VIEW: &str = concat!(
+    "running 9 tests\n",
+    "[zygo: 2 passed and 2 ignored test lines hidden]\n",
+    "test b\u{2003}c ... ok\n",
+    "test d\u{a0}e ... ok\n",
+    "test f ... ok\r\n",
+    "test g ... ok [repeated 3 times]\n",
+    "test i ... okay\n",
+    "[zygo: 1 build progress lines hidden]\n",
+    "\n",
+    "test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+    "=== RUN\tTestX\n",
+    "    x_test.go:3: log\n",
+    "=== RUNNER TestY\n",
+    "--- PASSX: TestX (0.00s)\n",
+    "    --- PASS: TestX/sub (0.00s)\n",
+    "--- PASS: TestX (0.00s)\n",
+    "=== RUN   TestZ\r\n",
+    "=== RUN   TestW\n",
+    "    w_test.go:9: no result\n",
+    "[stderr]\n",
+    "?   \texample.com/none\t[no test files]\n",
+    "okay\n",
+    "ok  \texample.com/x\t0.1s\n",
+);
+
+/// The go test view of `EDGE` at 442defa3.
+const EDGE_GO_VIEW: &str = concat!(
+    "running 9 tests\n",
+    "test a ... ok\n",
+    "test a ... ignored, x ... ok\n",
+    "test b\u{2003}c ... ok\n",
+    "test d\u{a0}e ... ok\n",
+    "test f ... ok\r\n",
+    "test g ... ok [repeated 3 times]\n",
+    "test h ... ignored\n",
+    "test i ... okay\n",
+    "test j ... ok\n",
+    "   Compiling zygo v0.1.0\n",
+    "\n",
+    "test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+    "[zygo: 4 lines of passed tests hidden]\n",
+    "=== RUNNER TestY\n",
+    "--- PASSX: TestX (0.00s)\n",
+    "=== RUN   TestZ\r\n",
+    "=== RUN   TestW\n",
+    "    w_test.go:9: no result\n",
+    "[stderr]\n",
+    "[zygo: 1 packages with no test files hidden]\n",
+    "okay\n",
+    "ok  \texample.com/x\t0.1s\n",
+);
+
+/// The go test view of `GF` then `EDGE` at 442defa3: the libtest failure section of `GF` stays.
+const GF_EDGE_GO_VIEW: &str = concat!(
+    "[zygo: 11 lines of passed tests hidden]\n",
+    "test boom ... FAILED\n",
+    "failures:\n",
+    "---- boom stdout ----\n",
+    "thread 'boom' panicked at src/lib.rs:3:5:\n",
+    "explicit panic\n",
+    "\n",
+    "failures:\n",
+    "    boom\n",
+    "PASS\n",
+    "ok  \texample.com/x\t0.2s\n",
+    "running 9 tests\n",
+    "test a ... ok\n",
+    "test a ... ignored, x ... ok\n",
+    "test b\u{2003}c ... ok\n",
+    "test d\u{a0}e ... ok\n",
+    "test f ... ok\r\n",
+    "test g ... ok [repeated 3 times]\n",
+    "test h ... ignored\n",
+    "test i ... okay\n",
+    "test j ... ok\n",
+    "   Compiling zygo v0.1.0\n",
+    "\n",
+    "test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+    "=== RUNNER TestY\n",
+    "--- PASSX: TestX (0.00s)\n",
+    "=== RUN   TestZ\r\n",
+    "=== RUN   TestW\n",
+    "    w_test.go:9: no result\n",
+    "[stderr]\n",
+    "[zygo: 1 packages with no test files hidden]\n",
+    "okay\n",
+    "ok  \texample.com/x\t0.1s\n",
+);
+
+/// OS-47: `view` on texts that mix runners gives the views of 442defa3 (before the fast path), for each runner order;
+/// `EDGE` has no libtest or pytest failure section (the section guard skips them), `A` and `GF` have one.
+#[test]
+fn runner_fast_path_mixed_runner_views_are_unchanged() {
+    let lib = Some((EDGE_LIB_VIEW.to_string(), vec![Step::PassedTestsHidden, Step::BuildProgressHidden], Shaper::Libtest));
+    let go = Some((EDGE_GO_VIEW.to_string(), vec![Step::PassedTestsHidden], Shaper::Gotest));
+    assert_eq!(view(EDGE, &[Libtest, Gotest]), lib);
+    assert_eq!(view(EDGE, &[Pytest, Libtest, Gotest]), lib);
+    assert_eq!(view(EDGE, &[Gotest, Libtest]), go);
+    let ea = [EDGE, A].concat();
+    assert_eq!(view(&ea, &[Libtest, Gotest]).map(|v| v.0), Some([EDGE_LIB_VIEW, A].concat()));
+    assert_eq!(view(&ea, &[Gotest, Libtest]).map(|v| v.0), Some([EDGE_GO_VIEW, A].concat()));
+    assert_eq!(view(&ea, &[Pytest, Libtest, Gotest]), None);
+    let ge = [GF, EDGE].concat();
+    assert_eq!(view(&ge, &[Libtest, Gotest]).map(|v| v.0), Some([GF, EDGE_LIB_VIEW].concat()));
+    assert_eq!(view(&ge, &[Gotest, Libtest]), Some((GF_EDGE_GO_VIEW.to_string(), vec![Step::PassedTestsHidden], Shaper::Gotest)));
+}
