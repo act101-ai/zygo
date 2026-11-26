@@ -907,3 +907,36 @@ fn namespace_call_maps_back_from_history_only() {
     assert_eq!(r["output"][0]["name"], "multi_agent_v1__spawn_agent");
     assert!(r["output"][0].get("namespace").is_none(), "{}", r["output"][0]);
 }
+
+// ---- RS-9 review round 1 findings ----
+
+#[test]
+fn namespace_call_maps_back_one_kind_for_events_and_item() {
+    // F2: a custom tool `ns__x` sent and a history call of `ns`/`x`: `request` refuses the body, and the encoder's
+    // events and item come from one lookup, so they agree on the kind.
+    let body = json!({"model":"role-x","max_output_tokens":100,"tools":[{"type":"custom","name":"ns__x"}],
+        "input":[user("go"),
+            {"type":"function_call","call_id":"c1","name":"x","namespace":"ns","arguments":"{}"},
+            {"type":"function_call_output","call_id":"c1","output":"r"}, user("next")]});
+    let e = request(&body, &tgt(), None).unwrap_err();
+    assert_eq!(e.message, "input: two tools have the same name");
+    let mut ev = vec![message_start()];
+    ev.extend(tool_block(0, "toolu_x", "ns__x", &["{\"input\":\"p\"}"]));
+    ev.extend(end("tool_use"));
+    let evs = run(&mut Encoder::new("role-x", &tgt(), Calls::of(&body)), &ev);
+    assert_sequence(&evs);
+    let added = &evs[2].data["item"];
+    let done = items_done(&evs).remove(0);
+    assert_eq!(added["type"], done["type"]);
+    let prefix = if done["type"] == "custom_tool_call" { "response.custom_tool_call_input" } else { "response.function_call_arguments" };
+    assert!(types(&evs[3..evs.len() - 2]).iter().all(|t| t.starts_with(prefix)), "{:?}", types(&evs));
+
+    // F1: a plain sent function of the flat name: a model call of it never returns as namespaced.
+    let body = json!({"tools":[{"type":"function","name":"mcp__zygo__compact"}],
+        "input":[{"type":"function_call","call_id":"c1","name":"compact","namespace":"mcp__zygo","arguments":"{}"}]});
+    let msg = json!({"content":[{"type":"tool_use","id":"t","name":"mcp__zygo__compact","input":{}}],
+        "stop_reason":"tool_use","usage":{}});
+    let (r, _) = response(&msg, "role-x", &tgt(), &Calls::of(&body));
+    assert_eq!(r["output"][0]["name"], "mcp__zygo__compact");
+    assert!(r["output"][0].get("namespace").is_none(), "{}", r["output"][0]);
+}

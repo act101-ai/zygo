@@ -165,6 +165,7 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
     }
     adjacency(&c.messages)?;
     let mut tools = tools(req, &mut d)?;
+    table(req)?;
     let mut choice = tool_choice(req, &tools)?;
     let from_history = history_tools(&c.messages, &tools);
     if !from_history.is_empty() {
@@ -457,7 +458,8 @@ fn data_url(u: &str) -> Option<(&str, &str)> {
 
 /// The Messages and chat tool name of the tool `name` inside the `namespace` tool `ns` (K§6.4.3 request obligation 6):
 /// `<ns>__<name>` when that is 1-64 characters of `[A-Za-z0-9_-]`; else that string with each other character
-/// replaced by `_`, cut to 47 characters, then `_` and the first 16 hex digits of SHA-256 of `ns`, U+0000, `name`.
+/// replaced by `_`, cut to 47 characters, then `_` and the first 16 hex digits of SHA-256 of
+/// `<len(ns)>:<ns><len(name)>:<name>` (lengths in UTF-8 bytes, decimal), so no character of a part moves the boundary.
 /// A pure function of the pair, so a definition and a history call agree with no proxy state; it is never parsed
 /// back (`Calls` holds the reverse table).
 pub fn flat_name(ns: &str, name: &str) -> String {
@@ -467,7 +469,7 @@ pub fn flat_name(ns: &str, name: &str) -> String {
         return plain;
     }
     let mut cut: String = plain.chars().map(|c| if ok(c) { c } else { '_' }).take(47).collect();
-    let h = hex::encode(sha256(&format!("{ns}\u{0}{name}")));
+    let h = hex::encode(sha256(&format!("{}:{ns}{}:{name}", ns.len(), name.len())));
     cut.push('_');
     cut.push_str(&h[..16]);
     cut
@@ -599,7 +601,11 @@ fn tool_choice(req: &Value, tools: &[Value]) -> Result<Option<Value>, ZygoError>
             (Some("none"), _, _) => json!({"type":"none"}),
             (Some("required"), _, _) => json!({"type":"any"}),
             (None, Some("function" | "custom"), Some(name)) => {
-                let name = s(v, "namespace").map_or_else(|| name.to_owned(), |ns| flat_name(ns, name));
+                let name = match v.get("namespace") {
+                    None | Some(Value::Null) => name.to_owned(),
+                    Some(Value::String(ns)) => flat_name(ns, name),
+                    Some(_) => return Err(bad("tool_choice: namespace must be a string")),
+                };
                 if !tools.iter().any(|t| s(t, "name") == Some(name.as_str())) {
                     return Err(bad("tool_choice: the named tool is not among the sent tools"));
                 }
@@ -625,48 +631,87 @@ fn tool_choice(req: &Value, tools: &[Value]) -> Result<Option<Value>, ZygoError>
 
 // ---- Messages → Responses (K§6.4.3 stream obligations 1-9) ----
 
+/// The kind of tool a Messages tool name stands for (K§6.4.3 request obligation 6, stream obligation 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ToolKind {
+    Function,
+    /// A client `custom` tool: a call returns as a `custom_tool_call` item.
+    Custom,
+    /// A tool inside a client `namespace` tool, as (namespace, name): a call returns as a `function_call` item with
+    /// `name` and `namespace`.
+    Namespaced(String, String),
+}
+
+/// Each Messages tool name of the request and its kind, from `tools[]` (`function`, `custom`, and the nested
+/// `function` tools of `namespace`, under the flat name) and from `input[]` (`function_call`, under the flat name
+/// when it has a string `namespace`; `custom_tool_call`). A name of a `custom` tool and of a function is `Custom` (a
+/// custom history call of a sent function's name returns as custom). A name of a namespaced pair and of anything else
+/// (a plain tool, or another pair) → `400 "input: two tools have the same name"` (fail closed: the call could not
+/// return under one kind). Malformed entries, which `request` refuses, are ignored.
+fn table(req: &Value) -> Result<HashMap<String, ToolKind>, ZygoError> {
+    fn list<'a>(v: &'a Value, k: &str) -> &'a [Value] {
+        v.get(k).and_then(Value::as_array).map_or(&[][..], Vec::as_slice)
+    }
+    let mut out: HashMap<String, ToolKind> = HashMap::new();
+    let mut add = |name: String, kind: ToolKind| -> Result<(), ZygoError> {
+        use ToolKind::{Custom, Function};
+        let merged = match (out.get(&name), &kind) {
+            (None, _) => kind,
+            (Some(old), _) if *old == kind => kind,
+            (Some(Function | Custom), Function | Custom) => Custom,
+            _ => return Err(bad("input: two tools have the same name")),
+        };
+        out.insert(name, merged);
+        Ok(())
+    };
+    for t in list(req, "tools") {
+        match (s(t, "type"), s(t, "name")) {
+            (Some("function"), Some(n)) => add(n.to_owned(), ToolKind::Function)?,
+            (Some("custom"), Some(n)) => add(n.to_owned(), ToolKind::Custom)?,
+            (Some("namespace"), Some(ns)) => {
+                for x in list(t, "tools").iter().filter(|x| s(x, "type") == Some("function")) {
+                    if let Some(n) = s(x, "name") {
+                        add(flat_name(ns, n), ToolKind::Namespaced(ns.to_owned(), n.to_owned()))?;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    for it in list(req, "input") {
+        match (s(it, "type"), s(it, "name"), s(it, "namespace")) {
+            (Some("function_call"), Some(n), Some(ns)) => {
+                add(flat_name(ns, n), ToolKind::Namespaced(ns.to_owned(), n.to_owned()))?
+            }
+            (Some("function_call"), Some(n), None) => add(n.to_owned(), ToolKind::Function)?,
+            (Some("custom_tool_call"), Some(n), _) => add(n.to_owned(), ToolKind::Custom)?,
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
 /// What the client's request says about its tools that the call items need (K§6.4.3 stream obligation 2).
 #[derive(Debug, Clone, Default)]
 pub struct Calls {
-    /// The names of the client's `custom` tools: a call of one returns as a `custom_tool_call` item.
-    custom: HashSet<String>,
-    /// Flat name → (namespace, name) of each tool inside a client `namespace` tool: a call of one returns as a
-    /// `function_call` item with `name` and `namespace` (never found by splitting the flat name).
-    namespaced: HashMap<String, (String, String)>,
+    /// Each Messages tool name of the request and its kind (`table`); the one source for the item and its events.
+    kinds: HashMap<String, ToolKind>,
 }
 
 impl Calls {
-    /// The string `name` of each `tools[]` entry of type `custom` and of each `input[]` item of type
-    /// `custom_tool_call` (a custom tool the request declares only from its history, K§6.4.3 request obligation 6);
-    /// the flat name of each nested `function` of a `tools[]` entry of type `namespace` and of each `input[]`
-    /// `function_call` with a string `namespace`; anything else (malformed entries `request` refuses) is ignored.
+    /// The request's tool names and kinds (`table`: `tools[]` and the call items of `input[]`). A request that
+    /// `request` refuses for two tools of one name gives no kinds (every call returns as a plain `function_call`).
     pub fn of(req: &Value) -> Calls {
-        let list = |k: &str| req.get(k).and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
-        let of_type = |ty: &'static str| move |v: &&Value| s(v, "type") == Some(ty);
-        let tools = list("tools").iter().filter(of_type("custom"));
-        let history = list("input").iter().filter(of_type("custom_tool_call"));
-        let custom = tools.chain(history).filter_map(|t| s(t, "name")).map(str::to_owned).collect();
-        let mut namespaced = HashMap::new();
-        let mut add = |ns: &str, n: &str| {
-            namespaced.entry(flat_name(ns, n)).or_insert_with(|| (ns.to_owned(), n.to_owned()));
-        };
-        for t in list("tools").iter().filter(of_type("namespace")) {
-            let Some(ns) = s(t, "name") else { continue };
-            let nested = t.get("tools").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
-            for n in nested.iter().filter(of_type("function")).filter_map(|x| s(x, "name")) {
-                add(ns, n);
-            }
-        }
-        for it in list("input").iter().filter(of_type("function_call")) {
-            if let (Some(ns), Some(n)) = (s(it, "namespace"), s(it, "name")) {
-                add(ns, n);
-            }
-        }
-        Calls { custom, namespaced }
+        Calls { kinds: table(req).unwrap_or_default() }
+    }
+
+    /// The kind of the tool `name`; a name the request does not hold is a function.
+    fn kind(&self, name: &str) -> &ToolKind {
+        self.kinds.get(name).unwrap_or(&ToolKind::Function)
     }
 
     fn is_custom(&self, name: &str) -> bool {
-        self.custom.contains(name)
+        *self.kind(name) == ToolKind::Custom
     }
 
     /// The only builder of a call item: a `tool_use` with id `call_id`, name `name` and arguments `args` (JSON text)
@@ -675,16 +720,16 @@ impl Calls {
     /// `output_item.added` form.
     fn item(&self, ulid: &str, oi: usize, call_id: &str, name: &str, args: Option<&str>) -> Value {
         let status = if args.is_some() { "completed" } else { "in_progress" };
-        if let Some((ns, n)) = self.namespaced.get(name) {
-            json!({"type":"function_call","id":item_id("fc", ulid, oi),"call_id":call_id,"name":n,"namespace":ns,
-                "arguments":args.unwrap_or(""),"status":status})
-        } else if self.is_custom(name) {
-            let input = args.map_or_else(String::new, custom_input);
-            json!({"type":"custom_tool_call","id":item_id("ctc", ulid, oi),"call_id":call_id,"name":name,
-                "input":input,"status":status})
-        } else {
-            json!({"type":"function_call","id":item_id("fc", ulid, oi),"call_id":call_id,"name":name,
-                "arguments":args.unwrap_or(""),"status":status})
+        match self.kind(name) {
+            ToolKind::Namespaced(ns, n) => json!({"type":"function_call","id":item_id("fc", ulid, oi),
+                "call_id":call_id,"name":n,"namespace":ns,"arguments":args.unwrap_or(""),"status":status}),
+            ToolKind::Custom => {
+                let input = args.map_or_else(String::new, custom_input);
+                json!({"type":"custom_tool_call","id":item_id("ctc", ulid, oi),"call_id":call_id,"name":name,
+                    "input":input,"status":status})
+            }
+            ToolKind::Function => json!({"type":"function_call","id":item_id("fc", ulid, oi),"call_id":call_id,
+                "name":name,"arguments":args.unwrap_or(""),"status":status}),
         }
     }
 }

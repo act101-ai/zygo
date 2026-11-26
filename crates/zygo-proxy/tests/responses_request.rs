@@ -1019,3 +1019,74 @@ fn namespace_tools_flatten_tool_choice() {
         assert_eq!(m["tool_choice"], json!({"type":"tool","name":"multi_agent_v1__spawn_agent"}));
     }
 }
+
+// ---- RS-9 review round 1 findings ----
+
+/// A body whose history holds a call of `ns`/`name` and its output, with `tools`.
+fn ns_history(tools: Value, calls: &[Value]) -> Value {
+    let mut input = vec![user("go")];
+    for (i, c) in calls.iter().enumerate() {
+        let mut c = c.clone();
+        c["call_id"] = json!(format!("c{i}"));
+        c["arguments"] = json!("{}");
+        c["type"] = json!("function_call");
+        input.push(c);
+        input.push(fco(&format!("c{i}"), "r"));
+    }
+    input.push(user("next"));
+    let mut b = body(Value::Array(input));
+    b["tools"] = tools;
+    b
+}
+
+#[test]
+fn namespace_tools_flatten_history_collision_400() {
+    let dup = "input: two tools have the same name";
+    let cases = [
+        // F1: a plain sent function of the flat name.
+        (json!([{"type":"function","name":"mcp__zygo__compact"}]), vec![json!({"name":"compact","namespace":"mcp__zygo"})]),
+        // F2: a sent custom tool of the flat name.
+        (json!([{"type":"custom","name":"ns__x"}]), vec![json!({"name":"x","namespace":"ns"})]),
+        // F3: a sent nested tool of another pair with the same flat name.
+        (
+            json!([{"type":"namespace","name":"a","tools":[{"type":"function","name":"b__c"}]}]),
+            vec![json!({"name":"c","namespace":"a__b"})],
+        ),
+        // Two history pairs with one flat name.
+        (json!([]), vec![json!({"name":"c","namespace":"a__b"}), json!({"name":"b__c","namespace":"a"})]),
+        // A plain history call of the flat name.
+        (json!([]), vec![json!({"name":"ns__x"}), json!({"name":"x","namespace":"ns"})]),
+    ];
+    for (tools, calls) in cases {
+        let b = ns_history(tools, &calls);
+        assert_400(err(rq(&b)), dup);
+    }
+    // The same pair sent and called is no collision.
+    let b = ns_history(
+        json!([{"type":"namespace","name":"a","tools":[{"type":"function","name":"b__c"}]}]),
+        &[json!({"name":"b__c","namespace":"a"}), json!({"name":"b__c","namespace":"a"})],
+    );
+    let (m, _) = rq(&b).unwrap();
+    assert_eq!(m["tools"], json!([{"name":"a__b__c","input_schema":{"type":"object"}}]));
+}
+
+#[test]
+fn namespace_tools_flatten_hash_input_unambiguous() {
+    // F4: the hash input is length-prefixed, so a NUL in a part cannot move the boundary.
+    assert_ne!(flat_name("a\0", "_b"), flat_name("a", "\0_b"));
+    assert_ne!(flat_name("a\0b", "c"), flat_name("a", "b\0c"));
+}
+
+#[test]
+fn namespace_tools_flatten_tool_choice_namespace_type_400() {
+    // F5: a `namespace` that is not a string (or null) is refused, as in a `function_call` item.
+    let base = record("agents/requests/pc6-a-0002.json");
+    for ns in [json!(5), json!(["multi_agent_v1"]), json!({})] {
+        let mut b = base.clone();
+        b["tool_choice"] = json!({"type":"function","name":"spawn_agent","namespace":ns});
+        assert_400(err(rq(&b)), "tool_choice: namespace must be a string");
+    }
+    let mut b = base.clone();
+    b["tool_choice"] = json!({"type":"function","name":"multi_agent_v1__spawn_agent","namespace":null});
+    assert_eq!(tr(&b).0["tool_choice"], json!({"type":"tool","name":"multi_agent_v1__spawn_agent"}));
+}
