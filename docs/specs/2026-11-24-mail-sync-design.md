@@ -139,6 +139,11 @@ Two machines that make the branch at the same time: the second push is rejected 
 
 `cli` and `zygo` are reserved names (M§6 reserves `cli` and `all`; this spec adds `zygo` for S§8.6). A send to `cli@<host>` or `zygo@<host>` is refused: they have no inbox.
 
+**(lead)** At send (`mail_send`, `zygo mail send`), the local host is the host in force (S§7.1) when sync is on for the workspace; with sync off there is no local host. A send reads config and files only and runs no git (S§7.3), and an older own host (S§7.5, S§7.6 "Rename") is known only at the tip, so at send `<name>@<older host>` is a remote address, and the member cache rule below refuses it (the cache never holds a registry of this workspace's identity). A `to` value with no `@` follows M§8 and M§10. A `to` value with `@` that is not an address is refused with one line, the same for the tool and the CLI:
+
+- a reserved name (`all@<host>`, `cli@<host>`, `zygo@<host>`): `zygo: all, cli and zygo have no address; send to <name> or <name>@<host>`;
+- any other form: `zygo: not an address; send to a member name, a pane key, all, or <name>@<host>`.
+
 A send to a remote address is refused:
 
 - when the sender is a member with no name, or the CLI with no `ZYGO_PANE`: `zygo: remote mail needs a sender name; give this member a name in the loadout or with --name` **(lead)**;
@@ -367,7 +372,7 @@ A host that is idle for months keeps its mail on the branch, and the branch grow
 
 ### 10.4 Agent text
 
-M§8a item 8 gains one clause when sync is on for the workspace and the member cache is not empty, after the member list, before "Send with": `Other machines: <address>, <address>, …; mail them by the full address.` Each address is `<name>@<host>`, in host order, then names as stored, each address once; the addresses are joined with `, `. At most 64 addresses; when there are more, the last of the 64 is followed by `, and <n> more; mail_list lists all`, before `; mail them by the full address.`, where `<n>` is the number of addresses left out. Sync off, a config that does not load, or an empty cache gives no clause. `mail_list` returns the remote addresses from the member cache. The tool description of `mail_send` adds: "To a member on another machine, use `<name>@<host>`." No message text goes into this text (M§8a).
+M§8a item 8 gains one clause when sync is on for the workspace and the member cache is not empty, after the member list, before "Send with": `Other machines: <address>, <address>, …; mail them by the full address.` Each address is `<name>@<host>`, in host order, then names as stored, each address once; the addresses are joined with `, `. At most 64 addresses; when there are more, the last of the 64 is followed by `, and <n> more; mail_list lists all`, before `; mail them by the full address.`, where `<n>` is the number of addresses left out. Sync off, a config that does not load, or an empty cache gives no clause. `mail_list` returns the remote addresses from the member cache as `remote`: each address once, in the clause order, with no limit; sync off or a config that does not load gives an empty list. The tool description of `mail_send` adds: "To a member on another machine, use `<name>@<host>`." No message text goes into this text (M§8a).
 
 ### 10.5 Output of remote values
 
@@ -572,3 +577,5 @@ Each check is a test or a command. A "machine" in a test is one `HOME` with its 
 - 2026-11-26 · S§6.6 · author's call (lead) · MS-17 review round 1 (F2): a sync whose first pass ended and whose later pass stopped recorded the note and did not print it; the note now belongs to the first `zygo mail sync` that ends without a stop, its pass that finds no mark records it, and a later stop sets it back.
 - 2026-11-26 · S§8.2 · author's call (lead) · MS-17 plan: `run_with` (`sync.rs`) returns the notes only in the `Report` of a sync that is not stopped, and `SyncError::Stopped` carries one line; the `unknown` line is now printed at the end of a sync that is not stopped, and a stopped sync's next sync prints it again from the cache or a new check.
 - 2026-11-26 · S§6.6 · author's call (lead) · MS-17 review round 2: note paragraph states each multi-pass case as built; the lock-error case keeps the note recorded (R1-A recorded).
+- 2026-11-26 · S§7.2 · author's call (lead) · MS-19 plan: a send runs no git (S§7.3) and an older own host is known only at the tip, so at send the local host is the host in force and `<name>@<older host>` meets the member cache rule; the two refusal lines of a `to` with `@` that is not an address are fixed, so the tool and the CLI print the same text.
+- 2026-11-26 · S§10.4 · author's call (lead) · MS-19 plan: the `mail_list` sentence named no key and no sync-off case; `mail_list` returns `remote`, each address once, empty with sync off or a config that does not load, as the item 8 clause.

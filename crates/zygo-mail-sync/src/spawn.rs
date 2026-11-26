@@ -1,8 +1,10 @@
 //! The start of the sync child and its rate limit (mail sync design S§8.1, S§8.4, S§15). The hook path starts a
 //! child when `now - last_start >= sync_gap` and writes `mail/sync/last_start` before the spawn; a send starts one
-//! with no gap and writes no `last_start`. Nothing here waits for the child or runs git.
+//! with no gap and writes no `last_start`. Only a detached thread waits for the child (to reap it); nothing here
+//! runs git.
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::env::{Env, Spawner};
@@ -36,11 +38,23 @@ impl ChildSpawner {
 }
 
 impl Spawner for ChildSpawner {
-    // The caller does not wait for the child: it ends soon after, and `init` reaps the child (S§8.1).
-    #[allow(clippy::zombie_processes)]
+    // The caller does not wait for the child; a detached thread reaps it (`spawn_reaped`, S§8.1).
     fn spawn_sync(&self, ws_id: &str) -> std::io::Result<()> {
-        self.command(ws_id).spawn().map(|_| ())
+        spawn_reaped(self.command(ws_id)).map(|_| ())
     }
+}
+
+/// Starts `cmd` and moves the child into a detached thread that waits for it, so that no zombie stays in a
+/// long-lived caller such as `zygo mcp` (MS-19 F1). In a short-lived caller (the hook) the thread ends with the
+/// process and `init` reaps the child. Returns the pid of the child and the handle of the thread; the result of the
+/// wait is ignored.
+pub fn spawn_reaped(mut cmd: Command) -> std::io::Result<(u32, JoinHandle<()>)> {
+    let mut child = cmd.spawn()?;
+    let pid = child.id();
+    let handle = std::thread::Builder::new().name("zygo-sync-reap".into()).spawn(move || {
+        let _ = child.wait();
+    })?;
+    Ok((pid, handle))
 }
 
 /// The whole seconds of `now` since the Unix epoch; `0` before it.
@@ -74,5 +88,21 @@ pub fn trigger(env: &Env, ws_id: &str, gap: Option<Duration>, log: &dyn Fn(&str)
     }
     if let Err(e) = env.spawner.spawn_sync(ws_id) {
         log(&format!("cannot start the mail sync child: {e}"));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// MS-19 F1: the child of `spawn_reaped` is reaped once its thread ends: no `/proc/<pid>` stays (a zombie keeps
+    /// one until a `wait`).
+    #[test]
+    fn spawn_reaped_leaves_no_zombie() {
+        let (pid, handle) = spawn_reaped(Command::new("true")).expect("spawn true");
+        handle.join().expect("join the reap thread");
+        let proc = std::path::PathBuf::from(format!("/proc/{pid}"));
+        let state = std::fs::read_to_string(proc.join("stat")).ok();
+        assert!(!proc.exists(), "child {pid} not reaped; /proc/{pid}/stat: {state:?}");
     }
 }

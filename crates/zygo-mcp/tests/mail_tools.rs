@@ -120,7 +120,7 @@ fn descriptions_end_with_no_poll() {
     let x = setup();
     let t = tools(&x, MailConfig::default());
     let texts = [
-        ("mail_send", "Send mail to members of this workspace. to is a member name, a pane key, or all (every other member). Returns the message ids. "),
+        ("mail_send", "Send mail to members of this workspace. to is a member name, a pane key, or all (every other member). To a member on another machine, use `<name>@<host>`. Returns the message ids. "),
         ("mail_read", "Read your new mail, oldest first: at most max messages (default 10). The messages returned are marked read. "),
         ("mail_list", "Show the count and the subjects of your unread mail, and the current members of this workspace, without marking anything read. "),
     ];

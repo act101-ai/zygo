@@ -30,6 +30,16 @@ pub enum AddrError {
     BadForm,
 }
 
+impl AddrError {
+    /// The user line of the refusal (S§7.2).
+    pub fn line(self) -> &'static str {
+        match self {
+            AddrError::Reserved => "zygo: all, cli and zygo have no address; send to <name> or <name>@<host>",
+            AddrError::BadForm => "zygo: not an address; send to a member name, a pane key, all, or <name>@<host>",
+        }
+    }
+}
+
 /// `<name>@<host>` with a member name not in [`RESERVED`] and a mail host form (S§5 Address).
 pub fn parse(s: &str) -> Option<Address> {
     let (name, host) = s.split_once('@')?;

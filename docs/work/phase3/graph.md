@@ -193,7 +193,7 @@ Session text (T, SX nodes):
 |----|------|---------|-------|------------|------|
 | MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | DONE | judgment | e8f19e67..5bc5249b · acceptance pass (operator 22 passed) · PR #190 |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | DONE | implementation | 0167648d..826c59f6 · acceptance pass (mail_sync_cli 14 passed, cli_surface 21 passed) · PR #210 |
-| MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | TODO | implementation | — |
+| MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | DONE | implementation | 37139e44^..e21d5e0b · acceptance pass (mail_remote 16 passed) · PR #212 |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
 | OS-37 | On-demand latency test, ignored in CI | OS-35 | DONE | implementation | 98d82be5 · b5c27cbd · 77c6726f · acceptance pass (shaping_latency 5 ignored) · PR #200 |
 | WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | DONE | judgment | 1324716e^..e1276ac2 · acceptance pass (workspace_definition 23 passed with tmux) · PR #214 |
@@ -214,7 +214,6 @@ Session text (T, SX nodes):
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
 | OS-46 | Bound the hook's usage-store wait per Bash call | — | DONE | judgment | 75339a21 · d6be5653 · c727ff0e · 68f8e48c · acceptance pass (busy_wait_total/open_bounded_total 7, rollback_journal 1, zygo-usage, zygo-hooks, readbacks) · PR #205 |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
-| FX-6 | Dead-port test helpers: a port no parallel test can take (CI run 45557591675) | — | DONE | implementation | 690ea805 · zygo lib 38/compact_cmd 5/session_verbs 11/serve_cli 4/workspace_member 2/serve_client 40 passed · PR #65 |
 | FX-7 | Exec-failure relaunch test runs in a child process (environ swap breaks parallel PATH lookups) | — | DONE | implementation | 365436c6 · zygo lib ws/work/plugins 22p, down 8p; --include-ignored 54p; floor green · PR #97 |
 | FX-8 | zygo usage reads summary and savings from one snapshot | OS-8 | DONE | implementation | 4636d2ee, 73cffb55 · report_snapshot 1/0, usage_doctor 45/0 ; floor green · PR #105 |
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
@@ -430,6 +429,8 @@ Session text (T, SX nodes):
 | 2026-11-26 | MS-17 DONE: zygo mail sync verb, options, hidden --background form; review R1 F1 (shared admin::named name rule) F2 (CI note) F3 (one panic line) T1 fixed, T2 recorded; R2 R1-B fixed (S§6.6), R1-A recorded · PR #210 |
 | 2026-11-26 | FX-21 DONE: clean removes an nF escape (ESC, 1-4 intermediates 0x20-0x2F, final 0x30-0x7E) whole, else only ESC; replaces FX-16's ESC ( / ESC ) arm (DDR-01M8CRQH44Y37WS3MAAV2G0DP4 depends on the FX-16 record); review R1 F1-F5 fixed · PR #211 |
 | 2026-11-26 | Author's call (lead), for operator review: O§15 item 2 "hiding" and O-C9 read as text a terminal would display; FX-21 removes bytes FX-16 kept only where a terminal consumes them as one nF escape (DDR-01M8CRQH44Y37WS3MAAV2G0DP4) |
+| 2026-11-26 | MS-19 plan: premise drift: S§7.2 a send knows only the host in config (old own hosts are remote, refused by the member cache); two S§7.2 refusal lines fixed; S§10.4 mail_list gains remote |
+| 2026-11-26 | MS-19 DONE: mail_send addresses, send-time secret pass and sync child, mail_list remote; review R1 F1 (zygo mcp left one zombie per remote send; ChildSpawner reaps in a detached thread) F2-F4 fixed · PR #212 |
 | 2026-11-26 | WD-14 plan: premise drift: up writes the pin into the fresh member record (callback keeps it); R§7.4 stop line text, exit 1, escaped commit/digest, launch outside a checkout stops |
 | 2026-11-26 | WD-14 DONE: ws run, restore and hand resume launch from the saved pin; review R1 F1 (tests cloned the act101 marketplace) F2 F3 F5 fixed, F4 race recorded in R§7.4; R2 R2-1 (serve-mode refusal kept the pin) fixed · PR #214 |
 | 2026-11-26 | FX-22, FX-23 added: WD-14 review: built-in act101 tag v2.9.2 moved upstream (every launch prints the tag-moved line); six binary test files launch with the built-in marketplace on and reach the network |
