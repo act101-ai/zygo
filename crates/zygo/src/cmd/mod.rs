@@ -22,6 +22,7 @@ pub mod hook;
 pub mod keys;
 pub mod loadout;
 pub mod ls;
+pub mod mail;
 pub mod marketplace;
 pub mod mcp;
 pub mod member;
@@ -374,6 +375,8 @@ enum Cmd {
     Workspace,
     /// Workspace tools: forget, forget-pane
     Ws(ws::WsArgs),
+    /// Workspace mail: send, read, ls
+    Mail(mail::MailArgs),
     /// Internal: MCP server started by the agents
     Mcp {
         #[arg(long)]
@@ -559,13 +562,18 @@ pub fn run() -> i32 {
         }
     };
     // §10.1 and its N71 note: results of ended sessions are swept at the next `zygo` command, except hooks,
-    // `zygo mcp` (time-bounded; C6) and `zygo ws` (AU71). I/O errors are ignored.
+    // `zygo mcp` (time-bounded; C6) and `zygo ws` (AU71). I/O errors are ignored; the mail sweep (M§5) runs under the same rule.
     if !matches!(cli.command, Cmd::Hook { .. } | Cmd::Mcp { .. } | Cmd::Ws(_)) {
         let p = Paths::from_env();
         zygo_results::sweep(&p.cache_dir, &p.workspace_cache_dir(), SystemTime::now());
+        // OP5: native Windows has no workspace features, so it has no mail sweep (the cfg of `op5`).
+        if !cfg!(windows) {
+            mail::sweep(&p, SystemTime::now());
+        }
     }
     let command = match cli.command {
         Cmd::Ws(a) => return ws::dispatch(a),
+        Cmd::Mail(a) => return mail::run(a),
         c => c,
     };
     let verb = match &command {
@@ -587,6 +595,7 @@ pub fn run() -> i32 {
         Cmd::Decision { args } => return decision::run(args),
         Cmd::Workspace => return finish(workspace::verb(&cli_ctx(), &[])),
         Cmd::Ws(_) => unreachable!("taken above"),
+        Cmd::Mail(_) => unreachable!("taken above"),
         Cmd::Status => "status",
         Cmd::Compact { .. } => "compact",
         Cmd::Profile { .. } => "profile",
@@ -671,5 +680,31 @@ mod tests {
         let Cmd::Claude(l) = Cli::try_parse_from(["zygo", "claude"]).unwrap().command else { panic!() };
         assert_eq!(l.name, None);
         assert!(Cli::command().render_help().to_string().contains("Decision records: new, ls, show, deps, check"));
+    }
+
+    #[test] // M§8 CLI rows send, read, ls
+    fn mail_args_parse() {
+        use super::mail::{MailArgs, MailCmd};
+        use std::path::PathBuf;
+        let mail = |a: &[&str]| -> Result<MailArgs, clap::Error> {
+            let argv: Vec<&str> = ["zygo", "mail"].iter().chain(a).copied().collect();
+            Cli::try_parse_from(argv).map(|c| match c.command {
+                Cmd::Mail(m) => m,
+                _ => panic!("not mail"),
+            })
+        };
+        let Some(MailCmd::Send { to, subject, file, stdin }) = mail(&["send", "bob", "--subject", "s", "--file", "f"]).unwrap().sub else { panic!() };
+        assert_eq!((to.as_str(), subject.as_deref(), file, stdin), ("bob", Some("s"), Some(PathBuf::from("f")), None));
+        let Some(MailCmd::Send { stdin, .. }) = mail(&["send", "bob", "-"]).unwrap().sub else { panic!() };
+        assert_eq!(stdin.as_deref(), Some("-"));
+        assert!(mail(&["send", "bob", "--file", "f", "-"]).is_err());
+        assert!(mail(&["send", "bob", "x"]).is_err());
+        let Some(MailCmd::Read { name, max }) = mail(&["read", "--name", "n", "--max", "3"]).unwrap().sub else { panic!() };
+        assert_eq!((name.as_deref(), max), (Some("n"), 3));
+        let Some(MailCmd::Read { max, .. }) = mail(&["read"]).unwrap().sub else { panic!() };
+        assert_eq!(max, 10);
+        let Some(MailCmd::Ls { name }) = mail(&["ls", "bob"]).unwrap().sub else { panic!() };
+        assert_eq!(name.as_deref(), Some("bob"));
+        assert!(mail(&[]).unwrap().sub.is_none());
     }
 }
