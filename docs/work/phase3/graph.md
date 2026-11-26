@@ -193,7 +193,6 @@ Session text (T, SX nodes):
 |----|------|---------|-------|------------|------|
 | OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | TODO | judgment | — |
 | OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4 | TODO | judgment | — |
-| WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | DONE | judgment | bae5b7af, 11d71492 · up_definition 35/0 ; floor green · PR #125 |
 | ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | DONE | mechanical | plan 0cbac05c · node b16ce79f, f13fe09b · acceptance LIVE M12 verified (agent 2.1.332): 3 of 3 ; check-premises ok · PR #178 |
 | MS-14 | Prune: orphan rewrite of acknowledged files, lease push | MS-13 | DONE | judgment | plan d2642ab4; node 51e0a828, ba8f8542, af8c6af8, f0cb91a7, f7a2bd2a; prune 18 passed; PR #179 |
 | MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | DONE | mechanical | plan fb76dfa8 · node 0febbe3b, 7e7d53a3, e63e4c6c, 8d5469a7 · acceptance pass (mail_sync_text 12 passed, session_text 43 passed) · PR #177 |
@@ -242,8 +241,9 @@ Session text (T, SX nodes):
 | FX-15 | `zygo doctor` pool lines skip the members `zygo up` skips | WD-12 | DONE | implementation | 0b4ee021, f046b2b7 · definition_doctor 17/0 ; floor green · PR #129 |
 | FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | TODO | implementation | — |
 | FX-17 | `zygo up` refuses a `[limits] max_members` outside 1-32 from the team or user layer (`config check` rule, `check_jobs` path) | FX-14, WD-11 | DONE | implementation | plan 7a124777 · node da3062c7, e437fde9 · acceptance pass (workspace_restore 7 passed, cmd::up 16 passed) · PR #169 |
-| FX-18 | live-mail.sh fixture head line doubles the word zygo | ML-19 | TODO | mechanical | — |
+| FX-18 | live-mail.sh fixture head line doubles the word zygo | ML-19 | DONE | mechanical | plan 02a12d2d · node fad4e150 · acceptance pass (sh scripts/premises/live-selftest.sh: live selftest: ok (77)) · PR #187 |
 | FX-19 | PO2 row states what its run observed | OS-34 | TODO | mechanical | — |
+| FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | TODO | mechanical | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -414,3 +414,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | OS-32 DONE, kept, round 1. Fixed F1 (panic/race/teardown after a passed test hidden; O-C9), F2 (unparsed mark), F3 (go test rules 1-3 rewritten, lead's call, O§15 decision record). Refuted F4 (fixed step set), F5, F6 (OS-36 seam) · PR #182 |
 | 2026-11-26 | OS-34 DONE, kept, round 1. Fixed F1 (test follows the PO2 row to failed), F3 (no prose assertion). F2 → FX-19 (PO2 run had stderr merged into stdout). Refuted F4 (fixed acceptance; --exact used), F5 (no failure) · PR #184 |
 | 2026-11-26 | FX-19 added: PO2 row states what its run observed (OS-34 review F2); OS-42 and MS-25 now depend on it (shared files: output-shaping spec, premises.md) |
+| 2026-11-26 | FX-18 DONE: M12 head line names zygo once (`${ZV:-zygo ?}`), stub-agent selftest case; live selftest ok (77). FX-20 added: live-detach.sh PW15 record line doubles the word zygo (FX-18 review F3) · PR #187 |
