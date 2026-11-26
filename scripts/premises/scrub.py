@@ -38,6 +38,15 @@ r"""Fixture hygiene for N2: scrub.py <run dir> <file> -> scrubbed copy on stdout
   (Darwin ... Darwin Kernel Version ..., Linux <host> <version> #<n> ...) -> "(os omitted)"; a
   <timezone> other than UTC -> "<timezone>(omitted)</timezone>" (a backstop: codex_env sets TZ=UTC;
   the forms and UTC names of codex_record's check); Claude's dashed path form of a run path with "//" ("--") maps like the plain form.
+- PC-11: Codex's platformOs and platformFamily values (JSON keys, and in JSON text) -> "(os omitted)";
+  a <shell> element (the forms of <timezone>) -> "<shell>(omitted)</shell>"; a bare /private/tmp
+  writable root -> /tmp; Codex item ids msg_, fco_, ctco_ + UUID -> "<prefix>_placeholder<n>",
+  numbered per prefix per file; a "sandbox" value that names an OS sandbox (seatbelt, landlock,
+  seccomp, bwrap, windows sandbox names; plain or \"-escaped) -> "(os omitted)"; marketplace-<os>-<id>
+  -> marketplace-os-omitted; a login shell path before " -lc" -> "(shell omitted) -lc"; macOS __CF*
+  env names, with an "=<value>", -> "(os env omitted)"; each tool "description" in a request body,
+  also of tools nested in a namespace tool, and in a top-level tool listing (a list of tools, as in
+  the harness listing files) -> "[omitted]"; parameter descriptions kept.
 """
 import getpass
 import json
@@ -116,7 +125,7 @@ IDS = {}
 def ids(kind, v):
     if v not in IDS:
         n = sum(1 for k in IDS.values() if k[0] == kind) + 1
-        IDS[v] = (kind, "00000000-0000-4000-8000-%012d" % n if kind == "uuid" else "ses_placeholder%04d" % n)
+        IDS[v] = (kind, "00000000-0000-4000-8000-%012d" % n if kind == "uuid" else "%s_placeholder%04d" % (kind, n))
     return IDS[v][1]
 
 
@@ -129,7 +138,7 @@ OS_NAMES = (r"(?:Mac OS|macOS|Macintosh|Darwin|Linux|Ubuntu|Debian|Fedora|CentOS
             r"MINGW|MSYS)")
 UA_OS = re.compile(r"(\S/[0-9][^\s/()]*)( ?)\((?=[^()]*\b%s\b)[^()]*\)" % OS_NAMES)
 MAC_OS_X = re.compile(r"(?:Macintosh; )?(?:Intel |PPC )?Mac OS X [0-9][0-9_.]*")
-OS_KEYS = ("os_type", "os_version", "os_arch", "os_name", "os_release")
+OS_KEYS = ("os_type", "os_version", "os_arch", "os_name", "os_release", "platformOs", "platformFamily")
 OS_JSON = re.compile(r"((?:\\?\")(?:%s)(?:\\?\")\s*:\s*(?:\\?\"))[^\"\\]*" % "|".join(OS_KEYS))
 UNAME = re.compile(r"\b(?:Darwin \S+ [0-9]+\.[0-9]+\.[0-9]+ Darwin Kernel Version|Linux \S+ [0-9]+\.[0-9]+\.[0-9]+\S* #[0-9]+)[^\n\"\\]*")
 # A <timezone> element in the forms lib.sh's codex_record checks: plain, JSON < > escapes or
@@ -137,6 +146,19 @@ UNAME = re.compile(r"\b(?:Darwin \S+ [0-9]+\.[0-9]+\.[0-9]+ Darwin Kernel Versio
 TIMEZONE = re.compile(r"((?:<|\\u003[cC]|&lt;)timezone(?:>|\\u003[eE]|&gt;))((?:\\/|[^<&\\\n]){1,200})"
                       r"((?:<|\\u003[cC]|&lt;)\\?/timezone)")
 UTC_NAMES = {"utc", "etc/utc", "gmt", "etc/gmt", "utc+0", "utc+00:00"}
+# PC-11: the login shell in a <shell> element (the same bracket forms as <timezone>).
+SHELL_TAG = re.compile(r"((?:<|\\u003[cC]|&lt;)shell(?:>|\\u003[eE]|&gt;))(?:\\/|[^<&\\\n]){1,200}"
+                       r"((?:<|\\u003[cC]|&lt;)\\?/shell)")
+# PC-11: Codex item ids (UUIDv7, time-bearing); "_" is a word character, so UUID does not match them.
+ITEM_ID = re.compile(B + r"(msg|fco|ctco)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+# PC-11: an OS sandbox name as a "sandbox" value (x-codex-turn-metadata, plain or JSON-escaped).
+SANDBOX = re.compile(r"(\\?\"sandbox\\?\"\s*:\s*\\?\")(?:seatbelt|landlock|linux_seccomp|seccomp|bwrap|bubblewrap|"
+                     r"windows_sandbox|restricted_token|windows_restricted_token|elevated)(?=\\?\")")
+MARKETPLACE = re.compile(r"marketplace-(?:macos|linux|windows)-[A-Za-z0-9_-]+")
+# PC-11: the owner's login shell in a recorded command ("/bin/zsh -lc '...'").
+LOGIN_SHELL = re.compile(r"(?:/[^\s\"'\\/]+)*/(?:zsh|bash|fish|sh|dash|ksh|mksh|tcsh|csh) -lc\b")
+# PC-11: macOS __CF* env names (__CF_USER_TEXT_ENCODING=0x<uid>:... holds the user id).
+CF_ENV = re.compile(B + r"__CF[A-Za-z_]*(?:=[^\s\"'\\]*)?")
 
 
 def s(text):
@@ -146,18 +168,25 @@ def s(text):
     text = MAC_OS_X.sub("(os omitted)", text)
     text = OS_JSON.sub(lambda m: m.group(1) + "(os omitted)", text)
     text = UNAME.sub("(os omitted)", text)
+    text = SANDBOX.sub(lambda m: m.group(1) + "(os omitted)", text)
+    text = MARKETPLACE.sub("marketplace-os-omitted", text)
+    text = LOGIN_SHELL.sub("(shell omitted) -lc", text)
     text = TIMEZONE.sub(lambda m: m.group(0) if m.group(2).replace("\\/", "/").strip().lower() in UTC_NAMES
                         else m.group(1) + "(omitted)" + m.group(3), text)
+    text = SHELL_TAG.sub(lambda m: m.group(1) + "(omitted)" + m.group(2), text)
     text = re.sub(r"(/private)?/var/folders/[^\s\"'`)]*", "/tmp/x", text)
     text = re.sub(r"/private/var/[^\s\"'`)]*", "/tmp/x", text)
     text = re.sub(r"(?i)[A-Za-z]:(?:\\\\|\\|/)Users(?:\\\\|\\|/)" + WNAME, lambda m: "/home/user", text)
     text = re.sub(r"(?i)(?<![A-Za-z0-9_.-])/[a-z]/Users/" + WNAME, lambda m: "/home/user", text)
     text = re.sub(r"/Users/[^/\s\"']+", "/home/user", text)
     text = re.sub(r"/private/tmp/", "/tmp/", text)
+    text = re.sub(r"/private/tmp(?![A-Za-z0-9_./-])", "/tmp", text)
     for h in HOSTS:  # before the user rule: a host name may hold the user name
         text = re.sub(r"(?:(?<![A-Za-z0-9_-])|(?<=\\[nrtbf]))%s(?![A-Za-z0-9_-])" % re.escape(h), "host", text, flags=re.I)
     text = re.sub(B + r"%s\b" % re.escape(user), "user", text)
     text = re.sub(r"Attribution for git commits.*?(?=</system-reminder>)", "Harness text.\n", text, flags=re.S)
+    text = CF_ENV.sub("(os env omitted)", text)
+    text = ITEM_ID.sub(lambda m: ids(m.group(1), m.group(0)), text)
     text = UUID.sub(lambda m: ids("uuid", m.group(0)), text)
     text = SES.sub(lambda m: ids("ses", m.group(0)), text)
     text = re.sub(r"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*", lambda m: "[jwt omitted]", text)
@@ -182,6 +211,20 @@ def walk(o):
     return o
 
 
+def omit_tool_descriptions(tools):
+    for t in tools:
+        if isinstance(t, dict):
+            if "description" in t:
+                t["description"] = "[omitted]"
+            if isinstance(t.get("tools"), list):
+                omit_tool_descriptions(t["tools"])
+
+
+def is_tool_listing(data):
+    return (isinstance(data, list) and bool(data) and all(isinstance(t, dict) and "type" in t for t in data)
+            and any("parameters" in t or "tools" in t for t in data))
+
+
 raw = open(path, encoding="utf-8", errors="replace").read()
 try:
     data = json.loads(raw)
@@ -199,8 +242,8 @@ if isinstance(data, dict) and isinstance(data.get("body"), dict):
         b["metadata"]["user_id"] = "[omitted: device, account and session ids]"
     if "system" in b:
         b["system"] = "[omitted]"
-    for t in b.get("tools") or []:
-        if isinstance(t, dict) and "description" in t:
-            t["description"] = "[omitted]"
+    omit_tool_descriptions(b.get("tools") or [])
+if is_tool_listing(data):
+    omit_tool_descriptions(data)
 json.dump(walk(data), sys.stdout, indent=2, ensure_ascii=False)
 sys.stdout.write("\n")
