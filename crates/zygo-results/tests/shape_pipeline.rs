@@ -3,7 +3,7 @@ use zygo_results::Kind;
 use zygo_results::kind::sniff;
 use zygo_results::shape::kind_view::kind_view;
 use zygo_results::shape::runner::libtest;
-use zygo_results::view::VIEW_CAP_BYTES;
+use zygo_results::view::{SHAPED_MARKER_ROOM, VIEW_CAP_BYTES};
 use zygo_results::shape::{self, clean::clean, command::parse, ShapeInput, Shaped, Shaper, Step, SHAPE_MAX_BYTES};
 use Step::{ColorCodesRemoved as Color, ProgressLinesRemoved as Progress, RepeatedLinesCounted as Counted};
 
@@ -203,7 +203,7 @@ fn kind_view_runs_over_the_threshold() {
         let raw = stdout(dir, name);
         let k = sniff(raw.as_bytes());
         let out = shape::run(&raw, &input(None, k, T));
-        assert_eq!(out.text, kind_view(&raw, k, VIEW_CAP_BYTES).unwrap().0, "{name}");
+        assert_eq!(out.text, kind_view(&raw, k, VIEW_CAP_BYTES - SHAPED_MARKER_ROOM).unwrap().0, "{name}");
         assert_eq!(out.steps, vec![step], "{name}");
         assert_eq!(out.shaper, Some(shaper), "{name}");
         assert!(!out.size_view, "{name}");
@@ -325,7 +325,7 @@ fn kind_view_runs_on_the_runner_view_when_still_over() {
         + &(31..=60).map(log).collect::<String>();
     let runner = libtest(&raw).unwrap().0;
     let out = shape::run(&raw, &input(Some("cargo test"), Kind::Log, 100));
-    assert_eq!(out.text, kind_view(&runner, Kind::Log, VIEW_CAP_BYTES).unwrap().0);
+    assert_eq!(out.text, kind_view(&runner, Kind::Log, VIEW_CAP_BYTES - SHAPED_MARKER_ROOM).unwrap().0);
     assert!(out.text.lines().any(|l| l == "37: 2026-11-25 10:35:00 ERROR boom"), "{:?}", out.text);
     assert_eq!(out.steps, vec![Step::PassedTestsHidden, Step::LogErrorsKept]);
     assert_eq!(out.shaper, Some(Shaper::Log));

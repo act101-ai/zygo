@@ -94,6 +94,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | DONE | implementation | d19e88f5, 0b457de5 · acc 12/12, 1/1, 234/234 · PR #149 |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | DONE | mechanical | node commits 9633f4b9, 3b88581f; acceptance: grep -c "^\| PO2 \|" docs/premises.md → 1, po2-result.json present; floor ws 3394/0 |
 | MS-11 | Tip metadata, own hosts, collision and twin checks | MS-6, MS-10 | DONE | judgment | 53f75bbc 95931099 eaf0f3ee 71ba6b9c · identity 17/0 ; floor green · PR #113 |
+| MS-12 | Import: candidates, checks, crash-safe delivery | MS-6, MS-10, ML-2, ML-4 | DONE | judgment | 68fa626f, dc8f3ad4, cf388671 · import 23/0 ; floor green · PR #114 |
 
 ## Log
 

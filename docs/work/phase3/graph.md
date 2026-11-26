@@ -195,7 +195,6 @@ Session text (T, SX nodes):
 | OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
 | ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
-| MS-12 | Import: candidates, checks, crash-safe delivery | MS-6, MS-10, ML-2, ML-4 | DONE | judgment | 68fa626f, dc8f3ad4, cf388671 · import 23/0 ; floor green · PR #114 |
 | MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5, OS-4 | DONE | implementation | ea149eab, ad7d3736 · acc 18/18, 26/26 · PR #148 |
 | OS-27 | Shape-off baseline: hook output and stored file of the `97d8767` behavior | OS-9, OS-17, OS-18, OS-19, OS-20, OS-21 | DONE | implementation | abea1612, 74976374 · acc 5/5 · PR #140 |
 | OS-30 | Runner views: dispatch and the libtest view (pipeline step 3) | OS-29, OS-19 | DONE | judgment | 974fef24 plan; 6f4959d7, d1f02107, eef74481; shape_runner_libtest 20/20, shape_pipeline 24/24; PR #158 |
@@ -205,7 +204,8 @@ Session text (T, SX nodes):
 | ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | TODO | implementation | — |
 | MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | TODO | judgment | — |
 | OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | DONE | judgment | node commits 81332899, b442555c, 095ee7bb, 63e6f26a, fe154009, 725e2609; acceptance: shaping_hook 21/21, shaping_off 5/5, hooks_basic 60/60, hook_trim 6/6; floor ws 3432/0; PR #154 |
-| OS-41 | Kind views leave room for the shaped marker | OS-28, OS-29, OS-30 | TODO | implementation | — |
+| OS-41 | Kind views leave room for the shaped marker | OS-28, OS-29, OS-30 | DONE | implementation | 8f22ddd9, 453a297c, 68d99c41 · PR #167 |
+| OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4 | TODO | judgment | — |
 | OS-31 | pytest runner view | OS-30, OS-20 | TODO | judgment | — |
 | WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | DONE | judgment | bae5b7af, 11d71492 · up_definition 35/0 ; floor green · PR #125 |
 | ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | TODO | mechanical | — |
@@ -404,3 +404,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | ML-12 DONE: zygo mail send\|read\|ls, /zygo:mail, mail sweep at command start. Review fixes: the sweep skips linked folders, a partial read prints what it has, a 2 s slash bound, a list-only fallback body, help args · PR #149 |
 | 2026-11-25 | OS-24 DONE: PO2 verified on Claude Code 2.1.332 (stderr arrives merged into stdout; the replaced stdout removed err-line); hook fixture + empty shape-off golden added; review 7: F1/F2/F4-F7 fixed (first reading "not shown" reversed), F3 refuted · PR #151 |
 | 2026-11-25 | OS-30 DONE: libtest runner view and dispatch as pipeline step 3; review round 2 fixed F1-F4 (failure sections, binary boundary, dedup lines, ASCII/CR whitespace); F5 is FX-16; F6 fixed in the OS-36 contract. |
+| 2026-11-25 | OS-41 DONE: shaped marker room 341 B reserved in kind views, Step::ALL holds all 8 steps, hook tests per kind. Review: 4 findings, 2 fixed, 1 refuted, 1 → OS-43 (shaped view with no kind view has no 8 KiB cap) · PR #167 |
