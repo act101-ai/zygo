@@ -1,0 +1,15 @@
+event: response.created
+data: {"response":{"id":"resp_01M8AVPMTEXG2AMRRWCFS9FW1V","object":"response","model":"{{MODEL}}","status":"in_progress","output":[]},"type":"response.created","sequence_number":0}
+
+event: response.in_progress
+data: {"response":{"id":"resp_01M8AVPMTEXG2AMRRWCFS9FW1V","object":"response","model":"{{MODEL}}","status":"in_progress","output":[]},"type":"response.in_progress","sequence_number":1}
+
+event: response.output_item.added
+data: {"output_index":0,"item":{"type":"function_call","id":"fc_01M8AVPMTEXG2AMRRWCFS9FW1V_0","call_id":"toolu_pc12_xt","name":"exec_command","arguments":"","status":"in_progress"},"type":"response.output_item.added","sequence_number":2}
+
+event: response.function_call_arguments.delta
+data: {"item_id":"fc_01M8AVPMTEXG2AMRRWCFS9FW1V_0","output_index":0,"delta":"{\"cmd\": \"echo pc12-tr","type":"response.function_call_arguments.delta","sequence_number":3}
+
+event: response.failed
+data: {"response":{"id":"resp_01M8AVPMTEXG2AMRRWCFS9FW1V","object":"response","model":"{{MODEL}}","status":"failed","output":[],"error":{"code":"api_error","message":"pc12 upstream failure"}},"type":"response.failed","sequence_number":4}
+

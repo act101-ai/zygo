@@ -1,11 +1,11 @@
 {
-  "seq": 4,
+  "seq": 5,
   "method": "POST",
   "path": "/v1/responses",
   "headers": {
     "x-codex-beta-features": "remote_compaction_v2",
     "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
-    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"52d26b4f212bedafb2e459029ddac207d8f15ab9\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795659772374,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
+    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"5f64c4af2703728b0a16525ba50dc1af6ed91df6\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795660946014,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
     "x-client-request-id": "00000000-0000-4000-8000-000000000001",
     "session-id": "00000000-0000-4000-8000-000000000001",
     "thread-id": "00000000-0000-4000-8000-000000000001",
@@ -15,8 +15,8 @@
     "originator": "codex_exec",
     "user-agent": "codex_exec/0.172.0 (os omitted) xterm-256color (codex_exec; 0.172.0)",
     "accept-encoding": "zstd,gzip",
-    "host": "127.0.0.1:53112",
-    "content-length": "41172"
+    "host": "127.0.0.1:55313",
+    "content-length": "41176"
   },
   "credential_headers": [
     "authorization"
@@ -28,7 +28,7 @@
     "input": [
       {
         "type": "message",
-        "id": "msg_eeec90e2-de2b-5994-ac10-77156d7f5072",
+        "id": "msg_54d62201-4d1a-5909-b3a5-2fe93e5e1449",
         "role": "developer",
         "content": [
           {
@@ -39,7 +39,7 @@
       },
       {
         "type": "message",
-        "id": "msg_01a215a9-b210-7e81-9e9b-813d9063fbe3",
+        "id": "msg_01a215bb-9abf-7290-802e-f0d127a7e7d6",
         "role": "developer",
         "content": [
           {
@@ -54,7 +54,7 @@
       },
       {
         "type": "message",
-        "id": "msg_01a215a9-b210-7e81-9e9b-8143b7a0cb32",
+        "id": "msg_01a215bb-9abf-7290-802e-f0eebc4ea206",
         "role": "user",
         "content": [
           {
@@ -65,12 +65,12 @@
       },
       {
         "type": "message",
-        "id": "msg_01a215a9-b217-7611-ae3a-a0393c3311ac",
+        "id": "msg_01a215bb-9ad4-7191-9ff0-0f02be0b636e",
         "role": "user",
         "content": [
           {
             "type": "input_text",
-            "text": "pc12-turn-p"
+            "text": "pc12-turn-p-end"
           }
         ]
       }
@@ -532,12 +532,12 @@
     ],
     "prompt_cache_key": "00000000-0000-4000-8000-000000000001",
     "client_metadata": {
-      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"52d26b4f212bedafb2e459029ddac207d8f15ab9\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795659772374,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
       "root_turn_id": "00000000-0000-4000-8000-000000000003",
-      "session_id": "00000000-0000-4000-8000-000000000001",
-      "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
+      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"5f64c4af2703728b0a16525ba50dc1af6ed91df6\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795660946014,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
       "x-codex-installation-id": "00000000-0000-4000-8000-000000000002",
+      "session_id": "00000000-0000-4000-8000-000000000001",
       "thread_id": "00000000-0000-4000-8000-000000000001",
+      "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
       "turn_id": "00000000-0000-4000-8000-000000000003"
     }
   },

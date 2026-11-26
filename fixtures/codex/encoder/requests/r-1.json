@@ -1,11 +1,11 @@
 {
-  "seq": 6,
+  "seq": 7,
   "method": "POST",
   "path": "/v1/responses",
   "headers": {
     "x-codex-beta-features": "remote_compaction_v2",
     "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
-    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"52d26b4f212bedafb2e459029ddac207d8f15ab9\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795659774246,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
+    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"5f64c4af2703728b0a16525ba50dc1af6ed91df6\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795660949128,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
     "x-client-request-id": "00000000-0000-4000-8000-000000000001",
     "session-id": "00000000-0000-4000-8000-000000000001",
     "thread-id": "00000000-0000-4000-8000-000000000001",
@@ -15,8 +15,8 @@
     "originator": "codex_exec",
     "user-agent": "codex_exec/0.172.0 (os omitted) xterm-256color (codex_exec; 0.172.0)",
     "accept-encoding": "zstd,gzip",
-    "host": "127.0.0.1:53112",
-    "content-length": "41171"
+    "host": "127.0.0.1:55313",
+    "content-length": "41175"
   },
   "credential_headers": [
     "authorization"
@@ -28,7 +28,7 @@
     "input": [
       {
         "type": "message",
-        "id": "msg_b63bbc80-b20d-5b5a-a87d-33d4378af819",
+        "id": "msg_6e2feba9-9e2f-5395-bb26-421545a4eaab",
         "role": "developer",
         "content": [
           {
@@ -39,7 +39,7 @@
       },
       {
         "type": "message",
-        "id": "msg_01a215a9-b95f-74c3-bade-8cc7cd79ba70",
+        "id": "msg_01a215bb-a6e8-7b11-9b1b-bea895be8393",
         "role": "developer",
         "content": [
           {
@@ -54,7 +54,7 @@
       },
       {
         "type": "message",
-        "id": "msg_01a215a9-b95f-74c3-bade-8cd0f1f88390",
+        "id": "msg_01a215bb-a6e8-7b11-9b1b-beb46367d437",
         "role": "user",
         "content": [
           {
@@ -65,12 +65,12 @@
       },
       {
         "type": "message",
-        "id": "msg_01a215a9-b966-70d2-a3b7-866d37d8cf34",
+        "id": "msg_01a215bb-a6fd-7702-a0c3-d07fe088838b",
         "role": "user",
         "content": [
           {
             "type": "input_text",
-            "text": "pc12-turn-r"
+            "text": "pc12-turn-r-end"
           }
         ]
       }
@@ -532,13 +532,13 @@
     ],
     "prompt_cache_key": "00000000-0000-4000-8000-000000000001",
     "client_metadata": {
-      "thread_id": "00000000-0000-4000-8000-000000000001",
-      "x-codex-installation-id": "00000000-0000-4000-8000-000000000002",
-      "session_id": "00000000-0000-4000-8000-000000000001",
-      "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
       "turn_id": "00000000-0000-4000-8000-000000000003",
       "root_turn_id": "00000000-0000-4000-8000-000000000003",
-      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"52d26b4f212bedafb2e459029ddac207d8f15ab9\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795659774246,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}"
+      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"5f64c4af2703728b0a16525ba50dc1af6ed91df6\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795660949128,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
+      "x-codex-installation-id": "00000000-0000-4000-8000-000000000002",
+      "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "thread_id": "00000000-0000-4000-8000-000000000001"
     }
   },
   "reply": "r"

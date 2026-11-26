@@ -20,7 +20,10 @@ event: content_block_start
 data: {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "toolu_pc12_r", "name": "exec_command", "input": {}}}
 
 event: content_block_delta
-data: {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "{\"cmd\": \"echo pc12-tracer-r\"}"}}
+data: {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "{\"cmd\": \"echo "}}
+
+event: content_block_delta
+data: {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "pc12-tracer-r\"}"}}
 
 event: content_block_stop
 data: {"type": "content_block_stop", "index": 1}
