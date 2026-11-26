@@ -40,6 +40,22 @@ fn ws() -> Workspace {
     }
     ws
 }
+/// Writes `w` as the state of workspace `ID` and returns it: `send` reads the member records from the state under
+/// `mail/lock` (M§5 P1, FX-13), so the fixture is stored before each send.
+fn stored_as(p: &Paths, w: Workspace) -> Workspace {
+    Store::open(p, ID).update(Duration::from_secs(5), &mut |s| { *s = w.clone(); Ok(()) }).unwrap();
+    w
+}
+/// [`stored_as`] with [`ws`].
+fn stored(p: &Paths) -> Workspace { stored_as(p, ws()) }
+/// The names in `mail/`: a send takes `mail/lock` before it resolves `to`, so `mail/` holds `lock` and no maildir
+/// when nothing was delivered.
+fn mail_entries(p: &Paths) -> Vec<String> {
+    let mut v: Vec<String> =
+        fs::read_dir(mail_dir(p, ID)).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    v.sort();
+    v
+}
 /// Each message file in `mail/<key>/new/`, parsed; empty when the folder is missing.
 fn new_files(paths: &Paths, key: &str) -> Vec<Message> {
     let dir = mail_dir(paths, ID).join(key).join("new");
@@ -120,7 +136,7 @@ fn sender_is_name_then_key_then_cli() {
 fn send_by_name_writes_one_file() {
     let d = TempDir::new().unwrap();
     let p = paths(d.path());
-    let r = send(&p, &ws(), Some(LEAD), "elena", "Plan", "Body\n", &MailConfig::default(), at(T0)).unwrap();
+    let r = send(&p, &stored(&p), Some(LEAD), "elena", "Plan", "Body\n", &MailConfig::default(), at(T0)).unwrap();
     assert!(r.refused.is_empty(), "{r:?}");
     let sent = r.sent;
     assert_eq!(sent.len(), 1);
@@ -136,7 +152,7 @@ fn send_by_name_writes_one_file() {
 fn send_to_a_member_with_no_name() {
     let d = TempDir::new().unwrap();
     let p = paths(d.path());
-    let sent = send(&p, &ws(), None, ANON, "s", "b", &MailConfig::default(), at(T0)).unwrap().sent;
+    let sent = send(&p, &stored(&p), None, ANON, "s", "b", &MailConfig::default(), at(T0)).unwrap().sent;
     assert_eq!(sent.len(), 1);
     let got = new_files(&p, ANON);
     assert_eq!(got.len(), 1);
@@ -148,7 +164,7 @@ fn send_to_a_member_with_no_name() {
 fn send_to_all_writes_one_file_per_other_member() {
     let d = TempDir::new().unwrap();
     let p = paths(d.path());
-    let sent = send(&p, &ws(), Some(LEAD), "all", "s", "b", &MailConfig::default(), at(T0)).unwrap().sent;
+    let sent = send(&p, &stored(&p), Some(LEAD), "all", "s", "b", &MailConfig::default(), at(T0)).unwrap().sent;
     assert_eq!(sent.iter().map(|s| s.key.as_str()).collect::<Vec<_>>(), [ANON, BAD, ELENA]);
     assert_eq!(sent.iter().map(|s| &s.id).collect::<BTreeSet<_>>().len(), 3);
     for (s, to) in sent.iter().zip([ANON, BAD, "elena"]) {
@@ -165,9 +181,9 @@ fn send_to_all_writes_one_file_per_other_member() {
 fn send_unknown_target_writes_nothing() {
     let d = TempDir::new().unwrap();
     let p = paths(d.path());
-    let r = send(&p, &ws(), Some(LEAD), "bob", "s", "b", &MailConfig::default(), at(T0));
+    let r = send(&p, &stored(&p), Some(LEAD), "bob", "s", "b", &MailConfig::default(), at(T0));
     assert!(matches!(r, Err(MailError::UnknownTarget { .. })), "{r:?}");
-    assert!(!mail_dir(&p, ID).exists());
+    assert_eq!(mail_entries(&p), ["lock"]);
 }
 
 #[test]
@@ -175,8 +191,8 @@ fn send_full_names_the_target() {
     let d = TempDir::new().unwrap();
     let p = paths(d.path());
     let cfg = MailConfig { max_unread: 1, ..MailConfig::default() };
-    send(&p, &ws(), Some(LEAD), "elena", "s", "b", &cfg, at(T0)).unwrap();
-    let r = send(&p, &ws(), Some(LEAD), "elena", "s", "b", &cfg, at(T0 + 1)).unwrap();
+    send(&p, &stored(&p), Some(LEAD), "elena", "s", "b", &cfg, at(T0)).unwrap();
+    let r = send(&p, &stored(&p), Some(LEAD), "elena", "s", "b", &cfg, at(T0 + 1)).unwrap();
     assert!(r.sent.is_empty(), "{r:?}");
     assert_eq!(r.refused.len(), 1);
     assert_eq!(r.refused[0].key, ELENA);
@@ -188,13 +204,13 @@ fn send_writes_no_content_outside_mail() {
     let d = TempDir::new().unwrap();
     let p = paths(d.path());
     let store = Store::open(&p, ID);
-    store.update(Duration::from_secs(5), &mut |w| { *w = ws(); Ok(()) }).unwrap();
+    stored(&p);
     store.log_error("x");
     let cfg = MailConfig { max_unread: 1, ..MailConfig::default() };
     let (subj, body) = ("subj-7f3a", "body-9c1e");
-    send(&p, &ws(), Some(LEAD), "all", subj, body, &cfg, at(T0)).unwrap();
-    assert!(matches!(send(&p, &ws(), Some(LEAD), "bob", subj, body, &cfg, at(T0 + 1)), Err(MailError::UnknownTarget { .. })));
-    let r = send(&p, &ws(), Some(LEAD), "elena", subj, body, &cfg, at(T0 + 2)).unwrap();
+    send(&p, &stored(&p), Some(LEAD), "all", subj, body, &cfg, at(T0)).unwrap();
+    assert!(matches!(send(&p, &stored(&p), Some(LEAD), "bob", subj, body, &cfg, at(T0 + 1)), Err(MailError::UnknownTarget { .. })));
+    let r = send(&p, &stored(&p), Some(LEAD), "elena", subj, body, &cfg, at(T0 + 2)).unwrap();
     assert!(matches!(&r.refused[..], [Refused { error: MailError::Full { .. }, .. }]), "{r:?}");
     for f in ["workspace.json", "errors.log"] {
         let path = store.dir().join(f);
@@ -219,8 +235,8 @@ fn send_to_all_delivers_past_a_full_target() {
     let d = TempDir::new().unwrap();
     let p = paths(d.path());
     let cfg = MailConfig { max_unread: 1, ..MailConfig::default() };
-    send(&p, &ws(), Some(LEAD), BAD, "s", "b", &cfg, at(T0)).unwrap();
-    let r = send(&p, &ws(), Some(LEAD), "all", "s", "b", &cfg, at(T0 + 1)).unwrap();
+    send(&p, &stored(&p), Some(LEAD), BAD, "s", "b", &cfg, at(T0)).unwrap();
+    let r = send(&p, &stored(&p), Some(LEAD), "all", "s", "b", &cfg, at(T0 + 1)).unwrap();
     assert_eq!(keys(&r), (vec![ANON, ELENA], vec![BAD]), "{r:?}");
     assert!(matches!(&r.refused[0].error, MailError::Full { max: 1, .. }), "{r:?}");
     for s in &r.sent {
@@ -237,6 +253,7 @@ fn send_to_a_shared_name_reaches_each_holder() {
     let p = paths(d.path());
     let mut w = ws();
     w.members.get_mut(ANON).unwrap().name = Some("elena".into());
+    let w = stored_as(&p, w);
     let r = send(&p, &w, Some(LEAD), "elena", "s", "b", &MailConfig::default(), at(T0)).unwrap();
     assert_eq!(keys(&r), (vec![ANON, ELENA], vec![]), "{r:?}");
     for s in &r.sent {
@@ -250,7 +267,7 @@ fn send_to_a_shared_name_reaches_each_holder() {
 fn send_to_own_name_reaches_the_sender() {
     let d = TempDir::new().unwrap();
     let p = paths(d.path());
-    let r = send(&p, &ws(), Some(LEAD), "lead", "s", "b", &MailConfig::default(), at(T0)).unwrap();
+    let r = send(&p, &stored(&p), Some(LEAD), "lead", "s", "b", &MailConfig::default(), at(T0)).unwrap();
     assert_eq!(keys(&r), (vec![LEAD], vec![]), "{r:?}");
     let got = new_files(&p, LEAD);
     assert_eq!(got.len(), 1);
@@ -263,9 +280,9 @@ fn send_over_the_limits_writes_nothing() {
     let p = paths(d.path());
     let long = "s".repeat(SUBJECT_MAX + 1);
     let big = "b".repeat(BODY_MAX + 1);
-    let r = send(&p, &ws(), Some(LEAD), "all", &long, "b", &MailConfig::default(), at(T0));
+    let r = send(&p, &stored(&p), Some(LEAD), "all", &long, "b", &MailConfig::default(), at(T0));
     assert!(matches!(r, Err(MailError::SubjectTooLong)), "{r:?}");
-    let r = send(&p, &ws(), Some(LEAD), "elena", "s", &big, &MailConfig::default(), at(T0));
+    let r = send(&p, &stored(&p), Some(LEAD), "elena", "s", &big, &MailConfig::default(), at(T0));
     assert!(matches!(r, Err(MailError::BodyTooLarge)), "{r:?}");
     assert!(!mail_dir(&p, ID).exists());
 }
@@ -276,10 +293,11 @@ fn send_to_all_with_only_the_sender() {
     let p = paths(d.path());
     let mut w = ws();
     w.members.retain(|k, _| k == LEAD);
+    let w = stored_as(&p, w);
     let r = send(&p, &w, Some(LEAD), "all", "s", "b", &MailConfig::default(), at(T0)).unwrap();
     assert_eq!(keys(&r), (vec![], vec![]), "{r:?}");
     let long = "s".repeat(SUBJECT_MAX + 1);
     let r = send(&p, &w, Some(LEAD), "all", &long, "b", &MailConfig::default(), at(T0));
     assert!(matches!(r, Err(MailError::SubjectTooLong)), "{r:?}");
-    assert!(!mail_dir(&p, ID).exists());
+    assert_eq!(mail_entries(&p), ["lock"]);
 }

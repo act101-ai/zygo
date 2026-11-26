@@ -63,6 +63,35 @@ pub(crate) fn make_dir(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Makes `dir` alone, `0700` on unix, when its parent exists (`NotFound` when it does not: no parent is made); an
+/// existing `dir` is no error. Then, as [`make_dir`], a `dir` that is a symlink or not a folder is refused and `dir`
+/// is set to `0700` (M-C4; M§5 P1: a missing `mail/` or `mail/<key>/` is not made again).
+pub(crate) fn make_leaf(dir: &Path) -> std::io::Result<()> {
+    let mut b = DirBuilder::new();
+    b.recursive(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        b.mode(0o700);
+    }
+    match b.create(dir) {
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+        r => r?,
+    }
+    let meta = fs::symlink_metadata(dir)?;
+    if !meta.is_dir() {
+        return Err(std::io::Error::new(ErrorKind::InvalidInput, format!("{} is not a folder", dir.display())));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o7777 != 0o700 {
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    Ok(())
+}
+
 /// `mail/`, `mail/<key>/` and its three folders, each `0700` (M-C4).
 fn make_dirs(mail_dir: &Path, md: &Path) -> std::io::Result<()> {
     super::ensure_mail_root(mail_dir)?;
