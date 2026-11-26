@@ -262,8 +262,9 @@ impl Conv {
 
 /// One `input` item (obligations 1-6, 9).
 fn item(c: &mut Conv, it: &Value, t: &Target, d: &mut Drops) -> Result<(), ZygoError> {
-    let ty = match s(it, "type") {
-        Some(ty) => ty,
+    let ty = match it.get("type") {
+        Some(Value::String(ty)) => ty.as_str(),
+        Some(_) => return Err(bad("input item: type must be a string")),
         None if it.get("role").is_some() => "message",
         None => return Err(bad("input item: missing type")),
     };
