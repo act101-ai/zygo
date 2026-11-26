@@ -248,6 +248,9 @@ EXTRA_ENV_ALLOW="RUST_LOG RUST_BACKTRACE"
 # Assigned here, so a value from the environment is never used; lib_test.sh reassigns it after
 # sourcing lib.sh (with n2_procs) to point under its own folder.
 N2_DAEMON_DIRS="/private/tmp /tmp"
+# N2_PROC: the proc file system n2_scan reads. Assigned here like N2_DAEMON_DIRS; lib_test.sh points
+# it at a stub tree in one case.
+N2_PROC=/proc
 
 # n2_procs <daemon|left>: n2_scan with no root (every process of this user). Defined here, so the
 # environment cannot replace it; lib_test.sh redefines it after sourcing lib.sh.
@@ -257,7 +260,9 @@ n2_procs() { n2_scan "$1" ""; }
 # /proc/<pid>/cwd, else lsof) and the daemon socket folders; print one "premises: ..." line per
 # finding and return 1 when there is one. It fails closed (a line, return 1) when ps fails or the
 # working folders cannot be read: the lookup must give the working folder of this shell ($$) itself,
-# lsof must end within 120 s, and on /proc any error but a process that has ended counts. A
+# lsof must end within 120 s, and on /proc any error but a process that has ended counts, except
+# for a process that is not wholly this user's (TF-2: a Uid: field of /proc/<pid>/status is another
+# uid; Linux refuses its cwd, and it cannot be a process of this run). A
 # process is "of this run" when its command line holds the run folder or its working folder is
 # inside it. The scanning shell, its parents and the processes the scan starts are skipped; a
 # pipeline sibling of the caller is not (call codex_record from the part's shell, not in a
@@ -272,7 +277,7 @@ n2_procs() { n2_scan "$1" ""; }
 # No process is stopped and no file is removed. <root> (lib_test.sh only): only processes whose
 # command line or working folder holds it are named.
 n2_scan() {
-  N2_P_MODE=$1 N2_P_ROOT=$2 N2_P_RUN=$RUN N2_P_SELF=$$ N2_P_DIRS=$N2_DAEMON_DIRS python3 -I -c '
+  N2_P_MODE=$1 N2_P_ROOT=$2 N2_P_RUN=$RUN N2_P_SELF=$$ N2_P_DIRS=$N2_DAEMON_DIRS N2_P_PROC=$N2_PROC python3 -I -c '
 import errno, os, re, shutil, stat, subprocess, sys
 e = os.environ
 mode, run, root, self_pid = e["N2_P_MODE"], e["N2_P_RUN"], e["N2_P_ROOT"], int(e["N2_P_SELF"])
@@ -327,17 +332,36 @@ for pid, (pp, puid, args) in procs.items():
         if any(r in args for r in runs):
             continue
     cand[pid] = (args, exe)
+proc = e["N2_P_PROC"].rstrip("/")
+def owned(pid):
+    """True: every Uid: field of /proc/<pid>/status is this uid; False: one is not; None: ended.
+    A status that cannot be read or has no Uid: line counts as owned (fail closed)."""
+    try:
+        with open("%s/%d/status" % (proc, pid)) as f:
+            for line in f:
+                if line.startswith("Uid:"):
+                    return all(int(v) == uid for v in line.split()[1:])
+    except OSError as x:
+        if x.errno == errno.ENOENT:
+            return None
+    except ValueError:
+        pass
+    return True
 def cwds(pids):
     """pid -> working folder, for the candidates and this shell; fails closed."""
     pids = set(pids) | {self_pid}
     out = {}
-    if os.path.isdir("/proc/self/fd"):
+    if os.path.isdir(proc + "/self/fd"):
         for pid in pids:
             try:
-                out[pid] = os.readlink("/proc/%d/cwd" % pid)
+                out[pid] = os.readlink("%s/%d/cwd" % (proc, pid))
             except OSError as x:
-                if x.errno != errno.ENOENT:
-                    fail("cannot read process working folders (pid %d: %s)" % (pid, x.strerror))
+                if x.errno == errno.ENOENT:
+                    continue
+                o = owned(pid)
+                if o is None or (o is False and pid != self_pid):
+                    continue
+                fail("cannot read process working folders (pid %d, %s: %s)" % (pid, comm.get(pid, "?"), x.strerror))
     else:
         lsof = shutil.which("lsof")
         if not lsof:

@@ -1235,6 +1235,34 @@ res "W5 start_web: a server that dies says web did not start, exit 1" 1 w5
 # W6: sigrun's not-ready branch: a child that exits 0 without the ready file sets NR=1, signals nothing.
 c=W6; prep $c own; ERR=$T/$c.err; child $c 0 'exit 0'; sigrun $c TERM
 if [ "$NR" = 1 ] && [ "$rc" = 0 ]; then ok "W6 sigrun: a child that exits before it is ready sets NR=1"; else no "W6 sigrun: a child that exits before it is ready sets NR=1" "NR=$NR rc=$rc"; fi
+# Y1, Y2 (TF-2 CI): n2_scan on a stub proc tree (N2_PROC=$T/fp-<case>). A stub daemon of this user is
+# a candidate; its stub cwd entry cannot be read (a plain file: readlink fails). The child links its
+# own cwd entry. Y1: its status says another uid (as for a root process on a Linux runner): skipped,
+# the scan passes. Y2: its status says this uid: the scan fails closed and names it.
+cat >"$T/fpself.py" <<'PY'
+import os, sys
+os.makedirs(sys.argv[1]); os.symlink(os.getcwd(), sys.argv[1] + "/cwd")
+PY
+N2D_READY=$T/Y.ready "$T/dmn/codex" &
+echo $! >"$T/Y.dpid"
+YP=$(cat "$T/Y.dpid")
+waitready "$T/Y.ready" "$YP" || no "Y stub daemon" "exited before it was ready"
+for c in Y1 Y2; do
+  mkdir -p "$T/fp-$c/self/fd" "$T/fp-$c/$YP"; : >"$T/fp-$c/$YP/cwd"
+  if [ $c = Y1 ]; then u=0; else u=$(id -u); fi
+  printf 'Name:\tcodex\nUid:\t%s\t%s\t%s\t%s\n' "$u" "$u" "$u" "$u" >"$T/fp-$c/$YP/status"
+  cxprep $c caller
+  child $c 0 "new_run x; N2_PROC='$T/fp-$c'; python3 -I '$T/fpself.py' '$T/fp-$c/'\$\$; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+  run $c
+done
+y1() { [ "$(cat "$T/Y1.rc")" = 0 ] && [ ! -s "$T/Y1.out" ] || { why="rc $(cat "$T/Y1.rc"), stdout: $(tr '\n' '|' <"$T/Y1.out")"; return 1; }; }
+res "Y1 n2_scan skips another uid's process whose cwd cannot be read" 0 y1
+y2() {
+  [ "$(cat "$T/Y2.rc")" = 1 ] && grep -q "^premises: codex_record: cannot read process working folders (pid $YP, .*: Invalid argument)\$" "$T/Y2.out" ||
+    { why="rc $(cat "$T/Y2.rc"), stdout: $(tr '\n' '|' <"$T/Y2.out")"; return 1; }
+}
+res "Y2 n2_scan fails closed on this user's process whose cwd cannot be read" 0 y2
+kill "$YP" 2>/dev/null; rm -f "$T/Y.dpid"
 
 if [ "$bad" -eq 0 ]; then echo "lib tests: ok ($n)"; exit 0; fi
 echo "lib tests: $bad failed"
