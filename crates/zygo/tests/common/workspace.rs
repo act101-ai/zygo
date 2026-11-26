@@ -338,10 +338,12 @@ impl Harness {
         self.marketplace_ok.set(true);
     }
 
-    /// Writes the user config `root/config.toml`: [`NO_MARKETPLACE`], then `body`. A test that runs a marketplace
-    /// sync on purpose writes its own config file and opts in ([`Harness::allow_marketplace`]).
+    /// Writes the user config `root/config.toml`: `body`, a newline, then [`NO_MARKETPLACE`]. Its `[[marketplace]]`
+    /// header closes any table that `body` left open, and no top-level key of `body` goes into it (FX-23 review F5).
+    /// A test that runs a marketplace sync on purpose writes its own config file and opts in
+    /// ([`Harness::allow_marketplace`]).
     pub fn config(&self, body: &str) {
-        std::fs::write(&self.paths.config_file, format!("{NO_MARKETPLACE}{body}")).unwrap();
+        std::fs::write(&self.paths.config_file, format!("{body}\n{NO_MARKETPLACE}")).unwrap();
     }
 
     pub fn root(&self) -> &Path {

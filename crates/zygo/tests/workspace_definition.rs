@@ -3,7 +3,7 @@
 //! `#[ignore = "timing: …"]` as the agent-launch tests of `workspace_run.rs` and `workspace_restore.rs`. Workspace
 //! state and the test shell need unix, so the file is `cfg(unix)` (OP5). No test reaches the network: the L-tests
 //! remove the built-in marketplace from the built-in layer; the B- and E-tests write the user config through the
-//! harness, whose head `common::workspace::NO_MARKETPLACE` turns it off (FX-23).
+//! harness, whose `common::NO_MARKETPLACE` (after the body) turns it off (FX-23).
 #![cfg(unix)]
 mod common;
 #[path = "common/e2e.rs"]
@@ -901,4 +901,17 @@ fn e3_item_15_a_pool_member_with_a_profile() { // R§18 item 15 (stub launch par
     assert!(view_of(&h, &k2)["profile"].is_null());
     assert!(headers(&k2).contains("X-Zygo-Token"), "{}", headers(&k2));
     down(&h, &ws.name);
+}
+
+/// FX-23 review F5: [`Harness::config`] writes the body first and then `NO_MARKETPLACE`, so the `[[marketplace]]`
+/// header of `NO_MARKETPLACE` does not take a top-level key of the body into its table.
+#[test]
+fn fx23_harness_config_keeps_the_top_level_keys_of_the_body() {
+    let Some(h) = Harness::new() else { return };
+    h.config("main_role = \"boss\"\n");
+    let o = Guarded::spawn(h.zygo(&["config", "show"], &[])).output("config show");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let out = text(&o.stdout);
+    let main_role: Vec<&str> = out.lines().filter(|l| l.starts_with("main_role ")).collect();
+    assert_eq!(main_role, ["main_role = \"boss\"  # user"]);
 }
