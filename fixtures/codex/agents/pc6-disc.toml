@@ -1,0 +1,4 @@
+name = "pc6-disc"
+description = "tracer-pc6-disc-desc"
+model = "gpt-mock-disc"
+developer_instructions = "tracer-pc6-disc-dev"

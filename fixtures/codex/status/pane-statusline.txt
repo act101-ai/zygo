@@ -1,0 +1,50 @@
+
+  >_ OpenAI Codex (v0.172.0)
+     /repo
+
+
+› tracer-pc11-turn
+
+
+• tracer-pc11-reply
+
+  Worked for <1s • 1:24 AM
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  Configure Status Line
+  Select which items to display in the status line.
+
+  Type to search
+
+› [x] Use theme colors      Apply colors from the active /theme
+  ───────────────────────
+  [x] model-with-reasoning  Current model name with reasoning level
+  [ ] model                 Current model name
+  [ ] reasoning             Current reasoning level
+  [ ] current-dir           Current working directory
+  [ ] project-name          Project name (omitted when unavailable)
+  [ ] hostname              Current machine hostname (omitted when unavailable)
+↓
+  gpt-mock default
+  space toggle · ←/→ reorder · enter save · esc cancel
