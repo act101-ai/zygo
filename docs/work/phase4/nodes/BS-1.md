@@ -81,3 +81,16 @@ Capability: `mechanical` (three dated notes in one file; no code, no test change
 - Step 7: `sh scripts/test-check-premises.sh` → exit 1, `test-check-premises: FAIL H1: a binary file with a forbidden name: output is not 'check-premises: forbidden name from N2_FORBIDDEN_NAMES: fixtures/codex/bin.dat:1'` (stderr: `check-premises.sh: line 431: warning: command substitution: ignored null byte in input`). On this host `/bin/sh` → `/usr/bin/bash` 5.3.20. This is the TF-3 defect (TF-3 not merged), not this node's: this node changes only three lines of the base spec. The run on `phase-4` was not repeated, per the operator's brief.
 - `scripts/lib_test.sh` not run (operator's brief: another agent may run it).
 - Step 8: open until CI is green on ubuntu, macOS and Windows; the commit, push and pull request are in this step.
+
+## Round 1 review
+
+The plan's note texts above are history; the base spec holds the final texts. Code facts were checked again before the change (file and symbol in each note).
+
+- F1 — fixed in 523e6090. The §7.4 note (:282) no longer cites K§12 (K§12 has no §7.4 row); it is the author's call (graph Log 2026-11-26). The code facts stay (`resolve.rs` `resolve`, `schema.rs` `Role`, v2, see the §7.6 note).
+- F2 — fixed in 523e6090. The §7.4 note adds: the `/<dialect>/v1/models` rule does not hold for `GET /openai/v1/models` (roles and custom roles in the model-catalog shape Codex reads, no catalog ids; `models.rs` `list_openai`; K§6.4.1 and PC7). K§6.4.1 is the section that defines this route's shape (`grep -n '/openai/v1/models'` in the client-model design: `:485`); K§6.3.1 only names the catalog file.
+- F3 — fixed in 523e6090. The §8.1 note (:324): a cell in the table or in a note of §8.1 that differs from the generated `docs/conformance.md` yields to the generated matrix (derived from the registry and the grade files). The registry holds no cells.
+- F4 — fixed in 523e6090. The §7.6 note (:295): toward `openai` the body goes as received except for the K§6.4.3 changes (`model`, `store` := `false`, `include` gets `reasoning.encrypted_content`; `forward.rs` `responses_same`).
+- F5 — fixed in 523e6090. The §7.6 note cites `forward.rs` `responses_attempt` for the request chain and `forward.rs` `run` (the stream mapper, `responses_client::response`, `Streamed`) for the answer chain.
+- F6 — fixed in 523e6090. The §8.1 note names the generator: `crates/zygo-core/tests/conformance.rs` (`ZYGO_WRITE_CONFORMANCE=1`) writes the feature matrix, rollup and score to `docs/conformance.md` and `docs/conformance.json`.
+- F7 — fixed in 523e6090. Each note opens `*(Note 2026-11-26, BS-1 implementation: …)*`; the authority is in the text after the colon.
+- Checks at 523e6090: `git diff --numstat` → `3	3` (only lines 282, 295, 324; `wc -l` 1118). Acceptance → exit 0 (count `3`; `check-premises: ok (P1 … PC19)`; cargo no failure). `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → exit 0, `check-premises: ok (P1 … PC19)`. `cargo test -p zygo-config --test builtin --locked` → `test result: ok. 13 passed; 0 failed`. `lib_test.sh` and `test-check-premises.sh` not run (operator's brief).
