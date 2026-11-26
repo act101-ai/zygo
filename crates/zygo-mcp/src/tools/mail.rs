@@ -57,7 +57,12 @@ pub fn tools(ctx: &McpCtx) -> Vec<Box<dyn Tool>> {
 /// `tools` with the paths, the `[mail]` config, the clock and the waker given.
 #[doc(hidden)]
 pub fn tools_with(ctx: &McpCtx, paths: Paths, cfg: MailConfig, clock: Clock, wake: Waker) -> Vec<Box<dyn Tool>> {
-    tools_with_sync(ctx, paths, cfg, clock, wake, Box::new(ChildSpawner { zygo: zygo_program() }), DeadlinePolicy::default())
+    tools_with_sync(ctx, paths, cfg, clock, wake, Box::new(production_spawner()), DeadlinePolicy::default())
+}
+
+/// The spawner of `tools_with`: the sync child is `<zygo_program()> mail sync --ws-id <id> --background` (MS-19 D6).
+fn production_spawner() -> ChildSpawner {
+    ChildSpawner { zygo: zygo_program() }
 }
 
 /// `tools_with` with the spawn of the sync child and the deadline policy of the send-time secret pass given
@@ -335,5 +340,28 @@ impl Tool for MailList {
             .collect();
         let members: Vec<Value> = names::members(&ws).into_iter().map(|t| json!({"key": t.key, "name": t.name})).collect();
         Ok(json!({"unread": unread, "messages": messages, "members": members, "remote": m.remote(&ws)}))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// MS-19 review F2: in the test process `zygo_program` is the canonical current executable.
+    #[test]
+    fn zygo_program_is_the_canonical_current_exe() {
+        let want = std::env::current_exe().expect("current_exe").canonicalize().expect("canonicalize");
+        assert_eq!(zygo_program(), want);
+    }
+
+    /// MS-19 review F2: the spawner of `tools_with` starts `<zygo_program()> mail sync --ws-id <id> --background`.
+    #[test]
+    fn production_spawner_starts_mail_sync_of_the_workspace() {
+        let sp = production_spawner();
+        assert_eq!(sp.zygo, zygo_program());
+        let cmd = sp.command("ws-1");
+        assert_eq!(cmd.get_program(), zygo_program().as_os_str());
+        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        assert_eq!(args, ["mail", "sync", "--ws-id", "ws-1", "--background"]);
     }
 }
