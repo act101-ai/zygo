@@ -136,17 +136,17 @@ LEAK = [
     ("arch", '"x-stainless-arch": "(ARCH OMITTED)"', True),
     ("arch", '"x-stainless-arch": "(version omitted)"', True),
     ("arch", "x-stainless-arch: (arch omitted)\r\n", False),
-    # Review round 3 H1: an unquoted Stainless value ends at a ",", a blank or the line end, so the
-    # placeholder then a "," or a blank passes (the shell and OS lines stay strict).
-    ("arch", "x-stainless-arch: (arch omitted) arm64", False),
-    ("arch", "x-stainless-arch=(arch omitted), x-stainless-os=MacOS", False),
-    ("arch", "x-stainless-arch: (arch omitted) ", False),
-    ("arch", "x-stainless-arch: (arch omitted)\t", False),
+    ("arch", "x-stainless-arch: (arch omitted) arm64", True),
+    # Review round 3 H1: the placeholder passes only before a quote, a backslash, CR, LF or the end; a
+    # "," or a blank after it is flagged (the scrub replaces an unquoted value to the line end).
+    ("arch", "x-stainless-arch=(arch omitted), x-stainless-os=MacOS", True),
+    ("arch", "x-stainless-arch: (arch omitted) ", True),
+    ("arch", "x-stainless-arch: (arch omitted)\t", True),
     ("arch", "x-stainless-arch=arm64, x-stainless-os=MacOS", True),
     ("arch", "x-stainless-arch: arm64 ", True),
     ("arch", '"x-stainless-arch": "arm64 extra"', True),
     ("runtime version", "x-stainless-runtime-version: v26.1.0, node", True),
-    ("runtime version", "x-stainless-runtime-version: (version omitted), node", False),
+    ("runtime version", "x-stainless-runtime-version: (version omitted), node", True),
     ("arch", '{\\"x-stainless-arch\\":\\"(arch omitted)\\"}', False),
     ("runtime version", '"x-stainless-runtime-version": "v26.12.1"', True),
     ("runtime version", '{\\"X-Stainless-Runtime-Version\\":\\"v22.1.0\\"}', True),

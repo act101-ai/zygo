@@ -262,15 +262,20 @@ CASES += [
     ("messaging socket pid", "/tmp/cc-socks/95709.sock", "/tmp/cc-socks/<pid>.sock", ["95709"]),
 ]
 # PC-13 review round 3. H1: a quoted Stainless value is replaced up to its closing quote; an unquoted
-# one up to the first ",", blank or line end.
+# one up to the line end (or a quote or backslash: a header line inside a JSON string); a "," or a blank
+# does not end it (fails closed).
 H1_INPUTS = ["x-stainless-arch=arm64, x-stainless-os=MacOS", "x-stainless-arch: arm64 ",
              '"x-stainless-arch": "arm64 extra"', "x-stainless-runtime-version: v26.1.0, node"]
 CASES += [
-    ("H1: header pair with a comma", H1_INPUTS[0], "x-stainless-arch=(arch omitted), x-stainless-os=MacOS", ["arm64"]),
-    ("H1: trailing blank", H1_INPUTS[1], "x-stainless-arch: (arch omitted) ", ["arm64"]),
+    ("H1: header pair with a comma", H1_INPUTS[0], "x-stainless-arch=(arch omitted)", ["arm64"]),
+    ("H1: trailing blank", H1_INPUTS[1], "x-stainless-arch: (arch omitted)", ["arm64"]),
     ("H1: quoted value with a blank", H1_INPUTS[2], '"x-stainless-arch": "(arch omitted)"', ["arm64", "extra"]),
-    ("H1: runtime version then a comma", H1_INPUTS[3], "x-stainless-runtime-version: (version omitted), node",
-     ["26.1.0"]),
+    ("H1: runtime version then a comma", H1_INPUTS[3], "x-stainless-runtime-version: (version omitted)",
+     ["26.1.0", "node"]),
+    ("H1: placeholder then a value", "x-stainless-arch: (arch omitted) arm64", "x-stainless-arch: (arch omitted)",
+     ["arm64"]),
+    ("H1: header line in a JSON string", '{\\"h\\":\\"x-stainless-arch: arm64 x\\\\nk: v\\"}',
+     '{\\"h\\":\\"x-stainless-arch: (arch omitted)\\\\nk: v\\"}', ["arm64"]),
     ("H1: escaped quoted value with a blank", '{\\"x-stainless-arch\\":\\"arm64 extra\\",\\"k\\":1}',
      '{\\"x-stainless-arch\\":\\"(arch omitted)\\",\\"k\\":1}', ["arm64", "extra"]),
     # H3: more dashless host values (OS names, shells, shell paths, Windows shell paths).

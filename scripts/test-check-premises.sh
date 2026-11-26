@@ -1034,9 +1034,14 @@ printf '%s\n' 'x-stainless-arch=arm64, x-stainless-os=MacOS' 'x-stainless-arch: 
     '"x-stainless-arch": "arm64 extra"' 'x-stainless-runtime-version: v26.1.0, node' > "$T/h1.in"
 SCRUB_FIXED=1 SCRUB_USER=user SCRUB_HOSTS= python3 -I "$ROOT/scripts/premises/scrub.py" "$T" "$T/h1.in" \
     > "$D/fixtures/claude-code/plant.txt" || fail "scrub.py failed"
-grep -q arm64 "$D/fixtures/claude-code/plant.txt" && fail "the scrub left a value"
+grep -qE 'arm64|MacOS|node' "$D/fixtures/claude-code/plant.txt" && fail "the scrub left a value"
 run "$D"
 expect_ok
+# The placeholder then a value, a "," or a blank fails (only a quote, a backslash, CR or the line end
+# may follow it).
+env_case "R3 H1 placeholder then a value" 'x-stainless-arch: (arch omitted) arm64' 'Stainless arch'
+env_case "R3 H1 placeholder then a comma" 'x-stainless-runtime-version: (version omitted), node' 'Stainless runtime version'
+env_case "R3 H1 placeholder then a blank" 'x-stainless-arch: (arch omitted) ' 'Stainless arch'
 # H3: more dashless host values.
 env_case "R3 H3 Windows_NT" 'OS Version: Windows_NT 10.0.26100' 'OS version'
 env_case "R3 H3 Windows then a blank" 'OS Version: Windows Server 2022' 'OS version'
