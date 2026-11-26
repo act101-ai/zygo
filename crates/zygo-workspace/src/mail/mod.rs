@@ -285,11 +285,13 @@ pub(crate) fn not_pruned_line(e: &std::io::Error) -> String {
     format!("zygo: maildirs without a member record not removed: {e}")
 }
 
-/// One delivered message: its id and the pane key it went to.
+/// One delivered message: its id, the pane key it went to, and its label: the target's name in the read under
+/// `mail/lock` or, with none, its pane key (the message's `to`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sent {
     pub id: String,
     pub key: String,
+    pub label: String,
 }
 
 /// One target `send` did not deliver to: its pane key and the error.
@@ -299,16 +301,20 @@ pub struct Refused {
     pub error: MailError,
 }
 
-/// What one `send` did: the messages delivered and the targets refused, each in target (key) order.
+/// What one `send` did: the messages delivered and the targets refused, each in target (key) order, and the state
+/// it read under `mail/lock`, on which it resolved the targets. A caller labels and wakes from this read, not from its
+/// own older one.
 #[derive(Debug)]
 pub struct SendReport {
     pub sent: Vec<Sent>,
     pub refused: Vec<Refused>,
+    pub workspace: Workspace,
 }
 
 /// Sends one message to each target of `to` (M§5, M§8). It checks the subject and body limits, then takes `mail/lock`
 /// shared and reads the member records under it ([`Delivery`], M§5 P1): `ws` gives only the workspace id, and `to`
-/// and the sender are resolved on that read, so a record removed after the caller's read gets no maildir. It
+/// and the sender are resolved on that read, so a record removed after the caller's read gets no maildir; the report
+/// carries that read and each label for the caller's lines and wake. It
 /// `resolve`s `to` before it writes a file; those errors, and those of [`Delivery::begin`], are its only `Err`. Then it writes one file per target, with `from` from
 /// `names::sender` and `to` the target's name or, with none, its pane key. A target whose message it cannot make or
 /// deliver (for example `Full`, M§5 limit per target) goes into `refused`, and the send continues with the next
@@ -328,18 +334,16 @@ pub fn send(
     let d = Delivery::begin(&Store::open(paths, &ws.id), MAIL_LOCK_WAIT)?;
     let targets = names::resolve(d.workspace(), to, sender_key)?;
     let from = names::sender(d.workspace(), sender_key);
-    let mut report = SendReport {
-        sent: Vec::with_capacity(targets.len()),
-        refused: Vec::new(),
-    };
+    let mut sent = Vec::with_capacity(targets.len());
+    let mut refused = Vec::new();
     for t in targets {
-        let label = t.name.as_deref().unwrap_or(&t.key);
-        let delivered = Message::new(&from, label, subject, body, now)
-            .and_then(|msg| d.deliver(&t.key, label, &msg, cfg.max_unread).map(|()| msg.id));
+        let label = t.name.unwrap_or_else(|| t.key.clone());
+        let delivered = Message::new(&from, &label, subject, body, now)
+            .and_then(|msg| d.deliver(&t.key, &label, &msg, cfg.max_unread).map(|()| msg.id));
         match delivered {
-            Ok(id) => report.sent.push(Sent { id, key: t.key }),
-            Err(error) => report.refused.push(Refused { key: t.key, error }),
+            Ok(id) => sent.push(Sent { id, key: t.key, label }),
+            Err(error) => refused.push(Refused { key: t.key, error }),
         }
     }
-    Ok(report)
+    Ok(SendReport { sent, refused, workspace: d.ws })
 }

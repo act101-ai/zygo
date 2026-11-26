@@ -199,18 +199,18 @@ pub fn run(a: MailArgs) -> i32 {
                     return 1;
                 }
             };
+            // The labels, the wake and the refused lines use the state `send` read under `mail/lock` (M§5 P1).
             let mut text = String::new();
             for s in &r.sent {
-                let label = ws.members.get(&s.key).and_then(|m| m.valid_name()).unwrap_or(&s.key);
-                text.push_str(&format!("sent {} to {}\n", esc(&s.id), esc(label)));
+                text.push_str(&format!("sent {} to {}\n", esc(&s.id), esc(&s.label)));
             }
             if !text.is_empty() {
                 print_out(&text);
             }
             let keys: Vec<String> = r.sent.iter().map(|s| s.key.clone()).collect();
-            wake::after_send(&paths, &ws, &tmux_program(), &keys, &cfg.mail);
+            wake::after_send(&paths, &r.workspace, &tmux_program(), &keys, &cfg.mail);
             for x in &r.refused {
-                print_err(&format!("{}; to {}\n", x.error, member(&ws, &x.key)));
+                print_err(&format!("{}; to {}\n", x.error, member(&r.workspace, &x.key)));
             }
             if r.refused.is_empty() { 0 } else { 1 }
         }

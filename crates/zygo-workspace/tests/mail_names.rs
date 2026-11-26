@@ -144,7 +144,7 @@ fn send_by_name_writes_one_file() {
     let got = new_files(&p, ELENA);
     assert_eq!(got.len(), 1);
     let m = &got[0];
-    assert_eq!(sent[0], Sent { id: m.id.clone(), key: ELENA.into() });
+    assert_eq!(sent[0], Sent { id: m.id.clone(), key: ELENA.into(), label: "elena".into() });
     assert_eq!((m.from.as_str(), m.to.as_str(), m.subject.as_str(), m.body.as_str()), ("lead", "elena", "Plan", "Body\n"));
 }
 

@@ -174,6 +174,27 @@ fn send_to_all_skips_the_sender() {
     assert_eq!(woke(&x), vec![vec![ANON.to_string(), ELENA.to_string()]]);
 }
 
+#[test] // FX-13 review F4: the label and the wake use the send's own read under mail/lock, not the tool's older read
+fn send_labels_and_wakes_from_the_read_under_the_lock() {
+    let x = setup();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let (p, s2) = (x.p.clone(), Arc::clone(&seen));
+    // The clock runs after the tool's read and before the send's: it gives ANON the name "anna".
+    let clock = Arc::new(move || {
+        state(&p, |w| w.members.get_mut(ANON).unwrap().name = Some("anna".into()));
+        at(T0)
+    });
+    let waker = Arc::new(move |_: &Paths, ws: &Workspace, k: &[String], _: &MailConfig| {
+        let names: Vec<Option<String>> = k.iter().map(|k| ws.members.get(k).and_then(|m| m.name.clone())).collect();
+        s2.lock().unwrap().push(names);
+    });
+    let t = mail::tools_with(&ctx(Some(&x.sd), true), x.p.clone(), MailConfig::default(), clock, waker);
+    let v = tool(&t, "mail_send").call(send_args("all")).unwrap();
+    let (a, e) = (new_ids(&x.p, ANON), new_ids(&x.p, ELENA));
+    assert_eq!(v, json!({"sent":[{"id":a[0],"to":"anna"},{"id":e[0],"to":"elena"}],"refused":[]}));
+    assert_eq!(*seen.lock().unwrap(), vec![vec![Some("anna".to_string()), Some("elena".to_string())]]);
+}
+
 #[test]
 fn send_unknown_target_names_the_known_names() {
     let x = setup();

@@ -253,6 +253,31 @@ fn lifecycle_send_to_a_key_with_no_record_creates_no_maildir() {
     assert!(gone(&p.workspaces_dir().join(OTHER)));
 }
 
+#[test] // F4: the report carries the read under the lock: a record added after the caller's read gets its label, and
+// the wake reads that record
+fn lifecycle_send_report_carries_the_read_under_the_lock() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let p = paths(td.path());
+    let id = THIRD;
+    let store = stored(&p, id, &[("kaaaaaaaa", Some("lead")), ("kbbbbbbbb", Some("bob"))]);
+    let stale = read(&store);
+    store
+        .update(S5, &mut |ws| {
+            let mut m = MemberRecord::new(Agent::ClaudeCode);
+            m.name = Some("carol".into());
+            ws.members.insert("kcccccccc".into(), m);
+            Ok(())
+        })
+        .unwrap();
+    let r = send(&p, &stale, Some("kaaaaaaaa"), "all", "s", "b", &MailConfig::default(), at(T0)).unwrap();
+    let got: Vec<(&str, &str)> = r.sent.iter().map(|s| (s.key.as_str(), s.label.as_str())).collect();
+    assert_eq!(got, [("kbbbbbbbb", "bob"), ("kcccccccc", "carol")]);
+    assert!(r.refused.is_empty(), "{r:?}");
+    assert_eq!(r.workspace.members.get("kcccccccc").and_then(|m| m.valid_name()), Some("carol"));
+    assert!(!stale.members.contains_key("kcccccccc"));
+}
+
 #[test] // P1 removal: prune and remove_maildir take mail/lock exclusive and remove only keys with no record
 fn lifecycle_prune_removes_only_keys_without_a_record() {
     let _s = serial();
