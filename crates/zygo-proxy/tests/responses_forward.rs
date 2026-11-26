@@ -552,6 +552,21 @@ fn in_stream_error_message_without_key() {
     assert_eq!(events(&b).last().unwrap().0, "response.failed");
 }
 
+#[test] // review round 2 G3: an error event whose JSON spans two data lines never carries the provider key to the client
+fn split_error_event_without_key() {
+    let h = start(A);
+    let key = h.provider_key().to_string();
+    let mut body = msg_sse(&[message_start(), text_start(0), text_delta(0, "par")]);
+    let e = format!("event: error\ndata: {{\"type\":\"error\",\ndata: \"error\":{{\"type\":\"api_error\",\"message\":\"bad {key}\"}}}}\n\n");
+    body.extend_from_slice(e.as_bytes());
+    h.reply_with(200, SSE, body);
+    let (s, _, b) = h.post(R, &codex_request("after-custom-tool-call-output"));
+    assert_eq!(s, 200);
+    let text = String::from_utf8_lossy(&b);
+    assert!(!text.contains(&key), "{text}");
+    assert_eq!(events(&b).last().unwrap().0, "response.failed");
+}
+
 #[test] // base §7.6: an injected null is removed on the way back to a Responses client
 fn injected_null_removed_for_responses_client() {
     let h = start(C);

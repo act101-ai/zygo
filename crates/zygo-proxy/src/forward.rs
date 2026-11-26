@@ -1197,13 +1197,22 @@ impl Streamed {
     }
 
     /// A Messages `error` line before the encoder: its message without the provider key. An over-long prompt
-    /// (`invalid_request_error` with a PC14 form, K§6.4.4) gets the code `context_length_exceeded`.
+    /// (`invalid_request_error` with a PC14 form, K§6.4.4) gets the code `context_length_exceeded`. A data line that is
+    /// no JSON (an event split over lines) has each occurrence of the key replaced: a JSON string holds no raw newline,
+    /// so the key is never split.
     fn line(&mut self, l: &mut SseLine) {
         let Some(d) = l.0.strip_prefix(b"data:") else { return };
-        if !d.windows(7).any(|w| w == b"\"error\"") {
+        let key = self.key.as_ref().map(Secret::expose).filter(|k| !k.is_empty());
+        let keyed = key.is_some_and(|k| d.windows(k.len()).any(|w| w == k.as_bytes()));
+        if !keyed && !d.windows(7).any(|w| w == b"\"error\"") {
             return;
         }
-        let Ok(mut v) = serde_json::from_slice::<Value>(d) else { return };
+        let Ok(mut v) = serde_json::from_slice::<Value>(d) else {
+            if keyed {
+                l.0 = format!("data:{}", scrub(&String::from_utf8_lossy(d), key)).into_bytes();
+            }
+            return;
+        };
         if v.get("type").and_then(Value::as_str) != Some("error") {
             return;
         }
