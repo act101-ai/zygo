@@ -41,9 +41,9 @@ Base: `origin/phase-4` at e4fb2e37 (PC-13 merged, PR #192). Branch `phase-4--PC-
 
 ### Steps
 
-- [ ] **1. Intro line of `docs/premises.md`.** In line 3, replace `Claude Code 2.1.328 or later, OpenCode 1.18.16 or later.` with `Claude Code 2.1.328 or later, OpenCode 1.18.16 or later, Codex 0.172.0 or later.`, and replace the last sentence `Spec: \`docs/specs/2026-11-18-zygo-design.md\` §19, §19a.` with `Spec: \`docs/specs/2026-11-18-zygo-design.md\` §19, §19a; Codex rows: \`docs/specs/2026-11-25-client-model-design.md\` K§6.3.7.` Do not touch the header lines (line 7 `Codex: 0.172.0` stays the only Codex header). Check: `grep -c -x 'Codex: 0.172.0' docs/premises.md` → `1`.
+- [x] **1. Intro line of `docs/premises.md`.** In line 3, replace `Claude Code 2.1.328 or later, OpenCode 1.18.16 or later.` with `Claude Code 2.1.328 or later, OpenCode 1.18.16 or later, Codex 0.172.0 or later.`, and replace the last sentence `Spec: \`docs/specs/2026-11-18-zygo-design.md\` §19, §19a.` with `Spec: \`docs/specs/2026-11-18-zygo-design.md\` §19, §19a; Codex rows: \`docs/specs/2026-11-25-client-model-design.md\` K§6.3.7.` Do not touch the header lines (line 7 `Codex: 0.172.0` stays the only Codex header). Check: `grep -c -x 'Codex: 0.172.0' docs/premises.md` → `1`.
 
-- [ ] **2. Method lines of `docs/premises.md`.** After the bullet that starts `- Codex encoder premise (node PC-12):` (the last bullet of "## Method"), add these three bullets, verbatim:
+- [x] **2. Method lines of `docs/premises.md`.** After the bullet that starts `- Codex encoder premise (node PC-12):` (the last bullet of "## Method"), add these three bullets, verbatim:
 
 ```text
 - Codex premises (nodes PC-2 to PC-6, K§6.3.7): `scripts/premises/run-codex.sh [<part>]` runs the parts in `scripts/premises/codex/` (`base`, `proxy`, `config`, `session`, `resume`, `encoder`) and rewrites `fixtures/codex/`. Each Codex run (`codex_env` in `scripts/premises/lib.sh`) is `env -i` with a temporary `HOME` and `CODEX_HOME` (and `XDG_*`, `TMPDIR`) under the run folder, a dummy key built at run time, `TERM=xterm-256color`, `TZ=UTC`, and a provider whose `base_url` is `scripts/premises/mock_upstream.py` directly (its `/v1/responses` SSE and `/v1/models` answers), with no zygo between. `HTTPS_PROXY`, `HTTP_PROXY` and `ALL_PROXY` point at the mock, which refuses and records each `CONNECT` and each absolute-URI request (`connect.txt` of each part under `fixtures/codex/runs/`), so a request to any other host is seen and fails; `NO_PROXY` is not set. No run uses an OpenAI or ChatGPT login; no step runs `codex login`. A TUI run passes `--no-daemon`. `codex_record` writes the part's `isolation.txt` and fails on a `HOME` or `CODEX_HOME` outside the run folder, a process or daemon socket left after the run, or a timezone other than UTC in a capture. `fixtures/codex/config.schema.json` is the pinned upstream schema (`rust-v0.172.0` tag), kept verbatim; its source and checksum are in `fixtures/codex/config.schema.source.txt`.
@@ -53,7 +53,7 @@ Base: `origin/phase-4` at e4fb2e37 (PC-13 merged, PR #192). Branch `phase-4--PC-
 
   Check: `grep -c -E '^- (Codex premises|Codex fixture hygiene|Claude Code and OpenCode fixture hygiene) ' docs/premises.md` → `3`.
 
-- [ ] **3. Rows PC1 to PC16 in `docs/premises.md`.** Insert these 16 lines, verbatim and in this order, after the row `| PO2 | …` and before the row `| PC17 | …`:
+- [x] **3. Rows PC1 to PC16 in `docs/premises.md`.** Insert these 16 lines, verbatim and in this order, after the row `| PO2 | …` and before the row `| PC17 | …`:
 
 ```text
 | PC1 | The provider table routes each model request to `base_url` with the key-helper bearer; the paths Codex calls; each other host it tries (`CONNECT` records); processes left after exit (K§6.3.7 PC1) | Codex | 0.172.0 | 2026-11-25 | verified | `fixtures/codex/transport/result.txt`, `fixtures/codex/transport/paths.txt`, `fixtures/codex/transport/key-helper.txt`, `fixtures/codex/transport/other-hosts.txt`, `fixtures/codex/transport/processes.txt`: at `base_url` Codex calls only `GET /v1/models` (query `client_version`) and `POST /v1/responses`. With a provider `auth` command (the key helper) the helper ran once and each of the run's 4 requests carried its token (a second dummy key built at run time); no request came without a credential. Other hosts tried, every `CONNECT` refused by the mock (35 of 35): `ab.chatgpt.com:443`, `api.github.com:443`, `chatgpt.com:443`, `github.com:443`. No Codex process was left after any of the 10 runs. |
@@ -76,7 +76,7 @@ Base: `origin/phase-4` at e4fb2e37 (PC-13 merged, PR #192). Branch `phase-4--PC-
 
   Check: `sh scripts/check-premises.sh` → exit 0, last line `check-premises: ok (… PO1 PO2 PC1 PC2 … PC16 PC17 PC18)`; and `grep -c -E '^\| PC([1-9]|1[0-6]) \|' docs/premises.md` → `16`.
 
-- [ ] **4. `docs/live-checks.md`.** After the header line `OpenCode: 1.18.16 or later` (line 6), add the line `Codex: 0.172.0 or later`. After the last row of "## Results" (the row `| FIX21-MOCK | …`, the file's last line), add this row, verbatim:
+- [x] **4. `docs/live-checks.md`.** After the header line `OpenCode: 1.18.16 or later` (line 6), add the line `Codex: 0.172.0 or later`. After the last row of "## Results" (the row `| FIX21-MOCK | …`, the file's last line), add this row, verbatim:
 
 ```text
 | LC-CX1 | Codex's own update notice against a real newer Codex release: with no `check_for_update_on_startup` key, a TUI start shows the notice text (K§6.3.7 PC16, K§6.5.4) | Codex | — | — | not run: owner-run (K§6.3.7 PC16) | No script yet. Owner-run only, never by an agent and never in CI. PC16 (`docs/premises.md`) measured the release-source request against the mock: inferred `api.github.com:443`, path not visible. |
@@ -84,13 +84,13 @@ Base: `origin/phase-4` at e4fb2e37 (PC-13 merged, PR #192). Branch `phase-4--PC-
 
   Check: `grep -c -x 'Codex: 0.172.0 or later' docs/live-checks.md` → `1`; `grep -c '^| LC-CX1 |' docs/live-checks.md` → `1`.
 
-- [ ] **5. Name scan and fixture scan.** Run the Acceptance line as written (it sets `N2_FORBIDDEN_NAMES` from `id -un`) → every command exits 0. This also scans `docs/live-checks.md` (the N38 scope) and the new text of `docs/premises.md` for the operator's user name.
+- [x] **5. Name scan and fixture scan.** Run the Acceptance line as written (it sets `N2_FORBIDDEN_NAMES` from `id -un`) → every command exits 0. This also scans `docs/live-checks.md` (the N38 scope) and the new text of `docs/premises.md` for the operator's user name.
 
-- [ ] **6. Test id in `scripts/test-check-premises.sh`.** Before the edit, `sh scripts/test-check-premises.sh` fails with `test-check-premises: FAIL Codex header and PC1 row: exit 1, expected 0` (two PC1 rows). Replace the whole-word ids (regex `\b(PC1|PC2|PC5|PC9)\b`, so `PC10` to `PC18` and `pc1.txt` are untouched): `PC1` → `PC99` (55 occurrences), `PC2` → `PC98` (1), `PC5` → `PC95` (3), `PC9` → `PC97` (14); change nothing else. Check: `grep -c -w -E 'PC1|PC2|PC5|PC9' scripts/test-check-premises.sh` → `0`; `grep -c -w PC99 scripts/test-check-premises.sh` → `54` (lines).
+- [x] **6. Test id in `scripts/test-check-premises.sh`.** Before the edit, `sh scripts/test-check-premises.sh` fails with `test-check-premises: FAIL Codex header and PC1 row: exit 1, expected 0` (two PC1 rows). Replace the whole-word ids (regex `\b(PC1|PC2|PC5|PC9)\b`, so `PC10` to `PC18` and `pc1.txt` are untouched): `PC1` → `PC99` (55 occurrences), `PC2` → `PC98` (1), `PC5` → `PC95` (3), `PC9` → `PC97` (14); change nothing else. Check: `grep -c -w -E 'PC1|PC2|PC5|PC9' scripts/test-check-premises.sh` → `0`; `grep -c -w PC99 scripts/test-check-premises.sh` → `54` (lines).
 
-- [ ] **7. Readers of the two files.** `sh scripts/test-check-premises.sh` → exit 0, last line `test-check-premises: ok (173 cases)` (about 15 minutes). `cargo test -p zygo-core --test conformance --locked` → exit 0 (header lines; no Codex grade file yet).
+- [x] **7. Readers of the two files.** `sh scripts/test-check-premises.sh` → exit 0, last line `test-check-premises: ok (173 cases)` (about 15 minutes). `cargo test -p zygo-core --test conformance --locked` → exit 0 (header lines; no Codex grade file yet).
 
-- [ ] **8. Commit** `docs/premises.md`, `docs/live-checks.md` and `scripts/test-check-premises.sh` (one `git add` per file), message `docs(premises): PC-7 Codex rows PC1-PC16, LC-CX1 and method lines`, by `git commit -F <message file>`.
+- [x] **8. Commit** `docs/premises.md`, `docs/live-checks.md` and `scripts/test-check-premises.sh` (one `git add` per file), message `docs(premises): PC-7 Codex rows PC1-PC16, LC-CX1 and method lines`, by `git commit -F <message file>`.
 
 ### Author's checks (2026-11-26)
 
