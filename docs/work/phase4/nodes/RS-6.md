@@ -10,7 +10,7 @@
 
 - Client policy stays the per-client config key `insert_markers.<agent>` read as today (`cache.rs:34`); the Codex default is P4-9 (K§6.4.2).
 - The marker is placed in `responses_attempt` (`forward.rs:977-1013`) in its Anthropic branch, after facts and the schema rewrite. `attempt_body` calls `responses_attempt` only for an Openai client and a non-Openai candidate (`forward.rs:897-899`), so that branch is the only place where the candidate is Anthropic and the client is Openai.
-- This node and RS-7 share no file (RS-7 changes `window.rs` and `tee.rs`), so they run in parallel after RS-5.
+- RS-7 also changes `forward.rs` (its premise check moved `tee.rs` out and `forward.rs` in) and depends on RS-6 in the graph, so RS-7 runs after this node.
 
 ## Plan
 
@@ -57,7 +57,7 @@ pub fn mark_upstream(body: &mut Value) -> bool
 
 ### Steps
 
-- [ ] **1. Unit tests for `mark_upstream`.** Append to `crates/zygo-proxy/src/cache.rs`:
+- [x] **1. Unit tests for `mark_upstream`.** Append to `crates/zygo-proxy/src/cache.rs`:
 
 ```rust
 #[cfg(test)]
@@ -105,7 +105,7 @@ mod tests {
 }
 ```
 
-- [ ] **2. Route tests.** Create `crates/zygo-proxy/tests/responses_cache.rs`:
+- [x] **2. Route tests.** Create `crates/zygo-proxy/tests/responses_cache.rs`:
 
 ```rust
 //! RS-6: cache markers at forward time on the Anthropic upstream body of a Responses client (K§6.4.2 row cache
@@ -173,21 +173,21 @@ fn chat_upstream_no_markers() {
 }
 ```
 
-- [ ] **3. See them fail.** `cargo test -p zygo-proxy --lib cache::tests` → does not compile (`mark_upstream` not found). `cargo test -p zygo-proxy --test responses_cache` → `anthropic_upstream_markers_when_on` and `opencode_default_marks_anthropic_upstream` fail (no `cache_control` in the body); the two "no markers" tests pass.
+- [x] **3. See them fail.** `cargo test -p zygo-proxy --lib cache::tests` → does not compile (`mark_upstream` not found). `cargo test -p zygo-proxy --test responses_cache` → `anthropic_upstream_markers_when_on` and `opencode_default_marks_anthropic_upstream` fail (no `cache_control` in the body); the two "no markers" tests pass.
 
-- [ ] **4. `mark_upstream`.** In `crates/zygo-proxy/src/cache.rs`, add `pub fn mark_upstream(body: &mut Value) -> bool` with the doc comment above. Rule: `has_marker(body)` → `false`; a `system` that is a JSON string is replaced in place by `[{"type":"text","text":<that string>}]`; then both `mark_last(body, "system")` and `mark_last(body, "tools")` run, and the result is their OR (as `on_request` does at `:38-40`). Leave `CacheStage` as it is.
+- [x] **4. `mark_upstream`.** In `crates/zygo-proxy/src/cache.rs`, add `pub fn mark_upstream(body: &mut Value) -> bool` with the doc comment above. Rule: `has_marker(body)` → `false`; a `system` that is a JSON string is replaced in place by `[{"type":"text","text":<that string>}]`; then both `mark_last(body, "system")` and `mark_last(body, "tools")` run, and the result is their OR (as `on_request` does at `:38-40`). Leave `CacheStage` as it is.
 
-- [ ] **5. Wire it in `forward.rs`.**
+- [x] **5. Wire it in `forward.rs`.**
   - Add `use crate::cache;` with the other `crate::` imports (`:27-41`).
   - `struct Rewrite` (`:875`): add the field `markers: bool`, doc ``/// `[cache] insert_markers.<agent>` for the session's agent (§10.4); read only toward an `anthropic` candidate of a Responses client (K§6.4.2).``
   - `run`, the `Rewrite` literal (`:423-427`): add `markers: cfg.config.cache.insert_markers.get(s.agent.as_str()).copied().unwrap_or(false),`
   - `responses_attempt`, the Anthropic branch (`} else { (m, Vec::new()) }`, `:1003-1005`): `if rw.markers { cache::mark_upstream(&mut m); }` before `(m, Vec::new())`. Add to its doc comment: "to `anthropic`, the §10.4 markers when `rw.markers` (K§6.4.2), last, so they sit on the final `system` text".
 
-- [ ] **6. See them pass.** `cargo test -p zygo-proxy --lib cache::tests` → 4 passed. `cargo test -p zygo-proxy --test responses_cache` → 4 passed.
+- [x] **6. See them pass.** `cargo test -p zygo-proxy --lib cache::tests` → 4 passed. `cargo test -p zygo-proxy --test responses_cache` → 4 passed.
 
-- [ ] **7. Acceptance.** `test "$(cargo test -q -p zygo-proxy --test responses_cache -- --list 2>/dev/null | grep -c ': test$')" -ge 3 && cargo test -p zygo-proxy --locked` → exit 0 (count 4; the cache tests in `request_path`, `redaction_e2e` and `responses_passthrough` pass unchanged). Also `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings` → no warning.
+- [x] **7. Acceptance.** `test "$(cargo test -q -p zygo-proxy --test responses_cache -- --list 2>/dev/null | grep -c ': test$')" -ge 3 && cargo test -p zygo-proxy --locked` → exit 0 (count 4; the cache tests in `request_path`, `redaction_e2e` and `responses_passthrough` pass unchanged). Also `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings` → no warning.
 
-- [ ] **8. Commit** `feat(proxy): RS-6 cache markers on the Anthropic upstream body of a Responses client`, with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:RS-6`.
+- [x] **8. Commit** `feat(proxy): RS-6 cache markers on the Anthropic upstream body of a Responses client`, with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:RS-6`.
 
 ### Author's checks
 
@@ -200,4 +200,14 @@ fn chat_upstream_no_markers() {
 
 ### Overlap
 
-Files: `cache.rs`, `forward.rs`, `tests/responses_cache.rs`. Open nodes: RS-14 (`forward.rs`) already depends on RS-6. RS-7 (`window.rs`, `tee.rs`; its node says no `forward.rs` change), RS-13, RS-12, PC-4, PC-7 and PC-11 share no file. No edge added.
+Files: `cache.rs`, `forward.rs`, `tests/responses_cache.rs`. Open nodes: RS-14 (`forward.rs`) already depends on RS-6. RS-7 (`window.rs`, `forward.rs`) depends on RS-6. RS-13, RS-12, PC-4, PC-7 and PC-11 share no file. No edge added.
+
+## Round 1 review
+
+Round 1 review of PR #176 at `ee14f787`: nits only. Round 2 on `phase-4--RS-6`.
+
+- F1 (`chat_upstream_no_markers` would still pass if marking moved before the chat translation): rejected. The test checks what the chat upstream receives, which is the observable behaviour. Today the Messages → chat translator drops `cache_control`, so both orders give the same body. If the translator ever forwards it, a misplaced marker reaches the chat body and this test fails.
+- F2 (route coverage): fixed (0655a9be). `responses_cache.rs`: `fallback_to_anthropic_gets_markers` (the `openai` candidate answers 500; its body has no marker, the `anthropic` fallback body has both), `streamed_request_gets_markers` (streamed 200 Messages SSE), `prompted_schema_inside_marked_system_block` (`structured_output = "none"`: the schema text ends the one marked `system` block). They passed on first run, as the behaviour was already right; with the `mark_upstream` call removed from `responses_attempt` all three fail.
+- F3 (`has_marker` scans the whole body, so a user key `cache_control` in a tool parameter schema, `output_config.format.schema` or a `tool_use` input turned markers off): fixed (0655a9be). `mark_upstream` now uses `has_placed_marker`, which looks only on `system` blocks, content blocks of `messages` and the top level of each `tools` entry. `CacheStage` keeps `has_marker`. Tests `cache::tests::mark_upstream_ignores_cache_control_in_user_values` (failed first) and `mark_upstream_leaves_a_marked_system_block`. K§6.4.2 row cache markers guard sentence rewritten as final text, with a change-log line.
+- F4 (stale citation `forward.rs:977-1013`): fixed (this commit). The row now cites `responses_attempt` at `forward.rs:988-1020`, and the Anthropic client's stage at `cache.rs:58-71` (it moved when `mark_upstream` was added).
+- Planning note on RS-7 (said no shared file): fixed (this commit), here and in Overlap.

@@ -24,6 +24,7 @@ use zygo_core::tokens::BYTES_PER_TOKEN;
 use zygo_redact::DeadlinePolicy;
 use zygo_usage::{RedactionCount, RequestRow};
 
+use crate::cache;
 use crate::errors::ZygoError;
 use crate::passthrough::CredentialType;
 use crate::pipeline::{Adjustment, ModelRoute, Pipeline, RequestCtx, ResponseCtx};
@@ -424,6 +425,7 @@ async fn run(
         facts: cfg.config.catalog.get(&resolved.model).and_then(|m| m.facts.as_ref()),
         rules: &cfg.config.schema_rule,
         strict: cfg.config.proxy.strict_schemas,
+        markers: cfg.config.cache.insert_markers.get(s.agent.as_str()).copied().unwrap_or(false),
     };
     // Attempts (§7.3): fallback on a connect error, a 5xx or a 429.
     let mut attempted = false;
@@ -876,6 +878,9 @@ struct Rewrite<'a> {
     facts: Option<&'a Facts>,
     rules: &'a [SchemaRule],
     strict: bool,
+    /// `[cache] insert_markers.<agent>` for the session's agent (§10.4); read only toward an `anthropic` candidate of a
+    /// Responses client (K§6.4.2).
+    markers: bool,
 }
 
 /// One attempt's body (§7.6): translated when the candidate's dialect is not the client's (facts, then the schema
@@ -977,7 +982,8 @@ fn responses_same(
 
 /// A Responses body toward an `anthropic` or `openai-chat` candidate (K§6.4.3): the Messages body of
 /// `responses_client::request`, then facts and the schema rewrite as on a translated Messages request; to
-/// `openai-chat`, the Messages → chat translator after them (Messages is the pivot). Codes in the order `model_body`,
+/// `openai-chat`, the Messages → chat translator after them (Messages is the pivot); to `anthropic`, the §10.4 markers
+/// when `rw.markers` (K§6.4.2), last, so they sit on the final `system` text. Codes in the order `model_body`,
 /// `request`, facts, schema, translator.
 fn responses_attempt(
     body: &Value,
@@ -1001,6 +1007,9 @@ fn responses_attempt(
         }
         (v, tc)
     } else {
+        if rw.markers {
+            cache::mark_upstream(&mut m);
+        }
         (m, Vec::new())
     };
     let (b, mut adj) = model_body(&mut v, raw, true, c)?;
