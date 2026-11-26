@@ -98,6 +98,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | MS-11 | Tip metadata, own hosts, collision and twin checks | MS-6, MS-10 | DONE | judgment | 53f75bbc 95931099 eaf0f3ee 71ba6b9c · identity 17/0 ; floor green · PR #113 |
 | MS-12 | Import: candidates, checks, crash-safe delivery | MS-6, MS-10, ML-2, ML-4 | DONE | judgment | 68fa626f, dc8f3ad4, cf388671 · import 23/0 ; floor green · PR #114 |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | DONE | mechanical | plan a8ac4f72 · commits 3e4c8baa, 0b4b6865 · PR #170 |
+| MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5, OS-4 | DONE | implementation | ea149eab, ad7d3736 · acc 18/18, 26/26 · PR #148 |
 
 ## Log
 
