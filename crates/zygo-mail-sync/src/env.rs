@@ -1,8 +1,14 @@
 //! The test seams of S-C9: the clock, the public probe, the spawn of the sync child and a hook between named
 //! steps. Production code takes the real ones (S§18).
 
+use std::path::PathBuf;
 use std::time::SystemTime;
+use zygo_config::MailConfig;
 use zygo_core::paths::Paths;
+use zygo_redact::secret::DeadlinePolicy;
+use zygo_workspace::mail::wake::{after_send_with, RealProbe};
+use zygo_workspace::mux::tmux::Tmux;
+use zygo_workspace::state::Workspace;
 
 /// S-C9: the clock, injected so no test depends on wall-clock time.
 pub trait Clock: Send + Sync { fn now(&self) -> SystemTime; }
@@ -36,11 +42,31 @@ pub struct NoSeam;
 
 impl Seam for NoSeam { fn at(&self, _point: &'static str) -> Result<(), Crash> { Ok(()) } }
 
-/// S§18: the paths and the seams that one sync run uses.
+/// S§10.1, M§7.3, S-C9: the wake of the members `keys` after an import or a notice, at the injected time `now`.
+pub trait Wake: Send + Sync {
+    fn wake(&self, paths: &Paths, ws: &Workspace, keys: &[String], cfg: &MailConfig, now: SystemTime);
+}
+
+/// The production wake: the M§7.3 wake through the tmux program `tmux` and the AU26 idle rule.
+#[derive(Debug, Clone)]
+pub struct TmuxWake {
+    pub tmux: PathBuf,
+}
+
+impl Wake for TmuxWake {
+    fn wake(&self, paths: &Paths, ws: &Workspace, keys: &[String], cfg: &MailConfig, now: SystemTime) {
+        after_send_with(paths, ws, keys, cfg, &Tmux::new(self.tmux.clone(), ws.tmux_socket.clone()), &RealProbe, now);
+    }
+}
+
+/// S§18: the paths and the seams that one sync run uses. `secret_policy` is the deadline policy of the secret pass
+/// at commit (S§8.6); production code gives `DeadlinePolicy::default()`.
 pub struct Env {
     pub paths: Paths,
     pub clock: Box<dyn Clock>,
     pub probe: Box<dyn Probe>,
     pub seam: Box<dyn Seam>,
     pub spawner: Box<dyn Spawner>,
+    pub wake: Box<dyn Wake>,
+    pub secret_policy: DeadlinePolicy,
 }
