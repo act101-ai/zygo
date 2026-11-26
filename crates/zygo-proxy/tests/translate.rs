@@ -28,6 +28,7 @@ use zygo_proxy::session::{ManualClock, SessionGrant, SessionRequest};
 use zygo_proxy::tee::{COPY_MAX, HOLD_MAX};
 use zygo_proxy::translate::reasoning::{decode, decode_thinking, encode, without_zygo_thinking, Signature};
 use zygo_proxy::translate::responses_client::{response, Calls, Encoder};
+use zygo_proxy::translate::sse::INPUT_DELTA_MAX;
 use zygo_proxy::{Proxy, ProxyHandle};
 use zygo_redact::DeadlinePolicy;
 use zygo_usage::{RequestRow, Store};
@@ -1656,4 +1657,52 @@ fn message_events_unknown_blocks_match_json_path() {
     assert_eq!(items[0]["content"][0]["text"], "hi");
     assert_eq!(codes, json_codes.into_iter().map(|a| a.0).collect::<Vec<_>>());
     assert_eq!(out.last().unwrap().event, "response.completed");
+}
+
+#[test] // RS-13, K§6.4.3 stream obligation 8: input_json_delta pieces of at most INPUT_DELTA_MAX, cut on a char boundary
+fn message_events_cuts_tool_input_on_char_boundaries() {
+    // Compact input `{"a":"` + c × n + `"}`: the first cut is the longest 6 + k·len(c) <= INPUT_DELTA_MAX.
+    for (c, n, first) in [('a', 200_000, INPUT_DELTA_MAX), ('€', 50_000, INPUT_DELTA_MAX - 1), ('😀', 40_000, INPUT_DELTA_MAX - 2)] {
+        let input = json!({"a": c.to_string().repeat(n)});
+        let m = msg_body(json!([{"type":"tool_use","id":"toolu_1","name":"exec_command","input":input}]));
+        let evs = message_events(&m);
+        assert_eq!(evs[1].data, json!({"type":"content_block_start","index":0,
+            "content_block":{"type":"tool_use","id":"toolu_1","name":"exec_command","input":{}}}));
+        let deltas: Vec<&Value> = evs.iter().filter(|e| e.event == "content_block_delta").map(|e| &e.data).collect();
+        assert!(deltas.iter().all(|d| d["index"] == 0 && d["delta"]["type"] == "input_json_delta"), "{c}");
+        let pieces: Vec<&str> = deltas.iter().map(|d| d["delta"]["partial_json"].as_str().unwrap()).collect();
+        assert!(pieces.len() > 1, "{c}");
+        assert_eq!(pieces[0].len(), first, "{c}");
+        assert!(pieces.iter().all(|p| !p.is_empty() && p.len() <= INPUT_DELTA_MAX), "{c}");
+        assert!(pieces[..pieces.len() - 1].iter().all(|p| p.len() > INPUT_DELTA_MAX - 4), "{c}");
+        assert_eq!(pieces.concat(), input.to_string(), "{c}");
+        assert_eq!(evs[evs.len() - 3].data, json!({"type":"content_block_stop","index":0}));
+    }
+}
+
+#[test] // RS-13: an empty input `{}`, and a tool_use with no input, is one input_json_delta `{}`
+fn message_events_empty_tool_input_one_piece() {
+    let m = msg_body(json!([{"type":"tool_use","id":"toolu_1","name":"exec_command","input":{}},
+        {"type":"tool_use","id":"toolu_2","name":"exec_command"}]));
+    let deltas: Vec<Value> = message_events(&m).into_iter().filter(|e| e.event == "content_block_delta").map(|e| e.data).collect();
+    assert_eq!(deltas, [
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}),
+        json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}}),
+    ]);
+}
+
+#[test] // RS-13, K§6.4.3 stream obligations 8 and 9: 1.5 MiB of `"` passes the encoder; each event stays under 2 × INPUT_DELTA_MAX plus framing
+fn message_events_large_tool_input_within_hold_max() {
+    let input = json!({"a": "\"".repeat(3 << 19)});
+    let m = msg_body(json!([{"type":"tool_use","id":"toolu_1","name":"exec_command","input":input}]));
+    let evs = message_events(&m);
+    let longest = evs.iter().map(|e| e.to_bytes().len()).max().unwrap();
+    assert!(longest < 2 * INPUT_DELTA_MAX + 256, "{longest}");
+    let (out, codes) = encoded(&m);
+    assert_eq!(out.last().unwrap().event, "response.completed", "{:?}", out.last().unwrap().data);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["type"], "function_call");
+    assert_eq!(items[0]["arguments"], input.to_string());
+    assert!(codes.is_empty(), "{codes:?}");
 }

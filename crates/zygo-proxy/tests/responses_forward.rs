@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use support::{codex_request, Harness, PROVIDER, UPSTREAM_MODEL};
 use zygo_config::Dialect::{Anthropic as A, OpenaiChat as C};
 use zygo_core::Agent;
+use zygo_proxy::tee::COPY_MAX;
 use zygo_proxy::translate::reasoning::decode_thinking;
 use zygo_proxy::translate::Target;
 
@@ -706,6 +707,35 @@ fn streamed_request_json_answer_keeps_redacted_drops_server_tool() {
     let rows = h.usage_rows();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].adjustments.iter().filter(|a| *a == "server_tool_dropped").count(), 1, "{:?}", rows[0].adjustments);
+}
+
+#[test] // RS-13, K§6.4.3 stream obligation 8: a JSON 2xx whose tool_use input is 1.5 MiB of `"` reaches a streamed request whole
+fn streamed_json_answer_keeps_large_tool_input() {
+    let h = start(A);
+    let mut m = MSG_JSON(false);
+    m["content"] = json!([{"type":"tool_use","id":"toolu_1","name":"exec_command","input":{"a":"\"".repeat(3 << 19)}}]);
+    let up = serde_json::to_vec(&m).unwrap();
+    assert!(up.len() <= COPY_MAX, "{}", up.len());
+    let req = codex_request("after-custom-tool-call-output");
+
+    h.reply_with(200, JSON, up.clone());
+    let (s, _, b) = h.post(R, &with_stream(req.clone(), false));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b[..b.len().min(512)]));
+    let r: Value = serde_json::from_slice(&b).unwrap();
+    let fc = r["output"].as_array().unwrap().iter().find(|i| i["type"] == "function_call").expect("a function_call item");
+    let want = fc["arguments"].clone();
+    assert!(want.as_str().is_some_and(|a| a.len() > 3 << 20), "{}", want.as_str().map_or(0, str::len));
+
+    h.reply_with(200, JSON, up);
+    let (s, hd, b) = h.post(R, &with_stream(req, true));
+    assert_eq!(s, 200);
+    assert!(hv(&hd, "content-type").starts_with(SSE), "{hd:?}");
+    let evs = events(&b);
+    assert_eq!(terminals(&evs).len(), 1, "{:?}", names(&evs));
+    assert_eq!(evs.last().unwrap().0, "response.completed", "{:?}", terminals(&evs));
+    let items = done_items(&evs);
+    let got = items.iter().find(|i| i["type"] == "function_call").expect("a function_call item");
+    assert_eq!(got["arguments"], want);
 }
 
 #[test] // base §7.6: an injected null is removed on the way back to a Responses client

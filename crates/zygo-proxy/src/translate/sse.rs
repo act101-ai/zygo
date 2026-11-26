@@ -26,6 +26,8 @@ type Key = (u64, u64);
 const CHAT_TEXT: Key = (0, u64::MAX);
 /// The held count of a chat tool call before its id, name and argument bytes: an empty call is not free.
 const CALL_COST: usize = 64;
+/// The most `partial_json` bytes in one `input_json_delta` that `message_events` sends (K§6.4.3 stream obligation 8).
+pub const INPUT_DELTA_MAX: usize = 64 << 10;
 
 struct Open {
     key: Key,
@@ -432,8 +434,9 @@ impl StreamMapper {
     }
 }
 
-/// A Messages body as the Messages SSE events that build it: one delta per text, thinking or tool_use block; any
-/// other block (of another type or with no `type`) goes out whole in its content_block_start with no delta; the
+/// A Messages body as the Messages SSE events that build it: one delta per text or thinking block; a tool_use input
+/// as compact JSON in `input_json_delta` pieces of at most `INPUT_DELTA_MAX` bytes, cut on a char boundary, so that
+/// each event stays within `HOLD_MAX` (K§6.4.3 stream obligation 8); any other block (of another type or with no `type`) goes out whole in its content_block_start with no delta; the
 /// usage on message_delta. The Responses encoder keeps redacted_thinking from that arm and drops server-tool and
 /// unknown blocks; a Messages client never reaches it, because its translated bodies hold only text, thinking and
 /// tool_use.
@@ -454,7 +457,14 @@ pub fn message_events(m: &Value) -> Vec<SseEvent> {
             }
             Some("tool_use") => {
                 let input = b.get("input").map_or_else(|| "{}".into(), Value::to_string);
-                (json!({"type":"tool_use","id":b["id"],"name":b["name"],"input":{}}), vec![json!({"type":"input_json_delta","partial_json":input})])
+                let mut d = vec![];
+                let mut rest = input.as_str();
+                while !rest.is_empty() {
+                    let (p, r) = rest.split_at(rest.floor_char_boundary(INPUT_DELTA_MAX));
+                    d.push(json!({"type":"input_json_delta","partial_json":p}));
+                    rest = r;
+                }
+                (json!({"type":"tool_use","id":b["id"],"name":b["name"],"input":{}}), d)
             }
             Some("text") => (json!({"type":"text","text":""}), vec![json!({"type":"text_delta","text":s(b, "text").unwrap_or("")})]),
             _ => (b.clone(), vec![]),
