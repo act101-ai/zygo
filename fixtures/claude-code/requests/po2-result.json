@@ -1,0 +1,21 @@
+{
+  "hook_output": {
+    "hookSpecificOutput": {
+      "hookEventName": "PostToolUse",
+      "updatedToolOutput": {
+        "stdout": "PO2-REPLACED-stdout",
+        "stderr": "",
+        "interrupted": false,
+        "isImage": false,
+        "noOutputExpected": false
+      }
+    }
+  },
+  "tool_use_id": "toolu_po2_00_bash",
+  "request_file": "/tmp/run/rec/0003.json",
+  "is_error": false,
+  "tool_result_seen_by_model": "PO2-REPLACED-stdout",
+  "text": "PO2-REPLACED-stdout",
+  "replaced": true,
+  "err_line_seen": false
+}
