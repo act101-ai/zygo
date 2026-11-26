@@ -1,0 +1,15 @@
+session_start_fired_a=yes
+session_id_equals_rollout_id=yes
+exec_thread_id_equals_rollout_id=yes
+session_start_c_equals_rollout_id=yes
+exec_resume_exit=0
+exec_resume_history=yes
+tui_resume_exit=0
+tui_resume_history=yes
+tui_resume_in_store=yes
+links_kept=yes
+store_rollouts=1
+no_link_resume_exit=1
+no_link_resume_history=no
+warnings_panel=captured
+pc10=verified
