@@ -10,7 +10,7 @@ pub const SHAPE_MAX_BYTES: usize = 4 * 1024 * 1024;
 /// A view is used only when it saves at least this many bytes (O§7.8).
 pub const MIN_SAVING_BYTES: usize = 256;
 
-use crate::view::VIEW_CAP_BYTES;
+use crate::view::{SHAPED_MARKER_ROOM, VIEW_CAP_BYTES};
 use crate::Kind;
 use command::Parsed;
 
@@ -70,7 +70,7 @@ pub fn run(raw: &str, input: &ShapeInput) -> Shaped {
         shaper = Some(k);
     }
     // Step 4, kind view (O§7.7), only when over the threshold.
-    if over(&text) && let Some((t, s, k)) = kind_view::kind_view(&text, input.kind, VIEW_CAP_BYTES) {
+    if over(&text) && let Some((t, s, k)) = kind_view::kind_view(&text, input.kind, VIEW_CAP_BYTES - SHAPED_MARKER_ROOM) {
         text = t;
         steps.push(s);
         shaper = Some(k);
@@ -96,6 +96,18 @@ pub enum Step {
 }
 
 impl Step {
+    /// Every step, in declaration order: the order in which `shape::run` can push them (O§7.8).
+    pub const ALL: [Step; 8] = [
+        Step::ColorCodesRemoved,
+        Step::ProgressLinesRemoved,
+        Step::RepeatedLinesCounted,
+        Step::PassedTestsHidden,
+        Step::BuildProgressHidden,
+        Step::DiffFilesListed,
+        Step::JsonOutlined,
+        Step::LogErrorsKept,
+    ];
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Step::ColorCodesRemoved => "color codes removed",
@@ -160,6 +172,7 @@ mod tests {
         for (s, want) in all {
             assert_eq!(s.as_str(), want, "{s:?}");
         }
+        assert_eq!(Step::ALL, all.map(|(s, _)| s));
     }
 
     #[test]

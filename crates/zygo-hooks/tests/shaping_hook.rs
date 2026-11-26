@@ -484,3 +484,23 @@ fn size_view_use_rule_boundary() {
     let id = ids(&e)[0].clone();
     assert_eq!(rows(&e), [(raw.len() as i64, raw.len() as i64 - 256, Some(id), Some("other".to_string()), Some("size".to_string()))]);
 }
+
+#[test]
+fn log_view_with_its_marker_fits_8_kib() {
+    // O§7.7; O§8.2 row "diff, json, log": view ≤ 8 KiB, marker included (O§8.1)
+    use zygo_results::shape::kind_view::kind_view;
+    use zygo_results::view::{SHAPED_MARKER_ROOM, VIEW_CAP_BYTES};
+    use zygo_results::Kind;
+    let raw: String = (1..=1000).map(|i| format!("2026-11-25 10:00:00 ERROR line {i:05}\n")).collect();
+    let marker = shaped_marker(&raw, "log errors kept", ZERO_ID);
+    let full = kind_view(&raw, Kind::Log, VIEW_CAP_BYTES).unwrap().0;
+    assert!(marker.len() + 1 + full.len() > VIEW_CAP_BYTES); // the old cap's kind view is within one marker length of 8 KiB
+    let e = env(true);
+    let out = run(&e, Agent::ClaudeCode, &bash(json!("echo x"), &raw, ""), &TrimOpts::default());
+    let view = masked(&e, resp(&out)["stdout"].as_str().unwrap());
+    let kv = kind_view(&raw, Kind::Log, VIEW_CAP_BYTES - SHAPED_MARKER_ROOM).unwrap().0;
+    assert_eq!(view, format!("{marker}\n{kv}"));
+    assert!(view.len() <= VIEW_CAP_BYTES, "{}", view.len());
+    let id = ids(&e)[0].clone();
+    assert_eq!(rows(&e), [(raw.len() as i64, view.len() as i64, Some(id), Some("other".to_string()), Some("log".to_string()))]);
+}

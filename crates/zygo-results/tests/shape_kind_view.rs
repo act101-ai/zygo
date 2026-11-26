@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use zygo_results::kind::{sniff, tree};
 use zygo_results::shape::kind_view::kind_view;
-use zygo_results::shape::{Shaper, Step};
-use zygo_results::view::VIEW_CAP_BYTES;
+use zygo_results::shape::{self, ShapeInput, Shaper, Step, SHAPE_MAX_BYTES};
+use zygo_results::view::{shaped_view, SHAPED_MARKER_ROOM, VIEW_CAP_BYTES};
 use zygo_results::{Kind, Stored};
 
 /// `stdout` and the `must_keep` lines of an OS-18 case.
@@ -264,4 +264,34 @@ fn diff_of_300_files_gives_none() {
         .map(|i| format!("diff --git a/src/some/deep/module/path/file_{i:03}.rs b/src/some/deep/module/path/file_{i:03}.rs\n--- a/src/some/deep/module/path/file_{i:03}.rs\n+++ b/src/some/deep/module/path/file_{i:03}.rs\n@@ -1 +1 @@\n-a\n+b\n"))
         .collect();
     assert!(kind_view(&t, Kind::Diff, VIEW_CAP_BYTES).is_none());
+}
+
+/// A stored raw text with the largest numbers the shaped path allows (raw ≤ SHAPE_MAX_BYTES, 7 digits) and a 26-character id.
+fn largest_stored() -> Stored {
+    Stored { id: "0".repeat(26), tool: "Bash".into(), bytes: SHAPE_MAX_BYTES as u64, lines: SHAPE_MAX_BYTES as u64, kind: Kind::Text, created_at: 0, session: None, data: vec![] }
+}
+
+#[test]
+fn shaped_marker_room_is_the_longest_marker() {
+    // O§7.7, O§7.8: every step once (shape::run pushes each at most once), 7-digit numbers, a 26-character id
+    assert_eq!(shaped_view(&Step::ALL, "", &largest_stored()).len(), SHAPED_MARKER_ROOM);
+}
+
+/// `n` distinct lines `2026-11-25 10:00:00 ERROR line <i:05>`, 37 bytes each with the `\n`; sniffed as log.
+fn error_log(n: usize) -> String {
+    (1..=n).map(|i| format!("2026-11-25 10:00:00 ERROR line {i:05}\n")).collect()
+}
+
+#[test]
+fn run_leaves_room_for_the_shaped_marker() {
+    // O§7.7: the kind view stays within VIEW_CAP_BYTES less the largest shaped marker
+    let raw = error_log(1000);
+    assert_eq!(raw.len(), 37_000);
+    assert_eq!(sniff(raw.as_bytes()), Kind::Log);
+    let full = kind_view(&raw, Kind::Log, VIEW_CAP_BYTES).unwrap().0;
+    assert!(full.len() + SHAPED_MARKER_ROOM > VIEW_CAP_BYTES, "{}", full.len()); // within one marker length of 8 KiB
+    let out = shape::run(&raw, &ShapeInput { parsed: None, kind: Kind::Log, threshold: 16384 });
+    assert_eq!(out.text, kind_view(&raw, Kind::Log, VIEW_CAP_BYTES - SHAPED_MARKER_ROOM).unwrap().0);
+    assert_eq!((out.steps.clone(), out.shaper, out.size_view), (vec![Step::LogErrorsKept], Some(Shaper::Log), false));
+    assert!(shaped_view(&Step::ALL, &out.text, &largest_stored()).len() <= VIEW_CAP_BYTES);
 }
