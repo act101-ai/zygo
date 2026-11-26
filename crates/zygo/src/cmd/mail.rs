@@ -617,6 +617,17 @@ mod tests {
         assert_eq!(e.secret_policy, zygo_redact::secret::DeadlinePolicy::default());
     }
 
+    /// D2, D4 (review round 1, T1): a CLI sync that finds the lock held after the wait prints `BUSY_LINE` and exits 1.
+    #[test]
+    fn busy_is_the_busy_line_and_exit_1() {
+        use zygo_mail_sync::sync::{Mode, SyncError};
+        let mut err = Vec::new();
+        super::print_error(&SyncError::Busy, "app", &mut err);
+        assert_eq!(String::from_utf8(err).unwrap(), format!("{}\n", super::BUSY_LINE));
+        assert_eq!(super::BUSY_LINE, "zygo: another mail sync of this workspace holds the lock; try again");
+        assert_eq!(SyncError::Busy.exit_code(Mode::Cli), 1);
+    }
+
     /// D7, C6 (review round 1, F3): a panic in a scoped thread panics again on the main thread; the hook body writes
     /// one `errors.log` line for both.
     #[test]
