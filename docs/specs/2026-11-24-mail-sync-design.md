@@ -279,7 +279,7 @@ Reasons **(author)**:
 
 ### 8.4 Rate limit
 
-**(author)** A hook starts the sync child only when `now - last_start` is `[mail] sync_gap` (default `60s`) or more, or when `last_start` is later than `now` (a clock set back, or a corrupt file). `last_start` is the Unix time in its own file, `mail/sync/last_start`; the hook reads it and writes the new value (atomic) before the spawn. A separate file keeps the hook and the sync from writing one file. Two hooks that read at the same time can both start a child; the lock and mark of S§8.3 make the second one a mark or a second pass. The clock is a parameter (S-C9).
+**(author)** A hook or a `zygo mail watch` starts the sync child only when `now - last_start` is `[mail] sync_gap` (default `60s`) or more, or when `last_start` is later than `now` (a clock set back, or a corrupt file). `last_start` is the Unix time in its own file, `mail/sync/last_start`; the hook reads it and writes the new value (atomic) before the spawn. A separate file keeps the hook and the sync from writing one file. Two hooks that read at the same time can both start a child; the lock and mark of S§8.3 make the second one a mark or a second pass. The clock is a parameter (S-C9).
 
 ### 8.5 Import (P3-4 receive side)
 
@@ -586,3 +586,4 @@ Each check is a test or a command. A "machine" in a test is one `HOME` with its 
 - 2026-11-26 · S§10.5 · author's call (lead) · MS-18 plan: `zygo mail read` also prints a remote `from` and `subject`, and the body; it escapes each (ML-12, `read_text`), so the section names it.
 - 2026-11-26 · S§8.1 · author's call (lead) · MS-18 review F1/F3: the watch ran the sync in its own process between looks, so a hanging fetch held the look loop up to the pass deadline (120 s) per pass, against M§13 #7 and `--timeout`, and a panic printed its text and exited 101; the watch now starts the sync child at its start and each `sync_gap`, does not wait for it, and imported mail shows at the next look.
 - 2026-11-26 · S§8.1 · author's call (lead) · MS-18 review round 2 F1: per-workspace rate limit. The watch kept its own last start, so watches started again or in several panes started children far more often than the S§8.4 rate limit intends; the watch now asks for the child under the S§8.4 rule (`last_start`, `sync_gap`), shared with the hooks, at its start and before each look.
+- 2026-11-26 · S§8.4 · author's call (lead) · names the watch as a rate-limited starter: S§8.1 row 3 asks for the child under this rule, so the rule names a hook and `zygo mail watch`.
