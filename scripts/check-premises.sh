@@ -393,8 +393,13 @@ EQ='(\\?["'"'"'])?'
 EEND='(["'"'"'\\'"$CR"']|$)'
 ESH=$(ci shell)
 EOS=$(ci 'os version')
-SHV="$(ci '((/usr(/local)?)?/bin/|/opt/homebrew/bin/)?(zsh|bash|fish|sh|tcsh|ksh|dash|pwsh|powershell|cmd)(\.exe)?')"'([^A-Za-z0-9_./-]|$)'
-OSV="$(ci '(darwin|linux|windows|macos)')"'[[:blank:]]*[0-9]'
+# Review round 3 H3: the host values of scrub.py SHELL_VAL and OS_VAL (Linuxbrew, NixOS and Nix store
+# shell paths, a Windows path to a shell .exe, plain or with escaped backslashes; Windows_NT, "Windows "
+# and Linux and BSD distributions).
+SHD="$(ci '((/usr(/local)?)?/bin/|/opt/homebrew/bin/|/home/linuxbrew/\.linuxbrew/bin/|/run/current-system/sw/bin/|/nix/store/')"'[0-9A-Za-z]+-[^/[:space:]"'"'"'\\]+/'"$(ci 'bin/)')"
+SHW='[A-Za-z]:(\\{1,2}[^\\"'"'$CR"']+)*\\{1,2}'"$(ci '(bash|pwsh|powershell|cmd)')"'\.[Ee][Xx][Ee]'
+SHV="($SHD?$(ci '(zsh|bash|fish|sh|tcsh|csh|ksh|mksh|dash|nu|xonsh|pwsh|powershell|cmd)(\.exe)?')|$SHW)"'([^A-Za-z0-9_./-]|$)'
+OSV="($(ci '(darwin|linux|windows|macos|ubuntu|debian|fedora|freebsd|openbsd|nixos)')[[:blank:]]*[0-9]|$(ci windows)[_ ])"
 EVAL='[^\\"'"'"'[:space:]]'
 # The drop keeps the character after the placeholder (group 3: EWS and EQ are groups 1 and 2), which
 # may start the next line.
@@ -408,10 +413,15 @@ env_scan "${ENL}${EIN}O$(ci 's version'):$EWS$EQ$OSV" 'OS version'
 XSA="$(ci x-stainless-arch)"'(\\?["'"'"'])?[[:space:]]*[:=][[:space:]]*(\\?["'"'"'])?'
 XSR="$(ci x-stainless-runtime-version)"'(\\?["'"'"'])?[[:space:]]*[:=][[:space:]]*(\\?["'"'"'])?'
 XSV='[^"'"'"'\\[:space:],]'
-env_scan "$XSA$XSV" 'Stainless arch' "s/$XSA"'\(arch omitted\)'"$EEND/\\3/g"
-env_scan "$XSR$XSV" 'Stainless runtime version' "s/$XSR"'\(version omitted\)'"$EEND/\\3/g"
-# The pid of a Claude Code messaging socket (scrub.py CC_SOCK; review round 2 G7).
-env_scan '/cc-socks/[0-9]+\.sock' 'socket pid'
+# Review round 3 H1: an unquoted Stainless value ends at a ",", a blank or the line end (scrub.py
+# STAINLESS_RE), so its placeholder may also be followed by a "," or a blank (XEND, rescrub XS_END).
+# The shell and OS lines keep EEND.
+XEND='([,[:blank:]"'"'"'\\'"$CR"']|$)'
+env_scan "$XSA$XSV" 'Stainless arch' "s/$XSA"'\(arch omitted\)'"$XEND/\\3/g"
+env_scan "$XSR$XSV" 'Stainless runtime version' "s/$XSR"'\(version omitted\)'"$XEND/\\3/g"
+# The pid of a Claude Code messaging socket (scrub.py CC_SOCK; review round 2 G7; round 3 H5: also
+# with escaped slashes).
+env_scan '/cc-socks\\*/[0-9]+\.sock' 'socket pid'
 
 # name_scan <label> <name> [<word characters>] [<exempt ERE>]: the name as a whole word (any case;
 # it may hold spaces), also right after a JSON backslash escape. Word characters: A-Za-z0-9_ unless

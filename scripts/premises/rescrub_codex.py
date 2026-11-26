@@ -71,9 +71,17 @@ ENV_IND = r"(?:[ \t]|\\t)*"
 ENV_WS = r"(?:[ \t\u00a0]|\\t|\\u00[aA]0)*"
 ENV_Q = r"(?:\\?[\"'])?"
 ENV_END = r"(?:$|[\r\n\\\"'])"
-SHELL_VAL = (r"(?i:(?:(?:/usr(?:/local)?)?/bin/|/opt/homebrew/bin/)?(?:zsh|bash|fish|sh|tcsh|ksh|dash|pwsh|"
-             r"powershell|cmd)(?:\.exe)?)(?![A-Za-z0-9_./-])")
-OS_VAL = r"(?i:darwin|linux|windows|macos)[ \t]*[0-9]"
+# Review round 3 H1: an unquoted Stainless value ends at a ",", a blank or the line end (scrub.py
+# STAINLESS_RE), so its placeholder may also be followed by a "," or a blank. The shell and OS lines
+# keep ENV_END.
+XS_END = r"(?:$|[\r\n\\\"', \t])"
+# Review round 3 H3: the host values of scrub.py SHELL_VAL and OS_VAL.
+SHELL_DIR = (r"(?:(?:/usr(?:/local)?)?/bin/|/opt/homebrew/bin/|/home/linuxbrew/\.linuxbrew/bin/|"
+             r"/run/current-system/sw/bin/|/nix/store/[0-9a-z]+-[^/\s\"'\\]+/bin/)")
+WIN_SHELL = r"[a-z]:(?:\\{1,2}[^\\\r\n\"']+)*?\\{1,2}(?:bash|pwsh|powershell|cmd)\.exe"
+SHELL_VAL = (r"(?i:" + SHELL_DIR + r"?(?:zsh|bash|fish|sh|tcsh|csh|ksh|mksh|dash|nu|xonsh|pwsh|powershell|cmd)"
+             r"(?:\.exe)?|" + WIN_SHELL + r")(?![A-Za-z0-9_./-])")
+OS_VAL = r"(?:(?i:darwin|linux|windows|macos|ubuntu|debian|fedora|freebsd|openbsd|nixos)[ \t]*[0-9]|(?i:windows)[_ ])"
 SHELL_KEY = r"(?:-" + ENV_WS + r"(?i:shell)|S(?i:hell)(?=:" + ENV_WS + ENV_Q + SHELL_VAL + r"))"
 OS_KEY = r"(?:-" + ENV_WS + r"(?i:os version)|O(?i:s version)(?=:" + ENV_WS + ENV_Q + OS_VAL + r"))"
 XS_SEP = r"\\?[\"']?\s*[:=]\s*\\?[\"']?"
@@ -82,10 +90,10 @@ ENV_LEAKS = {
                              r"(?!\(omitted\)" + ENV_END + r")[^\s\\\"']"),
     "os version": re.compile(r"(?m)" + ENV_NL + ENV_IND + OS_KEY + ":" + ENV_WS + ENV_Q +
                              r"(?!\(os omitted\)" + ENV_END + r")[^\s\\\"']"),
-    "arch": re.compile(r"(?m)(?i:x-stainless-arch)" + XS_SEP + r"(?!\(arch omitted\)" + ENV_END + r")[^\s\"',\\]"),
+    "arch": re.compile(r"(?m)(?i:x-stainless-arch)" + XS_SEP + r"(?!\(arch omitted\)" + XS_END + r")[^\s\"',\\]"),
     "runtime version": re.compile(r"(?m)(?i:x-stainless-runtime-version)" + XS_SEP +
-                                  r"(?!\(version omitted\)" + ENV_END + r")[^\s\"',\\]"),
-    "socket pid": re.compile(r"/cc-socks/[0-9]+\.sock"),
+                                  r"(?!\(version omitted\)" + XS_END + r")[^\s\"',\\]"),
+    "socket pid": re.compile(r"/cc-socks\\*/[0-9]+\.sock"),
 }
 
 

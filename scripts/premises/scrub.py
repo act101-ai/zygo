@@ -226,22 +226,33 @@ ENV_IND = r"(?:[ \t]|\\t)*"
 ENV_WS = r"(?:[ \t\u00a0]|\\t|\\u00[aA]0)*"
 ENV_Q = r"(?:\\?[\"'])?"
 ENV_END = r"(?:$|[\r\n\\\"'])"
-SHELL_VAL = (r"(?i:(?:(?:/usr(?:/local)?)?/bin/|/opt/homebrew/bin/)?(?:zsh|bash|fish|sh|tcsh|ksh|dash|pwsh|"
-             r"powershell|cmd)(?:\.exe)?)(?![A-Za-z0-9_./-])")
-OS_VAL = r"(?i:darwin|linux|windows|macos)[ \t]*[0-9]"
+# Review round 3 H3: more shell names and paths (Linuxbrew, NixOS, the Nix store, a Windows path to a
+# shell .exe, plain or with escaped backslashes) and OS names (Windows_NT, "Windows ", distributions).
+SHELL_DIR = (r"(?:(?:/usr(?:/local)?)?/bin/|/opt/homebrew/bin/|/home/linuxbrew/\.linuxbrew/bin/|"
+             r"/run/current-system/sw/bin/|/nix/store/[0-9a-z]+-[^/\s\"'\\]+/bin/)")
+WIN_SHELL = r"[a-z]:(?:\\{1,2}[^\\\r\n\"']+)*?\\{1,2}(?:bash|pwsh|powershell|cmd)\.exe"
+SHELL_VAL = (r"(?i:" + SHELL_DIR + r"?(?:zsh|bash|fish|sh|tcsh|csh|ksh|mksh|dash|nu|xonsh|pwsh|powershell|cmd)"
+             r"(?:\.exe)?|" + WIN_SHELL + r")(?![A-Za-z0-9_./-])")
+OS_VAL = r"(?:(?i:darwin|linux|windows|macos|ubuntu|debian|fedora|freebsd|openbsd|nixos)[ \t]*[0-9]|(?i:windows)[_ ])"
 SHELL_KEY = r"(?:-" + ENV_WS + r"(?i:shell)|S(?i:hell)(?=:" + ENV_WS + ENV_Q + SHELL_VAL + r"))"
 OS_KEY = r"(?:-" + ENV_WS + r"(?i:os version)|O(?i:s version)(?=:" + ENV_WS + ENV_Q + OS_VAL + r"))"
-ENV_SHELL = re.compile(r"(?m)(" + ENV_NL + ENV_IND + SHELL_KEY + ":" + ENV_WS + ENV_Q + r")[^\s\\\"'][^\n\r\\\"']*")
+# A Windows shell path is replaced whole (its backslashes are not line ends).
+ENV_SHELL = re.compile(r"(?m)(" + ENV_NL + ENV_IND + SHELL_KEY + ":" + ENV_WS + ENV_Q + r")(?:(?i:" + WIN_SHELL +
+                       r")(?![A-Za-z0-9_./-])|[^\s\\\"'][^\n\r\\\"']*)")
 ENV_OS = re.compile(r"(?m)(" + ENV_NL + ENV_IND + OS_KEY + ":" + ENV_WS + ENV_Q + r")[^\s\\\"'][^\n\r\\\"']*")
 # PC-13 review round 1 F3: the Stainless SDK's architecture and runtime version request headers (a
 # JSON key, plain or \"-escaped, or a header line; any case); x-stainless-os (the OS family) is kept.
 # Review round 2 G5: the whole value (a token, or a parenthesis then a token) becomes the key's own
-# placeholder, so a wrong placeholder or one with text after it is rewritten.
+# placeholder, so a wrong placeholder or one with text after it is rewritten. Review round 3 H1: a
+# quoted value (plain or \"-escaped) is replaced up to its closing quote; an unquoted one up to the first
+# ",", blank or line end (groups: 1 the key and separator, 2 the key, 3 the opening quote).
 STAINLESS = {"x-stainless-arch": "(arch omitted)", "x-stainless-runtime-version": "(version omitted)"}
-STAINLESS_RE = re.compile(r"(\\?[\"']?((?i:x-stainless-(?:arch|runtime-version)))\\?[\"']?\s*[:=]\s*\\?[\"']?)"
-                          r"(?:\([^)\r\n\"'\\]*\)|[^\s\"',\\])[^\s\"',\\]*")
-# PC-13 review round 1 F7: the process id in a Claude Code messaging socket path.
-CC_SOCK = re.compile(r"(/cc-socks/)[0-9]+(\.sock)")
+STAINLESS_RE = re.compile(r"(\\?[\"']?((?i:x-stainless-(?:arch|runtime-version)))\\?[\"']?\s*[:=]\s*)"
+                          r"(?:(\\?[\"'])(?:(?!\3)(?:\\[^\r\n]|[^\\\r\n]))*"
+                          r"|(?:\([^)\r\n\"'\\]*\)|[^\s\"',\\])[^\s\"',\\]*)")
+# PC-13 review round 1 F7: the process id in a Claude Code messaging socket path (review round 3 H5:
+# also with escaped slashes).
+CC_SOCK = re.compile(r"(/cc-socks\\*/)[0-9]+(\.sock)")
 
 
 def s(text):
@@ -253,7 +264,7 @@ def s(text):
     text = UNAME.sub("(os omitted)", text)
     text = ENV_SHELL.sub(lambda m: m.group(1) + "(omitted)", text)
     text = ENV_OS.sub(lambda m: m.group(1) + "(os omitted)", text)
-    text = STAINLESS_RE.sub(lambda m: m.group(1) + STAINLESS[m.group(2).lower()], text)
+    text = STAINLESS_RE.sub(lambda m: m.group(1) + (m.group(3) or "") + STAINLESS[m.group(2).lower()], text)
     text = CC_SOCK.sub(lambda m: m.group(1) + "<pid>" + m.group(2), text)
     text = SANDBOX.sub(lambda m: m.group(1) + "(os omitted)", text)
     text = MARKETPLACE.sub("marketplace-os-omitted", text)
@@ -320,7 +331,7 @@ def is_tool_listing(data):
 raw = open(path, encoding="utf-8", errors="replace").read()
 try:
     data = json.loads(raw)
-except ValueError:
+except (ValueError, RecursionError):  # review round 3 H2: too deep to parse -> the raw-text scrub
     sys.stdout.write(s(raw))
     save_ids()
     sys.exit(0)
