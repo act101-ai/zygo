@@ -191,7 +191,6 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | TODO | judgment | — |
 | OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4, OS-46 | TODO | judgment | — |
 | MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | TODO | judgment | — |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | TODO | implementation | — |
@@ -422,3 +421,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | OS-47 added: OS-38 rerun failed O§8.5 budget 2 under load (libtest 4 MiB p95 105.87 / 106.64 ms, p50 62-73 ms); runner view is ~90% of steps 1-4; OS-38 now depends on OS-47 |
 | 2026-11-26 | OS-47 DONE: runner view pre-checks, output byte-identical (differential probe 0 diffs); 4 MiB libtest/go test p50 60-75 → 20-22 ms, p95 ≤ 22.53 ms (release, load 4-6); review F1 fixed, F2 cost only · PR #206 |
 | 2026-11-26 | FX-16 BLOCKED: its fix makes clean remove more; O§15 item 2 needs the operator's ratification of the O§7.4 text and a decision record first |
+| 2026-11-26 | OS-44 DROPPED: kept_bytes modelled each agent's cut, but OpenCode keeps whole lines under user-config limits and Claude Code cuts by an API token count and keeps characters; no premise states what is kept; O§6.4 Size limit stated as permanent · PR #207 |
