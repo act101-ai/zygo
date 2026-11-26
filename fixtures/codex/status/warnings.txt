@@ -1,0 +1,50 @@
+
+  >_ OpenAI Codex (v0.172.0)
+     /repo
+
+
+› tracer-pc11-turn
+
+
+• tracer-pc11-reply
+
+  Worked for <1s • 12:06 AM
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  Warnings · 1 of 2 · Startup
+
+  Model metadata for `gpt-mock` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.
+
+
+
+
+
+
+
+
+  k keep & next · esc dismiss & close · ⌃o copy · ←/→ warning

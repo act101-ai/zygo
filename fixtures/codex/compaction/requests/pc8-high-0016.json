@@ -5,7 +5,7 @@
   "headers": {
     "x-codex-beta-features": "remote_compaction_v2",
     "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
-    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"a352be81042faebc758632a02c3e8c45ede18fcc\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795649514654,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
+    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"42b149b7dbd6c5a0ed3fc1b1a99491422f7525fc\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795651529953,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
     "x-client-request-id": "00000000-0000-4000-8000-000000000001",
     "session-id": "00000000-0000-4000-8000-000000000001",
     "thread-id": "00000000-0000-4000-8000-000000000001",
@@ -15,7 +15,7 @@
     "originator": "codex_exec",
     "user-agent": "codex_exec/0.172.0 (os omitted) xterm-256color (codex_exec; 0.172.0)",
     "accept-encoding": "zstd,gzip",
-    "host": "127.0.0.1:54908",
+    "host": "127.0.0.1:51193",
     "content-length": "42023"
   },
   "credential_headers": [
@@ -28,7 +28,7 @@
     "input": [
       {
         "type": "message",
-        "id": "msg_c16b9832-adce-5c11-be1c-9cd61f5abfb1",
+        "id": "msg_ea6325ff-7463-5f3b-8f30-adcd5ea33e4a",
         "role": "developer",
         "content": [
           {
@@ -39,7 +39,7 @@
       },
       {
         "type": "message",
-        "id": "msg_01a2150d-2d88-7252-88f0-88f52f9150f5",
+        "id": "msg_01a2152b-ed28-7da0-acf2-1d1a69b2ba69",
         "role": "developer",
         "content": [
           {
@@ -54,18 +54,18 @@
       },
       {
         "type": "message",
-        "id": "msg_01a2150d-2d88-7252-88f0-890267b8b15f",
+        "id": "msg_01a2152b-ed28-7da0-acf2-1d252de4f6ac",
         "role": "user",
         "content": [
           {
             "type": "input_text",
-            "text": "<environment_context>\n  <cwd>/repo</cwd>\n  <shell>zsh</shell>\n  <current_date>2026-11-25</current_date>\n  <timezone>GMT</timezone>\n  <filesystem><workspace_roots><root>/repo</root></workspace_roots><permission_profile type=\"managed\"><file_system type=\"restricted\"><entry access=\"read\"><special>:root</special></entry><entry access=\"write\"><path>/repo</path></entry><entry access=\"write\"><special>:slash_tmp</special></entry><entry access=\"write\"><special>:tmpdir</special></entry><entry access=\"read\"><path>/repo/.git</path></entry><entry access=\"read\"><path>/repo/.agents</path></entry><entry access=\"read\"><path>/repo/.codex</path></entry><entry access=\"read\"><path>/repo/.aws</path></entry></file_system></permission_profile></filesystem>\n</environment_context>"
+            "text": "<environment_context>\n  <cwd>/repo</cwd>\n  <shell>zsh</shell>\n  <current_date>2026-11-26</current_date>\n  <timezone>GMT</timezone>\n  <filesystem><workspace_roots><root>/repo</root></workspace_roots><permission_profile type=\"managed\"><file_system type=\"restricted\"><entry access=\"read\"><special>:root</special></entry><entry access=\"write\"><path>/repo</path></entry><entry access=\"write\"><special>:slash_tmp</special></entry><entry access=\"write\"><special>:tmpdir</special></entry><entry access=\"read\"><path>/repo/.git</path></entry><entry access=\"read\"><path>/repo/.agents</path></entry><entry access=\"read\"><path>/repo/.codex</path></entry><entry access=\"read\"><path>/repo/.aws</path></entry></file_system></permission_profile></filesystem>\n</environment_context>"
           }
         ]
       },
       {
         "type": "message",
-        "id": "msg_01a2150d-2da5-7db3-8181-01fb13edb4de",
+        "id": "msg_01a2152b-ed30-7831-a5fb-6d01463383de",
         "role": "user",
         "content": [
           {
@@ -522,13 +522,13 @@
     ],
     "prompt_cache_key": "00000000-0000-4000-8000-000000000001",
     "client_metadata": {
-      "x-codex-installation-id": "00000000-0000-4000-8000-000000000002",
-      "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
-      "session_id": "00000000-0000-4000-8000-000000000001",
-      "turn_id": "00000000-0000-4000-8000-000000000003",
       "root_turn_id": "00000000-0000-4000-8000-000000000003",
-      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"a352be81042faebc758632a02c3e8c45ede18fcc\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795649514654,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
-      "thread_id": "00000000-0000-4000-8000-000000000001"
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "thread_id": "00000000-0000-4000-8000-000000000001",
+      "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
+      "turn_id": "00000000-0000-4000-8000-000000000003",
+      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"42b149b7dbd6c5a0ed3fc1b1a99491422f7525fc\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795651529953,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
+      "x-codex-installation-id": "00000000-0000-4000-8000-000000000002"
     }
   },
   "reply": "pc8-high"

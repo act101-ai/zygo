@@ -5,7 +5,7 @@
   "headers": {
     "x-codex-beta-features": "remote_compaction_v2",
     "x-codex-window-id": "00000000-0000-4000-8000-000000000001:1",
-    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:1\",\"window_number\":1,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"cold_resume\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"a352be81042faebc758632a02c3e8c45ede18fcc\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795649516865,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
+    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:1\",\"window_number\":1,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"cold_resume\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"42b149b7dbd6c5a0ed3fc1b1a99491422f7525fc\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795651532104,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
     "x-client-request-id": "00000000-0000-4000-8000-000000000001",
     "session-id": "00000000-0000-4000-8000-000000000001",
     "thread-id": "00000000-0000-4000-8000-000000000001",
@@ -15,7 +15,7 @@
     "originator": "codex_exec",
     "user-agent": "codex_exec/0.172.0 (os omitted) xterm-256color (codex_exec; 0.172.0)",
     "accept-encoding": "zstd,gzip",
-    "host": "127.0.0.1:54908",
+    "host": "127.0.0.1:51193",
     "content-length": "42705"
   },
   "credential_headers": [
@@ -28,7 +28,7 @@
     "input": [
       {
         "type": "message",
-        "id": "msg_c16b9832-adce-5c11-be1c-9cd61f5abfb1",
+        "id": "msg_ea6325ff-7463-5f3b-8f30-adcd5ea33e4a",
         "role": "developer",
         "content": [
           {
@@ -39,7 +39,7 @@
       },
       {
         "type": "message",
-        "id": "msg_01a2150d-3561-70e0-aadf-a9bdbb00b2d3",
+        "id": "msg_01a2152b-f56c-75f0-af17-fcfae1899af6",
         "role": "developer",
         "content": [
           {
@@ -54,18 +54,18 @@
       },
       {
         "type": "message",
-        "id": "msg_01a2150d-3561-70e0-aadf-a9c51b97544f",
+        "id": "msg_01a2152b-f56c-75f0-af17-fd095b2c2a52",
         "role": "user",
         "content": [
           {
             "type": "input_text",
-            "text": "<environment_context>\n  <cwd>/repo</cwd>\n  <shell>zsh</shell>\n  <current_date>2026-11-25</current_date>\n  <timezone>GMT</timezone>\n  <filesystem><workspace_roots><root>/repo</root></workspace_roots><permission_profile type=\"managed\"><file_system type=\"restricted\"><entry access=\"read\"><special>:root</special></entry><entry access=\"write\"><path>/repo</path></entry><entry access=\"write\"><special>:slash_tmp</special></entry><entry access=\"write\"><special>:tmpdir</special></entry><entry access=\"read\"><path>/repo/.git</path></entry><entry access=\"read\"><path>/repo/.agents</path></entry><entry access=\"read\"><path>/repo/.codex</path></entry><entry access=\"read\"><path>/repo/.aws</path></entry></file_system></permission_profile></filesystem>\n</environment_context>"
+            "text": "<environment_context>\n  <cwd>/repo</cwd>\n  <shell>zsh</shell>\n  <current_date>2026-11-26</current_date>\n  <timezone>GMT</timezone>\n  <filesystem><workspace_roots><root>/repo</root></workspace_roots><permission_profile type=\"managed\"><file_system type=\"restricted\"><entry access=\"read\"><special>:root</special></entry><entry access=\"write\"><path>/repo</path></entry><entry access=\"write\"><special>:slash_tmp</special></entry><entry access=\"write\"><special>:tmpdir</special></entry><entry access=\"read\"><path>/repo/.git</path></entry><entry access=\"read\"><path>/repo/.agents</path></entry><entry access=\"read\"><path>/repo/.codex</path></entry><entry access=\"read\"><path>/repo/.aws</path></entry></file_system></permission_profile></filesystem>\n</environment_context>"
           }
         ]
       },
       {
         "type": "message",
-        "id": "msg_01a2150d-2da5-7db3-8181-01fb13edb4de",
+        "id": "msg_01a2152b-ed30-7831-a5fb-6d01463383de",
         "role": "user",
         "content": [
           {
@@ -76,7 +76,7 @@
       },
       {
         "type": "message",
-        "id": "msg_01a2150d-3561-70e0-aadf-a9dc9448c05c",
+        "id": "msg_01a2152b-f56c-75f0-af17-fd1e1210d0c6",
         "role": "user",
         "content": [
           {
@@ -87,7 +87,7 @@
       },
       {
         "type": "message",
-        "id": "msg_01a2150d-356a-7b30-8e1c-ca9533f6dfd0",
+        "id": "msg_01a2152b-f576-7983-a34f-7f4f80760468",
         "role": "user",
         "content": [
           {
@@ -544,13 +544,13 @@
     ],
     "prompt_cache_key": "00000000-0000-4000-8000-000000000001",
     "client_metadata": {
-      "x-codex-installation-id": "00000000-0000-4000-8000-000000000002",
       "thread_id": "00000000-0000-4000-8000-000000000001",
-      "x-codex-window-id": "00000000-0000-4000-8000-000000000001:1",
-      "turn_id": "00000000-0000-4000-8000-000000000003",
+      "x-codex-installation-id": "00000000-0000-4000-8000-000000000002",
+      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:1\",\"window_number\":1,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"cold_resume\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"42b149b7dbd6c5a0ed3fc1b1a99491422f7525fc\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795651532104,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
       "session_id": "00000000-0000-4000-8000-000000000001",
+      "x-codex-window-id": "00000000-0000-4000-8000-000000000001:1",
       "root_turn_id": "00000000-0000-4000-8000-000000000003",
-      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:1\",\"window_number\":1,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"cold_resume\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"a352be81042faebc758632a02c3e8c45ede18fcc\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795649516865,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}"
+      "turn_id": "00000000-0000-4000-8000-000000000003"
     }
   },
   "reply": "default"
