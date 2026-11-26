@@ -263,6 +263,123 @@ fn commit_applies_adds_and_removes_on_base() {
     assert_eq!(git(&m.wt, &["rev-parse", "HEAD"]), c2);
 }
 
+/// The bytes of each `path` in `c`, read by one `git cat-file --batch`.
+fn blobs(cwd: &std::path::Path, c: &str, paths: &[String]) -> Vec<Vec<u8>> {
+    let input: String = paths.iter().map(|p| format!("{c}:{p}\n")).collect();
+    let mut o = plain(cwd).args(["cat-file", "--batch"]).stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped()).spawn().unwrap();
+    std::io::Write::write_all(&mut o.stdin.take().unwrap(), input.as_bytes()).unwrap();
+    let out = o.wait_with_output().unwrap().stdout;
+    let (mut rest, mut got) = (&out[..], Vec::new());
+    while !rest.is_empty() {
+        let nl = rest.iter().position(|&b| b == b'\n').unwrap();
+        let head = std::str::from_utf8(&rest[..nl]).unwrap();
+        let f: Vec<&str> = head.split(' ').collect();
+        assert_eq!(f.get(1), Some(&"blob"), "{head}");
+        let n: usize = f[2].parse().unwrap();
+        got.push(rest[nl + 1..nl + 1 + n].to_vec());
+        rest = &rest[nl + 2 + n..];
+    }
+    got
+}
+
+#[test]
+fn commit_of_450_adds_and_3_removes_keeps_the_last_change_of_each_path() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let (_, c1) = two_commits(&m);
+    let olds: Vec<Change> = (0..5).map(|i| Change::Add { path: format!("old/{i}"), bytes: format!("old {i}\n").into_bytes() })
+        .collect();
+    let base = commit(&m.wt, &c1, Some(&c1), &olds, far()).unwrap();
+    let body = |i: usize| format!("{{\"n\":{i}}}\r\n").into_bytes();
+    let mut changes: Vec<Change> = (0..450).map(|i| Change::Add { path: format!("new/{i:03}"), bytes: body(i) }).collect();
+    changes.extend((0..3).map(|i| Change::Remove { path: format!("old/{i}") }));
+    // The last change of a path wins: `old/3` is removed then added, `new/007` added then removed.
+    changes.push(Change::Remove { path: "old/3".into() });
+    changes.push(Change::Add { path: "old/3".into(), bytes: b"again\n".to_vec() });
+    changes.push(Change::Remove { path: "new/007".into() });
+    changes.push(Change::Add { path: "new/008".into(), bytes: b"second\n".to_vec() });
+    let c = commit(&m.wt, &base, Some(&base), &changes, far()).unwrap();
+    let mut want: Vec<(String, Vec<u8>)> = vec![
+        ("ZYGO-MAIL".into(), MARKER.to_vec()),
+        (MSG_PATH.into(), b"{\"a\":1}\n".to_vec()),
+        ("registry/a.json".into(), b"r\r\n".to_vec()),
+        ("old/3".into(), b"again\n".to_vec()),
+        ("old/4".into(), b"old 4\n".to_vec()),
+    ];
+    want.extend((0..450).filter(|&i| i != 7)
+        .map(|i| (format!("new/{i:03}"), if i == 8 { b"second\n".to_vec() } else { body(i) })));
+    want.sort();
+    let got = files(&m.root, &c);
+    assert_eq!(got, want.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>());
+    assert_eq!(blobs(&m.root, &c, &got), want.into_iter().map(|(_, b)| b).collect::<Vec<_>>());
+    assert_eq!(git(&m.wt, &["rev-parse", "HEAD"]), c);
+    assert!(temp_left(&m).is_empty());
+}
+
+/// A 97-character message path, the longest that `<name>@<host>/<ULID>.json` makes (name and host 32 each).
+fn long_path(i: usize) -> String { format!("{}@{}/{i:026}.json", "n".repeat(32), "h".repeat(32)) }
+
+/// The adds of `long_path(i)` = `long <i>\n` for `i` in `range`.
+fn long_adds(range: std::ops::Range<usize>) -> Vec<Change> {
+    range.map(|i| Change::Add { path: long_path(i), bytes: format!("long {i}\n").into_bytes() }).collect()
+}
+
+/// The paths of the temp files that `commit` leaves in the folder of the worktree.
+fn temp_left(m: &Machine) -> Vec<String> {
+    names(m.wt.parent().unwrap()).into_iter().filter(|n| n.starts_with(".zygo-object")).collect()
+}
+
+#[test]
+fn commit_of_long_paths_beyond_one_command_line_gives_every_file() {
+    // 300 `--cacheinfo` arguments of 97-character paths are about 54 000 characters: more than one call carries.
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let rt = bootstrap(&m.root, &m.wt, far()).unwrap();
+    let c = commit(&m.wt, &rt, Some(&rt), &long_adds(0..300), far()).unwrap();
+    let mut want: Vec<(String, Vec<u8>)> = vec![("ZYGO-MAIL".into(), MARKER.to_vec())];
+    want.extend((0..300).map(|i| (long_path(i), format!("long {i}\n").into_bytes())));
+    want.sort();
+    let got = files(&m.root, &c);
+    assert_eq!(got, want.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>());
+    assert_eq!(blobs(&m.root, &c, &got), want.into_iter().map(|(_, b)| b).collect::<Vec<_>>());
+    assert!(temp_left(&m).is_empty());
+}
+
+#[test]
+fn commit_of_removes_beyond_one_command_line_gives_the_rest() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let rt = bootstrap(&m.root, &m.wt, far()).unwrap();
+    let base = commit(&m.wt, &rt, Some(&rt), &long_adds(0..300), far()).unwrap();
+    let removes: Vec<Change> = (0..290).map(|i| Change::Remove { path: long_path(i) }).collect();
+    let c = commit(&m.wt, &base, Some(&base), &removes, far()).unwrap();
+    let mut want = vec!["ZYGO-MAIL".to_string()];
+    want.extend((290..300).map(long_path));
+    want.sort();
+    assert_eq!(files(&m.root, &c), want);
+}
+
+#[test]
+fn commit_that_fails_partway_moves_nothing_and_leaves_no_temp_file() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let rt = bootstrap(&m.root, &m.wt, far()).unwrap();
+    let mut changes = long_adds(0..300);
+    // `update-index` refuses a path with a `..` part.
+    changes[250] = Change::Add { path: "x/../y".into(), bytes: b"bad\n".to_vec() };
+    assert_eq!(commit(&m.wt, &rt, Some(&rt), &changes, far()), Err(BranchError::Git(RunError::Failed, "update-index")));
+    assert_eq!(git(&m.wt, &["rev-parse", "HEAD"]), rt);
+    assert!(temp_left(&m).is_empty());
+    let good = long_adds(0..3);
+    let c = commit(&m.wt, &rt, Some(&rt), &good, far()).unwrap();
+    let mut want = vec!["ZYGO-MAIL".to_string()];
+    want.extend((0..3).map(long_path));
+    want.sort();
+    assert_eq!(files(&m.root, &c), want);
+    assert_eq!(git(&m.wt, &["rev-parse", "HEAD"]), c);
+}
+
 #[test]
 fn commit_without_parent_is_a_root() {
     let r = Remote::new();
