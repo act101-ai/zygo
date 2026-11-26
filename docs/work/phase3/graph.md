@@ -254,6 +254,7 @@ Session text (T, SX nodes):
 | FX-14 | `zygo up` team read: CLI test of `with_team`, team-layer warnings only, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code | WD-11, WD-12, ML-12 | DONE | implementation | 64d9685c, 3dc62442, 34467d50 · up_definition, workspace_restore, serve_cli, cmd::up all pass ; floor green · PR #162 |
 | FX-15 | `zygo doctor` pool lines skip the members `zygo up` skips | WD-12 | DONE | implementation | 0b4ee021, f046b2b7 · definition_doctor 17/0 ; floor green · PR #129 |
 | FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | TODO | implementation | — |
+| FX-17 | `zygo up` refuses a `[limits] max_members` outside 1-32 from the team or user layer (`config check` rule, `check_jobs` path) | FX-14, WD-11 | TODO | implementation | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -403,3 +404,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | ML-12 DONE: zygo mail send\|read\|ls, /zygo:mail, mail sweep at command start. Review fixes: the sweep skips linked folders, a partial read prints what it has, a 2 s slash bound, a list-only fallback body, help args · PR #149 |
 | 2026-11-25 | OS-24 DONE: PO2 verified on Claude Code 2.1.332 (stderr arrives merged into stdout; the replaced stdout removed err-line); hook fixture + empty shape-off golden added; review 7: F1/F2/F4-F7 fixed (first reading "not shown" reversed), F3 refuted · PR #151 |
 | 2026-11-25 | FX-14 DONE: `zygo up` prints only team-layer warnings; CLI test of `with_team`, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code. 2 rounds; review F1, F2 fixed; F3 nit kept; F4 (max_members range) is new node FX-17 · PR #162 |
+| 2026-11-25 | FX-17 added from FX-14 review F4: `zygo up` takes `[limits] max_members` from the team or user layer with no 1-32 range check; contract reuses the `config check` rule via the `check_jobs` path (check.rs:119-120, up.rs:797-808) |
