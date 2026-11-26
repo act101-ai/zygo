@@ -192,7 +192,6 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
-| OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
 | ML-11 | MCP tools `mail_send`, `mail_read`, `mail_list` | ML-6, ML-7 | TODO | implementation | — |
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | TODO | implementation | — |
@@ -403,3 +402,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | OS-23 DONE: PO1 failed live (Claude Code 2.1.332): error holds stdout before stderr; no hook output replaced the text; OS-33 takes the "If PO1 fails" branch of O§7.13. Failed-Bash fixture and 2 failure cases. Review: 5 findings, 4 fixed, 1 carried to report · PR #142 |
 | 2026-11-25 | ML-6 DONE: wake of an idle member after a send (M§7.3); Files widened with state.rs (Store::live_session, plan drift D1); after_send_with for injected probe and clock (MS-13); keys woken in parallel; lock waits, no added gate. Review: 9 findings, 8 fixed, 1 in part · PR #143 |
 | 2026-11-25 | ML-10 DONE: Stop block (once, not while draining/stopping), prompt and SessionStart line, OpenCode per-request line; all off when [features] mail is off; unreadable mail/ changes no decision. Spec M§7.1, M§7.2, M§9 rewritten (author's call). Review: 6 fixed · PR #144 |
+| 2026-11-25 | OS-24 DONE: PO2 verified on Claude Code 2.1.332 (stderr arrives merged into stdout; the replaced stdout removed err-line); hook fixture + empty shape-off golden added; review 7: F1/F2/F4-F7 fixed (first reading "not shown" reversed), F3 refuted · PR #151 |
