@@ -1,9 +1,12 @@
 //! WD-19: hooks, the MCP server and the status line read nothing from `.zygo/` (R-C8; R§8 "Not a layer"; R§10 row
 //! "Hooks, the MCP server, the status line"; R§18 item 20; review focus 38). p-tests, every OS: source scans of the
-//! crates that the hooks and the MCP server link, of `load`, and of the one `zygo-workspace` caller of the read.
-//! h-tests, unix (workspace state, a `sh` fake `git`, process groups; OP5): each hook registration, each OpenCode
-//! plugin call and `zygo mcp`, in a repository with an approved `.zygo/` and in the same repository without it. No
-//! agent runs (R-C9), the built-in marketplace is off in the user config (`NO_MARKETPLACE`), no test asserts a time.
+//! crates that the hooks and the MCP server link, of the slash verbs that `zygo hook prompt` runs, of `load`, of the
+//! one `zygo-workspace` caller of the read, and for an absolute `git` path. h-tests, unix (workspace state, a `sh`
+//! fake `git`, process groups; OP5): each hook registration, each slash verb, each OpenCode plugin call and
+//! `zygo mcp`, in a repository with an approved `.zygo/` and in the same repository without it, with three checks per
+//! run: the fake `git` log, the `repo_def` tripwire (`ZYGO_TEST_TRAP_REPO_DEF`, feature `test-hooks`) and, on Linux,
+//! an inotify watch of the working-tree `.zygo/`. No agent runs (R-C9), the built-in marketplace is off in the user
+//! config (`USER_CONFIG`), no test asserts a time.
 mod common;
 
 use std::collections::BTreeSet;
@@ -63,6 +66,39 @@ const SCANNED: [&str; 10] = [
 const CMD_FILES: [&str; 3] = ["crates/zygo/src/cmd/hook.rs", "crates/zygo/src/cmd/mcp.rs", "crates/zygo/src/cmd/statusline.rs"];
 /// Names of the definition read (R§6.1, R§7.3, R§7.4), of its apply step (R§8) and of the code that calls them.
 const FORBIDDEN: [&str; 6] = ["repo_def", "with_definition", "check_default", "check_pinned", "zygo_workspace::up", "zygo_launch"];
+/// The public read entries of `repo_def` as whole words (`read_default_branch` is the `.zygo.toml` read, not one).
+const READ_WORDS: &str = r"\b(check_default|check_pinned|read_default|read_at)\b";
+/// The paths that the slash verb files name and that read no definition, removed from a line before the scan of p2:
+/// the client of `zygo serve` (scanned itself, `verb_files`) and two items of `zygo_workspace::up` that are not
+/// `up`/`up_all` (p3: only `up`/`up_all` reach the read).
+const VERB_ALLOWED: [&str; 3] =
+    ["zygo_launch::serve_client::", "zygo_workspace::up::{find_checkout, GIT_BOUND}", "zygo_workspace::up::GIT_BOUND"];
+
+/// The files of the slash verbs that `zygo hook prompt` runs in the hook process (`cmd/mod.rs` `slash` → `run_verb`
+/// → `VERBS`): `cmd/verbs.rs`, the module of each `VERBS` handler, and `zygo-launch/src/serve_client.rs`, the one
+/// `zygo-launch` module they name.
+fn verb_files() -> Vec<PathBuf> {
+    let cmd = ws_root().join("crates/zygo/src/cmd");
+    let handler = regex::Regex::new(r"handler: super::([a-z_]+)::verb\b").unwrap();
+    let text = read(&cmd.join("verbs.rs"));
+    let mods: Vec<String> = handler.captures_iter(&text).map(|c| c[1].to_string()).collect();
+    assert_eq!(mods.len(), zygo_core::verbs::VERB_SPECS.len(), "{mods:?}");
+    assert_eq!(mods.len(), 19, "{mods:?}");
+    let mut v = vec![cmd.join("verbs.rs")];
+    v.extend(mods.iter().map(|m| cmd.join(format!("{m}.rs"))));
+    v.push(ws_root().join("crates/zygo-launch/src/serve_client.rs"));
+    v
+}
+
+/// Every source file the hooks, the slash verbs and the MCP server run: the `SCANNED` crates, `CMD_FILES` and
+/// `verb_files`, sorted, each once.
+fn hook_files() -> Vec<PathBuf> {
+    let mut files: BTreeSet<PathBuf> =
+        SCANNED.iter().flat_map(|c| rs_files(&ws_root().join("crates").join(c).join("src"))).collect();
+    files.extend(CMD_FILES.iter().map(|f| ws_root().join(f)));
+    files.extend(verb_files());
+    files.into_iter().collect()
+}
 
 #[test]
 fn p1_hook_and_mcp_crates_link_only_the_scanned_crates() { // R-C8; drift 9
@@ -85,19 +121,22 @@ fn p1_hook_and_mcp_crates_link_only_the_scanned_crates() { // R-C8; drift 9
 }
 
 #[test]
-fn p2_no_hook_or_mcp_source_names_the_definition_read() { // R-C8; R§10 row; R§18 item 20
+fn p2_no_hook_verb_or_mcp_source_names_the_definition_read() { // R-C8; R§10 row; R§18 item 20; review F3
     let brace_up = regex::Regex::new(r"zygo_workspace::\{[^}]*\bup\b").unwrap();
-    let mut files: Vec<PathBuf> =
-        SCANNED.iter().flat_map(|c| rs_files(&ws_root().join("crates").join(c).join("src"))).collect();
-    files.extend(CMD_FILES.iter().map(|f| ws_root().join(f)));
-    assert!(files.len() >= 140, "{} files", files.len());
-    assert!(files.iter().any(|f| f.ends_with("crates/zygo-hooks/src/statusline/data.rs")));
+    let reads = regex::Regex::new(READ_WORDS).unwrap();
+    let files = hook_files();
+    assert!(files.len() >= 160, "{} files", files.len());
+    for f in ["crates/zygo-hooks/src/statusline/data.rs", "crates/zygo/src/cmd/verbs.rs", "crates/zygo/src/cmd/status.rs"] {
+        assert!(files.iter().any(|p| p.ends_with(f)), "{f}");
+    }
     for f in &files {
         let text = read(f);
         for (i, line) in text.lines().enumerate() {
+            let l = VERB_ALLOWED.iter().fold(line.to_string(), |l, a| l.replace(a, ""));
             for n in FORBIDDEN {
-                assert!(!line.contains(n), "{}:{}: names {n}", f.display(), i + 1);
+                assert!(!l.contains(n), "{}:{}: names {n}", f.display(), i + 1);
             }
+            assert!(!reads.is_match(&l), "{}:{}: names a repo_def read: {line}", f.display(), i + 1);
         }
         assert!(!brace_up.is_match(&text), "{}: imports zygo_workspace::up", f.display());
     }
@@ -107,20 +146,15 @@ fn p2_no_hook_or_mcp_source_names_the_definition_read() { // R-C8; R§10 row; R�
 fn p3_zygo_workspace_reads_the_definition_only_in_up_choose() { // R-C8; R§10 `zygo up` rows; drift 8
     let src = ws_root().join("crates/zygo-workspace/src");
     let rel = |f: &Path| f.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
-    let readers: Vec<String> = rs_files(&src)
-        .iter()
-        .filter(|f| {
-            let t = read(f);
-            t.contains("check_default") || t.contains("check_pinned")
-        })
-        .map(|f| rel(f))
-        .collect();
+    // Each public read entry of `repo_def` (review F5: `read_default` and `read_at` too), by whole word.
+    let reads = regex::Regex::new(READ_WORDS).unwrap();
+    let readers: Vec<String> = rs_files(&src).iter().filter(|f| reads.is_match(&read(f))).map(|f| rel(f)).collect();
     assert_eq!(readers, ["up.rs"]);
     let up = read(&src.join("up.rs"));
     let lines: Vec<&str> = up.lines().collect();
     let choose = body(&lines, "fn choose(");
     for (i, l) in lines.iter().enumerate() {
-        if l.contains("check_default") || l.contains("check_pinned") {
+        if reads.is_match(l) {
             assert!(l.starts_with("use zygo_config::repo_def::") || choose.contains(&i), "up.rs:{}: {l}", i + 1);
         }
     }
@@ -162,8 +196,10 @@ fn p4_load_reads_no_definition_and_repo_def_is_only_in_with_definition() { // R�
         );
     }
     assert!(at.iter().any(|i| with.contains(i)));
-    // No other file of zygo-config outside `repo_def/` reaches the read.
+    // No other file of zygo-config outside `repo_def/` reaches the read, by name or by a renamed re-export
+    // (review F4: `pub use repo_def::{read_default as …}` hid the read from p2).
     let src = ws_root().join("crates/zygo-config/src");
+    let reads = regex::Regex::new(READ_WORDS).unwrap();
     let mut named = Vec::new();
     for f in rs_files(&src) {
         let r = f.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
@@ -171,25 +207,51 @@ fn p4_load_reads_no_definition_and_repo_def_is_only_in_with_definition() { // R�
             continue;
         }
         let t = read(&f);
-        for n in ["check_default", "check_pinned", "read_default(", "read_at("] {
-            assert!(!t.contains(n), "{r}: names {n}");
+        for (i, l) in t.lines().enumerate() {
+            assert!(!reads.is_match(l), "{r}:{}: names a repo_def read: {l}", i + 1);
         }
         if t.contains("repo_def") {
             named.push(r);
         }
     }
     assert_eq!(named, ["layers.rs", "lib.rs"]);
+    // The crate root declares the module and re-exports nothing of it: a hook reaches the read only by the path
+    // `repo_def`, which p2 scans for.
+    let lib = read(&src.join("lib.rs"));
+    let at_root: Vec<&str> = lib.lines().filter(|l| l.contains("repo_def")).collect();
+    assert_eq!(at_root, ["pub mod repo_def;"]);
+}
+
+#[test]
+fn p5_no_hook_source_names_an_absolute_git() { // R§18 item 20; review F7
+    // `bin/git` logs only a `git` found on `PATH`; an absolute path to git would run git unlogged.
+    let abs = regex::Regex::new(r#""/[^"\s]*/git(\.exe)?"|Command::new\(\s*"/[^"]*git"#).unwrap();
+    let mut files = hook_files();
+    for c in ["zygo-config", "zygo-workspace"] {
+        files.extend(rs_files(&ws_root().join("crates").join(c).join("src")));
+    }
+    assert!(files.len() >= 190, "{} files", files.len());
+    for f in &files {
+        for (i, line) in read(f).lines().enumerate() {
+            assert!(!abs.is_match(line), "{}:{}: names an absolute git: {line}", f.display(), i + 1);
+        }
+    }
+    // Control: the pattern sees both forms.
+    assert!(abs.is_match(r#"let c = Command::new("/usr/bin/git");"#));
+    assert!(abs.is_match(r#"const GIT: &str = "/opt/homebrew/bin/git";"#));
+    assert!(!abs.is_match(r#"Command::new("git")"#) && !abs.is_match(r#"p.join("/.git")"#));
 }
 
 #[cfg(unix)]
 mod unix {
+    use std::collections::BTreeSet;
     use std::ffi::OsStr;
     use std::path::{Path, PathBuf};
     use std::process::{Output, Stdio};
     use std::time::{Duration, Instant};
 
     use serde_json::{json, Value};
-    use zygo_config::repo_def::{approve_workspace_in, check_default, Definition, GitRunner, Use};
+    use zygo_config::repo_def::{approve_workspace_in, check_default, Definition, GitRunner, Use, TRAP_ENV};
     use zygo_core::session_dir::SessionDir;
     use zygo_core::session_view::{Member, SessionView, ViewWorkspace};
     use zygo_core::Agent;
@@ -198,11 +260,12 @@ mod unix {
     use zygo_workspace::state::{MemberRecord, MemberState, Pane, PaneKind};
 
     use crate::common::feed_stdin;
-    use crate::common::workspace::{ready_exe, Guarded, Harness, WS_ID};
+    use crate::common::workspace::{ready_exe, wait_child, Guarded, Harness, WS_ID};
 
     const RUST: &str = "overrides = { code = \"claude-haiku-5-5\" }\ndisabled = [\"design\"]\n";
-    /// The built-in marketplace off (as `workspace_definition.rs:142`): no run reaches the network.
-    const NO_MARKETPLACE: &str = "[[marketplace]]\nname = \"act101\"\nref = \"\"\n";
+    /// The user config: the built-in marketplace off (as `workspace_definition.rs:142`), so no run reaches the
+    /// network, and the `workspace_down` MCP tool on (review F6; `crates/zygo-mcp/src/tools/workspace_down.rs:39`).
+    const USER_CONFIG: &str = "[features]\nworkspace_tool = true\n\n[[marketplace]]\nname = \"act101\"\nref = \"\"\n";
     const KEY: &str = "kaaaaaaaa";
     const SID: &str = "01JTESTSESSIONAAAAAAAAAAAA";
     const OC_SID: &str = "ses_placeholder0001";
@@ -210,11 +273,52 @@ mod unix {
     const LOAD_READ: &str = "show origin/main:.zygo.toml";
     /// The R§6.1 step 2 lookup of the definition read (`repo_def/read.rs:80`).
     const DEFAULT_LOOKUP: &str = "symbolic-ref --quiet refs/remotes/origin/HEAD";
+    /// The prefix of a `bin/git` log line that holds one stdin line of a `cat-file --batch*` call.
+    const STDIN: &str = "stdin: ";
+    /// The stored result that the result tools read (review F6): JSON, so `result_tree` has an outline.
+    const RESULT: &str = "{\"alpha\": 1,\n\"beta\": [1, 2]}\n";
 
-    /// A `bin/git` line of a read of `.zygo/` (drift 5); the `load` read of `.zygo.toml` is not one.
-    fn reads_definition(line: &str) -> bool {
-        line.contains(DEFAULT_LOOKUP)
-            || line.split(' ').any(|a| a == ".zygo" || a.starts_with(".zygo/") || a.contains(":.zygo/") || a.ends_with(":.zygo"))
+    /// Holds `.zygo` once each `.zygo.toml` is taken out (`./.zygo/…`, `-C …/.zygo`, `HEAD:.zygo/…`).
+    fn names_zygo(s: &str) -> bool {
+        s.replace(".zygo.toml", "").contains(".zygo")
+    }
+
+    /// A `bin/git` line of a read of `.zygo/` (drift 5; review F2). `defs` are the object ids of the root tree and of
+    /// each `.zygo` object of the fixture ([`def_oids`]). A call line: the default-branch lookup; an argument that
+    /// [`names_zygo`]; an `ls-tree` with `-r` and no pathspec (the whole tree); `cat-file --batch-all-objects`. A
+    /// `cat-file --batch*` call takes its objects on stdin, so each of its stdin lines (`stdin: <object>`; with
+    /// `--batch-command`, the last word) is judged: one that [`names_zygo`], one that names the root tree (`^{tree}`,
+    /// an empty path or a path with a `.` or `..` part), or an id in `defs`. The `load` read of `.zygo.toml` is not one.
+    fn reads_definition(line: &str, defs: &BTreeSet<String>) -> bool {
+        if let Some(x) = line.strip_prefix(STDIN) {
+            let obj = x.split_whitespace().last().unwrap_or_default();
+            let root_path = obj
+                .split_once(':')
+                .is_some_and(|(_, p)| p.is_empty() || p.starts_with('/') || p.split('/').any(|c| c == "." || c == ".."));
+            return names_zygo(x) || obj.contains("^{tree}") || root_path || defs.contains(obj);
+        }
+        let args: Vec<&str> = line.split(' ').collect();
+        let all_objects = args.contains(&"cat-file") && args.contains(&"--batch-all-objects");
+        let whole_tree = match args.iter().position(|a| *a == "ls-tree") {
+            Some(i) => {
+                let rest = &args[i + 1..];
+                let opts_end = rest.iter().position(|a| *a == "--").unwrap_or(rest.len());
+                let recursive = rest[..opts_end].iter().any(|a| *a == "-r" || (a.starts_with('-') && !a.starts_with("--") && a.contains('r')));
+                let positional = rest[..opts_end].iter().filter(|a| !a.starts_with('-')).count() + rest.len().saturating_sub(opts_end + 1);
+                recursive && positional <= 1
+            }
+            None => false,
+        };
+        line.contains(DEFAULT_LOOKUP) || all_objects || whole_tree || args.iter().any(|a| names_zygo(a))
+    }
+
+    /// The object ids of the root tree of `app`'s HEAD and of `.zygo` and each tree and blob under it: the ids by
+    /// which a `cat-file --batch` stdin line can reach `.zygo/` with no path in it.
+    fn def_oids(app: &Path) -> BTreeSet<String> {
+        let mut s: BTreeSet<String> =
+            git(app, &["ls-tree", "-r", "-t", "--format=%(objectname)", "HEAD", "--", ".zygo"]).lines().map(String::from).collect();
+        s.insert(git(app, &["rev-parse", "HEAD^{tree}"]));
+        s
     }
 
     /// A test-side git call: no user or system config, no templates, no signing, a fixed identity; asserts success;
@@ -271,36 +375,118 @@ mod unix {
         }
     }
 
-    /// `bin/git`: appends each call (`$*`) to `<root>/git.log`, then runs the real git with no user or system config and
-    /// no templates (as `workspace_definition.rs:578`).
+    /// `bin/git`: appends each call (`$*`) to `<root>/git.log`, and the stdin of a `cat-file --batch*` call to
+    /// `<root>/git.stdin` (review F2; `tee` by its full path, since a run's `PATH` is `bin`), then runs the real git
+    /// with no user or system config and no templates (as `workspace_definition.rs:578`).
     fn fake_git(h: &Harness) {
         use std::os::unix::fs::PermissionsExt;
         let real = which::which("git").unwrap();
+        let tee = which::which("tee").unwrap();
+        let env = "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TEMPLATE_DIR=";
         let body = format!(
-            "#!/bin/sh\necho \"$*\" >> '{}'\nGIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TEMPLATE_DIR= \
-             exec '{}' \"$@\"\n",
-            h.root().join("git.log").display(),
-            real.display()
+            "#!/bin/sh\necho \"$*\" >> '{log}'\ncase \" $* \" in\n  *\" cat-file \"*--batch*) \
+             '{tee}' -a '{stdin}' | {env} '{real}' \"$@\"; exit $? ;;\nesac\n{env} exec '{real}' \"$@\"\n",
+            log = h.root().join("git.log").display(),
+            stdin = h.root().join("git.stdin").display(),
+            real = real.display(),
+            tee = tee.display(),
         );
         let p = h.bin.join("git");
         std::fs::write(&p, body).unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
         ready_exe(&p);
         let _ = std::fs::remove_file(h.root().join("git.log"));
+        let _ = std::fs::remove_file(h.root().join("git.stdin"));
+    }
+
+    /// The working-tree trap (review F1, Linux): an inotify watch with `IN_OPEN | IN_ACCESS` on a folder and on each
+    /// folder and file under it, read non-blocking. The kernel queues an event when a process opens or reads a
+    /// watched path, so the events of a child that has exited are all in the queue: [`Watch::drain`] needs no wait.
+    #[cfg(target_os = "linux")]
+    pub(super) struct Watch {
+        fd: libc::c_int,
+        paths: Vec<(libc::c_int, PathBuf)>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Watch {
+        pub(super) fn new(dir: &Path) -> Watch {
+            use std::os::unix::ffi::OsStrExt;
+            // SAFETY: plain integer flags; the result is checked.
+            let fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
+            assert!(fd >= 0, "inotify_init1: {}", std::io::Error::last_os_error());
+            let mut w = Watch { fd, paths: Vec::new() };
+            // The walk ends before the first watch: its own folder reads are not events.
+            let all: Vec<PathBuf> = walkdir::WalkDir::new(dir).into_iter().map(|e| e.unwrap().into_path()).collect();
+            for p in all {
+                let c = std::ffi::CString::new(p.as_os_str().as_bytes()).unwrap();
+                // SAFETY: `fd` is the open inotify descriptor; `c` is a NUL-terminated path that lives for the call.
+                let wd = unsafe { libc::inotify_add_watch(fd, c.as_ptr(), libc::IN_OPEN | libc::IN_ACCESS) };
+                assert!(wd >= 0, "inotify_add_watch {}: {}", p.display(), std::io::Error::last_os_error());
+                w.paths.push((wd, p));
+            }
+            assert!(w.paths.len() >= 2, "{dir:?}: {:?}", w.paths);
+            w
+        }
+
+        /// Each queued event as `<watched path>[/<name>] <mask>`; the queue is empty after the call.
+        pub(super) fn drain(&self) -> Vec<String> {
+            let mut out = Vec::new();
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                // SAFETY: `buf` is a writable buffer of `buf.len()` bytes; `fd` is the open inotify descriptor.
+                let n = unsafe { libc::read(self.fd, buf.as_mut_ptr().cast(), buf.len()) };
+                if n < 0 {
+                    let e = std::io::Error::last_os_error();
+                    assert_eq!(e.kind(), std::io::ErrorKind::WouldBlock, "inotify read: {e}");
+                    return out;
+                }
+                let n = n as usize;
+                assert!(n > 0, "inotify read: end of file");
+                let mut i = 0;
+                // `struct inotify_event`: wd i32, mask u32, cookie u32, len u32, then `len` bytes of NUL-padded name.
+                while i + 16 <= n {
+                    let word = |k: usize| <[u8; 4]>::try_from(&buf[i + k..i + k + 4]).unwrap();
+                    let wd = i32::from_ne_bytes(word(0));
+                    let mask = u32::from_ne_bytes(word(4));
+                    let len = u32::from_ne_bytes(word(12)) as usize;
+                    let name = String::from_utf8_lossy(&buf[i + 16..i + 16 + len]).trim_end_matches('\0').to_string();
+                    let path = self.paths.iter().find(|(w, _)| *w == wd).map_or("?".into(), |(_, p)| p.display().to_string());
+                    out.push(if name.is_empty() { format!("{path} {mask:#x}") } else { format!("{path}/{name} {mask:#x}") });
+                    i += 16 + len;
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for Watch {
+        fn drop(&mut self) {
+            // SAFETY: `fd` is the open inotify descriptor this value owns; it is closed once.
+            unsafe { libc::close(self.fd) };
+        }
     }
 
     struct Fx {
         h: Harness,
         app: PathBuf,
         head: String,
+        /// The file of the `repo_def` tripwire (`TRAP_ENV`) of each run.
+        trap: PathBuf,
+        /// [`def_oids`] of `app`.
+        defs: BTreeSet<String>,
+        /// The watch of the working-tree `.zygo/` of a fixture with a definition.
+        #[cfg(target_os = "linux")]
+        watch: Option<Watch>,
     }
 
-    /// A harness with `NO_MARKETPLACE` as the user config, `bin/git` from [`fake_git`], and `app` with `.zygo.toml` =
+    /// A harness with `USER_CONFIG` as the user config, `bin/git` from [`fake_git`], and `app` with `.zygo.toml` =
     /// `version = 1` and `README`. With `definition`, also `.zygo/workspace.toml` = `version = 1` and
-    /// `.zygo/profiles/rust.toml` = `RUST`, approved for `app` (a definition that changes `up` and a `rust` launch).
+    /// `.zygo/profiles/rust.toml` = `RUST`, approved for `app` (a definition that changes `up` and a `rust` launch),
+    /// and on Linux the watch of `app/.zygo`, set after the approval.
     fn fx(definition: bool) -> Fx {
         let h = Harness::no_tmux();
-        std::fs::write(h.root().join("config.toml"), NO_MARKETPLACE).unwrap();
+        std::fs::write(h.root().join("config.toml"), USER_CONFIG).unwrap();
         let mut files = vec![(".zygo.toml", "version = 1\n"), ("README", "app\n")];
         if definition {
             files.push((".zygo/workspace.toml", "version = 1\n"));
@@ -313,20 +499,60 @@ mod unix {
             let def = approve(&app, &h.paths.approvals_file, &LogGit(h.bin.join("git")));
             assert!(def.workspace.is_some() && def.profiles.contains_key("rust"), "{def:?}");
             let _ = std::fs::remove_file(h.root().join("git.log"));
+            let _ = std::fs::remove_file(h.root().join("git.stdin"));
         }
-        Fx { h, app, head }
+        let trap = h.root().join("trap.log");
+        let defs = def_oids(&app);
+        #[cfg(target_os = "linux")]
+        let watch = definition.then(|| Watch::new(&app.join(".zygo")));
+        Fx {
+            h,
+            app,
+            head,
+            trap,
+            defs,
+            #[cfg(target_os = "linux")]
+            watch,
+        }
     }
 
-    /// The `bin/git` lines since the last call, with the harness root as `<root>` and HEAD of `app` as `<head>`,
-    /// sorted; the log is removed.
+    /// The `bin/git` lines since the last call, each `cat-file --batch*` stdin line as `stdin: <line>`, with the
+    /// harness root as `<root>` and HEAD of `app` as `<head>`, sorted; the logs are removed.
     fn take_log(fx: &Fx) -> Vec<String> {
-        let p = fx.h.root().join("git.log");
-        let text = std::fs::read_to_string(&p).unwrap_or_default();
-        let _ = std::fs::remove_file(&p);
+        let take = |name: &str| {
+            let p = fx.h.root().join(name);
+            let text = std::fs::read_to_string(&p).unwrap_or_default();
+            let _ = std::fs::remove_file(&p);
+            text
+        };
         let root = fx.h.root().display().to_string();
-        let mut v: Vec<String> = text.lines().map(|l| l.replace(&root, "<root>").replace(&fx.head, "<head>")).collect();
+        let calls = take("git.log");
+        let stdin = take("git.stdin");
+        let mut v: Vec<String> = calls
+            .lines()
+            .map(str::to_string)
+            .chain(stdin.lines().map(|l| format!("{STDIN}{l}")))
+            .map(|l| l.replace(&root, "<root>").replace(&fx.head, "<head>"))
+            .collect();
         v.sort();
         v
+    }
+
+    /// The tripwire lines since the last call; the file is removed.
+    fn take_trap(fx: &Fx) -> Vec<String> {
+        let text = std::fs::read_to_string(&fx.trap).unwrap_or_default();
+        let _ = std::fs::remove_file(&fx.trap);
+        text.lines().map(str::to_string).collect()
+    }
+
+    /// The working-tree events since the last call (Linux, a fixture with a definition); else none.
+    fn take_events(fx: &Fx) -> Vec<String> {
+        #[cfg(target_os = "linux")]
+        if let Some(w) = &fx.watch {
+            return w.drain();
+        }
+        let _ = fx;
+        Vec::new()
     }
 
     /// `<root>/<name>`: `view.json` of session `SID` for `agent`, main and effective role `lead`, profile `rust`,
@@ -377,18 +603,54 @@ mod unix {
         sd
     }
 
-    /// `zygo <args>` in `app` with `ZYGO_SESSION_DIR` = `sd`, `COLUMNS` = 200 and `NO_COLOR` = 1, `stdin` fed and
-    /// closed; asserts exit 0 (C6; `zygo mcp` at the end of its input). Returns stdout and the run's `bin/git` lines.
-    fn run(fx: &Fx, sd: &SessionDir, args: &[&str], stdin: &[u8]) -> (String, Vec<String>) {
-        let extra: [(&str, &OsStr); 3] =
-            [("ZYGO_SESSION_DIR", sd.root.as_os_str()), ("COLUMNS", OsStr::new("200")), ("NO_COLOR", OsStr::new("1"))];
+    /// The end of one `zygo` run: exit code, stdout, stderr, `bin/git` lines, tripwire lines, working-tree events.
+    struct Out {
+        code: Option<i32>,
+        stdout: String,
+        stderr: String,
+        git: Vec<String>,
+        trap: Vec<String>,
+        events: Vec<String>,
+    }
+
+    /// `zygo <args>` in `app` with `ZYGO_SESSION_DIR` = `sd`, `COLUMNS` = 200, `NO_COLOR` = 1 and the tripwire file,
+    /// `stdin` fed and closed.
+    fn run_raw(fx: &Fx, sd: &SessionDir, args: &[&str], stdin: &[u8]) -> Out {
+        let extra: [(&str, &OsStr); 4] = [
+            ("ZYGO_SESSION_DIR", sd.root.as_os_str()),
+            ("COLUMNS", OsStr::new("200")),
+            ("NO_COLOR", OsStr::new("1")),
+            (TRAP_ENV, fx.trap.as_os_str()),
+        ];
         let mut c = fx.h.zygo(args, &extra);
         c.current_dir(&fx.app).stdin(Stdio::piped());
         let mut g = Guarded::spawn(c);
         feed_stdin(g.stdin().unwrap(), stdin);
         let o: Output = g.output(&args.join(" "));
-        assert_eq!(o.status.code(), Some(0), "zygo {}: {}", args.join(" "), String::from_utf8_lossy(&o.stderr));
-        (String::from_utf8_lossy(&o.stdout).into_owned(), take_log(fx))
+        Out {
+            code: o.status.code(),
+            stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+            git: take_log(fx),
+            trap: take_trap(fx),
+            events: take_events(fx),
+        }
+    }
+
+    /// [`run_raw`] that asserts exit 0 (C6; `zygo mcp` at the end of its input), no tripwire line and no working-tree
+    /// event; a message names the run as `label`, else as its arguments. Returns stdout and the run's `bin/git` lines.
+    fn run_as(fx: &Fx, sd: &SessionDir, label: Option<&str>, args: &[&str], stdin: &[u8]) -> (String, Vec<String>) {
+        let o = run_raw(fx, sd, args, stdin);
+        let what = label.map_or_else(|| args.join(" "), str::to_string);
+        assert_eq!(o.code, Some(0), "zygo {what}: {}", o.stderr);
+        assert!(o.trap.is_empty(), "zygo {what}: the definition read ran: {:?}", o.trap);
+        assert!(o.events.is_empty(), "zygo {what}: the working-tree .zygo/ was opened or read: {:?}", o.events);
+        (o.stdout, o.git)
+    }
+
+    /// [`run_as`] with the arguments as the name of the run.
+    fn run(fx: &Fx, sd: &SessionDir, args: &[&str], stdin: &[u8]) -> (String, Vec<String>) {
+        run_as(fx, sd, None, args, stdin)
     }
 
     /// The recorded Claude Code input `file` with `"/repo` (its `cwd` and tool paths) moved to `app`.
@@ -415,7 +677,8 @@ mod unix {
     /// One run: (label, stdout, git lines).
     type Ran = (String, String, Vec<String>);
 
-    /// The Claude Code registrations of every launch (`claude_code.rs:462-541`).
+    /// The Claude Code registrations of every launch (`claude_code.rs:462-541`), with each tool group of `trim` and
+    /// `role-guard` (review F6).
     fn cc_main(fx: &Fx) -> Vec<Row> {
         let app = fx.app.display().to_string();
         let hud = json!({"session_id": "00000000-0000-4000-8000-000000000001", "cwd": app,
@@ -432,11 +695,16 @@ mod unix {
         ];
         for (args, file) in [
             ("hook role-guard", "PreToolUse-Edit-main.json"),
+            ("hook role-guard", "PreToolUse-Write-main.json"),
+            ("hook role-guard", "PreToolUse-NotebookEdit-main.json"),
             ("hook guard", "PreToolUse-Edit-main.json"),
             ("hook guard", "PreToolUse-Bash-main.json"),
             ("hook guard", "PreToolUse-Read-main.json"),
             ("hook trim", "PostToolUse-Bash-main.json"),
             ("hook trim", "PostToolUse-Read-main.json"),
+            ("hook trim", "PostToolUse-Grep-main.json"),
+            ("hook trim", "PostToolUse-Glob-main.json"),
+            ("hook trim", "PostToolUse-WebFetch-main.json"),
             ("hook work", "PostToolUse-Bash-sub.json"),
             ("hook work", "PostToolUseFailure-Read-main.json"),
             ("hook work", "SubagentStop-zygo-code-sub.json"),
@@ -448,6 +716,20 @@ mod unix {
             v.push((format!("{args} < {file}"), cc(fx, file)));
         }
         v.into_iter().map(|(label, stdin)| (label.clone(), label.split(" < ").next().unwrap().to_string(), stdin)).collect()
+    }
+
+    /// `zygo hook prompt` with the prompt `/zygo:<verb>` (`crates/zygo-hooks/src/prompt.rs:22`) for each verb of
+    /// `VERB_SPECS`, in order: each slash verb runs in the hook process (`cmd/mod.rs` `slash`; review F3).
+    fn verb_rows(fx: &Fx) -> Vec<Row> {
+        let base: Value = serde_json::from_slice(&cc(fx, "UserPromptSubmit-main.json")).unwrap();
+        zygo_core::verbs::VERB_SPECS
+            .iter()
+            .map(|s| {
+                let mut v = base.clone();
+                v["prompt"] = json!(format!("/zygo:{}", s.name));
+                (format!("hook prompt < /zygo:{}", s.name), "hook prompt".to_string(), v.to_string().into_bytes())
+            })
+            .collect()
     }
 
     /// The registrations that a member adds (`claude_code.rs:489-525`) and the other `workspace` events
@@ -469,24 +751,27 @@ mod unix {
         .collect()
     }
 
-    /// The `zygo hook` calls of the OpenCode plugin of a member (`opencode-plugin.js:23`, `:45-194`).
+    /// The `zygo hook` calls of the OpenCode plugin of a member (`opencode-plugin.js:23`, `:45-194`), with the
+    /// `session {sessionID}` call (`:86`) and the `task` branch's `pre-tool {tool_name: "Agent"}` (`:159`; review F6).
     fn oc_member() -> Vec<Row> {
         let s = |v: Value| v.to_string().into_bytes();
         vec![
-            ("hook guard --agent opencode", oc("tool.execute.before-bash.json")),
-            ("hook trim --agent opencode", oc("tool.execute.after-bash.json")),
-            ("hook work --agent opencode", oc("tool.execute.after-bash.json")),
-            ("hook session-start --agent opencode", oc("experimental.chat.system.transform.json")),
-            ("hook session-start --agent opencode --event subagent", oc("experimental.chat.system.transform.json")),
-            ("hook pre-compact --agent opencode", oc("experimental.session.compacting.json")),
-            ("hook workspace --agent opencode --event session", s(json!({}))),
-            ("hook workspace --agent opencode --event prompt", s(json!({"sessionID": OC_SID}))),
-            ("hook workspace --agent opencode --event pre-tool", s(json!({"sessionID": OC_SID, "tool_name": "bash"}))),
-            ("hook workspace --agent opencode --event tool-end", s(json!({"sessionID": OC_SID}))),
-            ("hook workspace --agent opencode --event stop", s(json!({"sessionID": OC_SID}))),
+            ("", "hook guard --agent opencode", oc("tool.execute.before-bash.json")),
+            ("", "hook trim --agent opencode", oc("tool.execute.after-bash.json")),
+            ("", "hook work --agent opencode", oc("tool.execute.after-bash.json")),
+            ("", "hook session-start --agent opencode", oc("experimental.chat.system.transform.json")),
+            ("", "hook session-start --agent opencode --event subagent", oc("experimental.chat.system.transform.json")),
+            ("", "hook pre-compact --agent opencode", oc("experimental.session.compacting.json")),
+            ("", "hook workspace --agent opencode --event session", s(json!({}))),
+            (" < {sessionID}", "hook workspace --agent opencode --event session", s(json!({"sessionID": OC_SID}))),
+            ("", "hook workspace --agent opencode --event prompt", s(json!({"sessionID": OC_SID}))),
+            ("", "hook workspace --agent opencode --event pre-tool", s(json!({"sessionID": OC_SID, "tool_name": "bash"}))),
+            (" < Agent", "hook workspace --agent opencode --event pre-tool", s(json!({"sessionID": OC_SID, "tool_name": "Agent"}))),
+            ("", "hook workspace --agent opencode --event tool-end", s(json!({"sessionID": OC_SID}))),
+            ("", "hook workspace --agent opencode --event stop", s(json!({"sessionID": OC_SID}))),
         ]
         .into_iter()
-        .map(|(args, stdin)| (args.to_string(), args.to_string(), stdin))
+        .map(|(tag, args, stdin)| (format!("{args}{tag}"), args.to_string(), stdin))
         .collect()
     }
 
@@ -495,23 +780,34 @@ mod unix {
         rows.into_iter()
             .map(|(label, args, stdin)| {
                 let a: Vec<&str> = args.split(' ').collect();
-                let (out, log) = run(fx, sd, &a, &stdin);
+                let (out, log) = run_as(fx, sd, Some(&label), &a, &stdin);
                 (label, out, log)
             })
             .collect()
     }
 
-    /// `calls` on a fixture with an approved `.zygo/` and on one without: the same labels; in the first, no line
-    /// reads `.zygo/`; per label the same git lines in both, except for the status line (drift 7). Returns the first.
+    /// `calls` on a fixture with an approved `.zygo/` and on one without: the same labels; in both, no line reads
+    /// `.zygo/`; per label the same git lines in both, except for the status line (drift 7). Each run of both already
+    /// had no tripwire line and no working-tree event ([`run`]); after all runs of a fixture, a detached child left
+    /// none either. Returns the first.
     fn compare(calls: &dyn Fn(&Fx) -> Vec<Ran>) -> Vec<Ran> {
-        let with = calls(&fx(true));
-        let without = calls(&fx(false));
+        let run_all = |definition: bool| {
+            let fx = fx(definition);
+            let ran = calls(&fx);
+            assert_eq!(take_trap(&fx), Vec::<String>::new(), "after the runs, definition {definition}");
+            assert_eq!(take_events(&fx), Vec::<String>::new(), "after the runs, definition {definition}");
+            for (label, _, log) in &ran {
+                for l in log {
+                    assert!(!reads_definition(l, &fx.defs), "{label}: {l}");
+                }
+            }
+            ran
+        };
+        let with = run_all(true);
+        let without = run_all(false);
         let labels = |r: &[Ran]| r.iter().map(|c| c.0.clone()).collect::<Vec<_>>();
         assert_eq!(labels(&with), labels(&without));
         for ((label, _, w), (_, _, wo)) in with.iter().zip(&without) {
-            for l in w {
-                assert!(!reads_definition(l), "{label}: {l}");
-            }
             if !label.starts_with("hook statusline") {
                 assert_eq!(w, wo, "{label}: other git calls with .zygo/");
             }
@@ -519,9 +815,14 @@ mod unix {
         with
     }
 
+    /// The run `label`.
+    fn ran_of<'a>(ran: &'a [Ran], label: &str) -> &'a Ran {
+        ran.iter().find(|c| c.0 == label).unwrap_or_else(|| panic!("no run {label}"))
+    }
+
     /// The git lines of the run `label`.
     fn log_of<'a>(ran: &'a [Ran], label: &str) -> &'a [String] {
-        &ran.iter().find(|c| c.0 == label).unwrap_or_else(|| panic!("no run {label}")).2
+        &ran_of(ran, label).2
     }
 
     /// Runs `bin/git` of a harness as `git -C <top> <args>`, so [`fake_git`] logs the call.
@@ -541,7 +842,7 @@ mod unix {
     }
 
     #[test]
-    fn h0_the_log_predicate_sees_a_definition_read() { // R§18 item 20: the control of h1-h4
+    fn h0_the_log_predicate_and_the_tripwire_see_a_definition_read() { // R§18 item 20: the control of h1-h4
         let fx = fx(true);
         match check_default(&fx.app, &ws_id(&fx.app), &fx.h.paths.approvals_file, &LogGit(fx.h.bin.join("git"))) {
             Use::Approved { def, .. } => assert!(def.profiles.contains_key("rust")),
@@ -550,21 +851,96 @@ mod unix {
         let lines = take_log(&fx);
         assert!(lines.iter().any(|l| l.contains(DEFAULT_LOOKUP)), "{lines:?}");
         assert!(lines.iter().any(|l| l.contains("ls-tree -z --long --full-tree") && l.ends_with(" -- .zygo")), "{lines:?}");
-        assert!(lines.iter().filter(|l| reads_definition(l)).count() >= 2, "{lines:?}");
-        assert!(!reads_definition("-C <root>/app show origin/main:.zygo.toml"));
-        assert!(!reads_definition("-C <root>/app ls-tree --name-only origin/main -- .zygo.toml"));
-        assert!(!reads_definition("-c core.fsmonitor=false -C <root>/app symbolic-ref --short -q HEAD"));
+        let defs = &fx.defs;
+        assert!(lines.iter().filter(|l| reads_definition(l, defs)).count() >= 2, "{lines:?}");
+        // Review F2: the forms that the first predicate missed, and the forms that are not a read.
+        let root_tree = git(&fx.app, &["rev-parse", "HEAD^{tree}"]);
+        let rust_blob = git(&fx.app, &["rev-parse", "HEAD:.zygo/profiles/rust.toml"]);
+        assert!(defs.contains(&root_tree) && defs.contains(&rust_blob) && defs.len() == 5, "{defs:?}");
+        for l in [
+            "-C <root>/app show origin/main:./.zygo/profiles/rust.toml",
+            "-C <root>/app/.zygo log -1",
+            "-C <root>/app ls-tree -r HEAD",
+            "-C <root>/app ls-tree -rz --name-only HEAD",
+            "-C <root>/app cat-file --batch --batch-all-objects",
+            "stdin: <head>:.zygo/profiles/rust.toml",
+            "stdin: <head>^{tree}",
+            "stdin: <head>:",
+            "stdin: <head>:docs/..",
+            "stdin: contents <head>:./.zygo",
+            &format!("stdin: {root_tree}"),
+            &format!("stdin: {rust_blob}"),
+        ] {
+            assert!(reads_definition(l, defs), "{l}");
+        }
+        for l in [
+            "-C <root>/app show origin/main:.zygo.toml",
+            "-C <root>/app ls-tree --name-only origin/main -- .zygo.toml",
+            "-c core.fsmonitor=false -C <root>/app symbolic-ref --short -q HEAD",
+            "-C <root>/app ls-tree -r HEAD -- src",
+            "-C <root>/app ls-tree HEAD",
+            "-c core.fsmonitor=false -C <root>/app cat-file --batch",
+            "stdin: <head>^{commit}",
+            "stdin: <head>:docs/decisions",
+        ] {
+            assert!(!reads_definition(l, defs), "{l}");
+        }
+        // `bin/git` logs the stdin of a `cat-file --batch` call: an object id with no path in it is seen.
+        let mut c = std::process::Command::new(fx.h.bin.join("git"))
+            .arg("-C")
+            .arg(&fx.app)
+            .args(["cat-file", "--batch"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        feed_stdin(c.stdin.take().unwrap(), format!("{rust_blob}\n").as_bytes());
+        assert!(wait_child(&mut c, "bin/git cat-file --batch").success());
+        let lines = take_log(&fx);
+        assert!(lines.contains(&format!("{STDIN}{rust_blob}")), "{lines:?}");
+        assert_eq!(lines.iter().filter(|l| reads_definition(l, defs)).count(), 1, "{lines:?}");
+        // The tripwire: `zygo doctor` reads the definition (`cmd/doctor.rs:472`) in a child, through `bin/git`.
+        let sd = session(&fx, "d", Agent::ClaudeCode, false);
+        let o = run_raw(&fx, &sd, &["doctor"], b"");
+        for entry in ["repo_def:check_default", "repo_def:read_default", "repo_def:SystemGit::git"] {
+            assert!(o.trap.iter().any(|l| l == entry), "{entry}: {:?}\n{}", o.trap, o.stderr);
+        }
+        assert!(o.git.iter().any(|l| reads_definition(l, &fx.defs)), "{:?}", o.git);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn h5_the_working_tree_trap_sees_an_open_of_zygo() { // review F1: the control of the watch in h1-h4
+        let fx = fx(true);
+        assert_eq!(take_events(&fx), Vec::<String>::new());
+        assert_eq!(std::fs::read_to_string(fx.app.join(".zygo/profiles/rust.toml")).unwrap(), RUST);
+        let ev = take_events(&fx);
+        assert!(ev.iter().any(|e| e.contains(".zygo/profiles/rust.toml")), "{ev:?}");
+        assert_eq!(take_events(&fx), Vec::<String>::new());
+        // A listing of the folder is an open of it too.
+        let _ = std::fs::read_dir(fx.app.join(".zygo")).unwrap().count();
+        assert!(!take_events(&fx).is_empty());
     }
 
     #[test]
-    fn h1_claude_code_hooks_of_a_main_session_read_no_definition() { // R-C8; R§10 row; R§18 item 20; review focus 38
+    fn h1_claude_code_hooks_and_slash_verbs_of_a_main_session_read_no_definition() { // R-C8; R§10 row; R§18 item 20; review focus 38, F3
         let ran = compare(&|fx| {
             let sd = session(fx, "s", Agent::ClaudeCode, false);
-            run_rows(fx, &sd, cc_main(fx))
+            let mut rows = cc_main(fx);
+            rows.extend(verb_rows(fx));
+            run_rows(fx, &sd, rows)
         });
-        assert_eq!(ran.len(), 17);
+        assert_eq!(ran.len(), 22 + 19);
         // Control: the hook's `load` ran git through `bin/git`, so a definition read would be in the log.
         assert!(log_of(&ran, "hook guard < PreToolUse-Bash-main.json").iter().any(|l| l.contains(LOAD_READ)));
+        // Control: each verb ran and replied (the prompt hook blocks the line with the verb's reply).
+        for s in zygo_core::verbs::VERB_SPECS {
+            let out = &ran_of(&ran, &format!("hook prompt < /zygo:{}", s.name)).1;
+            let v: Value = serde_json::from_str(out).unwrap_or_else(|e| panic!("/zygo:{}: {e}: {out}", s.name));
+            assert_eq!(v["decision"], "block", "/zygo:{}: {out}", s.name);
+            assert!(!out.contains("unknown verb"), "/zygo:{}: {out}", s.name);
+        }
     }
 
     #[test]
@@ -578,19 +954,19 @@ mod unix {
             assert!(sd.activity_json().is_file());
             ran
         });
-        assert_eq!(ran.len(), 26);
+        assert_eq!(ran.len(), 22 + 9);
         assert!(log_of(&ran, "hook guard < PreToolUse-Bash-main.json").iter().any(|l| l.contains(LOAD_READ)));
     }
 
     #[test]
-    fn h3_opencode_plugin_calls_read_no_definition() { // R-C8; R§10 row; R§18 item 20; review focus 38
+    fn h3_opencode_plugin_calls_read_no_definition() { // R-C8; R§10 row; R§18 item 20; review focus 38, F6
         let ran = compare(&|fx| {
             let sd = session(fx, "o", Agent::OpenCode, true);
             let ran = run_rows(fx, &sd, oc_member());
             assert!(sd.activity_json().is_file());
             ran
         });
-        assert_eq!(ran.len(), 11);
+        assert_eq!(ran.len(), 13);
         assert!(log_of(&ran, "hook guard --agent opencode").iter().any(|l| l.contains(LOAD_READ)));
     }
 
@@ -599,24 +975,38 @@ mod unix {
         "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n",
     );
 
-    /// The arguments of a call of `tool`: a valid begin and a valid keep (so `work_verdict` reaches `session_config`,
-    /// `crates/zygo-mcp/src/tools/work.rs:43`, `:226-227`), else `{}`.
-    fn tool_args(fx: &Fx, tool: &str) -> Value {
+    /// The arguments of a call of `tool` that pass its argument checks (review F6): a valid begin and a valid keep
+    /// (so `work_verdict` reaches `session_config`, `crates/zygo-mcp/src/tools/work.rs:43`, `:226-227`), the stored
+    /// result `id` for the result tools, the member's own pane key as the `to` of `mail_send`
+    /// (`zygo-workspace/src/mail/names.rs:41`), else `{}`.
+    fn tool_args(fx: &Fx, tool: &str, id: &str) -> Value {
         match tool {
             "work_begin" => json!({"unit": "beads:bd-a1b2", "round": 1, "check": "cargo test -p demo", "files": ["src/"]}),
             "work_verdict" => json!({"unit": "beads:bd-a1b2", "round": 1, "verdict": "keep", "head": fx.head,
                 "base": fx.head, "dispositions": []}),
+            "result_view" | "result_tree" => json!({"id": id}),
+            "result_search" => json!({"id": id, "pattern": "beta"}),
+            "mail_send" => json!({"to": KEY, "subject": "s", "body": "b"}),
             _ => json!({}),
         }
     }
 
+    /// The text of the reply to the call with JSON-RPC id `id`; asserts it passed the argument checks (no JSON-RPC
+    /// error) and returns (text, isError).
+    fn reply_of(replies: &[Value], id: usize, tool: &str) -> (String, bool) {
+        let r = replies.iter().find(|r| r["id"] == id).unwrap_or_else(|| panic!("{tool}: no reply {id}: {replies:?}"));
+        assert!(r.get("error").is_none(), "{tool}: {r}");
+        (r["result"]["content"][0]["text"].as_str().unwrap().to_string(), r["result"]["isError"] == true)
+    }
+
     #[test]
-    fn h4_mcp_server_and_tools_read_no_definition() { // R-C8; R§10 row; R§18 item 20; review focus 38
+    fn h4_mcp_server_and_tools_read_no_definition() { // R-C8; R§10 row; R§18 item 20; review focus 38, F6
         let ran = compare(&|fx| {
             let mut out = Vec::new();
             for (name, agent, member) in [("s", "claude-code", false), ("m", "claude-code", true), ("o", "opencode", true)] {
                 let kind = if agent == "opencode" { Agent::OpenCode } else { Agent::ClaudeCode };
                 let sd = session(fx, name, kind, member);
+                let stored = zygo_results::Store::put(&sd.results(), "Bash", None, RESULT.as_bytes()).unwrap();
                 let args = ["mcp", "--agent", agent];
                 let list = format!("{INIT}{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}}\n");
                 let (stdout, log) = run(fx, &sd, &args, list.as_bytes());
@@ -631,23 +1021,45 @@ mod unix {
                 let mut calls = INIT.to_string();
                 for (i, t) in tools.iter().enumerate() {
                     let c = json!({"jsonrpc": "2.0", "id": 3 + i, "method": "tools/call",
-                        "params": {"name": t, "arguments": tool_args(fx, t)}});
+                        "params": {"name": t, "arguments": tool_args(fx, t, &stored.id)}});
                     calls.push_str(&format!("{c}\n"));
                 }
                 let (stdout, log) = run(fx, &sd, &args, calls.as_bytes());
                 assert_eq!(stdout.lines().count(), tools.len() + 1, "{stdout}");
+                // Control (review F6): each call passed its argument checks and the named tools ran their main path.
+                let replies: Vec<Value> = stdout.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+                for (i, t) in tools.iter().enumerate() {
+                    let (text, is_error) = reply_of(&replies, 3 + i, t);
+                    match t.as_str() {
+                        "result_view" => assert_eq!((text.as_str(), is_error), (RESULT.trim_end(), false), "{t}"),
+                        "result_search" | "result_tree" => assert!(!is_error && !text.is_empty(), "{t}: {text}"),
+                        "mail_send" => assert!(!is_error && text.contains("\"sent\":[{"), "{t}: {text}"),
+                        // `zygo down -- <name>` ran in a child and reached its tmux check (`zygo-workspace/src/down.rs:377`):
+                        // `bin/tmux` fails every call, so nothing stops.
+                        "workspace_down" => assert!(is_error && text.starts_with("zygo: cannot read the tmux version: "), "{t}: {text}"),
+                        _ => {}
+                    }
+                }
                 out.push((format!("mcp {agent} {name} calls"), stdout, log));
             }
             out
         });
         assert_eq!(ran.len(), 6);
         assert_eq!(ran[0].1, "compact,result_view,result_search,result_tree,work_begin,work_verdict");
-        for t in ["mail_send", "mail_read", "mail_list"] {
-            assert!(ran[2].1.split(',').any(|n| n == t), "{}", ran[2].1);
+        for i in [2, 4] {
+            for t in ["mail_send", "mail_read", "mail_list", "workspace_down"] {
+                assert!(ran[i].1.split(',').any(|n| n == t), "{}: {}", ran[i].0, ran[i].1);
+            }
         }
         // Control: each start's `load` (`tool.rs:60`, repo = the cwd) ran git through `bin/git`.
         for i in [0, 2, 4] {
             assert!(ran[i].2.iter().any(|l| l.contains(LOAD_READ)), "{}: {:?}", ran[i].0, ran[i].2);
+        }
+        // Control (review F2): the `work_verdict` keep reads objects through `cat-file --batch`
+        // (`crates/zygo-work/src/gate/git.rs:189`), and `bin/git` logged its stdin, which the predicate judged.
+        for i in [1, 3, 5] {
+            assert!(ran[i].2.iter().any(|l| l.ends_with(" cat-file --batch")), "{}: {:?}", ran[i].0, ran[i].2);
+            assert!(ran[i].2.iter().any(|l| l == &format!("{STDIN}<head>^{{commit}}")), "{}: {:?}", ran[i].0, ran[i].2);
         }
     }
 }
