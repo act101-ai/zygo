@@ -193,10 +193,9 @@ Session text (T, SX nodes):
 |----|------|---------|-------|------------|------|
 | OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | TODO | judgment | — |
 | OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4 | TODO | judgment | — |
-| MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | DONE | mechanical | plan fb76dfa8 · node 0febbe3b, 7e7d53a3, e63e4c6c, 8d5469a7 · acceptance pass (mail_sync_text 12 passed, session_text 43 passed) · PR #177 |
 | OS-32 | go test runner view with interleaved parallel output | OS-31, OS-21 | DONE | judgment | plan 677eb448 · node eee53a92, e5e55c30 · acceptance pass (gotest 19 passed) · PR #182 |
 | OS-33 | Failed Bash calls on Claude Code, as PO1 decided | OS-28, OS-23 | DONE | judgment | plan 911576e7 · node f632354c, 662bb328, 425bb080, 03d0f9c1 · acceptance pass (hooks 4 passed, launch 1 passed) · PR #168 |
-| OS-42 | Runner dispatch under wrappers and unseen live output | OS-31, OS-32, FX-19 | PLANNED | judgment | — |
+| OS-42 | Runner dispatch under wrappers and unseen live output | OS-31, OS-32, FX-19 | DONE | judgment | 6d559322 · 30a091c8 · d286417c · acceptance pass (dispatch 9, libtest 20, pytest 18) · PR #196 |
 | MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | TODO | judgment | — |
 | OS-34 | Set the stderr branch as PO2 decided | OS-33, OS-24 | DONE | mechanical | plan bba3b8b4 · node 9cd2b7fa, 399ed252, 7b268ebc · acceptance pass (po2_ 3 passed; shaping_hook 29 passed) · PR #184 |
 | WD-18 | Session text: each member's job and the job sentence | WD-11, ML-9, ML-10, MS-20 | TODO | implementation | — |
@@ -415,3 +414,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-18 DONE: M12 head line names zygo once (`${ZV:-zygo ?}`), stub-agent selftest case; live selftest ok (77). FX-20 added: live-detach.sh PW15 record line doubles the word zygo (FX-18 review F3) · PR #187 |
 | 2026-11-26 | SX-4 DONE: hook trim takes the subagent's re-inject flag first and adds additionalContext once (T§9.2 item 2); review F1 (run entry test), F3 (stat error) and a doc nit fixed; F2 refuted (any remove/print order has a kill window; at-most-once holds). |
 | 2026-11-26 | FX-19 DONE: PO2 row and O§7.8/O§17 restated to what the 2.1.332 run observed (stderr merged into stdout; stderr "" removal of non-empty stderr not observed); review F1, F4 fixed; author's call (lead), awaiting operator ratification. |
+| 2026-11-26 | OS-42 DONE: no view hides another runner's failure section; a wrapper at any depth, a PYTEST_ADDOPTS word, -p no:capture or an -o addopts override turns the pytest view off; O§7.6 (lead) awaiting operator ratification · PR #196 |
