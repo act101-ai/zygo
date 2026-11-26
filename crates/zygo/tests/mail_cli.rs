@@ -1,4 +1,4 @@
-//! ML-12: zygo mail send|read|ls and the command-start mail sweep (M§5, M§8, M§10; W OP5, AU71).
+//! ML-12, ML-13: zygo mail send|read|ls|watch and the command-start mail sweep (M§5, M§8, M§10, M§13; W OP5, AU71).
 mod common;
 
 #[cfg(unix)]
@@ -7,10 +7,11 @@ mod e2e;
 
 #[cfg(unix)]
 mod unix {
+    use std::cell::{Cell, RefCell};
     use std::ffi::OsStr;
     use std::path::{Path, PathBuf};
     use std::process::{Output, Stdio};
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use zygo_config::MailConfig;
     use zygo_core::Agent;
@@ -328,13 +329,151 @@ mod unix {
         assert_eq!(o.status.code(), Some(0), "{}", err(&o));
         assert!(exists(&old));
     }
+    /// A clock that returns `times[i]` at its i-th call (the last value after the end) and counts its calls.
+    struct Clock {
+        times: Vec<Instant>,
+        calls: Cell<usize>,
+    }
+
+    impl Clock {
+        fn now(&self) -> Instant {
+            let i = self.calls.get().min(self.times.len() - 1);
+            self.calls.set(self.calls.get() + 1);
+            self.times[i]
+        }
+    }
+
+    #[test] // M§8; esc
+    fn watch_prints_one_line_per_new_message_and_keeps_them_in_new() {
+        let h = Harness::no_tmux();
+        let w = ws(&h);
+        let id1 = put(&h, &w, "elena", "s1", "b1", 1);
+        let id2 = put(&h, &w, "elena", "a\u{1b}b", "b2", 2);
+        let t = Instant::now();
+        let c = Clock { times: vec![t], calls: Cell::new(0) };
+        let mut o = Vec::new();
+        let code = zygo::cmd::mail::watch(&dir(&h), KEY, Duration::from_secs(1500), Duration::ZERO, &|| c.now(), &mut o);
+        assert_eq!(code, 0);
+        assert_eq!(String::from_utf8(o).unwrap(), format!("{id1} cli s1\n{id2} cli a\\u{{1b}}b\n"));
+        assert_eq!(store::unread(&dir(&h), KEY).unwrap(), 2);
+    }
+
+    #[test] // M-G5, M§13 #7 send part: the clock sends on its 2nd call
+    fn watch_returns_when_mail_lands_during_the_watch() {
+        let h = Harness::no_tmux();
+        let w = ws(&h);
+        let sent = RefCell::new(None);
+        let calls = Cell::new(0);
+        let t = Instant::now();
+        let now = || {
+            calls.set(calls.get() + 1);
+            if calls.get() == 2 {
+                *sent.borrow_mut() = Some(put(&h, &w, "elena", "late", "b", 1));
+            }
+            t
+        };
+        let mut o = Vec::new();
+        assert_eq!(zygo::cmd::mail::watch(&dir(&h), KEY, Duration::from_secs(1500), Duration::ZERO, &now, &mut o), 0);
+        assert_eq!(String::from_utf8(o).unwrap(), format!("{} cli late\n", sent.borrow().as_ref().unwrap()));
+        assert_eq!(calls.get(), 2);
+        assert_eq!(store::unread(&dir(&h), KEY).unwrap(), 1);
+    }
+
+    #[test] // M§8 exit 1; M§13 #7 timeout part
+    fn watch_exits_1_at_the_timeout_with_no_line() {
+        let h = Harness::no_tmux();
+        let _w = ws(&h);
+        let t = Instant::now();
+        let to = Duration::from_secs(1500);
+        let c = Clock { times: vec![t, t + to - Duration::from_secs(1), t + to], calls: Cell::new(0) };
+        let mut o = Vec::new();
+        assert_eq!(zygo::cmd::mail::watch(&dir(&h), KEY, to, Duration::ZERO, &|| c.now(), &mut o), 1);
+        assert!(o.is_empty());
+        assert_eq!(c.calls.get(), 3); // start, 24m59s (goes on), 25m (exits)
+    }
+
+    #[test] // M§8 default 25m
+    fn watch_default_timeout_is_25m() {
+        use clap::{Args, FromArgMatches};
+        use zygo::cmd::mail::{MailArgs, MailCmd};
+        let h = Harness::no_tmux();
+        let _w = ws(&h);
+        let parse = |argv: &[&str]| {
+            MailArgs::from_arg_matches(&MailArgs::augment_args(clap::Command::new("mail")).try_get_matches_from(argv).unwrap())
+                .unwrap()
+        };
+        match parse(&["mail", "watch"]).sub {
+            Some(MailCmd::Watch { name: None, timeout }) => {
+                assert_eq!(timeout, "25m");
+                assert_eq!(zygo_config::parse_duration(&timeout), Some(Duration::from_secs(1500)));
+            }
+            _ => panic!("not watch"),
+        }
+        match parse(&["mail", "watch", "bob", "--timeout", "90s"]).sub {
+            Some(MailCmd::Watch { name: Some(n), timeout }) => assert_eq!((n.as_str(), timeout.as_str()), ("bob", "90s")),
+            _ => panic!("not watch"),
+        }
+    }
+
+    #[test] // `--timeout` takes the `parse_duration` forms; no wait (A4)
+    fn watch_cli_takes_duration_forms_a_name_or_this_pane() {
+        let h = Harness::no_tmux();
+        let w = ws(&h);
+        for t in ["0s", "0m", "0h", "0d"] {
+            let o = run(&h, &["mail", "watch", "elena", "--timeout", t], &[]);
+            assert_eq!(o.status.code(), Some(1), "{t}: {}", err(&o));
+            assert_eq!(out(&o), "", "{t}");
+        }
+        let id = put(&h, &w, "bob", "s", "b", 1);
+        let o = run(&h, &["mail", "watch", "bob", "--timeout", "0s"], &[]);
+        assert_eq!((o.status.code(), out(&o)), (Some(0), format!("{id} cli s\n")), "{}", err(&o));
+        let o = run(&h, &["mail", "watch", KEY2, "--timeout", "0s"], &[]);
+        assert_eq!((o.status.code(), out(&o)), (Some(0), format!("{id} cli s\n")), "{}", err(&o));
+        let o = run(&h, &["mail", "watch", "--timeout", "0s"], &[("ZYGO_PANE", OsStr::new(KEY2))]);
+        assert_eq!((o.status.code(), out(&o)), (Some(0), format!("{id} cli s\n")), "{}", err(&o));
+        assert_eq!(store::unread(&dir(&h), KEY2).unwrap(), 1);
+    }
+
+    #[test] // A1, A2, A3
+    fn watch_cli_refuses_a_bad_timeout_no_member_and_an_unknown_name() {
+        let h = Harness::no_tmux();
+        let _w = ws(&h);
+        let o = run(&h, &["mail", "watch", "elena", "--timeout", "soon"], &[]);
+        assert_eq!(o.status.code(), Some(2));
+        assert_eq!(err(&o), "zygo: bad --timeout value soon: use <n>s, <n>m, <n>h or <n>d\n");
+        let o = run(&h, &["mail", "watch", "--timeout", "0s"], &[]);
+        assert_eq!(o.status.code(), Some(2));
+        assert_eq!(err(&o), "zygo mail watch: no member for this pane; pass a name\n");
+        let o = run(&h, &["mail", "watch", "nobody", "--timeout", "0s"], &[]);
+        assert_eq!(o.status.code(), Some(1));
+        assert_eq!(err(&o), "zygo: unknown target; known names: bob, elena\n");
+        let o = run(&h, &["mail", "watch", "all", "--timeout", "0s"], &[]);
+        assert_eq!(o.status.code(), Some(2));
+        assert_eq!(err(&o), "zygo mail watch: all is not one member\n");
+        assert_eq!(out(&o), "");
+    }
+
+    #[test] // A5
+    fn watch_read_error_exits_1_with_one_stderr_line() {
+        use std::os::unix::fs::PermissionsExt;
+        let h = Harness::no_tmux();
+        let w = ws(&h);
+        put(&h, &w, "elena", "s1", "b1", 1);
+        let new = dir(&h).join(KEY).join("new");
+        std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let o = run(&h, &["mail", "watch", "elena", "--timeout", "0s"], &[]);
+        std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(o.status.code(), Some(1));
+        assert_eq!(out(&o), "");
+        assert!(err(&o).starts_with("zygo: mail: ") && err(&o).ends_with('\n') && err(&o).lines().count() == 1, "{}", err(&o));
+    }
 }
 
 #[cfg(windows)]
 #[test]
 fn op5_every_mail_verb() {
     let home = tempfile::tempdir().unwrap();
-    for args in [&["mail"][..], &["mail", "ls"][..], &["mail", "read"][..], &["mail", "send", "x", "-"][..]] {
+    for args in [&["mail"][..], &["mail", "ls"][..], &["mail", "read"][..], &["mail", "send", "x", "-"][..], &["mail", "watch"][..]] {
         let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_zygo"));
         common::scratch_home(&mut c, home.path());
         let o = c.args(args).stdin(std::process::Stdio::null()).output().unwrap();
