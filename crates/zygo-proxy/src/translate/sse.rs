@@ -26,8 +26,8 @@ type Key = (u64, u64);
 const CHAT_TEXT: Key = (0, u64::MAX);
 /// The held count of a chat tool call before its id, name and argument bytes: an empty call is not free.
 const CALL_COST: usize = 64;
-/// The most `partial_json` bytes in one `input_json_delta` that `message_events`, the chat mapper and the null-restore
-/// filter send (K§6.4.3 stream obligation 8).
+/// The most `partial_json`, `text` or `thinking` bytes in one delta that `message_events`, the chat mapper and the
+/// null-restore filter send (K§6.4.3 stream obligation 8).
 pub const INPUT_DELTA_MAX: usize = 64 << 10;
 
 struct Open {
@@ -297,7 +297,9 @@ impl StreamMapper {
         let d = c.get("delta").unwrap_or(&Value::Null);
         if let Some(x) = s(d, "content").filter(|x| !x.is_empty()) {
             self.ensure(CHAT_TEXT, json!({"type":"text","text":""}), out);
-            self.delta(json!({"type":"text_delta","text":x}), out);
+            for d in deltas("text_delta", "text", x) {
+                self.delta(d, out);
+            }
         }
         for (pos, tc) in d.get("tool_calls").and_then(Value::as_array).into_iter().flatten().enumerate() {
             let index = tc.get("index").and_then(Value::as_u64);
@@ -335,11 +337,12 @@ impl StreamMapper {
         }
     }
 
-    /// The held chat tool calls, each as one whole `tool_use` block; its arguments in `input_deltas` pieces.
+    /// The held chat tool calls, each as one whole `tool_use` block; its arguments in `input_json_delta` pieces of
+    /// `deltas`.
     fn calls_out(&mut self, out: &mut Vec<SseEvent>) {
         for c in std::mem::take(&mut self.calls) {
             self.open((1, c.index), json!({"type":"tool_use","id":c.id,"name":c.name,"input":{}}), out);
-            for d in input_deltas(&c.args) {
+            for d in deltas("input_json_delta", "partial_json", &c.args) {
                 self.delta(d, out);
             }
             self.close(out);
@@ -435,9 +438,10 @@ impl StreamMapper {
     }
 }
 
-/// A Messages body as the Messages SSE events that build it: one delta per text or thinking block; a tool_use input
-/// as compact JSON in `input_json_delta` pieces of at most `INPUT_DELTA_MAX` bytes, cut on a char boundary, so that
-/// each event stays within `HOLD_MAX` (K§6.4.3 stream obligation 8); any other block (of another type or with no
+/// A Messages body as the Messages SSE events that build it: a text or thinking block in `text_delta` or
+/// `thinking_delta` pieces (one empty delta for an empty block), then a thinking block's one `signature_delta`; a
+/// tool_use input as compact JSON in `input_json_delta` pieces; each piece of at most `INPUT_DELTA_MAX` bytes, cut on a
+/// char boundary, so that each event stays far within `HOLD_MAX` (K§6.4.3 stream obligation 8); any other block (of another type or with no
 /// `type`) goes out whole in its content_block_start with no delta; the usage on message_delta. The Responses encoder
 /// keeps redacted_thinking from that arm and drops server-tool and unknown blocks; a Messages client never reaches
 /// it, because its translated bodies hold only text, thinking and tool_use.
@@ -450,7 +454,7 @@ pub fn message_events(m: &Value) -> Vec<SseEvent> {
     for (i, b) in m.get("content").and_then(Value::as_array).into_iter().flatten().enumerate() {
         let (first, deltas) = match s(b, "type") {
             Some("thinking") => {
-                let mut d = vec![json!({"type":"thinking_delta","thinking":s(b, "thinking").unwrap_or("")})];
+                let mut d = block_deltas("thinking_delta", "thinking", s(b, "thinking").unwrap_or(""));
                 if let Some(g) = s(b, "signature").filter(|g| !g.is_empty()) {
                     d.push(json!({"type":"signature_delta","signature":g}));
                 }
@@ -458,9 +462,9 @@ pub fn message_events(m: &Value) -> Vec<SseEvent> {
             }
             Some("tool_use") => {
                 let input = b.get("input").map_or_else(|| "{}".into(), Value::to_string);
-                (json!({"type":"tool_use","id":b["id"],"name":b["name"],"input":{}}), input_deltas(&input))
+                (json!({"type":"tool_use","id":b["id"],"name":b["name"],"input":{}}), deltas("input_json_delta", "partial_json", &input))
             }
-            Some("text") => (json!({"type":"text","text":""}), vec![json!({"type":"text_delta","text":s(b, "text").unwrap_or("")})]),
+            Some("text") => (json!({"type":"text","text":""}), block_deltas("text_delta", "text", s(b, "text").unwrap_or(""))),
             _ => (b.clone(), vec![]),
         };
         out.push(ev("content_block_start", json!({"type":"content_block_start","index":i,"content_block":first})));
@@ -472,17 +476,26 @@ pub fn message_events(m: &Value) -> Vec<SseEvent> {
     out
 }
 
-/// `partial_json` as `input_json_delta` values of at most `INPUT_DELTA_MAX` bytes each, cut on a char boundary (a
-/// char has at most 4 bytes, so no piece is empty); none for an empty string (K§6.4.3 stream obligation 8).
-pub(super) fn input_deltas(partial_json: &str) -> Vec<Value> {
+/// `s` as delta values `{"type": kind, key: piece}` of at most `INPUT_DELTA_MAX` bytes each, cut on a char boundary
+/// (a char has at most 4 bytes, so no piece is empty); none for an empty string (K§6.4.3 stream obligation 8).
+pub(super) fn deltas(kind: &str, key: &str, s: &str) -> Vec<Value> {
     let mut d = vec![];
-    let mut rest = partial_json;
+    let mut rest = s;
     while !rest.is_empty() {
         let (p, r) = rest.split_at(rest.floor_char_boundary(INPUT_DELTA_MAX));
-        d.push(json!({"type":"input_json_delta","partial_json":p}));
+        d.push(json!({"type": kind, key: p}));
         rest = r;
     }
     d
+}
+
+/// A text or thinking block's deltas: `deltas`, or one empty delta for an empty string.
+fn block_deltas(kind: &str, key: &str, s: &str) -> Vec<Value> {
+    if s.is_empty() {
+        vec![json!({"type": kind, key: ""})]
+    } else {
+        deltas(kind, key, s)
+    }
 }
 
 fn ev(event: &str, data: Value) -> SseEvent {

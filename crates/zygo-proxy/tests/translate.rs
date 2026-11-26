@@ -1816,3 +1816,62 @@ fn anthropic_sse_large_restored_tool_arguments_complete_raw() {
         assert_eq!(items[0]["arguments"], json!(want), "chunk {n}");
     }
 }
+
+#[test] // RS-15, K§6.4.3 stream obligation 8: text (and message_events' thinking) in pieces of at most INPUT_DELTA_MAX from each sender
+fn text_deltas_within_event_max() {
+    let text = "\"".repeat(300_000);
+    // Every event under 2 × INPUT_DELTA_MAX + 256 bytes; the `kind` deltas: more than one, each of 1..=INPUT_DELTA_MAX
+    // bytes of `key`; returns their concatenation.
+    let pieces = |evs: &[SseEvent], kind: &str, key: &str| -> String {
+        for e in evs {
+            let n = e.to_bytes().len();
+            assert!(n < 2 * INPUT_DELTA_MAX + 256, "{} {kind}: {n}", e.event);
+        }
+        let p: Vec<&str> = evs.iter().filter(|e| e.data["delta"]["type"] == kind).map(|e| e.data["delta"][key].as_str().unwrap()).collect();
+        assert!(p.len() > 1, "{kind}: {}", p.len());
+        assert!(p.iter().all(|x| !x.is_empty() && x.len() <= INPUT_DELTA_MAX), "{kind}");
+        p.concat()
+    };
+    // message_events: a thinking block and a text block of a JSON body.
+    let m = msg_body(json!([{"type":"thinking","thinking":text,"signature":"sig"},{"type":"text","text":text}]));
+    let evs = message_events(&m);
+    assert_eq!(pieces(&evs, "thinking_delta", "thinking"), text);
+    assert_eq!(pieces(&evs, "text_delta", "text"), text);
+    // The chat mapper: one upstream chunk whose `content` is the whole text.
+    let sse = chat_delta(json!({"role":"assistant","content":text}), Value::Null) + &chat_delta(json!({}), json!("stop")) + DONE;
+    let mut c = chat();
+    let mut evs = c.push(sse.as_bytes());
+    evs.extend(c.finish_events());
+    assert_eq!(evs.last().unwrap().event, "message_stop");
+    assert_eq!(pieces(&evs, "text_delta", "text"), text);
+    // The null-restore filter: a JSON text block of the output schema with an injected null, in 60,000-byte deltas.
+    let held = json!({"a":null,"b":text}).to_string();
+    let want = json!({"b":text}).to_string();
+    let nulls = NullMap { tools: BTreeMap::new(), output: vec![vec![Seg::Key("a".into())]] };
+    let mut up = vec![msg_start("msg_1", "up"), text_start(0)];
+    up.extend(held.as_bytes().chunks(60_000).map(|p| text_d(0, std::str::from_utf8(p).unwrap())));
+    up.extend([block_stop(0), msg_delta("end_turn", [3, 0, 0, 2]), msg_stop()]);
+    // Events path (after the chat mapper).
+    let mut r = RestoreFilter::new(nulls.clone());
+    let mut evs: Vec<SseEvent> = up.iter().cloned().flat_map(|e| r.push(e)).collect();
+    evs.extend(r.finish());
+    assert_eq!(pieces(&evs, "text_delta", "text"), want);
+    // Raw path (an Anthropic upstream), in INPUT_DELTA_MAX-byte reads.
+    let raw: Vec<u8> = up.iter().flat_map(SseEvent::to_bytes).collect();
+    let mut r = RestoreFilter::new(nulls);
+    let mut sent: Vec<u8> = raw.chunks(INPUT_DELTA_MAX).flat_map(|c| r.push_raw(c)).collect();
+    sent.extend(r.finish_raw());
+    assert_eq!(pieces(&events(&sent), "text_delta", "text"), want);
+}
+
+#[test] // RS-15: a short text is one text_delta as before; an empty text or thinking block keeps its one empty delta
+fn message_events_short_text_one_delta() {
+    let m = msg_body(json!([{"type":"thinking","thinking":"","signature":"sig"},{"type":"text","text":""},{"type":"text","text":"hi"}]));
+    let d: Vec<Value> = message_events(&m).into_iter().filter(|e| e.event == "content_block_delta").map(|e| e.data["delta"].clone()).collect();
+    assert_eq!(d, [
+        json!({"type":"thinking_delta","thinking":""}),
+        json!({"type":"signature_delta","signature":"sig"}),
+        json!({"type":"text_delta","text":""}),
+        json!({"type":"text_delta","text":"hi"}),
+    ]);
+}
