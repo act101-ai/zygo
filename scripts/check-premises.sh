@@ -358,15 +358,33 @@ cx_scan 'marketplace-(macos|linux|windows)-[A-Za-z0-9_-]' 'marketplace OS name'
 # A time-bearing ULID after a lower-case prefix (resp_, msg_, fc_; scrub.py ULID); a placeholder of
 # time 0 is dropped. A bare ULID has no rule (Codex ids carry a prefix; ordinary hashes would match).
 cx_scan "${L}[a-z]{1,8}_[0-7][0-9A-HJKMNP-TV-Z]{25}([^0-9A-Za-z]|\$)" 'time-bearing id' '' 's/[a-z]{1,8}_0{10}[0-9A-HJKMNP-TV-Z]{16}//g'
-# env_scan <ERE> <label>: as cx_scan without i and drop, over fixtures/claude-code and fixtures/opencode
-# (PC-13: the Claude Code environment block lines, the scope of scrub.py's ENV_SHELL and ENV_OS: at a
-# line start or after a JSON "\n" escape; a masked "(...)" value passes). The verbatim files are exempt.
+# env_scan <ERE> <label> <drop sed -E script>: as cx_scan with i, over fixtures/claude-code and
+# fixtures/opencode (PC-13). The drop script is applied to the hit's text (without its "path:line:"
+# prefix, so ^ is the line start) in lower case; the hit fails only when the ERE still matches the
+# result. The verbatim files are exempt.
 env_scan() {
-  hit=$(grep -rn -aE -- "$1" fixtures/claude-code fixtures/opencode 2>/dev/null | grep -av -E -- "$VX" | tr '\000' ' ' | head -n 1)
+  hit=$(grep -rn -aiE -- "$1" fixtures/claude-code fixtures/opencode 2>/dev/null | grep -av -E -- "$VX" | tr '\000' ' ' |
+    while IFS= read -r ln; do
+      printf '%s\n' "${ln#*:*:}" | tr 'A-Z' 'a-z' | sed -E "$3" | grep -qaiE -- "$1" || continue
+      printf '%s\n' "$ln"
+    done | head -n 1)
   [ -z "$hit" ] || fail "forbidden content ($2): $(printf '%s\n' "$hit" | head -n 1 | cut -c1-160)"
 }
-env_scan '(^|\\n)[[:blank:]]*- Shell: [^(]' 'shell name'
-env_scan '(^|\\n)[[:blank:]]*- OS Version: [^(]' 'OS version'
+# The Claude Code environment block lines, the forms of scrub.py ENV_SHELL and ENV_OS (review round 1
+# F5, F8): any case, with or without "- ", blanks or escaped tabs after the colon, at a line start or
+# after a JSON "\n" escape (an odd run of backslashes before the "n"). Only the exact placeholder, at
+# the value's end, is dropped (F6).
+EPX='(^|(^|[^\\])(\\\\)*\\n)[[:blank:]]*(-[[:blank:]]*)?'
+EWS='([[:blank:]]|\\t)*'
+env_scan "${EPX}shell:$EWS"'[^\\"[:space:]]' 'shell name' "s/shell:$EWS"'\(omitted\)([\\"]|$)/\2/g'
+env_scan "${EPX}os version:$EWS"'[^\\"[:space:]]' 'OS version' "s/os version:$EWS"'\(os omitted\)([\\"]|$)/\2/g'
+# The Stainless SDK's arch and runtime version headers (scrub.py STAINLESS_RE; F3); x-stainless-os,
+# the OS family, is kept.
+XSA='x-stainless-arch(\\?["'"'"'])?[[:space:]]*[:=][[:space:]]*(\\?["'"'"'])?'
+XSR='x-stainless-runtime-version(\\?["'"'"'])?[[:space:]]*[:=][[:space:]]*(\\?["'"'"'])?'
+XSV='[^"'"'"'\\[:space:],]'
+env_scan "$XSA$XSV" 'Stainless arch' "s/$XSA"'\(arch omitted\)//g'
+env_scan "$XSR$XSV" 'Stainless runtime version' "s/$XSR"'\(version omitted\)//g'
 
 # name_scan <label> <name> [<word characters>] [<exempt ERE>]: the name as a whole word (any case;
 # it may hold spaces), also right after a JSON backslash escape. Word characters: A-Za-z0-9_ unless
