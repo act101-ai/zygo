@@ -1,7 +1,7 @@
-//! RS-14: on an untranslated pair (Messages → Anthropic, Responses → openai) the provider key never reaches the
-//! client (K§6.4.4): every occurrence of the key in the body bytes is replaced with `[REDACTED]`, 2xx or not, SSE or
-//! JSON, whatever the framing; an upstream header that holds the key is dropped; an encoded body is refused. Every
-//! other byte passes. Mock upstream on 127.0.0.1.
+//! RS-14: the provider key never reaches the client (K§6.4.4). On an untranslated pair (Messages → Anthropic,
+//! Responses → openai) every occurrence of the key in the body bytes is replaced with `[REDACTED]`, 2xx or not, SSE or
+//! JSON, whatever the framing, and every other byte passes; a translated 2xx body loses the key before translation;
+//! an upstream header that holds the key is dropped; an encoded body is refused. Mock upstream on 127.0.0.1.
 
 #[path = "support/responses.rs"]
 mod support;
@@ -394,26 +394,254 @@ fn header_with_key_is_dropped() {
     }
 }
 
-/// K§6.4.4 (round 1 F5): an upstream body with a `content-encoding` other than identity is
-/// `502 zygo_upstream_encoded`, 2xx or not; identity passes.
+/// K§6.4.4 (round 1 F5): a 2xx upstream body with a `content-encoding` other than identity is
+/// `502 zygo_upstream_encoded`; identity passes.
 #[test]
 fn encoded_body_is_502() {
     for d in [Dialect::Anthropic, Dialect::Openai] {
-        for status in [200u16, 401] {
-            let (h, path, body) = pair(d, Agent::OpenCode);
-            let k = h.provider_key().to_string();
-            let ctype = with_headers(SSE, &[("content-encoding", "gzip")]);
-            h.reply_with(status, &ctype, text_stream(d, &format!("echo {k}")));
-            let (s, _, b) = h.post(path, &body);
-            assert_eq!(s.as_u16(), 502, "{d:?} {status}");
-            assert!(contains(&b, b"zygo_upstream_encoded"), "{d:?} {status}");
-            assert!(!contains(&b, k.as_bytes()), "{d:?} {status}");
-        }
+        let (h, path, body) = pair(d, Agent::OpenCode);
+        let k = h.provider_key().to_string();
+        let ctype = with_headers(SSE, &[("content-encoding", "gzip")]);
+        h.reply_with(200, &ctype, text_stream(d, &format!("echo {k}")));
+        let (s, _, b) = h.post(path, &body);
+        assert_eq!(s.as_u16(), 502, "{d:?}");
+        assert!(contains(&b, b"zygo_upstream_encoded"), "{d:?}");
+        assert!(!contains(&b, k.as_bytes()), "{d:?}");
         let (h, path, body) = pair(d, Agent::OpenCode);
         let up = text_stream(d, "hello");
         h.reply_with(200, &with_headers(SSE, &[("content-encoding", "identity")]), up.clone());
         let (s, _, b) = h.post(path, &body);
         assert_eq!(s.as_u16(), 200, "{d:?}");
         assert_eq!(&b[..], &up[..], "{d:?}");
+    }
+}
+
+/// The number of `[REDACTED]` in `b`.
+fn reds(b: &[u8]) -> usize {
+    b.windows(RED.len()).filter(|w| *w == RED).count()
+}
+
+/// The client body for `path` (`stream` as given).
+fn client_body(path: &str, stream: bool) -> Value {
+    if path == M {
+        json!({"model":MODEL,"max_tokens":64,"stream":stream,"messages":[{"role":"user","content":"hi"}]})
+    } else {
+        let mut b = codex_request("turn-with-reasoning");
+        b["stream"] = json!(stream);
+        b
+    }
+}
+
+/// A 2xx Responses stream: an output text `text`, then an `exec_command` call with the arguments `args`.
+fn responses_tool_stream(text: &str, args: &str) -> Vec<u8> {
+    sse(&[
+        created(),
+        json!({"type":"response.output_item.added","sequence_number":1,"output_index":0,
+               "item":{"type":"message","id":"msg_up","role":"assistant","content":[]}}),
+        json!({"type":"response.content_part.added","sequence_number":2,"output_index":0,"content_index":0,"item_id":"msg_up",
+               "part":{"type":"output_text","text":""}}),
+        json!({"type":"response.output_text.delta","sequence_number":3,"output_index":0,"content_index":0,"item_id":"msg_up","delta":text}),
+        json!({"type":"response.output_item.done","sequence_number":4,"output_index":0,
+               "item":{"type":"message","id":"msg_up","role":"assistant","content":[{"type":"output_text","text":text}]}}),
+        json!({"type":"response.output_item.added","sequence_number":5,"output_index":1,
+               "item":{"type":"function_call","id":"fc_up","call_id":"call_1","name":"exec_command","arguments":""}}),
+        json!({"type":"response.function_call_arguments.delta","sequence_number":6,"output_index":1,"item_id":"fc_up","delta":args}),
+        json!({"type":"response.output_item.done","sequence_number":7,"output_index":1,
+               "item":{"type":"function_call","id":"fc_up","call_id":"call_1","name":"exec_command","arguments":args}}),
+        json!({"type":"response.completed","sequence_number":8,"response":{"id":"resp_up","object":"response","model":"up-rs",
+               "status":"completed","output":[],"usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}}),
+    ])
+}
+
+/// A 2xx Responses object with the content of `responses_tool_stream`.
+fn responses_tool_json(text: &str, args: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({"id":"resp_up","object":"response","model":"up-rs","status":"completed",
+        "output":[{"type":"message","id":"msg_up","role":"assistant","status":"completed","content":[{"type":"output_text","text":text,"annotations":[]}]},
+                  {"type":"function_call","id":"fc_up","call_id":"call_1","name":"exec_command","arguments":args,"status":"completed"}],
+        "usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}))
+    .unwrap()
+}
+
+/// A 2xx Messages stream: a text block `text`, then a tool_use block `name` with the input JSON `args`.
+fn messages_tool_stream(text: &str, name: &str, args: &str) -> Vec<u8> {
+    sse(&[
+        message_start(),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":text}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":name,"input":{}}}),
+        json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":args}}),
+        json!({"type":"content_block_stop","index":1}),
+        json!({"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":3}}),
+        json!({"type":"message_stop"}),
+    ])
+}
+
+/// A 2xx Messages body with the content of `messages_tool_stream`.
+fn messages_tool_json(text: &str, name: &str, args: &str) -> Vec<u8> {
+    let input: Value = serde_json::from_str(args).unwrap();
+    serde_json::to_vec(&json!({"id":"msg_up","type":"message","role":"assistant","model":"up-rs",
+        "content":[{"type":"text","text":text},{"type":"tool_use","id":"toolu_1","name":name,"input":input}],
+        "stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":7,"output_tokens":3}}))
+    .unwrap()
+}
+
+/// Round 2 G1, K§6.4.4 (4): a translated 2xx body (Messages client → openai upstream, Responses client → anthropic
+/// upstream), streamed and whole, with the key in a text delta and in tool arguments: the client gets no key; both
+/// places have `[REDACTED]`.
+#[test]
+fn translated_success_has_no_key() {
+    for (d, path) in [(Dialect::Openai, M), (Dialect::Anthropic, R)] {
+        for stream in [true, false] {
+            for agent in [Agent::ClaudeCode, Agent::OpenCode] {
+                let h = Harness::start(d, agent, "");
+                let k = h.provider_key().to_string();
+                let (text, args) = (format!("echo {k}"), json!({"cmd":format!("echo {k}")}).to_string());
+                let (ctype, up) = match (d, stream) {
+                    (Dialect::Anthropic, true) => (SSE, messages_tool_stream(&text, "exec_command", &args)),
+                    (Dialect::Anthropic, false) => (JSON, messages_tool_json(&text, "exec_command", &args)),
+                    (_, true) => (SSE, responses_tool_stream(&text, &args)),
+                    (_, false) => (JSON, responses_tool_json(&text, &args)),
+                };
+                h.reply_with(200, ctype, up);
+                let (s, _, b) = h.post(path, &client_body(path, stream));
+                let tag = format!("{d:?} {path} stream={stream} {agent:?}");
+                assert_eq!(s.as_u16(), 200, "{tag}: {}", String::from_utf8_lossy(&b));
+                assert!(!contains(&b, k.as_bytes()), "{tag}: {}", String::from_utf8_lossy(&b));
+                assert!(reds(&b) >= 2, "{tag}: {}", String::from_utf8_lossy(&b));
+            }
+        }
+    }
+}
+
+/// Round 2 G3, K§6.4.4 (2): an encoded non-2xx body keeps its status, with a zygo error body of type
+/// `zygo_upstream_encoded`; untranslated (Messages and Responses, 429) and translated (Messages client → openai
+/// upstream, 401).
+#[test]
+fn encoded_non_2xx_keeps_status() {
+    for (d, path, status) in [(Dialect::Anthropic, M, 429u16), (Dialect::Openai, R, 429), (Dialect::Openai, M, 401)] {
+        let h = Harness::start(d, Agent::OpenCode, "");
+        let k = h.provider_key().to_string();
+        h.reply_with(status, &with_headers(JSON, &[("content-encoding", "gzip")]), format!("{{\"error\":\"{k}\"}}").into_bytes());
+        let (s, _, b) = h.post(path, &client_body(path, true));
+        let tag = format!("{d:?} {path} {status}");
+        assert_eq!(s.as_u16(), status, "{tag}: {}", String::from_utf8_lossy(&b));
+        let v: Value = serde_json::from_slice(&b).unwrap();
+        assert_eq!(v["error"]["type"], "zygo_upstream_encoded", "{tag}: {v}");
+        assert!(!contains(&b, k.as_bytes()), "{tag}");
+    }
+}
+
+/// A tool with 26 optional properties: strict schemas inject a null for the last one on an anthropic upstream.
+fn wide_tool() -> Value {
+    let mut p = serde_json::Map::new();
+    p.insert("n".into(), json!({"type":"integer"}));
+    for i in 0..25 {
+        p.insert(format!("p{i}"), json!({"type":"string"}));
+    }
+    json!({"name":"get","input_schema":{"type":"object","properties":p,"required":["n"]}})
+}
+
+/// Round 2 G4, K§6.4.4 (4): with injected nulls and the key, whole and streamed, the client gets no key and the
+/// nulls are removed.
+#[test]
+fn injected_nulls_restored_and_key_replaced() {
+    for stream in [false, true] {
+        let h = Harness::start(Dialect::Anthropic, Agent::OpenCode, "[proxy]\nstrict_schemas = true\n");
+        let k = h.provider_key().to_string();
+        let text = format!("echo {k}");
+        let input = json!({"p24":null,"p0":text,"n":2}).to_string();
+        let up = if stream { messages_tool_stream(&text, "get", &input) } else { messages_tool_json(&text, "get", &input) };
+        h.reply_with(200, if stream { SSE } else { JSON }, up);
+        let body = json!({"model":MODEL,"max_tokens":64,"stream":stream,"tools":[wide_tool()],"messages":[{"role":"user","content":"hi"}]});
+        let (s, hd, b) = h.post(M, &body);
+        assert_eq!(s.as_u16(), 200, "{stream}: {}", String::from_utf8_lossy(&b));
+        let adj = hd.get("x-zygo-adjustments").map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+        assert!(adj.contains("schema:optional_properties_max"), "{stream}: {adj}");
+        assert!(!contains(&b, k.as_bytes()), "{stream}: {}", String::from_utf8_lossy(&b));
+        assert!(!contains(&b, b"p24"), "{stream}: {}", String::from_utf8_lossy(&b));
+        assert_eq!(reds(&b), 2, "{stream}: {}", String::from_utf8_lossy(&b));
+        if !stream {
+            let v: Value = serde_json::from_slice(&b).unwrap();
+            assert_eq!(v["content"][1]["input"], json!({"p0":"echo [REDACTED]","n":2}));
+            assert!(hd.get("content-length").is_none_or(|v| v.to_str().unwrap() == b.len().to_string()));
+        }
+    }
+}
+
+/// Round 2 G6, K§6.4.4 (1): an upstream header whose name holds the key is dropped (names arrive in lower case).
+#[test]
+fn header_name_with_key_is_dropped() {
+    let (h, path, body) = pair(Dialect::Anthropic, Agent::OpenCode);
+    let k = h.provider_key().to_string();
+    let name = format!("x-{k}");
+    h.reply_with(200, &with_headers(SSE, &[(&name, "v"), ("x-other", "kept")]), text_stream(Dialect::Anthropic, "hello"));
+    let (s, hd, _) = h.post(path, &body);
+    assert_eq!(s.as_u16(), 200);
+    let lower = k.to_ascii_lowercase();
+    assert!(hd.keys().all(|n| !n.as_str().contains(&lower)), "{hd:?}");
+    assert_eq!(hd.get("x-other").map(|v| v.to_str().unwrap()), Some("kept"));
+    let adj = hd.get("x-zygo-adjustments").map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+    assert!(adj.split(',').any(|a| a == "key_header_dropped"), "{adj}");
+}
+
+/// Round 2 G7, K§6.4.4 (4): a 2xx JSON body over COPY_MAX whose key straddles byte COPY_MAX: no key; every other
+/// byte unchanged.
+#[test]
+fn success_json_over_copy_max_key_across_the_boundary() {
+    let (h, path, mut body) = pair(Dialect::Anthropic, Agent::OpenCode);
+    body["stream"] = json!(false);
+    let k = h.provider_key().to_string();
+    let head: &[u8] = br#"{"id":"msg_up","type":"message","role":"assistant","model":"up-rs","content":[{"type":"text","text":""#;
+    let tail: &[u8] = br#" end"}],"stop_reason":"end_turn","usage":{"input_tokens":7,"output_tokens":3}}"#;
+    let fill = "x".repeat(COPY_MAX - head.len() - k.len() / 2);
+    let up = [head, fill.as_bytes(), k.as_bytes(), tail].concat();
+    assert!(up.len() > COPY_MAX && up[..COPY_MAX].ends_with(&k.as_bytes()[..k.len() / 2]));
+    h.reply_with(200, JSON, up.clone());
+    let (s, _, b) = h.post(path, &body);
+    assert_eq!(s.as_u16(), 200);
+    assert!(!contains(&b, k.as_bytes()));
+    assert!(b[..] == redacted(&up, &k)[..]);
+}
+
+/// Round 2 G7: a keyed stream with the key in a text delta writes its usage row with the exact upstream counts
+/// (input, cache read, cache write, output).
+#[test]
+fn keyed_stream_usage_counts_exact() {
+    for d in [Dialect::Anthropic, Dialect::Openai] {
+        let (h, path, body) = pair(d, Agent::ClaudeCode);
+        let k = h.provider_key().to_string();
+        let text = format!("echo {k}");
+        let (up, want) = if d == Dialect::Anthropic {
+            let start = json!({"type":"message_start","message":{"id":"msg_up","type":"message","role":"assistant","model":"up-rs","content":[],
+                "stop_reason":null,"usage":{"input_tokens":7,"cache_read_input_tokens":3,"cache_creation_input_tokens":2,"output_tokens":1}}});
+            let up = sse(&[
+                start,
+                json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+                json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":text}}),
+                json!({"type":"content_block_stop","index":0}),
+                json!({"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":9}}),
+                json!({"type":"message_stop"}),
+            ]);
+            (up, (7, 3, 2, 9))
+        } else {
+            let up = sse(&[
+                created(),
+                json!({"type":"response.output_text.delta","sequence_number":1,"output_index":0,"content_index":0,"item_id":"msg_up","delta":text}),
+                json!({"type":"response.completed","sequence_number":2,"response":{"id":"resp_up","object":"response","model":"up-rs",
+                       "status":"completed","output":[],
+                       "usage":{"input_tokens":12,"input_tokens_details":{"cached_tokens":4},"output_tokens":9,"total_tokens":21}}}),
+            ]);
+            // Responses `input_tokens` includes the cached tokens: input = 12 − 4.
+            (up, (8, 4, 0, 9))
+        };
+        h.reply_with(200, SSE, up);
+        let (s, _, b) = h.post(path, &body);
+        assert_eq!(s.as_u16(), 200, "{d:?}");
+        assert!(!contains(&b, k.as_bytes()), "{d:?}");
+        let rows = h.usage_rows();
+        assert_eq!(rows.len(), 1, "{d:?}");
+        let r = &rows[0];
+        assert_eq!((r.input_tokens, r.cache_read_tokens, r.cache_write_tokens, r.output_tokens), want, "{d:?}");
     }
 }

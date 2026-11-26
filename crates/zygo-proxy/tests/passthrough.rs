@@ -149,7 +149,10 @@ impl Upstream {
     fn at(&self, prefix: &str) -> Got { self.got().into_iter().rev().find(|g| g.path.starts_with(prefix)).expect("a recorded request") }
 }
 
-/// Counts every key lookup; `keychain:k-same` resolves, every other name is absent.
+/// The value of `keychain:k-space`: a key configured with a trailing space (RS-14 round 2 G2).
+const SPACE_KEY: &str = "test-key-space-0123456789 ";
+
+/// Counts every key lookup; `keychain:k-same` and `keychain:k-space` resolve, every other name is absent.
 #[derive(Default)]
 struct CountKeys { calls: AtomicUsize }
 impl KeyResolver for CountKeys {
@@ -157,6 +160,7 @@ impl KeyResolver for CountKeys {
         self.calls.fetch_add(1, Ordering::SeqCst);
         match r {
             KeyRef::Keychain(n) if n == "k-same" => Some(Secret::new("test-key-same")),
+            KeyRef::Keychain(n) if n == "k-space" => Some(Secret::new(SPACE_KEY)),
             _ => None,
         }
     }
@@ -975,6 +979,59 @@ fn e2e_normal_session_unchanged() {
     let u = t.up.at("/same/v1/messages");
     assert_eq!(hv(&u.headers, "x-api-key"), "test-key-same");
     assert!(u.headers.get("authorization").is_none());
+}
+
+#[test] // RS-14 round 2 G2, K§6.4.4: a key configured with a trailing space, echoed without it, is replaced in the body and its header dropped
+fn trimmed_key_echo_is_replaced() {
+    let t = setup(&model("test-space", &[prov("p-space", "{UP}/space", "test-space", "key = \"keychain:k-space\"\n")]));
+    let g = grant(&t, Agent::ClaudeCode, false);
+    let echo = SPACE_KEY.trim_ascii();
+    t.up.answer(200, &[("x-echo", &format!("Bearer {echo}"))],
+        &json!({"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":format!("echo {echo}.")}],"usage":{"input_tokens":1,"output_tokens":1}}));
+    let r = send(&t, "POST", M, &[("x-api-key", g.token.as_str()), ("x-zygo-session", g.session.as_str())], Some(mb("test-space")));
+    assert_eq!(r.0, 200, "{}", String::from_utf8_lossy(&r.2));
+    assert!(!has(&r.2, echo.as_bytes()), "{}", String::from_utf8_lossy(&r.2));
+    assert!(has(&r.2, b"echo [REDACTED]."), "{}", String::from_utf8_lossy(&r.2));
+    assert!(r.1.get("x-echo").is_none(), "{:?}", r.1);
+}
+
+#[test] // RS-14 round 2 G7: a client that leaves a keyed stream gets a usage row with the exact counts read
+fn keyed_stream_client_disconnect_exact_counts() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, false);
+    let ev = |v: Value| format!("event: {}\ndata: {v}\n\n", v["type"].as_str().unwrap());
+    let sse = [
+        ev(json!({"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[],
+            "usage":{"input_tokens":11,"cache_read_input_tokens":3,"cache_creation_input_tokens":2,"output_tokens":1}}})),
+        ev(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})),
+        ev(json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"echo test-key-same"}})),
+        ev(json!({"type":"message_delta","delta":{"stop_reason":null},"usage":{"output_tokens":22}})),
+    ]
+    .concat();
+    t.up.answer_hang(200, &sse);
+    *t.up.ctype.lock().unwrap() = "text/event-stream".into();
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let read = rt.block_on(async {
+        let c = reqwest::Client::builder().no_proxy().build().unwrap();
+        let mut r = c.post(t.h.url().join(M).unwrap())
+            .header("x-api-key", g.token.as_str()).header("x-zygo-session", g.session.as_str())
+            .header("content-type", "application/json").body(mb("code")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 200);
+        // Read until the usage line came through (no timer), then leave.
+        let mut read = Vec::new();
+        while !has(&read, b"message_delta") {
+            read.extend_from_slice(&r.chunk().await.unwrap().expect("the body ends only when the client leaves"));
+        }
+        drop(r);
+        read
+    });
+    drop(rt);
+    assert!(!has(&read, b"test-key-same"), "{}", String::from_utf8_lossy(&read));
+    // No total limit (no timing assertion): a missing row hangs the test; the Duration is only the poll period.
+    while !t.h.usage_written(1, Duration::from_secs(1)) {}
+    let r = &rows(&t, &g)[0];
+    assert_eq!((r.status, r.input_tokens, r.cache_read_tokens, r.cache_write_tokens, r.output_tokens), (200, 11, 3, 2, 22));
 }
 
 // ---- coverage ----
