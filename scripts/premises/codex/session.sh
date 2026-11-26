@@ -27,6 +27,10 @@ cat >"$RUN/rules.json" <<'JSON'
  {"name": "pc8-live-low", "path": "/v1/responses$", "body": "tracer-pc8-live-low-turn1", "sse": "sse/pc8-live-call.sse", "times": 1},
  {"name": "pc8-live-high", "path": "/v1/responses$", "body": "tracer-pc8-live-high-turn1", "sse": "sse/pc8-live-call.sse", "times": 1,
   "usage": {"input_tokens": 150000, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 10, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 150010}},
+ {"name": "pc8-tui-low-1", "path": "/v1/responses$", "header": {"x-codex-turn-metadata": "\"thread_source\":\"user\""}, "body": "tracer-pc8-tui-low-turn1", "sse": "sse/pc8-text.sse", "times": 1},
+ {"name": "pc8-tui-high-1", "path": "/v1/responses$", "header": {"x-codex-turn-metadata": "\"thread_source\":\"user\""}, "body": "tracer-pc8-tui-high-turn1", "sse": "sse/pc8-text.sse", "times": 1,
+  "usage": {"input_tokens": 150000, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 10, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 150010}},
+ {"name": "pc8-tui-2", "path": "/v1/responses$", "header": {"x-codex-turn-metadata": "\"thread_source\":\"user\""}, "body": "tracer-pc8-tui-(low|high)-turn2", "sse": "sse/pc8-tui-done.sse"},
  {"name": "pc9-call", "path": "/v1/responses$", "body": "tracer-pc9-call", "sse": "sse/pc9-call.sse", "times": 1},
  {"name": "pc9-done", "path": "/v1/responses$", "body": "tracer-pc9-call", "sse": "sse/pc9-done.sse"},
  {"name": "pc11-reply", "path": "/v1/responses$", "body": "tracer-pc11-turn", "sse": "sse/pc11-text.sse"}
@@ -230,50 +234,87 @@ def meta(r):
     return m if isinstance(m, dict) else {}
 
 
+def is_comp(r):
+    return meta(r).get("request_kind") == "compaction" or "/responses/compact" in str(r.get("path", ""))
+
+
+def is_turn(r):
+    """A model turn request: POST .../v1/responses, request_kind turn (or no turn metadata), not the
+    TUI's thread-title request."""
+    m = meta(r)
+    return (r.get("method") == "POST" and str(r.get("path", "")).endswith("/v1/responses")
+            and m.get("request_kind", "turn") == "turn" and m.get("thread_source") != "thread_title")
+
+
+def turn_tag(r):
+    """turn1 or turn2 from the PC8 tracer in the last user text, else None."""
+    texts = user_texts(body(r))
+    t = re.search(r"tracer-pc8-(?:live-|tui-)?(?:low|high)-(turn1|turn2)", texts[-1]) if texts else None
+    return t.group(1) if t else None
+
+
 def compaction(out, caps):
-    """Per record: the request kind and history from the turn metadata, the compact_prompt tracer,
-    the turn tracer, and whether the input carries a tool output. Per capture: compaction requests
-    by request_kind (or a /responses/compact path) and by the tracer; the condition (cold_resume
-    when a request resumes the session, else live); and whether a compaction came before the next
-    request: turn 2 on a cold resume; in a live session the first request after the first one that
-    is not a compaction and has the first one's turn_id (the follow-up; after a compaction its input
-    is the compacted history, so it need not carry the tool output: next_tool_output says)."""
+    """Per record: the request kind, history, thread_source and compaction phase from the turn
+    metadata, the compact_prompt tracer, the turn tracer, and whether the input carries a tool
+    output. Per capture: compaction requests by request_kind (or a /responses/compact path) and by
+    the tracer; the condition; the first turn request and the next request, and whether a
+    compaction came between them (with its phase). Conditions and their next request:
+      cold_resume     (a request resumes the session): the turn request of turn 2;
+      live_next_turn  (a turn-2 tracer, one process: the TUI): the turn request of turn 2;
+      live_followup   (else): the first record must be a non-compaction turn request; the next
+                      request is the first later turn request with its turn_id (after a
+                      compaction its input is the compacted history: next_tool_output says).
+    next_same_turn compares the turn_id values of the raw records (before any scrub)."""
     rows = []
     for capture, cap in pairs(caps):
-        n = n_prompt = 0
-        first_comp = nxt = None
         rs = recs(cap)
-        turn0 = meta(rs[0]).get("turn_id") if rs else None
-        cold = any(meta(r).get("history_initialization") == "cold_resume" for r in rs)
-        nxt_tool = "none"
-        for i, r in enumerate(rs):
+        n = n_prompt = 0
+        for r in rs:
             b = body(r)
             m = meta(r)
             prompt = "tracer-pc8-compact-prompt" in json.dumps(b)
-            texts = user_texts(b)
-            t = re.search(r"tracer-pc8-(?:live-)?(?:low|high)-(turn1|turn2)", texts[-1]) if texts else None
             items = b.get("input") if isinstance(b.get("input"), list) else []
             types = [(it.get("type") or ("message" if "role" in it else "?")) if isinstance(it, dict) else "?"
                      for it in items]
-            tool_out = "function_call_output" in types
-            kind = m.get("request_kind") or "none"
-            comp = kind == "compaction" or "/responses/compact" in str(r.get("path", ""))
-            rows.append("%s %s %s %s model=%s request_kind=%s history=%s compact_prompt=%s turn=%s tool_output=%s input_items=%d item_types=%s" % (
-                capture, r["_seq"], r.get("method"), r.get("path"), b.get("model") or "none", kind,
-                m.get("history_initialization") or "none", "yes" if prompt else "no", t.group(1) if t else "none",
-                "yes" if tool_out else "no", len(items), ",".join(types) or "none"))
+            comp = is_comp(r)
+            rows.append("%s %s %s %s model=%s request_kind=%s history=%s thread_source=%s phase=%s compact_prompt=%s turn=%s tool_output=%s input_items=%d item_types=%s" % (
+                capture, r["_seq"], r.get("method"), r.get("path"), b.get("model") or "none",
+                m.get("request_kind") or "none", m.get("history_initialization") or "none",
+                m.get("thread_source") or "none", (m.get("compaction") or {}).get("phase") or "none",
+                "yes" if prompt else "no", turn_tag(r) or "none",
+                "yes" if "function_call_output" in types else "no", len(items), ",".join(types) or "none"))
             n += comp
             n_prompt += prompt
-            if comp and first_comp is None:
-                first_comp = i
-            if nxt is None and i > 0 and not comp and (
-                    (t and t.group(1) == "turn2") if cold else (turn0 is None or m.get("turn_id") == turn0)):
-                nxt = i
-                nxt_tool = "yes" if tool_out else "no"
-        before = "yes" if first_comp is not None and nxt is not None and first_comp < nxt else "no"
-        rows.append("%s: compaction_requests=%d compact_prompt_requests=%d condition=%s next_request=%s next_tool_output=%s compacted_before_next=%s" % (
-            capture, n, n_prompt, "cold_resume" if cold else ("live" if rs else "none"),
-            ("turn2" if cold else "followup") if nxt is not None else "absent", nxt_tool, before))
+        cold = any(meta(r).get("history_initialization") == "cold_resume" for r in rs)
+        turns = [i for i, r in enumerate(rs) if is_turn(r)]
+        if not rs:
+            cond = "none"
+        elif cold:
+            cond = "cold_resume"
+        elif any(turn_tag(rs[i]) == "turn2" for i in turns):
+            cond = "live_next_turn"
+        else:
+            cond = "live_followup"
+        first = nxt = None
+        if cond in ("cold_resume", "live_next_turn"):
+            first = next((i for i in turns if turn_tag(rs[i]) == "turn1"), None)
+            nxt = next((i for i in turns if turn_tag(rs[i]) == "turn2"), None)
+        elif cond == "live_followup" and is_turn(rs[0]) and not is_comp(rs[0]):
+            first, t0 = 0, meta(rs[0]).get("turn_id")
+            nxt = next((i for i in turns if i > 0 and t0 is not None and meta(rs[i]).get("turn_id") == t0), None)
+        between = [i for i, r in enumerate(rs) if is_comp(r) and first is not None and nxt is not None and first < i < nxt]
+        nm = meta(rs[nxt]) if nxt is not None else {}
+        same = "none" if nxt is None else ("yes" if nm.get("turn_id") is not None and nm.get("turn_id") == meta(rs[first]).get("turn_id") else "no")
+        tool = "none"
+        if nxt is not None:
+            tool = "yes" if any(isinstance(it, dict) and it.get("type") == "function_call_output"
+                                for it in body(rs[nxt]).get("input") or []) else "no"
+        phase = (meta(rs[between[0]]).get("compaction") or {}).get("phase") or "none" if between else "none"
+        rows.append("%s: compaction_requests=%d compact_prompt_requests=%d condition=%s first_seq=%s next_request=%s next_seq=%s next_same_turn=%s next_thread_source=%s next_tool_output=%s compacted_before_next=%s compaction_phase=%s" % (
+            capture, n, n_prompt, cond, rs[first]["_seq"] if first is not None else "none",
+            ("followup" if cond == "live_followup" else "turn2") if nxt is not None else "absent",
+            rs[nxt]["_seq"] if nxt is not None else "none", same, nm.get("thread_source") or "none", tool,
+            "yes" if between else "no", phase))
     lines(out, rows)
 
 
@@ -301,7 +342,8 @@ def toml_pub(src, out):
         text = f.read()
     blocks, cur = [], []
     for line in text.splitlines(True):
-        if re.match(r"\s*\[", line) and cur:
+        # A table header line only ([t] or [[t]]), never an array row of a value.
+        if re.match(r"\s*(\[[^\[\]]+\]|\[\[[^\[\]]+\]\])\s*$", line) and cur:
             blocks.append(cur)
             cur = []
         cur.append(line)
@@ -334,12 +376,23 @@ def mcp(out, tools_json, name, cap):
                 "requests=%d" % len(rs)])
 
 
+def strings(o):
+    """Every string in a parsed JSON value, in order."""
+    if isinstance(o, dict):
+        return [s for v in o.values() for s in strings(v)]
+    if isinstance(o, list):
+        return [s for v in o for s in strings(v)]
+    return [o] if isinstance(o, str) else []
+
+
 def skills(out, cap):
+    """Per location: the skill's frontmatter name (pc15skill-<loc>, unlike its folder pc15-<loc>),
+    its description tracer and its body tracer, each a whole token in the parsed text of the first
+    request's body (a token at a line start counts; json.dumps would put an escaped n before it)."""
     r = first_request(cap)
-    text = json.dumps(body(r)) if r is not None else ""
-    # A whole token: pc15-home is not seen inside tracer-pc15-home-desc.
+    text = "\n".join(strings(body(r))) if r is not None else ""
     seen = lambda s: "seen" if re.search(r"(?<![A-Za-z0-9_-])%s(?![A-Za-z0-9_-])" % re.escape(s), text) else "absent"
-    lines(out, ["%s: name=%s description=%s body=%s" % (loc, seen("pc15-" + loc), seen("tracer-pc15-%s-desc" % loc),
+    lines(out, ["%s: name=%s description=%s body=%s" % (loc, seen("pc15skill-" + loc), seen("tracer-pc15-%s-desc" % loc),
                                                          seen("tracer-pc15-%s-body" % loc))
                 for loc in ("home", "repo", "path")])
 
@@ -359,17 +412,74 @@ def status_row(pane, exit_file):
     return (rows[-1].strip() if rows else ""), ex
 
 
-def status(out, pane, exit_file, control_pane, control_exit):
+def status(out, pane, exit_file, control_pane, control_exit, warnings):
     """The configured run (tui.status_line = ["model-with-reasoning"]) against the control run (no
-    status_line key: Codex's default items)."""
+    status_line key: Codex's default items); the warnings panel's count N ("k of N") and the
+    distinct k captured."""
     row, ex = status_row(pane, exit_file)
     crow, cex = status_row(control_pane, control_exit)
+    with open(warnings, encoding="utf-8", errors="replace") as f:
+        ks = re.findall(r"Warnings · (\d+) of (\d+)", f.read())
     shown = lambda r, s: "yes" if s in r else "no"
     lines(out, ["configured=model-with-reasoning", "status_row=%s" % row,
                 "model_shown=%s" % shown(row, "gpt-mock"), "dir_shown=%s" % shown(row, "/repo"),
                 "tui_exit=%s" % ex, "control=default", "control_row=%s" % crow,
                 "control_model_shown=%s" % shown(crow, "gpt-mock"), "control_dir_shown=%s" % shown(crow, "/repo"),
-                "control_tui_exit=%s" % cex, "differs=%s" % ("yes" if row != crow else "no")])
+                "control_tui_exit=%s" % cex, "differs=%s" % ("yes" if row != crow else "no"),
+                "warnings_total=%s" % (ks[0][1] if ks else "none"),
+                "warnings_captured=%d" % len({k for k, _ in ks})])
+
+
+def observed(out, fx, date):
+    """The five Observed result lines, from the published fixtures under <fx> by the plan's step 9
+    rules: - PCn: <verified|failed> <date>: <fixtures/codex/ paths>. A missing file counts as no
+    evidence (failed)."""
+    def read(p):
+        try:
+            with open(os.path.join(fx, p), encoding="utf-8", errors="replace") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    def kv(text, prefix=""):
+        """key=value words of the line that starts with <prefix> (all lines when no prefix)."""
+        d = {}
+        for line in text.splitlines():
+            if prefix and not line.startswith(prefix):
+                continue
+            for w in (line[len(prefix):] if prefix else line).split():
+                k, eq, v = w.partition("=")
+                if eq:
+                    d.setdefault(k, v)
+        return d
+
+    def row(pc, ok, paths):
+        return "- %s: %s %s: %s" % (pc, "verified" if ok else "failed", date,
+                                    " ".join("fixtures/codex/" + p for p in paths))
+
+    models = read("agents/models.txt")
+    ok6 = bool(re.search(r"(?m)^pc6-a: sub_model=gpt-mock-pc6$", models)
+               and re.search(r"(?m)^pc6-b: sub_model=gpt-mock-explorer$", models))
+    comp = read("compaction/compaction.txt")
+    hi, lo = kv(comp, "pc8-tui-high: "), kv(comp, "pc8-tui-low: ")
+    ok8 = (hi.get("condition") == "live_next_turn" and hi.get("compacted_before_next") == "yes"
+           and lo.get("condition") == "live_next_turn" and lo.get("compaction_requests") == "0")
+    reqs = ["compaction/requests/%s-%s.json" % (m.group(1), m.group(2))
+            for m in re.finditer(r"(?m)^(\S+) (\d+) POST \S+ model=\S+ request_kind=compaction ", comp)]
+    m9 = kv(read("mcp/mcp.txt"))
+    ok9 = m9.get("tool", "none") != "none" and m9.get("call_output") == "found"
+    s11 = kv(read("status/status.txt"))
+    ok11 = (s11.get("model_shown") == "yes" and s11.get("dir_shown") == "no"
+            and s11.get("control_dir_shown") == "yes")
+    ok15 = bool(re.search(r"(?m)^path: name=seen ", read("skills/skills.txt")))
+    lines(out, [
+        row("PC6", ok6, ["agents/models.txt", "agents/marker.txt", "agents/roles.txt", "agents/tools.json"]),
+        row("PC8", ok8, ["compaction/compaction.txt", "compaction/config.toml"] + reqs),
+        row("PC9", ok9, ["mcp/mcp.txt", "mcp/tools.json"]),
+        row("PC11", ok11, ["status/status.txt", "status/pane-turn.txt", "status/pane-default-turn.txt",
+                           "status/config.toml", "status/warnings.txt"]),
+        row("PC15", ok15, ["skills/skills.txt", "skills/config.toml"]),
+    ])
 
 
 cmd, a = sys.argv[1], sys.argv[2:]
@@ -397,6 +507,8 @@ elif cmd == "roles":
     roles(*a)
 elif cmd == "toml-pub":
     toml_pub(*a)
+elif cmd == "observed":
+    observed(*a)
 else:
     sys.exit("pc5.py: unknown command " + cmd)
 PY
@@ -452,10 +564,127 @@ py() { python3 -I "$RUN/pc5.py" "$@"; }
 # pub_config <config.toml> <dest>: pub, with a table that scrub made a repeat of another dropped
 # (two project paths become one /repo); the copy must parse (toml-pub).
 pub_config() { pub "$1" "$RUN/pub-config.tmp"; mkdir -p "$(dirname "$2")"; py toml-pub "$RUN/pub-config.tmp" "$2"; }
-# skill_md <file> <loc>: a SKILL.md for pc15-<loc>.
+# skill_md <file> <loc>: a SKILL.md in folder pc15-<loc> whose frontmatter name is pc15skill-<loc>
+# (unlike the folder name, so the check sees the name Codex read, not the path).
 skill_md() {
   mkdir -p "$(dirname "$1")"
-  printf '%s\n' '---' "name: pc15-$2" "description: tracer-pc15-$2-desc" '---' "tracer-pc15-$2-body" >"$1"
+  printf '%s\n' '---' "name: pc15skill-$2" "description: tracer-pc15-$2-desc" '---' "tracer-pc15-$2-body" >"$1"
+}
+
+# --- The TUI in a pane of a private tmux server (PC8 end-of-turn case, PC11) ---
+TMUX_BIN=$(command -v tmux) || { echo "session: tmux is not on PATH"; exit 1; }
+TV=$("$TMUX_BIN" -V | sed -n 's/^tmux //p')
+ver_ge "${TV%[a-z]}" 3.2 || { echo "session: tmux ${TV:-unknown} is below 3.2"; exit 1; }
+SOCK=$RUN/s
+[ ${#SOCK} -le 100 ] || { echo "session: the tmux socket path is longer than 100 characters; set N2_SCRATCH or TMPDIR to a short directory"; exit 1; }
+tm() { LC_ALL=C "$TMUX_BIN" -S "$SOCK" -f /dev/null "$@"; }
+tm_kill() { tm kill-server 2>/dev/null || true; }
+n2_trap_chain tm_kill
+# q <NAME> <value>: NAME='value'; a value that holds a quote ends the part.
+q() { case "$2" in *"'"*) echo "session: $1 holds a quote"; exit 1 ;; esac; printf "%s='%s'\n" "$1" "$2"; }
+# pane_wait <text> <polls>: up to <polls> captures of session $TS's pane, 0.5 s apart, into
+# $RUN/pane.txt; 0 when one holds <text>, 1 when the TUI ended, a capture failed or the polls ran out.
+pane_wait() {
+  _i=0
+  while [ "$_i" -lt "$2" ]; do
+    _i=$((_i + 1))
+    tm capture-pane -p -t "=$TS:" >"$RUN/pane.tmp" 2>/dev/null || return 1
+    mv "$RUN/pane.tmp" "$RUN/pane.txt"
+    sleep 0.5
+    ! grep -qF -- "$1" "$RUN/pane.txt" || return 0
+    [ ! -e "$RUN/$TS-exit" ] || return 1
+  done
+  return 1
+}
+# keep <file>: the last capture as <file> (none yet: nothing).
+keep() { [ ! -e "$RUN/pane.txt" ] || cp "$RUN/pane.txt" "$1"; }
+# key <key>: one key to the pane, then 0.5 s. send <text>: the text as typed, then Enter.
+key() { tm send-keys -t "=$TS:" "$1" 2>/dev/null || true; sleep 0.5; }
+send() { tm send-keys -t "=$TS:" -l "$1" 2>/dev/null || true; sleep 0.5; key Enter; }
+# warnings_walk: the warnings panel is open; append each capture to $RUN/$TS-warnings.txt, then
+# Right until the panel's "k of N" reaches N (at most 10 captures).
+warnings_walk() {
+  _w=0
+  while [ "$_w" -lt 10 ] && [ -e "$RUN/pane.txt" ]; do
+    _w=$((_w + 1))
+    { echo "=== capture $_w"; cat "$RUN/pane.txt"; } >>"$RUN/$TS-warnings.txt"
+    _kn=$(grep -o 'Warnings · [0-9]* of [0-9]*' "$RUN/pane.txt" | head -n 1 | sed 's/^Warnings · //')
+    _k=${_kn%% of *} _n=${_kn##* of }
+    [ -n "$_kn" ] && [ "$_k" != "$_n" ] || break
+    key Right
+    pane_wait "Warnings · $((_k + 1)) of" 6 || true
+  done
+}
+# tui_run <tag> <mode>: the TUI with this CX_HOME in session <tag> of the private server, captured
+# as $RUN/<tag>-start.txt, then by mode:
+#   plain   one turn (tracer-pc11-turn), <tag>-turn.txt;
+#   status  as plain, then /statusline (<tag>-statusline.txt) and the warnings panel, F2, every
+#           warning (<tag>-warnings.txt);
+#   pc8     two user turns in the one process: tracer-<tag>-turn1 (<tag>-turn.txt), then
+#           tracer-<tag>-turn2 (<tag>-turn2.txt).
+# Then quit, kill the server, take the records as capture <tag>. A refusal ends the part (exit 1).
+tui_run() {
+  TS=$1
+  {
+    q PREMISES_DIR "$PREMISES_DIR"
+    echo 'N2_AGENTS=codex'
+    q N2_SCRATCH "$N2_SCRATCH"
+    # shellcheck disable=SC2016
+    echo '. "$PREMISES_DIR/lib.sh"'
+    q RUN "$RUN"; q H "$H"; q R "$R"; q CX_HOME "$CX_HOME"; q MOCK_URL "$MOCK_URL"; q MOCK_PID "$MOCK_PID"
+    # A refusal (codex_env or run_codex exits before Codex ends) leaves <tag>-refused and its
+    # "premises:" lines in <tag>-pre.txt or the pane; the part then prints them and exits 1.
+    echo "trap '[ -e \"\$RUN/$TS-exit\" ] || : >\"\$RUN/$TS-refused\"' EXIT"
+    # --no-daemon: else the TUI starts a managed app-server daemon (from CODEX_HOME/packages, with
+    # a socket under /tmp/codex-daemon-<uid>) that outlives the run.
+    echo 'set -- --no-daemon'
+    # The checks run_codex makes, first with their output in a file (the pane closes on a refusal).
+    echo "{ n2_daemon_flag \"\$@\"; codex_env; n2_procs daemon || exit 1; } >\"\$RUN/$TS-pre.txt\" 2>&1"
+    echo "rc=0; run_codex \"\$@\" || rc=\$?; echo \"\$rc\" >\"\$RUN/$TS-exit\""
+  } >"$RUN/$TS-tui.sh"
+  rm -f "$RUN/$TS-exit" "$RUN/$TS-refused" "$RUN/pane.txt"
+  tm new-session -d -s "$TS" -x 250 -y 50 /bin/sh "$RUN/$TS-tui.sh"
+  pane_wait gpt-mock 60 || true
+  keep "$RUN/$TS-start.txt"
+  if [ "$2" = pc8 ]; then
+    send "tracer-$TS-turn1"
+    pane_wait tracer-pc8-reply 120 || true
+    keep "$RUN/$TS-turn.txt"
+    send "tracer-$TS-turn2"
+    pane_wait tracer-pc8-tui-done 120 || true
+    keep "$RUN/$TS-turn2.txt"
+  else
+    send tracer-pc11-turn
+    pane_wait tracer-pc11-reply 120 || true
+    keep "$RUN/$TS-turn.txt"
+  fi
+  if [ "$2" = status ]; then
+    send /statusline
+    pane_wait tracer-none 4 || true
+    keep "$RUN/$TS-statusline.txt"
+    key Escape
+    key F2
+    pane_wait 'Warnings · ' 6 || true
+    warnings_walk
+  fi
+  key Escape; key C-c; key C-c
+  _i=0
+  while [ ! -e "$RUN/$TS-exit" ] && [ "$_i" -lt 20 ]; do _i=$((_i + 1)); sleep 0.5; done
+  tm_kill
+  if [ -e "$RUN/$TS-refused" ]; then
+    echo "session: $TS: the TUI run was refused before Codex ended:"
+    cat "$RUN/$TS-pre.txt" 2>/dev/null || true
+    grep -h '^premises:' "$RUN/pane.txt" "$RUN/$TS"-*.txt 2>/dev/null | sort -u || true
+    exit 1
+  fi
+  take "$TS"
+}
+# pub_pane <capture file> <dest>: pub, or "(no capture)" when the file was never written; a
+# scrubbed capture that still holds a machine path ends the part.
+pub_pane() {
+  mkdir -p "$(dirname "$2")"
+  if [ -e "$1" ]; then pub "$1" "$2"; else echo '(no capture)' >"$2"; fi
+  ! grep -qE '/Users/|/var/folders/|/private/var/' "$2" || { echo "session: $2: a pane capture holds a machine path"; exit 1; }
 }
 
 start_mock "$RUN/rules.json"
@@ -534,11 +763,23 @@ for _c in low high; do
   exec_run "pc8-live-$_c" exec --json "tracer-pc8-live-$_c-turn1"
   take "pc8-live-$_c"
 done
+# Live session, end of turn (A-16's trigger): the TUI, one process, two user turns; turn 1's final
+# reply carries the raised usage in the high case; is there a compaction before turn 2's request?
+py sse-text "$RUN/sse/pc8-tui-done.sse" tracer-pc8-tui-done
+for _c in low high; do
+  cx_home "pc8-tui-$_c" "$PC8_TOP
+check_for_update_on_startup = false" '[tui]
+show_tooltips = false'
+  tui_run "pc8-tui-$_c" pc8
+  for _p in start turn turn2; do pub_pane "$RUN/pc8-tui-$_c-$_p.txt" "$FX/pane-pc8-tui-$_c-$_p.txt"; done
+done
 py compaction "$RUN/compaction.txt" "pc8-low=$RUN/cap/pc8-low" "pc8-high=$RUN/cap/pc8-high" \
-  "pc8-live-low=$RUN/cap/pc8-live-low" "pc8-live-high=$RUN/cap/pc8-live-high"
+  "pc8-live-low=$RUN/cap/pc8-live-low" "pc8-live-high=$RUN/cap/pc8-live-high" \
+  "pc8-tui-low=$RUN/cap/pc8-tui-low" "pc8-tui-high=$RUN/cap/pc8-tui-high"
 pub_config "$RUN/cx-pc8-high/config.toml" "$FX/config.toml"
+pub_config "$RUN/cx-pc8-tui-high/config.toml" "$FX/config-tui.toml"
 pub "$RUN/compaction.txt" "$FX/compaction.txt"
-for _r in pc8-low pc8-high pc8-live-low pc8-live-high; do pub_reqs "$_r" "$FX"; done
+for _r in pc8-low pc8-high pc8-live-low pc8-live-high pc8-tui-low pc8-tui-high; do pub_reqs "$_r" "$FX"; done
 for _r in pc8-live-low pc8-live-high; do pub "$RUN/out/$_r.jsonl" "$FX/exec-$_r.jsonl"; done
 
 # --- PC9: an MCP server named zygo with a tool named compact ---
@@ -593,112 +834,28 @@ for _f in "$RUN/cap/pc15"/[0-9]*.json; do
   esac
 done
 
-# --- PC11: the TUI status line, in a pane of a private tmux server ---
+# --- PC11: the TUI status line, against a control with Codex's default items ---
 FX=$CODEX_FX/status
-TMUX_BIN=$(command -v tmux) || { echo "session: tmux is not on PATH"; exit 1; }
-TV=$("$TMUX_BIN" -V | sed -n 's/^tmux //p')
-ver_ge "${TV%[a-z]}" 3.2 || { echo "session: tmux ${TV:-unknown} is below 3.2"; exit 1; }
-SOCK=$RUN/s
-[ ${#SOCK} -le 100 ] || { echo "session: the tmux socket path is longer than 100 characters; set N2_SCRATCH or TMPDIR to a short directory"; exit 1; }
-tm() { LC_ALL=C "$TMUX_BIN" -S "$SOCK" -f /dev/null "$@"; }
-tm_kill() { tm kill-server 2>/dev/null || true; }
-n2_trap_chain tm_kill
 py sse-text "$RUN/sse/pc11-text.sse" tracer-pc11-reply
-# q <NAME> <value>: NAME='value'; a value that holds a quote ends the part.
-q() { case "$2" in *"'"*) echo "session: $1 holds a quote"; exit 1 ;; esac; printf "%s='%s'\n" "$1" "$2"; }
-# pane_wait <text> <polls>: up to <polls> captures of session $TS's pane, 0.5 s apart, into
-# $RUN/pane.txt; 0 when one holds <text>, 1 when the TUI ended, a capture failed or the polls ran out.
-pane_wait() {
-  _i=0
-  while [ "$_i" -lt "$2" ]; do
-    _i=$((_i + 1))
-    tm capture-pane -p -t "=$TS:" >"$RUN/pane.tmp" 2>/dev/null || return 1
-    mv "$RUN/pane.tmp" "$RUN/pane.txt"
-    sleep 0.5
-    ! grep -qF -- "$1" "$RUN/pane.txt" || return 0
-    [ ! -e "$RUN/$TS-exit" ] || return 1
-  done
-  return 1
-}
-# keep <file>: the last capture as <file> (none yet: nothing).
-keep() { [ ! -e "$RUN/pane.txt" ] || cp "$RUN/pane.txt" "$1"; }
-# key <key>: one key to the pane, then 0.5 s. send <text>: the text as typed, then Enter.
-key() { tm send-keys -t "=$TS:" "$1" 2>/dev/null || true; sleep 0.5; }
-send() { tm send-keys -t "=$TS:" -l "$1" 2>/dev/null || true; sleep 0.5; key Enter; }
-# tui_run <tag> <full: 1|0>: the TUI with this CX_HOME in session <tag> of the private server; one
-# turn (tracer-pc11-turn), captured as $RUN/<tag>-start.txt and <tag>-turn.txt; full: then
-# /statusline (<tag>-statusline.txt) and the warnings view, F2 (<tag>-warnings.txt). Then quit,
-# kill the server, take the records as capture <tag>. A refusal ends the part (exit 1).
-tui_run() {
-  TS=$1
-  {
-    q PREMISES_DIR "$PREMISES_DIR"
-    echo 'N2_AGENTS=codex'
-    q N2_SCRATCH "$N2_SCRATCH"
-    # shellcheck disable=SC2016
-    echo '. "$PREMISES_DIR/lib.sh"'
-    q RUN "$RUN"; q H "$H"; q R "$R"; q CX_HOME "$CX_HOME"; q MOCK_URL "$MOCK_URL"; q MOCK_PID "$MOCK_PID"
-    # A refusal (codex_env or run_codex exits before Codex ends) leaves <tag>-refused and its
-    # "premises:" lines in <tag>-pre.txt or the pane; the part then prints them and exits 1.
-    echo "trap '[ -e \"\$RUN/$TS-exit\" ] || : >\"\$RUN/$TS-refused\"' EXIT"
-    # --no-daemon: else the TUI starts a managed app-server daemon (from CODEX_HOME/packages, with
-    # a socket under /tmp/codex-daemon-<uid>) that outlives the run.
-    echo 'set -- --no-daemon'
-    # The checks run_codex makes, first with their output in a file (the pane closes on a refusal).
-    echo "{ n2_daemon_flag \"\$@\"; codex_env; n2_procs daemon || exit 1; } >\"\$RUN/$TS-pre.txt\" 2>&1"
-    echo "rc=0; run_codex \"\$@\" || rc=\$?; echo \"\$rc\" >\"\$RUN/$TS-exit\""
-  } >"$RUN/$TS-tui.sh"
-  rm -f "$RUN/$TS-exit" "$RUN/$TS-refused" "$RUN/pane.txt"
-  tm new-session -d -s "$TS" -x 250 -y 50 /bin/sh "$RUN/$TS-tui.sh"
-  pane_wait gpt-mock 60 || true
-  keep "$RUN/$TS-start.txt"
-  send tracer-pc11-turn
-  pane_wait tracer-pc11-reply 120 || true
-  keep "$RUN/$TS-turn.txt"
-  if [ "$2" = 1 ]; then
-    send /statusline
-    pane_wait tracer-none 4 || true
-    keep "$RUN/$TS-statusline.txt"
-    key Escape
-    key F2
-    pane_wait tracer-none 4 || true
-    keep "$RUN/$TS-warnings.txt"
-  fi
-  key Escape; key C-c; key C-c
-  _i=0
-  while [ ! -e "$RUN/$TS-exit" ] && [ "$_i" -lt 20 ]; do _i=$((_i + 1)); sleep 0.5; done
-  tm_kill
-  if [ -e "$RUN/$TS-refused" ]; then
-    echo "session: $TS: the TUI run was refused before Codex ended:"
-    cat "$RUN/$TS-pre.txt" 2>/dev/null || true
-    grep -h '^premises:' "$RUN/pane.txt" "$RUN/$TS"-*.txt 2>/dev/null | sort -u || true
-    exit 1
-  fi
-  take "$TS"
-}
-# pub_pane <capture file> <dest>: pub, or "(no capture)" when the file was never written; a
-# scrubbed capture that still holds a machine path ends the part.
-pub_pane() {
-  if [ -e "$1" ]; then pub "$1" "$2"; else echo '(no capture)' >"$2"; fi
-  ! grep -qE '/Users/|/var/folders/|/private/var/' "$2" || { echo "session: pc11: a pane capture holds a machine path"; exit 1; }
-}
-# The configured run, then the control run (no status_line key: Codex's default items).
 cx_home pc11 'check_for_update_on_startup = false' '[tui]
 status_line = ["model-with-reasoning"]
 show_tooltips = false'
-tui_run pc11 1
+tui_run pc11 status
 cx_home pc11-default 'check_for_update_on_startup = false' '[tui]
 show_tooltips = false'
-tui_run pc11-default 0
+tui_run pc11-default plain
 pub_config "$RUN/cx-pc11/config.toml" "$FX/config.toml"
 pub_config "$RUN/cx-pc11-default/config.toml" "$FX/config-default.toml"
-for _p in start turn statusline; do pub_pane "$RUN/pc11-$_p.txt" "$FX/pane-$_p.txt"; done
-pub_pane "$RUN/pc11-warnings.txt" "$FX/warnings.txt"
+for _p in start turn statusline warnings; do pub_pane "$RUN/pc11-$_p.txt" "$FX/pane-$_p.txt"; done
+mv "$FX/pane-warnings.txt" "$FX/warnings.txt"
 pub_pane "$RUN/pc11-default-turn.txt" "$FX/pane-default-turn.txt"
 pub_reqs pc11 "$FX"
 pub_reqs pc11-default "$FX"
-py status "$FX/status.txt" "$FX/pane-turn.txt" "$RUN/pc11-exit" "$FX/pane-default-turn.txt" "$RUN/pc11-default-exit"
+py status "$FX/status.txt" "$FX/pane-turn.txt" "$RUN/pc11-exit" "$FX/pane-default-turn.txt" "$RUN/pc11-default-exit" \
+  "$FX/warnings.txt"
 
 stop_mock
 codex_record session
+# The five Observed result lines by the plan's rules, dated in UTC (the Acceptance compares them).
+py observed "$CODEX_FX/runs/session/observed.txt" "$CODEX_FX" "$(TZ=UTC date +%Y-%m-%d)"
 echo "codex session: ok (codex $CODEX_VERSION)"
