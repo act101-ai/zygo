@@ -1,6 +1,7 @@
 pub mod clean;
 pub mod command;
 pub mod dedup;
+pub mod kind_view;
 
 /// Raw text above this size gets only the size view (O§7.3).
 pub const SHAPE_MAX_BYTES: usize = 4 * 1024 * 1024;
@@ -8,6 +9,7 @@ pub const SHAPE_MAX_BYTES: usize = 4 * 1024 * 1024;
 /// A view is used only when it saves at least this many bytes (O§7.8).
 pub const MIN_SAVING_BYTES: usize = 256;
 
+use crate::view::VIEW_CAP_BYTES;
 use crate::Kind;
 use command::Parsed;
 
@@ -60,7 +62,12 @@ pub fn run(raw: &str, input: &ShapeInput) -> Shaped {
         shaper = Some(Shaper::Dedup);
     }
     // Step 3, runner view (O§7.6): OS-30.
-    // Step 4, kind view (O§7.7), only when over the threshold: OS-29.
+    // Step 4, kind view (O§7.7), only when over the threshold.
+    if over(&text) && let Some((t, s, k)) = kind_view::kind_view(&text, input.kind, VIEW_CAP_BYTES) {
+        text = t;
+        steps.push(s);
+        shaper = Some(k);
+    }
     let size_view = over(&text);
     if shaper.is_none() && size_view {
         shaper = Some(Shaper::Size);

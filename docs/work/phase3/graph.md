@@ -196,7 +196,6 @@ Session text (T, SX nodes):
 | OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | TODO | implementation | — |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
-| OS-29 | Kind views for diff, json and log (pipeline step 4) | OS-15, OS-18 | TODO | judgment | — |
 | ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
 | MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | DONE | judgment | e7987782, f30700e9, bec4c680 · outbox 29/0 ; floor green · PR #111 |
 | MS-11 | Tip metadata, own hosts, collision and twin checks | MS-6, MS-10 | DONE | judgment | 53f75bbc 95931099 eaf0f3ee 71ba6b9c · identity 17/0 ; floor green · PR #113 |
@@ -403,3 +402,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | ML-10 DONE: Stop block (once, not while draining/stopping), prompt and SessionStart line, OpenCode per-request line; all off when [features] mail is off; unreadable mail/ changes no decision. Spec M§7.1, M§7.2, M§9 rewritten (author's call). Review: 6 fixed · PR #144 |
 | 2026-11-25 | ML-11 DONE: MCP tools mail_send, mail_read, mail_list; review H2 fixed (stopping block follows AU83), H1/M1/L2-L4 carried, M2/L1 refuted; PR #146. |
 | 2026-11-25 | MS-16 DONE: sync child start and rate limit; member hooks start it. Review fixes: session-start trigger for Claude Code; a future last_start counts as due; S§8.4 rewritten (author's call) · PR #148 |
+| 2026-11-25 | OS-29 DONE: kind views diff/json/log (step 4); review 7: F1 (view larger than input → None), F2 (plain-diff hunk counts), F4 (must_keep whole-line rule), F7 tests fixed; F3 (8 KiB incl. marker → OS-28), F5, F6 carried · PR #153 |

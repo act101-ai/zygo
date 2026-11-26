@@ -127,7 +127,7 @@ fn json_children(v: &serde_json::Value, level: usize, out: &mut Vec<String>) {
     }
 }
 
-fn json_tree(data: &[u8]) -> Result<String, String> {
+pub(crate) fn json_tree(data: &[u8]) -> Result<String, String> {
     let root: serde_json::Value = serde_json::from_slice(data).map_err(|_| "the result is not valid JSON".to_string())?;
     let mut out = Vec::new();
     if root.is_array() {
@@ -137,7 +137,7 @@ fn json_tree(data: &[u8]) -> Result<String, String> {
     Ok(out.join("\n"))
 }
 
-fn diff_path(line: &str, marker: &str, side: &str) -> String {
+pub(crate) fn diff_path(line: &str, marker: &str, side: &str) -> String {
     let rest = line.strip_prefix(marker).unwrap_or(line);
     let path = rest.split('\t').next().unwrap_or(rest);
     path.strip_prefix(side).unwrap_or(path).to_string()
