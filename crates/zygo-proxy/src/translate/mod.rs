@@ -4,6 +4,7 @@ pub mod chat;
 pub mod facts;
 pub mod reasoning;
 pub mod responses;
+pub mod responses_client;
 pub mod schema;
 pub mod sse;
 
