@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
-use zygo_mail_sync::env::{Clock, Crash, Env, NoSeam, Probe, Seam, Spawner, Verdict};
+use zygo_mail_sync::env::{Clock, Crash, Env, NoSeam, Probe, Seam, Spawner, TmuxWake, Verdict};
 use zygo_mail_sync::git::{has_text, run, stream, sync_git};
 use zygo_work::repo::{Flow, RunError, Streamed};
 
@@ -156,7 +156,8 @@ fn env_carries_the_injected_seams() {
     let at = UNIX_EPOCH + Duration::from_secs(100);
     let env = Env { paths: zygo_core::paths::Paths::from_env(), clock: Box::new(Fixed(at)),
         probe: Box::new(Says(Verdict::Unknown("x".into()))), seam: Box::new(CrashAt("after_push")),
-        spawner: Box::new(Count(n.clone())) };
+        spawner: Box::new(Count(n.clone())), wake: Box::new(TmuxWake { tmux: "/dev/null/tmux".into() }),
+        secret_policy: zygo_redact::secret::DeadlinePolicy::default() };
     assert_eq!(env.clock.now(), at);
     assert_eq!(env.probe.probe("https://h/p"), Verdict::Unknown("x".into()));
     assert_eq!(env.seam.at("before_push"), Ok(()));

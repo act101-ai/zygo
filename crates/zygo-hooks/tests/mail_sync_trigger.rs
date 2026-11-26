@@ -21,7 +21,7 @@ use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::{Member, ResumeNote, SessionView, ViewWorkspace};
 use zygo_core::Agent;
 use zygo_hooks::workspace;
-use zygo_mail_sync::env::{Clock, Env, NoSeam, Probe, Spawner, Verdict};
+use zygo_mail_sync::env::{Clock, Env, NoSeam, Probe, Spawner, TmuxWake, Verdict};
 use zygo_mail_sync::spawn::{self, due, ChildSpawner};
 use zygo_mail_sync::state::{read_last_start, write_last_start, SyncPaths};
 use zygo_workspace::mail::mail_dir;
@@ -142,7 +142,8 @@ fn at(secs: u64) -> SystemTime {
 }
 
 fn env_at(f: &Fx, secs: u64, s: &Spawns) -> Env {
-    Env { paths: f.paths.clone(), clock: Box::new(At(at(secs))), probe: Box::new(NoGit), seam: Box::new(NoSeam), spawner: Box::new(s.clone()) }
+    Env { paths: f.paths.clone(), clock: Box::new(At(at(secs))), probe: Box::new(NoGit), seam: Box::new(NoSeam), spawner: Box::new(s.clone()),
+        wake: Box::new(TmuxWake { tmux: "/dev/null/tmux".into() }), secret_policy: Default::default() }
 }
 
 fn hook(f: &Fx, event: &str, payload: &Value, sync: &Env) -> anyhow::Result<Option<String>> {

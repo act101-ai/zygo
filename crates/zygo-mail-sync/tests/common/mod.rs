@@ -11,17 +11,23 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use zygo_core::paths::Paths;
+use zygo_core::Agent;
 use zygo_mail_sync::state::SyncPaths;
+use zygo_workspace::state::{MemberRecord, Phase, Store};
 
 /// The workspace id of every test machine.
 pub const WS_ID: &str = "0123456789abcdef";
+/// The pane key of member `alice` on machine A.
+pub const ALICE: &str = "kalice222";
+/// The pane key of member `bob` on machine B.
+pub const BOB: &str = "kbobbb222";
 
 /// The git variables that would make a child git read another repository, another config or another author.
 const CLEARED: &[&str] = &[
     "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
     "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
     "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME",
-    "GIT_COMMITTER_EMAIL",
+    "GIT_COMMITTER_EMAIL", "ACT_CONFIG_DIR",
 ];
 
 /// A deadline one hour away: a test not about time never times out under machine load.
@@ -196,18 +202,88 @@ impl Remote {
     }
 }
 
-/// One clone of a [`Remote`] (`root`) and the path of its side-branch worktree (`wt`, not made).
+/// One clone of a [`Remote`] (`root`), the path of its side-branch worktree (`wt`, not made) and its zygo paths.
 pub struct Machine {
     pub dir: TempDir,
     pub root: PathBuf,
     pub wt: PathBuf,
+    pub paths: Paths,
 }
 
 impl Machine {
     pub fn new(remote: &Remote) -> Machine {
         let (dir, p) = canonical_dir();
         git(&p, &["clone", "-q", &remote.url, "user"]);
-        let wt = SyncPaths::new(&paths(&p), WS_ID).unwrap().worktree;
-        Machine { dir, root: p.join("user"), wt }
+        let paths = paths(&p);
+        let wt = SyncPaths::new(&paths, WS_ID).unwrap().worktree;
+        Machine { dir, root: p.join("user"), wt, paths }
     }
+
+    /// Writes `paths.config_file`: `[mail]` with `host = "<host>"` when given, then `[mail.workspace.app]`
+    /// `sync = "zygo/mail"`, then `extra` as it is.
+    pub fn config(&self, host: Option<&str>, extra: &str) {
+        let mut s = String::from("[mail]\n");
+        if let Some(h) = host {
+            s.push_str(&format!("host = \"{h}\"\n"));
+        }
+        s.push_str("[mail.workspace.app]\nsync = \"zygo/mail\"\n");
+        s.push_str(extra);
+        fs::write(&self.paths.config_file, s).unwrap();
+    }
+
+    /// The workspace record `app` of [`WS_ID`], phase up, with exactly the members `(pane key, name)`, each with
+    /// the zygo session `s<name>`.
+    pub fn workspace(&self, members: &[(&str, &str)]) {
+        let root = self.root.clone();
+        Store::open(&self.paths, WS_ID).update(Duration::from_secs(10), &mut |ws| {
+            ws.name = "app".into();
+            ws.common_dir = root.join(".git");
+            ws.main_root = root.clone();
+            ws.tmux_session = "zygo-app".into();
+            ws.loadout = "solo".into();
+            ws.phase = Phase::Up;
+            ws.members.clear();
+            for (key, name) in members {
+                let mut m = MemberRecord::new(Agent::ClaudeCode);
+                m.name = Some(name.to_string());
+                m.zygo_session = Some(format!("s{name}"));
+                ws.members.insert(key.to_string(), m);
+            }
+            Ok(())
+        }).unwrap();
+    }
+
+    /// The sync paths of [`WS_ID`].
+    pub fn sp(&self) -> SyncPaths { SyncPaths::new(&self.paths, WS_ID).unwrap() }
+
+    /// The text of the workspace's `errors.log`; empty when it is missing.
+    pub fn errors(&self) -> String {
+        fs::read_to_string(self.paths.workspaces_dir().join(WS_ID).join("errors.log")).unwrap_or_default()
+    }
+}
+
+/// A live session `<sessions_dir>/<id>`: `token` and a held lock on `pid`, which lasts as long as the returned file.
+pub fn live(paths: &Paths, id: &str) -> fs::File {
+    let dir = paths.sessions_dir.join(id);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("token"), "t").unwrap();
+    let f = fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(dir.join("pid")).unwrap();
+    fs4::FileExt::try_lock(&f).unwrap();
+    f
+}
+
+/// A new commit on `refs/heads/<branch>` of the bare repository with the tip's tree and the tip as parent.
+pub fn advance(remote: &Remote, branch: &str) -> String {
+    let tip = remote.tip(branch).unwrap();
+    let tree = git(&remote.bare, &["rev-parse", &format!("{tip}^{{tree}}")]);
+    let c = commit_tree(&remote.bare, &tree, Some(&tip));
+    git(&remote.bare, &["update-ref", &format!("refs/heads/{branch}"), &c]);
+    c
+}
+
+/// The bytes of `<tip>:<path>` of `refs/heads/<branch>` in the bare repository; `None` when absent.
+pub fn tip_file(remote: &Remote, branch: &str, path: &str) -> Option<Vec<u8>> {
+    let tip = remote.tip(branch)?;
+    let o = plain(&remote.bare).args(["cat-file", "blob", &format!("{tip}:{path}")]).output().unwrap();
+    o.status.success().then_some(o.stdout)
 }
