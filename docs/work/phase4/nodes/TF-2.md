@@ -1,9 +1,9 @@
 # TF-2 — CI runs the premise test scripts
 
 **Spec:** none (CI defect); PC-13 round-2 review G3; Global constraints "No CI test runs a real `claude`, `opencode` or `codex` binary" and "No test … may pass or fail by wall-clock time"
-**Files:** `.github/workflows/ci.yml`, `scripts/premises/lib_test.sh` (CI-friendly waits and its "not run by CI" header line only)
+**Files:** `.github/workflows/ci.yml`, `scripts/premises/lib_test.sh` (CI-friendly waits and its "not run by CI" header line only), `scripts/premises/lib.sh` (round 1 F3: the port-file waits; CI run 1: n2_scan's /proc owner check), `scripts/premises/scrub_test.py` (CI run 1: the SCRUB_FIXED case only)
 **Consumes:** —
-**Produces:** CI job `test` runs the five premise test scripts on `ubuntu-latest` and `macos-latest`
+**Produces:** CI job `premises` (round 1 F5; was job `test`) runs the five premise test scripts on `ubuntu-latest` and `macos-latest`
 **Acceptance:** each command run alone from the repository root: `test "$(grep -oE 'scripts/(premises/scrub_test\.py|premises/rescrub_test\.py|test-check-premises\.sh|premises/lib_test\.sh|check-premises\.sh)' .github/workflows/ci.yml | sort -u | wc -l)" -eq 5` → exit 0 (ci.yml names each of the five scripts); `python3 -I scripts/premises/scrub_test.py` → exit 0; `python3 -I scripts/premises/rescrub_test.py` → exit 0; `sh scripts/test-check-premises.sh` → exit 0; `sh scripts/premises/lib_test.sh` → exit 0; `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → exit 0; then the CI run of the node's pull request is green on ubuntu, macOS and Windows, with the five new steps run on ubuntu and macOS. No real agent runs in CI (every script uses stubs or none); no network beyond what the scripts already use (127.0.0.1 only).
 
 ## Planning notes
@@ -16,7 +16,7 @@
   - `rescrub_test.py` (PC-13): `python3` only; it builds a temporary fixtures tree and pops `N2_FORBIDDEN_NAMES` itself. No network.
   - `test-check-premises.sh`: POSIX `sh`, `awk`, `sed`, `grep`, `cp`, `mktemp`; it runs `check-premises.sh` on temporary copies and sets what each case needs. No network.
   - `check-premises.sh`: POSIX `sh`, `awk`, `grep`, and `shasum` or `sha256sum` (`check-premises.sh:263-266`); `N2_FORBIDDEN_NAMES` is optional (`:6-8`, `:395`). CI sets the fixed word `N2_FORBIDDEN_NAMES=zzcinameq`, not the runner user: the runner user on ubuntu and macOS is `runner`, and `fixtures/claude-code/options-2.1.331.txt:127` holds `--runner-declares`, a whole-word hit for the scan (word class `A-Za-z0-9_`, `:374`), so `$(id -un)` fails on CI. The fixed word runs the scan path; the host-name scan (`:375-394`) runs on the runner's own host names as it does locally.
-  - `lib_test.sh`: no tmux, no real agent, no network beyond `127.0.0.1` (its mock and `HTTPS_PROXY` cases). It needs `cc` (it compiles the stub `codex`, `lib_test.sh:31-56`; gcc on ubuntu, clang on macOS), `perl` (`:120`, `:916`), `python3`, `git`, `shasum`, `file`, `ps`, `uname`, and `lsof` where there is no `/proc` (`:60-62`, macOS). `dash` is used when installed (`:13`; ubuntu has it, macOS falls back to `sh`). The root-only cases skip under root (`:214`, `:318`); runners are not root. Its header says "not run by CI" (`:7`).
+  - `lib_test.sh`: no tmux, no real agent, no network beyond `127.0.0.1` (its mock and `HTTPS_PROXY` cases). It needs `cc` (it compiles the stub `codex`, `lib_test.sh:31-56`; gcc on ubuntu, clang on macOS), `perl` (`:120`, `:916`), `python3`, `git`, `shasum`, `file`, `ps`, `uname`, and `lsof` where there is no `/proc` (`:60-62`, macOS). `dash` is used when installed (`:14`; ubuntu and macOS both have it, macOS as `/bin/dash`, so lib_test uses dash on both). The root-only cases skip under root (`:214`, `:318`); runners are not root. Its header says "not run by CI" (`:7`).
   - `lib_test.sh` timing: `waitready` gives up after 50 polls 0.1 s apart (`:106-114`) and the case then fails with `NR=1` (`:127-131`, `:918`); three inline loops give up after 100 polls (`:994`, `:1046`, `:1131`). On a slow runner a case can fail by wall-clock time. The same rule as the Global constraint applies: wait on the ready file with no count limit; the CI job timeout is the bound.
 - OS matrix (`ci.yml:43`, `ubuntu-latest`, `macos-latest`, `windows-latest`): the five steps run on `ubuntu-latest` and `macos-latest` and are skipped on `windows-latest` (`if: matrix.os != 'windows-latest'`, as `ci.yml:55`). Reasons: the three sh scripts are POSIX `sh` and `lib_test.sh` needs `cc`, `ps`, symbolic links and `/proc` or `lsof`; `check-premises.sh:42` refuses CRLF in `docs/premises.md`, which a Windows checkout with `core.autocrlf` gives; the premise harness that `scrub.py` serves runs on unix only (`scripts/premises/lib.sh`), so the two python tests skip Windows too. Running any of them on Windows is out of scope.
 - CI paths (`ci.yml:3-32`): `docs/premises.md`, `docs/live-checks.md`, `docs/conformance.md` and `docs/specs/2026-11-18-zygo-design.md` already run CI. `check-premises.sh` also reads `docs/specs/2026-11-20-workspaces-design.md` (`check-premises.sh:16`), which does not run CI today; add it to both lists.
@@ -49,6 +49,87 @@ Capability: `mechanical` (CI steps, one wait helper, no new test logic).
   their not-ready branches (`sigrun`, R5, B4, X34, X48, and the `NR` message "not ready in 5 s" in
   `res`); with no count limit these branches no longer run. They are left as they are, because the
   plan keeps each case's assertions unchanged and these lines are outside the plan's change list.
+  (Superseded by round 1 F1 and F2 below.)
 - Step 5: each of the five script names occurs once in `ci.yml` (`grep -c` per name → 1); the
   diff holds only the five steps, the two path lines, `waitready`, the three inline loops and the
   header line (rewrapped to the file's line width).
+
+## Round 1 review
+
+Each finding is fixed. Code in `096d07ae` (F1-F3) and `d31c85a4` (F4, F5); F6 and this block in
+the docs commit that follows them.
+
+- F1 (important), fixed in `096d07ae`: the waits hung when the producer died. `waitready <file>
+  <pid>` polls until the file exists or the pid is dead; a dead pid re-checks the file once (0 if
+  it exists, else 1). Each caller passes its producer: sigrun and R5 the background run (`bp`),
+  `fprep` the server (`SRV`), B4 base.sh (`bp`), X34 and X48 the stub daemon. The child loops of
+  X36, X39 (one wait per daemon) and X46 use `waitin`, the same wait with the pid read from the
+  case's dpid file. New cases, none timed: W1 (producer exits at once without the file:
+  `waitready` returns 1), W2 (producer writes the file and exits: 0), W3 (`waitin` in a child:
+  exit 2 and the message on stderr), W6 (sigrun with a child that exits before it is ready:
+  `NR=1`).
+- F2 (important), fixed in `096d07ae`: `res` says "exited before it was ready" (with the stderr)
+  in place of "not ready in 5 s". X34 and X48 record a FAIL with `no` in place of a bare echo;
+  `fprep` sets `NR=1` when the server dies before its port file; the child loops exit 2 with
+  "<name> exited before it was ready" on stderr, which `res` shows as "exit 2, want <n>".
+- F3 (nit), fixed in `096d07ae`: `lib.sh` `start_mock` and `start_web` wait with `n2_wait_port`
+  (port file, or the server's death; no count limit); a server that dies still fails at once with
+  "mock did not start" / "web did not start" (new cases W4, W5). `srv.py` writes its port file to
+  a temporary name and renames it; the `sleep 0.1` after the wait is gone. B4 sends TERM as soon
+  as `B4.ready` exists: the server writes it after it accepted base.sh's request and sent the
+  partial body, so base.sh has made its schema temporary and set its trap; the `sleep 0.3` is
+  gone. Sleeps left in `lib.sh` and `lib_test.sh`, none a timing guess on the test path:
+  - poll intervals inside liveness loops: `lib.sh` `n2_wait_port`, `lib_test.sh` `waitready` and
+    `waitin`;
+  - `lib.sh` `tmux_claude` (`sleep 2`, keeps the pane open after the agent exits),
+    `tmux_send` (`sleep 0.5` between the text and Enter) and `tmux_wait_req` (0.5 s poll with a
+    count limit): live tmux runs with a real agent only; no CI case calls them;
+  - `lib_test.sh` `sleep 30` in `sigact` and R5 and `time.sleep(30)` in `srv.py`: the
+    long-running stand-in that the case signals or kills right after its ready file; 30 s only
+    bounds a stray process's life, and a case changes result only if more than 30 s pass between
+    the ready file and the signal.
+- F4 (nit), fixed in `d31c85a4`: a comment at the Premise check step says CI uses the fixed name
+  `zzcinameq`, which only exercises the scan path, and that the operator's local run with the real
+  user name is the privacy check.
+- F5 (nit), fixed in `d31c85a4`: the five steps moved from job `test` to job `premises`
+  (`matrix.os: [ubuntu-latest, macos-latest]`, `timeout-minutes: 60`, its own checkout, no
+  Windows `if:`), parallel with `test`. The path filters are unchanged.
+- F6 (nit), fixed in the docs commit: the planning note said macOS falls back to `sh`; macOS has
+  `/bin/dash`, and lib_test uses it there.
+- Verification after the fixes: `lib tests: ok (163)` (157 + W1-W6); `scrub tests: ok (158)`;
+  `rescrub tests: ok (172)`; `check-premises: ok (P1 … PC18)` with
+  `N2_FORBIDDEN_NAMES=zzcinameq`; `test-check-premises: ok (173 cases)`; `grep -c` of each of the
+  five script names in `ci.yml` → 1.
+
+## CI run 1 (run 45833839265, head `88e3082a`)
+
+The first CI run of these scripts failed on ubuntu and macOS. Each cause is fixed in this round.
+
+- Ubuntu, L13 and C4 (exit 1, want 141; stderr `echo: I/O error`), fixed in `061cb830`: the child
+  got EPIPE, not SIGPIPE. GitHub's Linux runner starts the job with SIGPIPE ignored, an ignored
+  signal is inherited, and dash cannot undo an ignore it started with. Confirmed locally:
+  `lib_test.sh` started under perl with `$SIG{PIPE} = "IGNORE"` fails L13 and C4 the same way, and
+  passes after the fix. `piperun` starts the child through perl with `$SIG{PIPE} = "DEFAULT"`;
+  the assertions are unchanged.
+- Ubuntu, X3, X5, X8, X29, X32, B1, X36, X38b, X39, X40, X46, X50 ("cannot read process working
+  folders (pid N: Permission denied)"), fixed in `75710576`: the /proc branch of `n2_scan`
+  (`lib.sh`) counted every readlink error but ENOENT, and Linux refuses `/proc/<pid>/cwd` of a
+  process that is not wholly this user's. Now, when a cwd cannot be read, `n2_scan` reads
+  `/proc/<pid>/status`: a Uid: field (real, effective, saved, fs) of another uid skips the
+  process; a process wholly this user's, an unreadable status, or no Uid: line still fails closed
+  (the line now names the process by its ps comm). The macOS lsof path is unchanged. `N2_PROC`
+  (default `/proc`, assigned at source time like `N2_DAEMON_DIRS`) lets Y1 and Y2 use a stub tree:
+  Y1 (another uid) passes, Y2 (this uid) fails closed; with the skip removed, Y1 fails. Not
+  confirmed: which runner processes these were. If one is wholly the runner user's but refused
+  (a non-dumpable process, such as systemd's `(sd-pam)`), this fix does not cover it and the
+  failure line names it.
+- macOS, scrub_test "fixed user and host names: output not as wanted", fixed in `aa0025a8`: the
+  case wrote the runner's own user and host names into its input and wanted them unchanged, so the
+  result depended on the machine. Which rule changed them on the runner is not confirmed (the case
+  prints no machine name, and the log does not show the host name); `runner` with two guessed runner
+  host names gives no hit for the SCRUB_FIXED rules locally. A host name holding a lower-case UUID
+  (the UUID rule) would explain it; that is a guess. The case now patches `getuser`, `gethostname` and `scutil` to give
+  `zzmachuserq` and `zzmachhostq(.local)`, as the short-host case does.
+- Verification: `lib tests: ok (165)` (163 + Y1, Y2); `lib tests: ok (163)` at `061cb830` with
+  SIGPIPE ignored at the start;
+  `scrub tests: ok (158)`; the other checks as above.
