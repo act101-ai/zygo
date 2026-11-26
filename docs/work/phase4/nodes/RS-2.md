@@ -130,7 +130,14 @@ pub fn response(msg: &Value, model: &str, t: &Target, calls: &Calls) -> (Value, 
 - [x] 5. Add `Encoder` per "Fixed values": line splitting as `StreamMapper::push` (`sse.rs:111-141`, each byte scanned once, `\r` stripped, multi-line `data` joined with `\n`, event dispatched on its blank line by the data's `type`); one open block at a time keyed by the Messages `index`; usage maxima as the tee; the `HOLD_MAX` bound checked after each push and each delta, freeing all held bytes before `response.failed`. Doc comments name K§6.4.3 stream obligations.
 - [x] 6. Run `cargo test -p zygo-proxy --locked --test responses_stream` → all pass. Run the Acceptance command alone → the `--list` count is at least 12 and all pass.
 - [x] 7. Run `cargo test -p zygo-proxy --locked --test responses_request --test translate` → pass (RS-1 and the existing mapper unchanged). Commit `feat(proxy): RS-2 Messages to Responses encoder and JSON response`.
-- [ ] 8. Verification floor in the checkout: `cargo test --workspace --locked --no-fail-fast` → exit 0 apart from the known `zygo --test guard_hook` environment failures (name each failing test in the node's output). Push.
+- [x] 8. Verification floor in the checkout: `cargo test --workspace --locked --no-fail-fast` → exit 0 apart from the known `zygo --test guard_hook` environment failures (name each failing test in the node's output). Push.
+
+### Round 1 output (2026-11-25)
+
+- Acceptance alone: `--list` count 17 (≥ 12); `responses_stream` 17 passed, 0 failed; exit 0.
+- `cargo test -p zygo-proxy --locked --test responses_request --test translate`: 49 and 48 passed.
+- `cargo test --workspace --locked --no-fail-fast`: 2374 passed, 2 failed, both the known `zygo --test guard_hook` environment failures under `/private/tmp`: `binary_guard_not_a_repository_writes_no_line`, `binary_guard_slow_rev_parse_says_unread_once`.
+- `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings`: clean.
 
 ### Author's checks (2026-11-25)
 
