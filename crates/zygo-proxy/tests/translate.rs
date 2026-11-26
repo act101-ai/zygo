@@ -1780,3 +1780,39 @@ fn chat_sse_large_restored_tool_arguments_complete() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["arguments"], json!(json!({"b":b}).to_string()));
 }
+
+#[test] // RS-13 round 3 review H5, K§6.4.3 stream obligation 8: the raw path's rebuilt arguments go out in several INPUT_DELTA_MAX pieces
+fn anthropic_sse_large_restored_tool_arguments_complete_raw() {
+    let b = "\"".repeat(600_000);
+    let args = json!({"a":null,"b":b}).to_string();
+    let want = json!({"b":b}).to_string();
+    assert!(want.len() > 18 * INPUT_DELTA_MAX, "{}", want.len());
+    let mut evs = vec![msg_start("msg_1", "up"), block_start(0, json!({"type":"tool_use","id":"toolu_1","name":"exec_command","input":{}}))];
+    evs.extend(args.as_bytes().chunks(60_000).map(|p| json_d(0, std::str::from_utf8(p).unwrap())));
+    evs.extend([block_stop(0), msg_delta("tool_use", [3, 0, 0, 2]), msg_stop()]);
+    let sse: Vec<u8> = evs.iter().flat_map(SseEvent::to_bytes).collect();
+    let nulls = NullMap { tools: BTreeMap::from([("exec_command".to_string(), vec![vec![Seg::Key("a".into())]])]), output: vec![] };
+    for n in [16 << 10, 1 << 20, sse.len()] {
+        let mut r = RestoreFilter::new(nulls.clone());
+        let mut e = Encoder::new("role-x", &tgt(), Calls::default());
+        let (mut sent, mut out) = (Vec::new(), Vec::new());
+        for c in sse.chunks(n) {
+            let x = r.push_raw(c);
+            out.extend(e.push(&x));
+            sent.extend(x);
+        }
+        let x = r.finish_raw();
+        out.extend(e.push(&x));
+        out.extend(e.finish());
+        sent.extend(x);
+        let text = String::from_utf8(sent).unwrap();
+        let rebuilt = text.split("\n\n").filter(|ev| ev.contains("input_json_delta")).count();
+        assert_eq!(rebuilt, want.len().div_ceil(INPUT_DELTA_MAX), "chunk {n}");
+        let longest = text.split("\n\n").map(str::len).max().unwrap();
+        assert!(longest < 2 * INPUT_DELTA_MAX + 256, "chunk {n}: {longest}");
+        assert_eq!(out.last().unwrap().event, "response.completed", "chunk {n}: {:?}", out.last().unwrap().data);
+        let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+        assert_eq!(items.len(), 1, "chunk {n}");
+        assert_eq!(items[0]["arguments"], json!(want), "chunk {n}");
+    }
+}
