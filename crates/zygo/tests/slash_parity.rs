@@ -310,6 +310,7 @@ const SAME: &[(&str, &str, bool, i32, &str, bool)] = &[
     ("statusline", "wide", true, 2, "zygo statusline: usage: statusline [compact|verbose]", false),
     ("ls", "", false, if cfg!(windows) { 2 } else { 0 }, if cfg!(windows) { OP5 } else { "no workspaces" }, false),
     ("workspace", "", false, if cfg!(windows) { 2 } else { 1 }, if cfg!(windows) { OP5 } else { "no workspace for this session or folder" }, false),
+    ("mail", "", false, if cfg!(windows) { 2 } else { 1 }, if cfg!(windows) { OP5 } else { "no workspace for this session or folder" }, false),
 ];
 
 /// The work value of a reply: the `work:` line of `status`, else the whole reply (a `work` row).
