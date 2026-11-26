@@ -509,12 +509,23 @@ def main():
             bad.append("ulid ids, one map per folder: got %r, again %r" % (got, again))
         # Review round 1 F5: SCRUB_FIXED=1 takes the user name from SCRUB_USER and the host names from
         # SCRUB_HOSTS, not from the machine, so a check gives the same result on every machine.
+        # TF-2: the machine's names are injected (getuser, gethostname and scutil give zzmachuserq and
+        # zzmachhostq), not read, so the result does not depend on the runner's own names.
         t = os.path.join(d, "fixed.txt")
         with open(t, "w") as f:
-            f.write("zzuserq on zzhostq; %s on %s\n" % (user, host))
-        got = scrub_env(t, {"SCRUB_FIXED": "1", "SCRUB_USER": "zzuserq", "SCRUB_HOSTS": "zzhostq"})
-        if got != "user on host; %s on %s\n" % (user, host):
-            bad.append("fixed user and host names: output not as wanted [not shown]")
+            f.write("zzuserq on zzhostq; zzmachuserq on zzmachhostq.local and zzmachhostq\n")
+        with tempfile.TemporaryDirectory() as run:
+            r = subprocess.run([sys.executable, "-I", "-c",
+                                "import getpass, runpy, socket, subprocess, sys; "
+                                "getpass.getuser = lambda: 'zzmachuserq'; "
+                                "socket.gethostname = lambda: 'zzmachhostq.local'; "
+                                "subprocess.run = lambda *a, **k: subprocess.CompletedProcess(a, 0, 'zzmachhostq', ''); "
+                                "sys.argv = ['scrub.py', sys.argv[1], sys.argv[2]]; "
+                                "runpy.run_path(%r, run_name='__main__')" % SCRUB, run, t],
+                               capture_output=True, text=True,
+                               env=dict(os.environ, SCRUB_FIXED="1", SCRUB_USER="zzuserq", SCRUB_HOSTS="zzhostq"))
+        if r.returncode != 0 or r.stdout != "user on host; zzmachuserq on zzmachhostq.local and zzmachhostq\n":
+            bad.append("fixed user and host names: got %r" % (r.stdout,))
         # Review round 2 G4: the user-name rule is case-insensitive and matches whole words only;
         # a user name of "user" (any case) changes nothing.
         with open(t, "w") as f:

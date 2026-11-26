@@ -49,8 +49,19 @@ import json
 import os
 import re
 import sys
+import socketserver
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+class Server(ThreadingHTTPServer):
+    """ThreadingHTTPServer with no host name lookup: http.server's server_bind calls socket.getfqdn,
+    a reverse DNS lookup that can stall (about 35 s per start on a macOS CI runner). server_name is
+    the host string; nothing here reads it."""
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[0], self.server_address[1]
 
 LOCK = threading.Lock()
 STATE = {"n": 0, "uses": {}}
@@ -425,7 +436,7 @@ def main():
                 if k in r and not os.path.isabs(r[k]):
                     r[k] = os.path.join(base, r[k])
     os.makedirs(a.dir, exist_ok=True)
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    srv = Server(("127.0.0.1", 0), Handler)
     srv.cfg = {"dir": a.dir, "rules": rules, "key": key, "alt_key": alt_key}
     if a.port_file:
         with open(a.port_file + ".tmp", "w") as f:

@@ -12,6 +12,7 @@ on:
       - 'docs/passthrough.md'
       - 'docs/premises.md'
       - 'docs/specs/2026-11-18-zygo-design.md'
+      - 'docs/specs/2026-11-20-workspaces-design.md'
       - 'docs/conformance/**'
       - 'docs/conformance.md'
       - 'docs/conformance.json'
@@ -26,6 +27,7 @@ on:
       - 'docs/passthrough.md'
       - 'docs/premises.md'
       - 'docs/specs/2026-11-18-zygo-design.md'
+      - 'docs/specs/2026-11-20-workspaces-design.md'
       - 'docs/conformance/**'
       - 'docs/conformance.md'
       - 'docs/conformance.json'
@@ -57,3 +59,32 @@ jobs:
       - name: Install script (PowerShell)
         if: matrix.os == 'windows-latest'
         run: pwsh scripts/test-install.ps1
+  # The premise test scripts (TF-2): POSIX sh, python3, cc; unix only, so no Windows. They use stubs
+  # and 127.0.0.1 only; no real agent runs. No case passes or fails by wall-clock time; the job
+  # timeout is a backstop only.
+  premises:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Premise scrub tests
+        run: python3 -I scripts/premises/scrub_test.py
+      - name: Premise re-scrub tests
+        run: python3 -I scripts/premises/rescrub_test.py
+      - name: Premise check tests
+        run: sh scripts/test-check-premises.sh
+      - name: Premise harness tests
+        run: sh scripts/premises/lib_test.sh
+      # CI scans for the fixed name zzcinameq: it only exercises the scan path. The runner user
+      # ("runner") is a whole word in a fixture (--runner-declares), so it cannot be used. The
+      # privacy check is the operator's local run with the real user name in N2_FORBIDDEN_NAMES.
+      - name: Premise check
+        env:
+          N2_FORBIDDEN_NAMES: zzcinameq
+        run: sh scripts/check-premises.sh
