@@ -128,6 +128,8 @@ Slash forms: `/zygo:mail` (list) only, per O14; send and read stay tools, becaus
    > Workspace mail: you are `<name>` in workspace `<workspace name>`. Members: `<name>, <name>, …`. Send with mail_send (to a name, or `all`); read with mail_read; mail_list shows unread mail and the current members. zygo tells you when mail arrives: before your turn ends, at your next prompt, or with a wake line. Do not poll or wait for mail: end your turn, and you will be woken.
 
    A member with no name gets `you have no mail name; others reach you by pane <key>` in place of the first clause. The item is not appended to subagent prompts (unlike item 7): mail is between members, and a subagent reports to its member through its result.
+
+   With mail sync on for the workspace (mail sync design S§11) and a member cache (`mail/sync/members.json`, S§7.3) that is not empty, item 8 gains one clause after the member list, before "Send with": `Other machines: <address>, <address>, …; mail them by the full address.` Each address is `<name>@<host>`, in host order, then names as stored. At most 64 addresses; when there are more, the last of the 64 is followed by `, and <n> more; mail_list lists all`, where `<n>` is the number left out. Sync off, a config that does not load, or an empty cache gives no clause. The clause holds addresses only (S§10.4).
 2. **Tool descriptions.** `mail_send`, `mail_read` and `mail_list` each end with the same rule: "Do not poll; zygo wakes you when mail arrives."
 3. **Delivery lines** (M§7.1-7.3) name the tool to call: `read them with mail_read`.
 
@@ -228,3 +230,4 @@ Mail sync between machines adds `[mail] host`, `[mail] sync_gap` and the per-wor
 | 2026-11-25 | M§7.2 | author's call (ML-10 review) | The prompt and SessionStart lines are for a member with `[features] mail` on, which has `mail_read` (M§8, M§8a). |
 | 2026-11-25 | M§9 | author's call (ML-10 review) | The resume-note bullet said the note adds a second unread line; SessionStart gives only the M§7.2 line, after the note. |
 | 2026-11-25 | M§3, M-C4, M-C6 | mail sync design S§16 | Mail between machines is now the mail sync design; M-C4 holds for `mail/`, and synced mail is also in the object store and on the remote; M-C6 holds: the side branch delivers only after the user-config opt-in. |
+| 2026-11-25 | M§8a | author's call (lead) | Mail sync design S§16 and S§10.4: item 8 gains the "Other machines" clause after the member list, at most 64 addresses (MS-20). |
