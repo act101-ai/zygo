@@ -252,9 +252,12 @@ N2_DAEMON_DIRS="/private/tmp /tmp"
 # N2_PROC: the proc file system n2_scan reads. Assigned here like N2_DAEMON_DIRS; lib_test.sh points
 # it at a stub tree in one case.
 N2_PROC=/proc
+# N2_PART_MARK: unset here, so a value from the environment is never used; new_run sets it (n2_mark).
+unset N2_PART_MARK
 # n2_mark: the part's start mark that new_run records (N2_PART_MARK), in the clock n2_scan compares
 # process start times with: clock ticks since boot where $N2_PROC is a proc file system (the clock of
-# /proc/<pid>/stat field 22), else seconds since the epoch (the clock of ps lstart).
+# /proc/<pid>/stat field 22), else seconds since the epoch (UTC; n2_scan reads ps lstart with TZ=UTC
+# and converts it with calendar.timegm, so no local time and no daylight saving time is involved).
 n2_mark() {
   N2_P_PROC=$N2_PROC python3 -I -c '
 import os, time
@@ -296,7 +299,7 @@ n2_procs() { n2_scan "$1" ""; }
 # command line or working folder holds it are named.
 n2_scan() {
   N2_P_MODE=$1 N2_P_ROOT=$2 N2_P_RUN=$RUN N2_P_SELF=$$ N2_P_DIRS=$N2_DAEMON_DIRS N2_P_PROC=$N2_PROC N2_P_MARK=${N2_PART_MARK:-} python3 -I -c '
-import errno, os, re, shutil, stat, subprocess, sys, time
+import calendar, errno, os, re, shutil, stat, subprocess, sys, time
 e = os.environ
 mode, run, root, self_pid = e["N2_P_MODE"], e["N2_P_RUN"], e["N2_P_ROOT"], int(e["N2_P_SELF"])
 pre, post = ("premises: ", "; codex not started") if mode == "daemon" else ("premises: codex_record: ", "")
@@ -369,14 +372,14 @@ mark = int(e["N2_P_MARK"]) if e["N2_P_MARK"].isdigit() else None
 def before(pid):
     """True when the process started before the part start mark (new_run); False when it did not,
     or when its start or the mark is not known (fail closed). /proc: stat field 22 (clock ticks since
-    boot); else ps lstart (seconds since the epoch)."""
+    boot); else ps lstart, printed in UTC (seconds since the epoch)."""
     if mark is None:
         return False
     try:
         if is_proc:
             with open("%s/%d/stat" % (proc, pid)) as f:
                 return int(f.read().rsplit(")", 1)[1].split()[19]) < mark
-        return int(time.mktime(time.strptime(lstart[pid], "%a %b %d %H:%M:%S %Y"))) < mark
+        return calendar.timegm(time.strptime(lstart[pid], "%a %b %d %H:%M:%S %Y")) < mark
     except (OSError, ValueError, IndexError, KeyError, OverflowError):
         return False
 is_proc = os.path.isdir(proc + "/self/fd")
@@ -384,7 +387,7 @@ lstart, zombie = {}, set()
 if not is_proc:
     try:
         r = subprocess.run(["ps", "-A", "-o", "pid=", "-o", "stat=", "-o", "lstart="], capture_output=True, text=True,
-                           errors="replace", timeout=120, env=dict(e, LC_ALL="C"))
+                           errors="replace", timeout=120, env=dict(e, LC_ALL="C", TZ="UTC"))
     except (OSError, subprocess.SubprocessError) as x:
         fail("ps failed (%s)" % x)
     for line in r.stdout.splitlines():

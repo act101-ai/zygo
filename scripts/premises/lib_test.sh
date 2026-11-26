@@ -16,15 +16,27 @@ T=$(mktemp -d)
 # PC-10: each child script sources $T/seam.sh right after lib.sh (unless NOSEAM=1): it redefines
 # n2_procs to scan only processes of this test's folder and points N2_DAEMON_DIRS under it, so the
 # host's own Codex daemon or another session's run does not change a result. The environment
-# cannot do this (lib.sh assigns both at source time). The stub daemons a case starts (pids in
-# $T/*.dpid) are stopped on exit.
-trap 'for p in $(cat "$T"/*.dpid 2>/dev/null); do kill "$p" 2>/dev/null; done; chmod -R u+rwx "$T"; rm -rf "$T"' EXIT
+# cannot do this (lib.sh assigns both at source time).
+# $T/stop.sh: the traps, on exit and on INT and TERM (exit 130, 143; the exit runs the EXIT trap).
+# They stop each process a case starts that can outlive it: a pid in $T/*.dpid (stub daemons,
+# servers) and a process group in $T/*.pgid (sigrun, R5, B4: the group holds the child shell and
+# what it started). A case removes its file once it has stopped the process. G1 sources the same
+# file in a driver of its own.
+cat >"$T/stop.sh" <<'EOF'
+stopall() {
+  for p in $(cat "$T"/*.dpid 2>/dev/null); do kill "$p" 2>/dev/null; done
+  for g in $(cat "$T"/*.pgid 2>/dev/null); do kill -s TERM -- "-$g" 2>/dev/null; done
+  chmod -R u+rwx "$T"; rm -rf "$T"
+}
+trap stopall EXIT
 trap 'exit 130' INT
+trap 'exit 143' TERM
+EOF
+. "$T/stop.sh"
 cat >"$T/seam.sh" <<EOF
 N2_DAEMON_DIRS="$T/private/tmp $T/tmp"
 n2_procs() { n2_scan "\$1" "$T"; }
 EOF
-trap 'exit 143' TERM
 n=0 bad=0
 ok() { n=$((n + 1)); printf 'ok: %s\n' "$1"; }
 no() { n=$((n + 1)); bad=$((bad + 1)); printf 'FAIL: %s (%s)\n' "$1" "$2"; }
@@ -121,12 +133,14 @@ waitin() {
 }
 # sigrun <case> <signal>: run $T/<case>.sh in the background, signal it when ready; sets rc and NR.
 # perl resets INT to its default first: a background command of a non-interactive shell starts with
-# INT ignored, and a shell cannot trap a signal that was ignored when it started.
+# INT ignored, and a shell cannot trap a signal that was ignored when it started. The child leads a
+# process group of its own ($T/<case>.pgid), so lib_test's traps stop it and its helper (G1).
 sigrun() {
   # shellcheck disable=SC2086
-  perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die' \
+  perl -e '$SIG{INT} = "DEFAULT"; setpgrp(0, 0); exec @ARGV or die' \
     env PATH="$CP" TMPDIR="$T/tmp-$1" $XENV "$SH" "$T/$1.sh" >"$T/$1.out" 2>"$T/$1.err" &
   bp=$!
+  echo "$bp" >"$T/$1.pgid"
   if waitready "$T/$1.ready" "$bp"; then
     kill -s "$2" "$(cat "$T/$1.pid")"
     wait "$bp"
@@ -138,7 +152,10 @@ sigrun() {
     rc=$?
   fi
   [ ! -f "$T/$1.sleep" ] || kill "$(cat "$T/$1.sleep")" 2>/dev/null
+  endgrp "$T/$1.pgid"
 }
+# endgrp <pgid file>: TERM to the recorded process group (what is left of it), then remove the file.
+endgrp() { kill -s TERM -- "-$(cat "$1")" 2>/dev/null; rm -f "$1"; }
 # piperun <case>: run $T/<case>.sh with stdout to a pipe whose reader has exited; sets rc.
 # perl resets PIPE to its default first: an ignored SIGPIPE is inherited (GitHub's Linux runner starts
 # jobs with it ignored), and dash cannot undo an ignore it started with; the child then gets EPIPE.
@@ -389,6 +406,7 @@ c=R5; prep $c own; ERR=$T/$c.err; rall $c
 printf '%s\n' ": >'$T/R5.ready'; exec python3 -I -c 'import signal; signal.pause()'" >"$T/$c-pd/run-smoke.sh"
 perl -e 'setpgrp(0, 0); exec @ARGV or die' env PATH="$CP" TMPDIR="$T/tmp-$c" "$SH" "$T/$c-pd/run-all.sh" >"$T/$c.out" 2>"$T/$c.err" &
 bp=$!
+echo "$bp" >"$T/$c.pgid"
 if waitready "$T/R5.ready" "$bp"; then
   kill -s TERM -- "-$bp"
   wait "$bp"
@@ -399,6 +417,7 @@ else
   wait "$bp"
   rc=$?
 fi
+endgrp "$T/$c.pgid"
 r5() {
   [ "$(ls -A "$T/tmp-R5" | wc -l | tr -d ' ')" = 1 ] || { why="$T/tmp-R5 does not hold exactly one entry"; return 1; }
   kept_n R5 143 "$T/tmp-R5/$(ls -A "$T/tmp-R5")"
@@ -415,7 +434,7 @@ mkbin "$T/cx171" 1 0.171.9
 mkbin "$T/cx173" 1 0.173.0
 cat >"$T/connect.py" <<'PY'
 import socket, sys
-s = socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=30)
+s = socket.create_connection(("127.0.0.1", int(sys.argv[1])))
 s.sendall(b"CONNECT example.invalid:443 HTTP/1.1\r\nHost: example.invalid:443\r\n\r\n")
 while s.recv(4096):
     pass
@@ -915,6 +934,7 @@ fprep() {
   prep "$1" caller; ERR=$T/$1.err; mkdir -p "$T/fx-$1" "$T/$1-pd/codex"; XENV="$XENV CODEX_FX=$T/fx-$1"
   cp "$T/B-pd/lib.sh" "$T/B-pd/ver.sh" "$T/B-pd/scrub.py" "$T/B-pd/mock_upstream.py" "$T/$1-pd/"
   python3 -I "$T/srv.py" "$2" "$T/$1.port" "$T/$1.ready" & SRV=$!
+  echo "$SRV" >"$T/$1-srv.dpid"
   # The server writes the port file to a temporary name and renames it, so it is whole once it exists.
   waitready "$T/$1.port" "$SRV" || NR=1
   sed "s|^URL=.*|URL=http://127.0.0.1:$(cat "$T/$1.port")/s|" "$T/B-pd/codex/base.sh" >"$T/$1-pd/codex/base.sh"
@@ -928,15 +948,17 @@ c=B4; fprep $c hang
 # shellcheck disable=SC2086
 perl -e 'setpgrp(0, 0); exec @ARGV or die' env PATH="$CP" TMPDIR="$T/tmp-$c" $XENV "$SH" "$T/$c-pd/codex/base.sh" >"$T/$c.out" 2>"$T/$c.err" &
 bp=$!
+echo "$bp" >"$T/$c.pgid"
 # The server writes B4.ready after it has accepted base.sh's request and sent the partial body: by
 # then base.sh has made its schema temporary and set its trap, and curl is reading the body.
 if waitready "$T/$c.ready" "$bp"; then kill -s TERM -- "-$bp"; wait "$bp"; rc=$?; else NR=1; kill -s KILL -- "-$bp" 2>/dev/null; wait "$bp"; rc=$?; fi
-kill "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null
+endgrp "$T/$c.pgid"
+kill "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null; rm -f "$T/$c-srv.dpid"
 res "B4 a TERM during the schema fetch leaves no partial file" 143 no_partial B4
 c=B5; fprep $c bad
 # shellcheck disable=SC2086
 env PATH="$CP" TMPDIR="$T/tmp-$c" $XENV "$SH" "$T/$c-pd/codex/base.sh" >"$T/$c.out" 2>"$T/$c.err"; rc=$?
-kill "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null
+kill "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null; rm -f "$T/$c-srv.dpid"
 b5() { grep -q "^premises: the fetched schema sha256 is [0-9a-f]*, not the pinned $PIN\$" "$T/B5.out" || { why="stdout: $(tr '\n' '|' <"$T/B5.out")"; return 1; }; no_partial B5; }
 res "B5 a fetched schema that is not the pinned file leaves no file" 1 b5
 
@@ -1018,7 +1040,7 @@ ALT="dummy-""alt-key"
 cat >"$T/alt.py" <<'PY'
 import http.client, sys, urllib.parse
 u = urllib.parse.urlsplit(sys.argv[1])
-c = http.client.HTTPConnection(u.hostname, u.port, timeout=30)
+c = http.client.HTTPConnection(u.hostname, u.port)
 c.request("POST", "/v1/responses", body=b'{"model":"m","input":"x"}',
           headers={"authorization": "Bearer " + sys.argv[2], "content-type": "application/json"})
 print(c.getresponse().status)
@@ -1248,15 +1270,17 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 PY
 MOCK_KEY=x python3 -I "$T/nofqdn.py" "$HERE/mock_upstream.py" --dir "$T/W7rec" --port-file "$T/W7.port" 2>"$T/W7.err" &
 wp=$!
+echo "$wp" >"$T/W7.dpid"
 if waitready "$T/W7.port" "$wp"; then ok "W7 the mock starts with no host name lookup"; else no "W7 the mock starts with no host name lookup" "stderr: $(tr '\n' '|' <"$T/W7.err")"; fi
-kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null
+kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null; rm -f "$T/W7.dpid"
 if command -v openssl >/dev/null; then
   openssl req -x509 -newkey rsa:2048 -nodes -keyout "$T/W8-key.pem" -out "$T/W8-cert.pem" -days 2 -subj "/CN=127.0.0.1" >/dev/null 2>&1
   mkdir -p "$T/W8web"
   python3 -I "$T/nofqdn.py" "$HERE/https_static.py" "$T/W8web" "$T/W8-cert.pem" "$T/W8-key.pem" "$T/W8.port" 2>"$T/W8.err" &
   wp=$!
+  echo "$wp" >"$T/W8.dpid"
   if waitready "$T/W8.port" "$wp"; then ok "W8 the web server starts with no host name lookup"; else no "W8 the web server starts with no host name lookup" "stderr: $(tr '\n' '|' <"$T/W8.err")"; fi
-  kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null
+  kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null; rm -f "$T/W8.dpid"
 else
   ok "W8 skipped: no openssl"
 fi
@@ -1326,6 +1350,207 @@ y6() {
 }
 res "Y6 lsof path: this user's process with no working folder that started during the part fails closed" 0 y6
 kill "$YP" 2>/dev/null; rm -f "$T/Y.dpid"
+
+# --- TF-2 round 2 -------------------------------------------------------------------------------
+# gone <pid>: wait, with no count limit, until <pid> has ended (or is a zombie: its parent may not
+# reap it at once).
+gone() {
+  while kill -0 "$1" 2>/dev/null; do
+    case "$(ps -o stat= -p "$1" 2>/dev/null)" in Z*) return ;; esac
+    sleep 0.1
+  done
+}
+# G1 (TERM, INT): a driver sources $T/stop.sh (lib_test's own traps), starts a process group as the
+# cases do (a sh that waits on a helper that runs until it is signalled) and records it as they do,
+# then waits. lib_test signals the driver; when the driver has ended, lib_test sends WINCH to the
+# helper. The helper writes the name of the first signal it handles and exits: SIGTERM when the
+# driver's trap stopped it, SIGWINCH when the trap left it running. Pending signals are handled in
+# signal number order (TERM 15 before WINCH 28, on Linux and macOS), so no wait is timed.
+cat >"$T/g1h.py" <<'PY'
+import os, signal, sys
+got, pidf = sys.argv[1:3]
+def on(n, f):
+    with open(got + ".tmp", "w") as fh:
+        fh.write(signal.Signals(n).name)
+    os.rename(got + ".tmp", got)
+    sys.exit(0)
+signal.signal(signal.SIGTERM, on)
+signal.signal(signal.SIGWINCH, on)
+with open(pidf + ".tmp", "w") as f:
+    f.write(str(os.getpid()))
+os.rename(pidf + ".tmp", pidf)
+while True:
+    signal.pause()
+PY
+for s in TERM INT; do
+  c=G1$s
+  if [ $s = TERM ]; then want=143; else want=130; fi
+  {
+    echo "T='$T/$c-d'; mkdir -p \"\$T\""
+    echo ". '$T/stop.sh'"
+    echo "perl -e 'setpgrp(0, 0); exec @ARGV or die' sh -c 'python3 -I \"\$1\" \"\$2\" \"\$3\" & wait' sh '$T/g1h.py' '$T/$c.got' '$T/$c.hpid' &"
+    echo "g=\$!; echo \"\$g\" >\"\$T/$c.pgid\"; echo \"\$g\" >'$T/$c.gpid'"
+    echo "while [ ! -f '$T/$c.hpid' ]; do kill -0 \"\$g\" 2>/dev/null || exit 3; sleep 0.1; done"
+    echo ": >'$T/$c.ready'"
+    echo "wait"
+  } >"$T/$c.sh"
+  # perl resets INT to its default (a background command starts with INT ignored).
+  perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die' "$SH" "$T/$c.sh" >"$T/$c.out" 2>"$T/$c.err" &
+  gp=$!
+  if waitready "$T/$c.ready" "$gp"; then
+    kill -s $s "$gp"; wait "$gp"; grc=$?
+    hp=$(cat "$T/$c.hpid")
+    kill -s WINCH "$hp" 2>/dev/null
+    waitready "$T/$c.got" "$hp"
+    gone "$hp"; gone "$(cat "$T/$c.gpid")"
+    got=$(cat "$T/$c.got" 2>/dev/null)
+    if [ "$grc" = "$want" ] && [ "$got" = SIGTERM ] && [ ! -e "$T/$c-d" ]; then
+      ok "$c the traps stop a case's process group on $s (exit $want)"
+    else
+      no "$c the traps stop a case's process group on $s (exit $want)" "exit $grc; the helper got ${got:-nothing}; driver folder $(ls -d "$T/$c-d" 2>/dev/null)"
+    fi
+  else
+    wait "$gp"
+    no "$c the traps stop a case's process group on $s (exit $want)" "the driver exited before it was ready; stderr: $(tr '\n' '|' <"$T/$c.err")"
+  fi
+done
+
+# G2: n2_mark and the start time n2_scan reads use one clock. Real processes, the real n2_mark (in
+# new_run), the real ps. A process that started before new_run is skipped; one that started after it
+# fails closed. g2tick waits (no count limit) until the clock has passed its value at the call, so
+# a process that is ready before the call started before the mark that follows it.
+cat >"$T/g2tick.py" <<'PY'
+import os, sys, time
+def now():
+    if sys.argv[1] == "proc":
+        with open("/proc/uptime") as f:
+            return int(float(f.read().split()[0]) * os.sysconf("SC_CLK_TCK"))
+    return int(time.time())
+v = now() + (1 if sys.argv[1] == "proc" else 0)  # proc: one tick more for float rounding
+while now() <= v:
+    time.sleep(0.01)
+PY
+# The lsof path, where the host has no /proc (macOS: ps lstart is the wall clock the epoch mark uses;
+# Linux procps derives lstart from the boot time and can be a second or more behind it, but n2_scan
+# takes the lsof path only with no /proc). The real ps; the mark in epoch seconds; a stub lsof gives
+# every process the working folder / except the pid in $T/lsofx.pid (G3 uses it too).
+mkdir -p "$T/lsofg"
+printf '#!/bin/sh\nx=$(cat %s 2>/dev/null)\nfor p in $(ps -A -o pid=); do [ "$p" = "$x" ] || printf "p%%s\\nn/\\n" "$p"; done\n' "'$T/lsofx.pid'" >"$T/lsofg/lsof"
+chmod +x "$T/lsofg/lsof"
+if [ ! -d /proc/self/fd ]; then
+  c=G2a; cxprep $c caller; CP=$T/lsofg:$T/bin
+  N2D_READY=$T/$c.ready "$T/dmn/codex" &
+  echo $! >"$T/$c.dpid"
+  GP=$(cat "$T/$c.dpid")
+  waitready "$T/$c.ready" "$GP" || no "G2a stub" "exited before it was ready"
+  echo "$GP" >"$T/lsofx.pid"
+  python3 -I "$T/g2tick.py" epoch
+  child $c 0 "N2_PROC='$T/noproc'; new_run x; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+  run $c
+  kill "$GP" 2>/dev/null; rm -f "$T/$c.dpid"
+  g2a() { [ "$(cat "$T/G2a.rc")" = 0 ] && [ ! -s "$T/G2a.out" ] || { why="rc $(cat "$T/G2a.rc"), stdout: $(tr '\n' '|' <"$T/G2a.out")"; return 1; }; }
+  res "G2a lsof path, real n2_mark: a process with no working folder that started before new_run is skipped" 0 g2a
+  c=G2b; cxprep $c caller; CP=$T/lsofg:$T/bin
+  child $c 0 "N2_PROC='$T/noproc'; new_run x; N2D_READY='$T/$c.ready' '$T/dmn/codex' & echo \$! >'$T/$c.dpid'; $(waitin "$T/$c.ready" "$T/$c.dpid" 'G2b stub'); cat '$T/$c.dpid' >'$T/lsofx.pid'; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+  run $c
+  g2b() {
+    [ "$(cat "$T/G2b.rc")" = 1 ] && grep -q "^premises: codex_record: cannot read process working folders (pid $(cat "$T/G2b.dpid"), .*: no working folder from lsof)\$" "$T/G2b.out" ||
+      { why="rc $(cat "$T/G2b.rc"), stdout: $(tr '\n' '|' <"$T/G2b.out")"; return 1; }
+  }
+  res "G2b lsof path, real n2_mark: a process with no working folder that started after new_run fails closed" 0 g2b
+  kill "$(cat "$T/G2b.dpid")" 2>/dev/null; rm -f "$T/G2b.dpid" "$T/lsofx.pid"
+else
+  ok "G2a, G2b skipped: this host has /proc (the /proc path is G2c, G2d)"
+fi
+# The /proc path, where the host has one (the real /proc; the mark in clock ticks since boot): a
+# helper that makes itself non-dumpable, so Linux refuses its /proc/<pid>/cwd to this user.
+cat >"$T/g2nd.py" <<'PY'
+import ctypes, signal, sys
+ctypes.CDLL(None).prctl(4, 0, 0, 0, 0)  # PR_SET_DUMPABLE, 0
+open(sys.argv[1], "w").close()
+while True:
+    signal.pause()
+PY
+if [ -d /proc/self/fd ]; then
+  c=G2c; cxprep $c caller
+  python3 -I "$T/g2nd.py" "$T/$c.ready" &
+  echo $! >"$T/$c.dpid"
+  GP=$(cat "$T/$c.dpid")
+  waitready "$T/$c.ready" "$GP" || no "G2c helper" "exited before it was ready"
+  if python3 -I -c 'import os, sys; os.readlink("/proc/%s/cwd" % sys.argv[1])' "$GP" 2>/dev/null; then
+    kill "$GP" 2>/dev/null; rm -f "$T/$c.dpid"
+    ok "G2c, G2d skipped: this user can read a non-dumpable process's /proc/<pid>/cwd"
+  else
+    python3 -I "$T/g2tick.py" proc
+    child $c 0 "new_run x; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+    run $c
+    kill "$GP" 2>/dev/null; rm -f "$T/$c.dpid"
+    g2c() { [ "$(cat "$T/G2c.rc")" = 0 ] && [ ! -s "$T/G2c.out" ] || { why="rc $(cat "$T/G2c.rc"), stdout: $(tr '\n' '|' <"$T/G2c.out")"; return 1; }; }
+    res "G2c /proc path, real n2_mark: an unreadable process that started before new_run is skipped" 0 g2c
+    c=G2d; cxprep $c caller
+    child $c 0 "new_run x; python3 -I '$T/g2nd.py' '$T/$c.ready' & echo \$! >'$T/$c.dpid'; $(waitin "$T/$c.ready" "$T/$c.dpid" 'G2d helper'); if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+    run $c
+    g2d() {
+      [ "$(cat "$T/G2d.rc")" = 1 ] && grep -q "^premises: codex_record: cannot read process working folders (pid $(cat "$T/G2d.dpid"), .*: Permission denied)\$" "$T/G2d.out" ||
+        { why="rc $(cat "$T/G2d.rc"), stdout: $(tr '\n' '|' <"$T/G2d.out")"; return 1; }
+    }
+    res "G2d /proc path, real n2_mark: an unreadable process that started after new_run fails closed" 0 g2d
+    kill "$(cat "$T/G2d.dpid")" 2>/dev/null; rm -f "$T/G2d.dpid"
+  fi
+else
+  ok "G2c, G2d skipped: no /proc (the lsof path is G2a, G2b)"
+fi
+
+# G3: the lsof path in the repeated hour at the end of daylight saving time. TZ=America/New_York; the
+# mark is 2026-11-01 01:30 EST (06:30 UTC); a stub ps gives the process a start of 01:40 EST (06:40
+# UTC) in the time zone ps runs with. The start is after the mark: the scan fails closed.
+cat >"$T/g3ps.py" <<'PY'
+import sys, time
+x = open(sys.argv[1]).read().strip()
+for line in sys.stdin:
+    t = line.split(None, 2)
+    if len(t) == 3 and t[0] == x:
+        line = "%s %s %s\n" % (t[0], t[1], time.strftime("%a %b %e %H:%M:%S %Y", time.localtime(int(sys.argv[2]))))
+    sys.stdout.write(line)
+PY
+mkdir -p "$T/psdst"
+printf '#!/bin/sh\ncase "$*" in *lstart=*) ;; *) exec %s "$@" ;; esac\n%s "$@" | exec python3 -I %s %s 1793515200\n' \
+  "'$(command -v ps)'" "'$(command -v ps)'" "'$T/g3ps.py'" "'$T/lsofx.pid'" >"$T/psdst/ps"
+chmod +x "$T/psdst/ps"
+c=G3; cxprep $c caller; CP=$T/psdst:$T/lsofg:$T/bin; XENV="$XENV TZ=America/New_York"
+child $c 0 "N2_PROC='$T/noproc'; new_run x; N2_PART_MARK=1793514600; N2D_READY='$T/$c.ready' '$T/dmn/codex' & echo \$! >'$T/$c.dpid'; $(waitin "$T/$c.ready" "$T/$c.dpid" 'G3 stub'); cat '$T/$c.dpid' >'$T/lsofx.pid'; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+run $c
+g3() {
+  [ "$(cat "$T/G3.rc")" = 1 ] && grep -q "^premises: codex_record: cannot read process working folders (pid $(cat "$T/G3.dpid"), .*: no working folder from lsof)\$" "$T/G3.out" ||
+    { why="rc $(cat "$T/G3.rc"), stdout: $(tr '\n' '|' <"$T/G3.out")"; return 1; }
+}
+res "G3 lsof path: a start in the repeated DST hour after the mark is not before it" 0 g3
+kill "$(cat "$T/G3.dpid")" 2>/dev/null; rm -f "$T/G3.dpid" "$T/lsofx.pid"
+
+# G4: an N2_PART_MARK from the environment is not used (lib.sh unsets it; new_run sets it).
+c=G4; prep $c own; ERR=$T/$c.err; PRE="export N2_PART_MARK=9999999999"
+child $c 0 "if [ -z \"\${N2_PART_MARK+x}\" ]; then echo unset >'$T/$c.v'; else echo \"set:\$N2_PART_MARK\" >'$T/$c.v'; fi"
+run $c
+g4() { [ "$(cat "$T/G4.v")" = unset ] || { why="N2_PART_MARK after lib.sh: $(cat "$T/G4.v")"; return 1; }; }
+res "G4 lib.sh unsets an N2_PART_MARK from the environment" 0 g4
+
+# G5: daemon mode names a codex app-server whose cwd cannot be read and that the scan skips (another
+# uid in a stub proc tree, as Y1): its working folder is unknown, so it is outside the run folder.
+N2D_READY=$T/G5.ready "$T/dmn/codex" app-server &
+echo $! >"$T/G5.dpid"
+GP=$(cat "$T/G5.dpid")
+waitready "$T/G5.ready" "$GP" || no "G5 stub daemon" "exited before it was ready"
+c=G5; mkdir -p "$T/fp-$c/self/fd" "$T/fp-$c/$GP"; : >"$T/fp-$c/$GP/cwd"
+printf 'Name:\tcodex\nUid:\t0\t0\t0\t0\n' >"$T/fp-$c/$GP/status"
+cxprep $c caller
+child $c 0 "new_run x; N2_PROC='$T/fp-$c'; python3 -I '$T/fpself.py' '$T/fp-$c/'\$\$; if n2_procs daemon; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+run $c
+g5() {
+  [ "$(cat "$T/G5.rc")" = 1 ] && out_has G5 "premises: a codex app-server runs outside this run folder (pid $GP, $T/dmn/codex); codex not started; it is left running" ||
+    { why="rc $(cat "$T/G5.rc"), stdout: $(tr '\n' '|' <"$T/G5.out")"; return 1; }
+}
+res "G5 daemon mode still names a skipped app-server (another uid, cwd not readable)" 0 g5
+kill "$GP" 2>/dev/null; rm -f "$T/G5.dpid"
 
 if [ "$bad" -eq 0 ]; then echo "lib tests: ok ($n)"; exit 0; fi
 echo "lib tests: $bad failed"
