@@ -84,10 +84,8 @@ the docs commit that follows them.
   - `lib.sh` `tmux_claude` (`sleep 2`, keeps the pane open after the agent exits),
     `tmux_send` (`sleep 0.5` between the text and Enter) and `tmux_wait_req` (0.5 s poll with a
     count limit): live tmux runs with a real agent only; no CI case calls them;
-  - `lib_test.sh` `sleep 30` in `sigact` and R5 and `time.sleep(30)` in `srv.py`: the
-    long-running stand-in that the case signals or kills right after its ready file; 30 s only
-    bounds a stray process's life, and a case changes result only if more than 30 s pass between
-    the ready file and the signal.
+  - (`sleep 30` in `sigact` and R5 and `time.sleep(30)` in `srv.py` were left here; CI run 2
+    below replaced them.)
 - F4 (nit), fixed in `d31c85a4`: a comment at the Premise check step says CI uses the fixed name
   `zzcinameq`, which only exercises the scan path, and that the operator's local run with the real
   user name is the privacy check.
@@ -132,4 +130,35 @@ The first CI run of these scripts failed on ubuntu and macOS. Each cause is fixe
   `zzmachuserq` and `zzmachhostq(.local)`, as the short-host case does.
 - Verification: `lib tests: ok (165)` (163 + Y1, Y2); `lib tests: ok (163)` at `061cb830` with
   SIGPIPE ignored at the start;
+
+## CI run 2 (run 45839465098, head `92b7ff34`)
+
+Results: `test` passed on ubuntu, macOS and Windows; `premises` (ubuntu) failed, and
+`premises` (macOS) was cancelled at the 60-minute backstop. The SIGPIPE and scrub_test fixes
+held on both runners.
+
+- Ubuntu, the same 12 lib_test cases: the refused process was `pid 1329, systemd` (the runner
+  user's own `systemd --user`; every Uid field is this uid). Decision: skip such a process only
+  when it started before the part. Fixed in `d09a3cd5`: `new_run` records `N2_PART_MARK`
+  (`n2_mark`: clock ticks since boot from `<proc>/uptime`, else epoch seconds). `n2_scan` skips an
+  unreadable process of this user only when its start (`/proc/<pid>/stat` field 22, or `ps lstart`
+  without /proc) is before the mark; one that started during the part, or whose start is not
+  known, fails closed. On the lsof path, a live, non-zombie candidate with no working folder is now
+  treated the same way (before, it was taken as outside the run without a failure). A skipped
+  process keeps an unknown working folder, so daemon mode still names it. Cases Y3, Y4 (stub
+  /proc tree) and Y5, Y6 (stub lsof); Y3 and Y6 fail before the change.
+- macOS timeout. Decision: lsof for this uid only (`-a -u <uid> -d cwd -F pn`), fixed in
+  `d09a3cd5`, and a 90-minute backstop, fixed in `d7937ff6`. One lookup on the development Mac
+  (622 processes of this uid), measured with a scratch script: the old `-p <pids>` form 0.14 s
+  and 0.14 s, the `-u` form 0.14 s and 0.14 s. lsof is not what made the runner slow: X46 runs a
+  real lsof scan with no mock and took 0.6 s on the runner, while each case that calls
+  `start_mock` took about 35 s (X11, X12, X27, X38, X45, with no mock, took under 0.4 s). The
+  likely cause is outside this node's files: `mock_upstream.py` uses `ThreadingHTTPServer`, whose
+  `server_bind` calls `socket.getfqdn`, a reverse DNS lookup that can stall on the runner. Not
+  confirmed. At about 35 s per mock case (about 85 such cases) plus 17 minutes for
+  `test-check-premises.sh`, the macOS job needs about 70 minutes, near the 90-minute backstop.
+- Fixed in `9058b70c`: `sleep 30` in `sigact` and R5 and `time.sleep(30)` in `srv.py` became
+  `signal.pause()` (no time bound); each is still stopped by its case (sigrun's kill by pid file,
+  R5's TERM to the process group, B4's kill of the server); no such process is left after a run.
+- Verification: `lib tests: ok (169)` (165 + Y3-Y6).
   `scrub tests: ok (158)`; the other checks as above.
