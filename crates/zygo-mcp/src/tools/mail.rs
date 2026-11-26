@@ -113,8 +113,9 @@ fn tmux_program() -> PathBuf {
     found.unwrap_or_else(|| PathBuf::from("/dev/null/tmux"))
 }
 
-/// The zygo program that starts the sync child: the current executable (`zygo mcp`), canonical when it can be,
-/// else an empty path, whose start then fails with one `errors.log` line (MS-19 D6).
+/// The zygo program that starts the sync child: the current executable (`zygo mcp`), canonical when `canonicalize`
+/// succeeds, else the `current_exe` path as it is. The path is empty only when `current_exe` fails; a start of that
+/// path then fails with one `errors.log` line (MS-19 D6).
 fn zygo_program() -> PathBuf {
     match std::env::current_exe() {
         Ok(p) => std::fs::canonicalize(&p).unwrap_or(p),
