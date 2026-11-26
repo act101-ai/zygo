@@ -33,7 +33,7 @@ Capability: `mechanical` (one helper, one test, the same one-line change at each
 - [x] 5. Keep asserting the child's output and exit status as before: change no assertion, no expected value, no `wait_with_output` and no exit-code check. Run `git diff origin/phase-4 -- crates/zygo/tests`. Pass: outside the new test and `write_stdin`, each changed line is a write site or a `mod common;` line.
 - [x] 6. Run `grep -rn "write_all" crates/zygo/tests`. Pass: no child-stdin `write_all(...).unwrap()` remains; only the excluded sites of Planning notes and the one inside `write_stdin`.
 - [x] 7. Run the Acceptance check `CARGO_INCREMENTAL=0 cargo test -p zygo --locked --test compact_cmd`. Pass: exit 0. Then `CARGO_INCREMENTAL=0 cargo test -p zygo --locked --tests`. Pass: no new failure against origin/phase-4.
-- [ ] 8. Commit `fix(tests): TF-1 ignore BrokenPipe on child stdin writes` with trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:TF-1`; push the node branch.
+- [x] 8. Commit `fix(tests): TF-1 ignore BrokenPipe on child stdin writes` with trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:TF-1`; push the node branch.
 
 ### Execution notes
 
@@ -42,3 +42,4 @@ Capability: `mechanical` (one helper, one test, the same one-line change at each
 - `common/e2e.rs` is not a child of `common`: each test declares it beside `common` with `#[path = "common/e2e.rs"] mod e2e;`, and it already imports `crate::common::…`. So it calls `crate::common::write_stdin`, not `super::write_stdin`.
 - The change removed `use std::io::Write;` from 13 places (12 files and `mcp_call` in `common/e2e.rs`) where the replaced site was its only user (`-D warnings` rejects the unused import).
 - Step 7: `--test compact_cmd` 5 passed, 19 ignored. `--tests`: 384 passed, 2 failed, 301 ignored; the 2 failures are the known `guard_hook` ones (`binary_guard_not_a_repository_writes_no_line`, `binary_guard_slow_rev_parse_says_unread_once`; `guard_hook.rs:73`, a checkout under `/private/tmp` has no directory outside the temp roots).
+- Step 8: commit bdd45bf6 on `phase-4--TF-1`. `cargo clippy -p zygo --all-targets -- -D warnings` is clean; `cargo test --workspace --no-fail-fast` fails only in the `guard_hook` target, with the same 2 tests.
