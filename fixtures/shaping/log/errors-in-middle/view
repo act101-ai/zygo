@@ -1,0 +1,49 @@
+[zygo shaped this output: log errors kept. The full output (420 lines, 36184 bytes) is saved as result 00000000000000000000000000; read it with result_view, result_search or result_tree.]
+2026-11-25 05:27:06,201 INFO queue.worker: job 4001 done in 21 ms, 1037 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4002 done in 22 ms, 1050 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4003 done in 23 ms, 1063 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4004 done in 24 ms, 1076 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4005 done in 25 ms, 1089 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4006 done in 26 ms, 1102 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4007 done in 27 ms, 1115 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4008 done in 28 ms, 1128 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4009 done in 29 ms, 1141 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4010 done in 30 ms, 1154 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4011 done in 31 ms, 1167 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4012 done in 32 ms, 1180 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4013 done in 33 ms, 1193 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4014 done in 34 ms, 1206 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4015 done in 35 ms, 1219 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4016 done in 36 ms, 1232 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4017 done in 37 ms, 1245 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4018 done in 38 ms, 1258 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4019 done in 39 ms, 1271 bytes written
+2026-11-25 05:27:06,201 INFO queue.worker: job 4020 done in 40 ms, 1284 bytes written
+175: 2026-11-25 05:27:06,203 ERROR queue.worker: job 4175 failed: upstream returned 503 after 3 retries
+180: 2026-11-25 05:27:06,203 WARNING queue.worker: job 4180 slow: 2.4 s over budget
+190: 2026-11-25 05:27:06,203 ERROR queue.worker: job 4190 failed: upstream returned 503 after 3 retries
+205: 2026-11-25 05:27:06,204 ERROR queue.worker: job 4205 failed: upstream returned 503 after 3 retries
+220: 2026-11-25 05:27:06,204 ERROR queue.worker: job 4220 failed: upstream returned 503 after 3 retries
+230: 2026-11-25 05:27:06,204 WARNING queue.worker: job 4230 slow: 2.4 s over budget
+235: 2026-11-25 05:27:06,204 ERROR queue.worker: job 4235 failed: upstream returned 503 after 3 retries
+250: 2026-11-25 05:27:06,204 ERROR queue.worker: job 4250 failed: upstream returned 503 after 3 retries
+2026-11-25 05:27:06,206 INFO queue.worker: job 4401 done in 51 ms, 6237 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4402 done in 52 ms, 6250 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4403 done in 53 ms, 6263 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4404 done in 54 ms, 6276 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4405 done in 55 ms, 6289 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4406 done in 56 ms, 6302 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4407 done in 20 ms, 6315 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4408 done in 21 ms, 6328 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4409 done in 22 ms, 6341 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4410 done in 23 ms, 6354 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4411 done in 24 ms, 6367 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4412 done in 25 ms, 6380 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4413 done in 26 ms, 6393 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4414 done in 27 ms, 6406 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4415 done in 28 ms, 6419 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4416 done in 29 ms, 6432 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4417 done in 30 ms, 6445 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4418 done in 31 ms, 6458 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4419 done in 32 ms, 6471 bytes written
+2026-11-25 05:27:06,206 INFO queue.worker: job 4420 done in 33 ms, 6484 bytes written

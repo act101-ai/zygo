@@ -1,0 +1,9 @@
+[zygo shaped this output: passed tests hidden. The full output (19 lines, 1220 bytes) is saved as result 00000000000000000000000000; read it with result_view, result_search or result_tree.]
+============================= test session starts ==============================
+platform darwin -- Python 3.14.6, pytest-9.0.3, pluggy-1.6.0
+rootdir: /repo
+collected 128 items
+
+[zygo: 12 passed or skipped progress lines hidden]
+
+============================= 128 passed in 0.04s ==============================
