@@ -540,3 +540,17 @@ fn f1_conversation_must_start_with_user() {
         assert_400(err(rq(&body(input.clone()))), NO_USER_FIRST);
     }
 }
+
+#[test]
+fn f2_dropped_type_in_code_is_safe() {
+    let mut b = body(json!([user("go")]));
+    b["tools"] = json!([{"type":"a\nb"}, {"type":"weird:9,count_estimated"}, {"type":"wéb"}, {"type":"x".repeat(33)},
+        {"type":"ok_type_9"}]);
+    let (_, codes) = rq(&b).unwrap();
+    assert!(codes.contains(&"tools_dropped:other:4".to_string()), "{codes:?}");
+    assert!(codes.contains(&"tools_dropped:ok_type_9:1".to_string()), "{codes:?}");
+    for c in &codes {
+        assert!(c.bytes().all(|x| x.is_ascii_lowercase() || x.is_ascii_digit() || x == b'_' || x == b':'), "{c}");
+        assert_eq!(c.matches(':').count(), 2, "{c}");
+    }
+}
