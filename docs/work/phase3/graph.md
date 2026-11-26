@@ -203,7 +203,7 @@ Session text (T, SX nodes):
 | WD-13 | Launcher: repository profile by a default-branch read (not pinned) | WD-7, DR-13, OS-9 | DONE | judgment | b00e2819, ffe10789, 777c51d6, d5c92329, 93add253 · repo_profile 15/0 ; floor green · PR #121 |
 | WD-17 | `zygo doctor` lines: workspace files, pool, member maximum | WD-7, WD-9 | DONE | implementation | d31d6c56, 8a15ab61, 2ec94a9a, 3a944a2d · definition_doctor 15/0 ; floor green · PR #119 |
 | ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | TODO | implementation | — |
-| MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | DONE | judgment | node commits 717f910e, ab5fc14b, 91b95bcb; acceptance: sync_pass 39/39; floor ws 3422/0; PR #150 |
+| MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | DONE | judgment | node commits 717f910e, ab5fc14b, 91b95bcb, dba2a089, 5dd04b76; acceptance: sync_pass 39/39; floor ws 3422/0; PR #150 |
 | OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | TODO | judgment | — |
 | OS-31 | pytest runner view | OS-30, OS-20 | TODO | judgment | — |
 | WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | DONE | judgment | bae5b7af, 11d71492 · up_definition 35/0 ; floor green · PR #125 |
@@ -403,3 +403,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | ML-12 DONE: zygo mail send\|read\|ls, /zygo:mail, mail sweep at command start. Review fixes: the sweep skips linked folders, a partial read prints what it has, a 2 s slash bound, a list-only fallback body, help args · PR #149 |
 | 2026-11-25 | OS-24 DONE: PO2 verified on Claude Code 2.1.332 (stderr arrives merged into stdout; the replaced stdout removed err-line); hook fixture + empty shape-off golden added; review 7: F1/F2/F4-F7 fixed (first reading "not shown" reversed), F3 refuted · PR #151 |
 | 2026-11-25 | OS-30 DONE: libtest runner view and dispatch as pipeline step 3; review round 2 fixed F1-F4 (failure sections, binary boundary, dedup lines, ASCII/CR whitespace); F5 is FX-16; F6 fixed in the OS-36 contract. |
+| 2026-11-25 | MS-13 DONE (round 3): commit batching (dba2a089) and chunking by ARGV_BUDGET 16000 / BODY_BUDGET 64 MiB with the commit contract doc and tests T1/T2 (5dd04b76). Review: 6 findings (F1, F2/F3, F4, T1, T2) · PR #150 |
