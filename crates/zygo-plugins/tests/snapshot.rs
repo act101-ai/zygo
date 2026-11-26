@@ -24,7 +24,7 @@ fn file(name: &str) -> String {
 
 #[test]
 fn embedded_has_one_command_per_verb() {
-    assert_eq!(VERB_SPECS.len(), 18);
+    assert_eq!(VERB_SPECS.len(), 19);
     for v in VERB_SPECS {
         let t = file(&format!("commands/{}.md", v.name));
         assert!(t.contains("disable-model-invocation: true"), "{}", v.name);
@@ -33,7 +33,7 @@ fn embedded_has_one_command_per_verb() {
             assert!(t.contains(&format!("zygo {} $ARGUMENTS", v.name)), "{}", v.name);
         }
     }
-    assert_eq!(embedded::files().iter().filter(|(n, _)| n.starts_with("commands/")).count(), 18);
+    assert_eq!(embedded::files().iter().filter(|(n, _)| n.starts_with("commands/")).count(), 19);
     assert!(file("commands/compact.md").contains("argument-hint: \"<tokens|on|off>\""));
     assert!(file("commands/statusline.md").contains("argument-hint: \"[compact|verbose]\""));
     assert!(!file("commands/status.md").contains("argument-hint"));
@@ -94,7 +94,7 @@ fn claude_snapshot_has_plugin_dirs_and_the_embedded_plugin() {
     let session = fx.path("session");
     let s = snap(&paths, &session, Agent::ClaudeCode, &selection(&cfg, None), None).unwrap();
     let mut want: std::collections::BTreeSet<String> = embedded::files().into_iter().map(|(n, _)| format!("plugins/zygo/{n}")).collect();
-    assert_eq!(want.len(), 20);
+    assert_eq!(want.len(), 21);
     want.extend(["plugins/demo/.claude-plugin/plugin.json", "plugins/demo/skills/hello/SKILL.md", "plugins/demo/commands/go.md", "plugins/demo/agents/rev.md"].map(String::from));
     assert_eq!(tree(&session), want);
     assert_eq!(s.plugins.len(), 2);
