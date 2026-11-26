@@ -13,8 +13,8 @@ The folder argument (PC-13) selects fixtures/<folder>; the default is codex. Pat
 relative to fixtures/<folder>. Every regular file under that folder is read, sorted. VERBATIM files
 (per folder: codex config.schema.json, claude-code settings-schema.json; the pinned upstream schemas,
 never captures; opencode has none) are never scrubbed or written, but are still scanned for leaks.
-The leak classes are LEAKS for codex and ENV_LEAKS (the Claude Code environment block lines and the
-Stainless arch and runtime version headers) for claude-code and opencode; a JSON file whose object
+The leak classes are LEAKS for codex and ENV_LEAKS (the Claude Code environment block lines, the
+Stainless arch and runtime version headers and the messaging socket pid) for claude-code and opencode; a JSON file whose object
 repeats a key is the class "duplicate keys". A scrub.py output that differs from the text only in
 JSON layout (both parse with no repeated key, same canonical form) is no change: no finding and no
 write (PC-13, review round 1 F1). Each capture folder (the
@@ -59,20 +59,33 @@ LEAKS = {
     "time-bearing id": re.compile(B + r"[a-z]{1,8}_(?!0{10})[0-7][0-9A-HJKMNP-TV-Z]{25}(?![0-9A-Za-z])"),
 }
 # PC-13: the leak classes of claude-code and opencode. The shell name and OS version lines of a Claude
-# Code environment block (the forms of scrub.py ENV_SHELL, ENV_OS; review round 1 F5, F8: any case,
-# with or without "- ", blanks or escaped tabs after the colon, at a line start or after a JSON "\n"
-# escape that is not an escaped backslash then "n"); only the exact placeholder, at the value's end,
-# passes (F6). The Stainless arch and runtime version headers (scrub.py STAINLESS_RE; F3).
-ENV_PFX = r"(?:^|(?<!\\)(?:\\\\)*\\n)[ \t]*(?:-[ \t]*)?"
-ENV_WS = r"(?:[ \t]|\\t)*"
-ENV_END = r"(?:[\n\r\\\"]|$)"
+# Code environment block: the line forms of scrub.py ENV_SHELL and ENV_OS (review round 2 G1: any run
+# of backslashes then "n" or "r", a carriage return or a \u000a escape starts a line; G2: the dash
+# form for any value, the dashless form only with a capital first letter and a host value; G8: quoted
+# values, no-break spaces). Only the key's own placeholder, case-sensitive, as the whole value (then a
+# quote, a backslash, a line end or the text end; CRLF too) passes (F6, G5). The Stainless arch and
+# runtime version headers (scrub.py STAINLESS_RE; F3), anchored the same way (G5). The pid of a Claude
+# Code messaging socket (scrub.py CC_SOCK; G7).
+ENV_NL = r"(?:^|\r|(?<!\\)\\+[nr]|\\[uU]000[aAdD])"
+ENV_IND = r"(?:[ \t]|\\t)*"
+ENV_WS = r"(?:[ \t\u00a0]|\\t|\\u00[aA]0)*"
+ENV_Q = r"(?:\\?[\"'])?"
+ENV_END = r"(?:$|[\r\n\\\"'])"
+SHELL_VAL = (r"(?i:(?:(?:/usr(?:/local)?)?/bin/|/opt/homebrew/bin/)?(?:zsh|bash|fish|sh|tcsh|ksh|dash|pwsh|"
+             r"powershell|cmd)(?:\.exe)?)(?![A-Za-z0-9_./-])")
+OS_VAL = r"(?i:darwin|linux|windows|macos)[ \t]*[0-9]"
+SHELL_KEY = r"(?:-" + ENV_WS + r"(?i:shell)|S(?i:hell)(?=:" + ENV_WS + ENV_Q + SHELL_VAL + r"))"
+OS_KEY = r"(?:-" + ENV_WS + r"(?i:os version)|O(?i:s version)(?=:" + ENV_WS + ENV_Q + OS_VAL + r"))"
+XS_SEP = r"\\?[\"']?\s*[:=]\s*\\?[\"']?"
 ENV_LEAKS = {
-    "shell name": re.compile(r"(?m)" + ENV_PFX + r"(?i:shell):" + ENV_WS + r"(?!\(omitted\)" + ENV_END + r")[^\s\\\"]"),
-    "os version": re.compile(r"(?m)" + ENV_PFX + r"(?i:os version):" + ENV_WS + r"(?!\(os omitted\)" + ENV_END +
-                             r")[^\s\\\"]"),
-    "arch": re.compile(r"(?i)x-stainless-arch\\?[\"']?\s*[:=]\s*\\?[\"']?(?!\(arch omitted\))[^\s\"',\\]"),
-    "runtime version": re.compile(r"(?i)x-stainless-runtime-version\\?[\"']?\s*[:=]\s*\\?[\"']?"
-                                  r"(?!\(version omitted\))[^\s\"',\\]"),
+    "shell name": re.compile(r"(?m)" + ENV_NL + ENV_IND + SHELL_KEY + ":" + ENV_WS + ENV_Q +
+                             r"(?!\(omitted\)" + ENV_END + r")[^\s\\\"']"),
+    "os version": re.compile(r"(?m)" + ENV_NL + ENV_IND + OS_KEY + ":" + ENV_WS + ENV_Q +
+                             r"(?!\(os omitted\)" + ENV_END + r")[^\s\\\"']"),
+    "arch": re.compile(r"(?m)(?i:x-stainless-arch)" + XS_SEP + r"(?!\(arch omitted\)" + ENV_END + r")[^\s\"',\\]"),
+    "runtime version": re.compile(r"(?m)(?i:x-stainless-runtime-version)" + XS_SEP +
+                                  r"(?!\(version omitted\)" + ENV_END + r")[^\s\"',\\]"),
+    "socket pid": re.compile(r"/cc-socks/[0-9]+\.sock"),
 }
 
 
@@ -119,10 +132,25 @@ def _pairs(pairs: list) -> dict:
     return dict(pairs)
 
 
+class Num(str):
+    """A JSON number or constant (NaN, Infinity) kept as its text (review round 2 G6)."""
+
+
+def _enc(o) -> str:
+    if isinstance(o, Num):
+        return "#" + o  # "#" starts no other JSON value, so a number never equals a string
+    if isinstance(o, dict):
+        return "{" + ",".join(json.dumps(k, ensure_ascii=False) + ":" + _enc(o[k]) for k in sorted(o)) + "}"
+    if isinstance(o, list):
+        return "[" + ",".join(_enc(v) for v in o) + "]"
+    return json.dumps(o, ensure_ascii=False)
+
+
 def canon(text: str) -> str:
-    """The canonical form of a JSON text: sorted keys, true, 1 and 1.0 kept apart (json.dumps writes
-    them differently). ValueError when it does not parse; DuplicateKey when an object repeats a key."""
-    return json.dumps(json.loads(text, object_pairs_hook=_pairs), sort_keys=True, ensure_ascii=False)
+    """The canonical form of a JSON text: sorted keys, each number by its text (1, 1.0, 1E2, -0 and
+    1e400 all differ; review round 2 G6), true and 1 apart. ValueError when it does not parse;
+    DuplicateKey when an object repeats a key; RecursionError when it nests too deep."""
+    return _enc(json.loads(text, object_pairs_hook=_pairs, parse_float=Num, parse_int=Num, parse_constant=Num))
 
 
 def dup_keys(text: str) -> bool:
@@ -131,7 +159,7 @@ def dup_keys(text: str) -> bool:
         canon(text)
     except DuplicateKey:
         return True
-    except ValueError:
+    except (ValueError, RecursionError):
         return False
     return False
 
@@ -139,14 +167,15 @@ def dup_keys(text: str) -> bool:
 def same(text: str, new: str) -> bool:
     """True when new equals text byte for byte, or both parse with no repeated key and have the same
     canonical form (a JSON layout change only; review round 1 F1). A text with a repeated key is never
-    the same: a parse keeps only the last value, so a leak in an earlier one would pass."""
+    the same: a parse keeps only the last value, so a leak in an earlier one would pass. A text that
+    nests too deep to parse is not the same (review round 2 G6)."""
     if dup_keys(text) or dup_keys(new):
         return False
     if new == text:
         return True
     try:
         return canon(text) == canon(new)
-    except ValueError:
+    except (ValueError, RecursionError):
         return False
 
 

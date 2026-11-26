@@ -67,6 +67,10 @@ r"""Fixture hygiene for N2: scrub.py <run dir> <file> -> scrubbed copy on stdout
   backslash then "n"); x-stainless-arch -> "(arch omitted)" and x-stainless-runtime-version ->
   "(version omitted)" (keys of a parsed object, JSON text and header lines; any case; x-stainless-os,
   the OS family, is kept, as is "Platform: darwin"); /cc-socks/<n>.sock -> /cc-socks/<pid>.sock.
+- PC-13 review round 2: a line start is also a carriage return, any run of backslashes then "n" or
+  "r", or a \u000a escape (fail closed); a dashless "Shell:" or "OS Version:" line (capital first
+  letter) is masked only for a host value; quoted values and no-break spaces; a Stainless value is
+  replaced whole by its own placeholder (see ENV_NL and STAINLESS_RE).
 """
 import getpass
 import json
@@ -208,19 +212,34 @@ ULID = re.compile(B + r"([a-z]{1,8}_)(?!0{10})([0-7][0-9A-HJKMNP-TV-Z]{25})(?![0
 # PC-11: macOS __CF* env names (__CF_USER_TEXT_ENCODING=0x<uid>:... holds the user id).
 CF_ENV = re.compile(B + r"__CF[A-Za-z_]*(?:=[^\s\"'\\]*)?")
 # PC-13: the shell name and OS version lines of a Claude Code environment block (" - Shell: zsh",
-# " - OS Version: Darwin 25.6.0"). Review round 1 F5, F8: the name in any case, with or without the
-# leading "- ", any blanks or escaped tabs after the colon, at a line start or after a JSON "\n" escape
-# (an odd run of backslashes before the "n": an escaped backslash then "n" is not a newline). The same
-# forms as rescrub_codex.py ENV_LEAKS and check-premises.sh env_scan.
-ENV_PFX = r"(?:^|(?<!\\)(?:\\\\)*\\n)[ \t]*(?:-[ \t]*)?"
-ENV_WS = r"(?:[ \t]|\\t)*"
-ENV_SHELL = re.compile(r"(?m)(" + ENV_PFX + r"(?i:shell):" + ENV_WS + r")[^\s\\\"][^\n\r\\\"]*")
-ENV_OS = re.compile(r"(?m)(" + ENV_PFX + r"(?i:os version):" + ENV_WS + r")[^\s\\\"][^\n\r\\\"]*")
+# " - OS Version: Darwin 25.6.0"). The same forms as rescrub_codex.py ENV_LEAKS and check-premises.sh
+# env_scan. Review round 2 G1 (fail closed): a line start is the text start, a real line feed or
+# carriage return, one or more backslashes then "n" or "r" (any depth of JSON escaping; a literal
+# backslash then "n" is a false positive, accepted), or a \u000a or \u000d escape (any case). Blanks or
+# escaped tabs may follow it. G2: the dash form ("- Shell: <v>", the key in any case) is masked for any
+# value; the dashless form only with a capital first letter ("Shell:", "OS Version:"; a YAML
+# "shell: bash" key is kept) and a host value: a known shell name or its path, or Darwin, Linux, Windows
+# or macOS then a version digit. G8: blanks, escaped tabs or no-break spaces after the colon, and a
+# quoted or \"-quoted value.
+ENV_NL = r"(?:^|\r|(?<!\\)\\+[nr]|\\[uU]000[aAdD])"
+ENV_IND = r"(?:[ \t]|\\t)*"
+ENV_WS = r"(?:[ \t\u00a0]|\\t|\\u00[aA]0)*"
+ENV_Q = r"(?:\\?[\"'])?"
+ENV_END = r"(?:$|[\r\n\\\"'])"
+SHELL_VAL = (r"(?i:(?:(?:/usr(?:/local)?)?/bin/|/opt/homebrew/bin/)?(?:zsh|bash|fish|sh|tcsh|ksh|dash|pwsh|"
+             r"powershell|cmd)(?:\.exe)?)(?![A-Za-z0-9_./-])")
+OS_VAL = r"(?i:darwin|linux|windows|macos)[ \t]*[0-9]"
+SHELL_KEY = r"(?:-" + ENV_WS + r"(?i:shell)|S(?i:hell)(?=:" + ENV_WS + ENV_Q + SHELL_VAL + r"))"
+OS_KEY = r"(?:-" + ENV_WS + r"(?i:os version)|O(?i:s version)(?=:" + ENV_WS + ENV_Q + OS_VAL + r"))"
+ENV_SHELL = re.compile(r"(?m)(" + ENV_NL + ENV_IND + SHELL_KEY + ":" + ENV_WS + ENV_Q + r")[^\s\\\"'][^\n\r\\\"']*")
+ENV_OS = re.compile(r"(?m)(" + ENV_NL + ENV_IND + OS_KEY + ":" + ENV_WS + ENV_Q + r")[^\s\\\"'][^\n\r\\\"']*")
 # PC-13 review round 1 F3: the Stainless SDK's architecture and runtime version request headers (a
 # JSON key, plain or \"-escaped, or a header line; any case); x-stainless-os (the OS family) is kept.
+# Review round 2 G5: the whole value (a token, or a parenthesis then a token) becomes the key's own
+# placeholder, so a wrong placeholder or one with text after it is rewritten.
 STAINLESS = {"x-stainless-arch": "(arch omitted)", "x-stainless-runtime-version": "(version omitted)"}
-STAINLESS_RE = re.compile(r"(?i)(\\?[\"']?(x-stainless-(?:arch|runtime-version))\\?[\"']?\s*[:=]\s*\\?[\"']?)"
-                          r"(?!\((?:arch|version) omitted\))[^\s\"',\\]+")
+STAINLESS_RE = re.compile(r"(\\?[\"']?((?i:x-stainless-(?:arch|runtime-version)))\\?[\"']?\s*[:=]\s*\\?[\"']?)"
+                          r"(?:\([^)\r\n\"'\\]*\)|[^\s\"',\\])[^\s\"',\\]*")
 # PC-13 review round 1 F7: the process id in a Claude Code messaging socket path.
 CC_SOCK = re.compile(r"(/cc-socks/)[0-9]+(\.sock)")
 
