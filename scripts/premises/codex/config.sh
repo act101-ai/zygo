@@ -15,7 +15,9 @@
 # shapes). Each scenario has its prompt marker zp-<scenario> and its CODEX_HOME $RUN/cxh-<scenario>.
 # A Codex run that fails is data; only a harness refusal, ABORT or a missing tool exits non-zero.
 PREMISES_DIR=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck disable=SC2034 # read by lib.sh
 N2_AGENTS=codex
+# shellcheck disable=SC1091 # lib.sh is checked on its own
 . "$PREMISES_DIR/lib.sh"
 for _t in python3 shasum; do command -v "$_t" >/dev/null || { echo "premises: $_t is not on PATH"; exit 1; }; done
 # Paths go into TOML strings and sh -c texts unquoted: no blank, quote or backslash.
@@ -30,12 +32,16 @@ git -C "$RUN/other" -c user.name=t -c user.email=t@t commit -q --allow-empty -m 
 
 # cx.py: the part's Python (TOML writing, SSE authoring, tool selection, judging and summaries).
 cat >"$RUN/cx.py" <<'PY'
-import json, os, re, sys
+import difflib, hashlib, json, os, re, sqlite3, sys, urllib.parse
 
 RUN = sys.argv[1]
 CMD = sys.argv[2]
 A = sys.argv[3:]
 q = json.dumps
+# MATCHERS: (label, matcher) groups of pc5-match on PreToolUse and PostToolUse (F4): the hook's
+# tool name, the model's tool name, an alternation, a regex, a name that matches nothing, "*".
+MATCHERS = [("exact", "Bash"), ("model", "exec_command"), ("alt", "Bash|Write"), ("regex", "^Ba.*"),
+            ("none", "NoSuchTool"), ("star", "*")]
 EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse",
           "PreModelRequest", "PostModelRequest", "PreCompact", "PostCompact", "SubagentStart",
           "SubagentStop", "Stop", "Interrupt", "SessionEnd"]
@@ -161,7 +167,7 @@ def cmd_home():
     for p in paths + [os.path.realpath(p) for p in paths]:
         if p not in seen:
             seen.append(p)
-    for p in seen:
+    for p in seen if untrusted != "none" else []:
         L += ["", "[projects.%s]" % q(p), 'trust_level = "%s"' % ("untrusted" if untrusted == "1" else "trusted")]
     if feat:
         L += ["", "[features]", "%s = true" % feat]
@@ -205,7 +211,8 @@ def cmd_sse():
 def cmd_rule():
     rules_p, s, sse = A[:3]
     rules = json.load(open(rules_p))
-    r = {"name": s, "path": r"/v1/responses", "body": "zp-%s(?![-A-Za-z0-9])" % re.escape(s), "sse": sse, "times": 1}
+    body = A[4] if len(A) > 4 and A[4] else "zp-%s(?![-A-Za-z0-9])" % re.escape(s)
+    r = {"name": s, "path": r"/v1/responses", "body": body, "sse": sse, "times": 1}
     if len(A) > 3 and A[3]:
         r["usage"] = json.loads(A[3])
     rules.append(r)
@@ -213,19 +220,28 @@ def cmd_rule():
 
 
 def cmd_shellargs():
-    arg, arr, text = A
-    print(json.dumps({arg: ["/bin/sh", "-c", text] if arr == "1" else text}))
+    arg, arr, text = A[:3]
+    d = {arg: ["/bin/sh", "-c", text] if arr == "1" else text}
+    if len(A) > 3 and A[3]:
+        d["yield_time_ms"] = int(A[3])
+    print(json.dumps(d))
 
 
 def cmd_pc5toml():
     out, s, prem = A[:3]
     ev, rules = (A[3], A[4]) if len(A) > 4 else ("", "")
+    match = len(A) > 5 and A[5] == "match"
     L = []
     for e in EVENTS:
         c = "python3 -I %s/hook_log.py %s/hk/%s/%s" % (prem, RUN, s, e)
         if e == ev:
             c += " " + rules
         L += ["[[hooks.%s]]" % e, "[[hooks.%s.hooks]]" % e, 'type = "command"', "command = %s" % q(c), ""]
+        if match and e in ("PreToolUse", "PostToolUse"):
+            for label, m in MATCHERS:
+                c = "python3 -I %s/hook_log.py %s/hk/%s/%s-m-%s" % (prem, RUN, s, e, label)
+                L += ["[[hooks.%s]]" % e, "matcher = %s" % q(m), "[[hooks.%s.hooks]]" % e, 'type = "command"',
+                      "command = %s" % q(c), ""]
     L += ["[mcp_servers.probe]", 'command = "python3"', "args = %s" % q(["-I", prem + "/mcp_probe.py"]), ""]
     with open(out, "w") as f:
         f.write("\n".join(L))
@@ -258,7 +274,7 @@ def cmd_tools():
         if is_resp(r) and isinstance(r.get("body"), dict):
             first = r
             break
-    v = dict(SHELL_TOOL="", SHELL_ARG="", SHELL_ARRAY="", PATCH_TOOL="", PATCH_KIND="", SPAWN_TOOL="",
+    v = dict(SHELL_TOOL="", SHELL_ARG="", SHELL_ARRAY="", SHELL_YIELD="", PATCH_TOOL="", PATCH_KIND="", SPAWN_TOOL="",
              SPAWN_ARG="", SPAWN_NS="", MCP_TOOL="", MCP_NS="")
     tools = tool_names(first["body"]) if first else []
     by = {}
@@ -271,6 +287,7 @@ def cmd_tools():
             p = props(by[n])
             v["SHELL_ARG"] = "cmd" if "cmd" in p else "command"
             v["SHELL_ARRAY"] = "1" if (p.get(v["SHELL_ARG"]) or {}).get("type") == "array" else ""
+            v["SHELL_YIELD"] = "1" if "yield_time_ms" in p else ""
             break
     if "apply_patch" in by:
         v["PATCH_TOOL"] = "apply_patch"
@@ -397,8 +414,15 @@ def first_err(s):
     return ls[0] if ls else "no stderr (exit %s)" % rc(s)
 
 
+def key_name(k):
+    """(table, key name) of a strict key, from its TOML line (values play no part)."""
+    return (k[2], k[3].split("=", 1)[0].strip())
+
+
 def key_at(s, keys):
-    """The key on the config.toml line a stderr location names (out/<s>.toml is the file)."""
+    """The keys on the config.toml line a stderr location names, read from the file the run used
+    (out/<s>.toml): a key line gives its key, a table header the keys of that table, a line in a
+    [hooks.state...] table hooks_state. None when no location or the line holds no listed key."""
     for l in lines(os.path.join(RUN, "out", s + ".err")):
         m = LOC.search(l)
         if not m:
@@ -407,11 +431,19 @@ def key_at(s, keys):
         n = int(m.group(1))
         if not 0 < n <= len(fl):
             return None
-        text = fl[n - 1].strip()
-        k = next((k for k in keys if k[3] and k[3].strip() == text), None)
-        if k is None and any(x.strip().startswith("[hooks.state") for x in fl[:n]):
-            k = next((k for k in keys if k[0] == "hooks_state"), None)
-        return k
+        table = ""
+        for i, line in enumerate(fl[:n]):
+            h = re.match(r"\s*\[\s*([^\]]+?)\s*\]\s*$", line)
+            if h:
+                table = h.group(1)
+                if i == n - 1:
+                    if table.startswith("hooks.state"):
+                        return [k for k in keys if k[0] == "hooks_state"] or None
+                    return [k for k in keys if k[2] == table] or None
+        if table.startswith("hooks.state"):
+            return [k for k in keys if k[0] == "hooks_state"] or None
+        name = fl[n - 1].split("=", 1)[0].strip()
+        return [k for k in keys if k[0] != "hooks_state" and key_name(k) == (table, name)] or None
     return None
 
 
@@ -439,12 +471,15 @@ def cmd_strict_judge():
     v = {"run": s, "removed": removed.split(), "remote_compaction": rcv}
     if rc(s) == "0" and resp(s):
         v["verdict"] = "accepted"
+    elif rc(s) == "0":
+        v["verdict"] = "accepted-no-request"
     else:
         errs = lines(os.path.join(RUN, "out", s + ".err"))
-        k = key_at(s, keys)
-        hit = (first_err(s), k) if k else next(((l, key_hit(l, keys)) for l in errs if key_hit(l, keys)), None)
-        if hit:
-            v.update(verdict="key", key=hit[1][0], line=hit[0])
+        ks = key_at(s, keys)
+        if not ks:
+            ks = next(([key_hit(l, keys)] for l in errs if key_hit(l, keys)), None)
+        if ks:
+            v.update(verdict="key", key=",".join(k[0] for k in ks), line=first_err(s))
         else:
             v.update(verdict="other", line=first_err(s) if errs else "no request recorded (exit %s)" % rc(s))
     with open(os.path.join(RUN, "sum", "strict.jsonl"), "a") as f:
@@ -453,8 +488,8 @@ def cmd_strict_judge():
 
 
 def control_line(s):
-    if rc(s) == "0" and resp(s):
-        return "accepted"
+    if rc(s) == "0":
+        return "accepted" if resp(s) else "accepted: no request"
     return "refused: " + first_err(s)
 
 
@@ -469,20 +504,24 @@ def strict_report(version, with_state, url, prem):
         keys.append(("hooks_state", "hooks.state", "", "", "[omitted]"))
     unsupported = None
     for k in keys:
-        refused = [r for r in runs if r["verdict"] == "key" and r["key"] == k[0]]
+        refused = [r for r in runs if r["verdict"] == "key" and k[0] in r["key"].split(",")]
         if k[0] == "remote_compaction":
             first = [r for r in refused if r["remote_compaction"] == "false"]
             second = [r for r in runs if r["remote_compaction"] != "false" and "remote_compaction" not in r["removed"]]
             if second:
-                sr = [r for r in second if r["verdict"] == "key" and r["key"] == "remote_compaction"]
+                sr = [r for r in second if r["verdict"] == "key" and "remote_compaction" in r["key"].split(",")]
                 unsupported = "refused: " + sr[0]["line"] if sr else (
-                    "accepted" if second[-1]["verdict"] == "accepted" else "undecided (config: refused: %s)" % second[-1]["line"])
+                    "accepted" if second[-1]["verdict"] == "accepted" else
+                    "accepted: no request" if second[-1]["verdict"] == "accepted-no-request" else
+                    "undecided (config: refused: %s)" % second[-1]["line"])
             refused = first
         val = k[4] if k[0] != "remote_compaction" else "false"
         if refused:
             verdict = "refused: " + refused[0]["line"]
         elif last and last["verdict"] == "accepted":
             verdict = "accepted"
+        elif last and last["verdict"] == "accepted-no-request":
+            verdict = "accepted: no request"
         elif last:
             verdict = "undecided (config: refused: %s)" % last.get("line", "")
         else:
@@ -549,7 +588,7 @@ def shown_fns():
         err = rd(os.path.join(RUN, "out", s + ".err"))
         get = any(r.get("method") == "GET" and "websocket" in (r.get("headers") or {}).get("upgrade", "").lower()
                   for r in recs(s))
-        return "cli" if get or "responses_websocket" in err else "project"
+        return "cli" if get or "responses_websocket" in err else "none"
 
     def env(s):
         rs = resp(s)
@@ -557,9 +596,8 @@ def shown_fns():
         return "cli" if "ZP_WHO=cli" in t else "project" if "ZP_WHO=project" in t else "none"
 
     def threshold(s):
-        if not resp(s):
-            return "none"
-        return "cli" if compaction(s)[0] else "project"
+        # Only the cli side holds the small value: a compaction shows it; none is no evidence.
+        return "cli" if resp(s) and compaction(s)[0] else "none"
 
     def cprompt(s):
         kind, t = compaction(s)
@@ -576,7 +614,7 @@ def shown_fns():
         ("pc3-main", "model"): model,
         ("pc3-main", "model_providers.mock.http_headers"): header,
         ("pc3-main", "developer_instructions"): marker("zp-dev-cli", "zp-dev-project"),
-        ("pc3-main", "skills.config"): marker("zp-skill-desc", None, "project"),
+        ("pc3-main", "skills.config"): marker("zp-skill-desc", None),
         ("pc3-main", "mcp_servers.zygo"): lambda s: side(who(s, "mcp-who")),
         ("pc3-main", "model_providers.mock.supports_websockets"): ws,
         ("pc3-main", "model_providers.mock.wire_api"): None,
@@ -619,10 +657,8 @@ def pc3():
             e["verdict"] = "not-shown (%s)" % reason
         elif both in ("cli", "project"):
             e["verdict"] = both
-        elif not e["project_only"]:
-            e["verdict"] = "project-ignored"
         else:
-            e["verdict"] = "none"
+            e["verdict"] = "not-shown (no evidence in %s-both)" % g
         if e["cli_only"] and e["verdict"] != "cli":
             bad.append(k)
         keys[k] = e
@@ -657,18 +693,128 @@ def pc3():
     wjson(os.path.join(RUN, "sum", "config", "precedence.json"), prec)
 
 
-PC4 = ["pc4-none", "pc4-bypass", "pc4-untrusted", "pc4-trust", "pc4-log", "pc4-feature-default", "pc4-feature-legacy"]
+PC4 = ["pc4-none", "pc4-bypass", "pc4-untrusted", "pc4-trust", "pc4-trust-new", "pc4-log", "pc4-feature-default",
+       "pc4-feature-legacy", "pc4-tui", "pc4-tui-after"]
+SOURCES = ("home-inline", "home-json", "project-inline", "project-json")
+
+
+def trust_log_lines(paths):
+    """Lines about hook trust or approval (never a feedback_tags dump)."""
+    out = []
+    for p in paths:
+        for l in rd(p).splitlines():
+            if "feedback_tags" in l:
+                continue
+            if re.search("hook", l, re.I) and re.search(r"trust|approv", l, re.I):
+                out.append(l)
+    return out
+
+
+def sqlite_dump(db, needles):
+    """Every table of a SQLite file (opened read-only), and each column value that mentions hook,
+    trust, approv or a needle (at most 50 per table, 300 characters each)."""
+    out = ["db %s" % os.path.basename(db)]
+    pat = re.compile("|".join(["hook", "trust", "approv"] + [re.escape(n) for n in needles if n]), re.I)
+    con = None
+    for mode in ("ro", "ro&immutable=1"):
+        try:
+            con = sqlite3.connect("file:%s?mode=%s" % (urllib.parse.quote(db), mode), uri=True)
+            tables = [r[0] for r in con.execute("select name from sqlite_master where type='table' order by name")]
+            break
+        except sqlite3.Error as x:
+            err = x
+            con = None
+    if con is None:
+        return out + ["  error: %s" % err]
+    for t in tables:
+        out.append("table %s" % t)
+        qt = '"%s"' % t.replace('"', '""')
+        try:
+            cols = [c[1] for c in con.execute("pragma table_info(%s)" % qt)]
+            n = 0
+            for row in con.execute("select * from %s" % qt):
+                for c, v in zip(cols, row):
+                    if v is None:
+                        continue
+                    v = v.decode("utf-8", "replace") if isinstance(v, bytes) else str(v)
+                    if "feedback_tags" in v or not pat.search(v):
+                        continue
+                    out.append("  %s.%s: %s" % (t, c, v[:300].replace("\n", " ")))
+                    n += 1
+                if n >= 50:
+                    out.append("  (more rows not shown)")
+                    break
+        except sqlite3.Error as x:
+            out.append("  error: %s" % x)
+    con.close()
+    return out
+
+
+def tree(d, skip_git=False):
+    """'<size> <path>' for each file under d (relative paths, sorted; .git/ left out when asked)."""
+    out = []
+    for dp, dirs, fs in os.walk(d):
+        if skip_git and ".git" in dirs:
+            dirs.remove(".git")
+        for f in fs:
+            p = os.path.join(dp, f)
+            try:
+                out.append((os.path.relpath(p, d), os.lstat(p).st_size))
+            except OSError:
+                pass
+    return ["%d %s" % (n, r) for r, n in sorted(out)] or ["(empty)"]
+
+
+def cmd_evidence():
+    """evidence <scenario> <CODEX_HOME> <repo> <HOME> <marker file>: sum/trust/evidence-<s>.txt."""
+    sc, cxh, rdir, hdir, marker = A[:5]
+    cmds = ["echo %s >>%s" % (x, marker) for x in SOURCES]
+    needles = cmds + [hashlib.sha256(c.encode()).hexdigest() for c in cmds]
+    out = ["== %s: CODEX_HOME/config.toml, before the run -> after (unified diff)" % sc]
+    before = rd(os.path.join(RUN, "out", sc + ".config.before")).splitlines()
+    after = rd(os.path.join(cxh, "config.toml")).splitlines()
+    out += list(difflib.unified_diff(before, after, "before", "after", lineterm="")) or ["(no change)"]
+    out.append("== SQLite under CODEX_HOME (every table; values that mention hook, trust, approv, a hook command or its sha256)")
+    dbs = sorted(os.path.join(dp, f) for dp, _, fs in os.walk(cxh) for f in fs if f.endswith(".sqlite"))
+    for db in dbs:
+        out += sqlite_dump(db, needles)
+    if not dbs:
+        out.append("(no .sqlite file)")
+    out.append("== CODEX_HOME files (size path)")
+    out += tree(cxh)
+    out.append("== repo files (size path; .git/ left out)")
+    out += tree(rdir, skip_git=True)
+    out.append("== HOME files (size path)")
+    out += tree(hdir)
+    with open(os.path.join(RUN, "sum", "trust", "evidence-%s.txt" % sc), "w") as f:
+        f.write("\n".join(out) + "\n")
+
+
+def cmd_tui_choice():
+    """tui-choice <pane file>: the key that approves a hook prompt on the pane: an option digit, else
+    Enter; empty when the pane shows no hook prompt."""
+    t = rd(A[0])
+    if not (re.search("hook", t, re.I) and re.search(r"trust|review|approv|allow", t, re.I)):
+        print("")
+        return
+    for d, label in re.findall(r"(?m)^\W*(\d)[.)]\s+(.+)$", t):
+        if re.search(r"trust|approv|allow|yes|run|enable", label, re.I) and \
+                not re.search(r"\bno\b|don.?t|never|deny|skip|disable|cancel", label, re.I):
+            print(d)
+            return
+    print("Enter")
 
 
 def pc4():
     scen, where = {}, []
     for s in PC4 + ["pc4-prewritten"]:
         if not ran(s):
-            scen[s] = {"ran": False, "why": skipped().get(s) or "not-run: no record form"}
+            scen[s] = {"ran": False, "why": skipped().get(s) or ("not-run: no record form" if s == "pc4-prewritten" else "not run")}
             continue
         _, keys = state_tables(rd(os.path.join(RUN, "out", s + ".config.toml")))
         scen[s] = {"ran": True, "exit": rc(s), "request": bool(resp(s)),
-                   "sources_run": sorted(set(lines(os.path.join(RUN, "trust-" + s)))), "hooks_state_keys": keys}
+                   "sources_run": sorted(set(lines(os.path.join(RUN, "trust-" + s)))), "hooks_state_keys": keys,
+                   "evidence": "evidence-%s.txt" % s}
         if keys:
             where.append("%s: CODEX_HOME/config.toml [hooks.state.\"<key>\"]" % s)
     pre = scen["pc4-prewritten"]
@@ -677,7 +823,7 @@ def pc4():
     else:
         src = rd(os.path.join(RUN, "out", "pc4-prewritten.src")).strip()
         pre["form_from"] = src
-        honored = bool(set(pre["sources_run"]) & {"home-inline", "home-json", "project-inline", "project-json"})
+        honored = bool(set(pre["sources_run"]) & set(SOURCES))
     bypass = sorted(set(scen["pc4-bypass"].get("sources_run", [])) - set(scen["pc4-none"].get("sources_run", [])))
     if honored is True:
         r, w = "verified", "hook trust records written before launch are honored"
@@ -694,6 +840,11 @@ def pc4():
                          "warnings": sorted({l for s in ("pc4-feature-default", "pc4-feature-legacy", "pc4-bypass")
                                              for l in lines(os.path.join(RUN, "out", s + ".err")) if "deprecated" in l.lower()}),
                          "note": "each run: --dangerously-bypass-hook-trust; every other scenario sets [features] hooks = true"},
+        "trust_flag_on_untrusted_project": scen["pc4-trust-new"].get("sources_run"),
+        "tui": {"keys_sent": lines(os.path.join(RUN, "out", "pc4-tui.keys")) or "none (no hook prompt seen)",
+                "sources_run_in_tui": scen["pc4-tui"].get("sources_run"),
+                "sources_run_in_exec_after": scen["pc4-tui-after"].get("sources_run"),
+                "captures": sorted(f for f in os.listdir(os.path.join(RUN, "sum", "trust")) if f.startswith("tui-"))},
         "prewritten_honored": honored, "result": r, "why": w})
     out = []
     for s in PC4 + ["pc4-prewritten"]:
@@ -701,36 +852,50 @@ def pc4():
             continue
         out.append("== %s files" % s)
         out += lines(os.path.join(RUN, "out", s + ".files"))
-        out.append("== %s config.toml hooks tables" % s)
-        keep = False
-        for l in rd(os.path.join(RUN, "out", s + ".config.toml")).splitlines():
-            if re.match(r"\s*\[", l):
-                keep = bool(re.match(r"\s*\[\[?\s*hooks", l))
-            if keep:
-                out.append(l)
+        out.append("== %s config.toml after the run (whole file)" % s)
+        out += rd(os.path.join(RUN, "out", s + ".config.toml")).splitlines()
     with open(os.path.join(RUN, "sum", "trust", "codex-home-after.txt"), "w") as f:
         f.write("\n".join(out or ["no PC4 run"]) + "\n")
     logs = []
-    src = [os.path.join(RUN, "out", "pc4-log.err")]
-    ld = os.path.join(RUN, "out", "pc4-log.log")
-    for d, _, fs in os.walk(ld):
-        src += [os.path.join(d, f) for f in sorted(fs)]
-    for p in src:
-        for l in rd(p).splitlines():
-            if re.search("hook", l, re.I) and re.search("trust|hash", l, re.I):
-                logs.append(l)
+    for s in PC4 + ["pc4-prewritten"]:
+        src = [os.path.join(RUN, "out", s + ".err")]
+        for d, _, fs in os.walk(os.path.join(RUN, "out", s + ".log")):
+            src += [os.path.join(d, f) for f in sorted(fs)]
+        logs += ["%s: %s" % (s, l) for l in trust_log_lines(src)]
     with open(os.path.join(RUN, "sum", "trust", "log-lines.txt"), "w") as f:
-        f.write("\n".join(logs[:200] or ["none: no pc4-log line holds hook and trust or hash"]) + "\n")
+        f.write("\n".join(logs[:200] or ["none: no PC4 stderr or log line is about hook trust or approval"]) + "\n")
 
 
-PC5_CLASS = {"pc5-shell": "shell", "pc5-patch": "patch", "pc5-mcp": "mcp", "pc5-sub": "spawn"}
-PC5_ORDER = ["pc5-probe", "pc5-shell", "pc5-patch", "pc5-mcp", "pc5-sub", "pc5-ctx-start", "pc5-ctx-prompt",
-             "pc5-deny", "pc5-deny-block", "pc5-stop-block", "pc5-post-replace", "pc5-post-block"]
-SHAPES = {
+REP_CLASSES = ("shell", "mcp")
+# REP_SHAPES: the PostToolUse replacement outputs tried on each class (F5).
+REP_SHAPES = {"str": {"updatedToolOutput": "zp-replaced"},
+              "obj": {"updatedToolOutput": {"content": [{"type": "text", "text": "zp-replaced"}]}},
+              "mcp": {"updatedMCPToolOutput": {"content": [{"type": "text", "text": "zp-replaced"}]}}}
+REP = ["pc5-rep-%s-%s" % (c, x) for c in REP_CLASSES for x in REP_SHAPES]
+PC5_CLASS = [("pc5-shell", "shell"), ("pc5-patch", "patch"), ("pc5-mcp", "mcp"), ("pc5-sub", "spawn")] + \
+    [(x, x.split("-")[2]) for x in REP]
+PC5_ORDER = ["pc5-probe", "pc5-shell", "pc5-patch", "pc5-mcp", "pc5-sub", "pc5-match", "pc5-ctx-start", "pc5-ctx-prompt",
+             "pc5-deny", "pc5-deny-block", "pc5-stop-block", "pc5-post-block"] + REP
+SHAPES = dict({
     "pc5-ctx-start": ("context", "SessionStart"), "pc5-ctx-prompt": ("context", "UserPromptSubmit"),
     "pc5-deny": ("deny", "PreToolUse"), "pc5-deny-block": ("deny", "PreToolUse"),
-    "pc5-stop-block": ("block", "Stop"), "pc5-post-replace": ("replacement", "PostToolUse"),
-    "pc5-post-block": ("block", "PostToolUse")}
+    "pc5-stop-block": ("block", "Stop"), "pc5-post-block": ("block", "PostToolUse")},
+    **{x: ("replacement", "PostToolUse") for x in REP})
+
+
+def matcher_fired(s, e):
+    """label -> True when the matcher group's hook ran in scenario s for event e."""
+    return {label: bool(payloads(s, "%s-m-%s" % (e, label))) for label, _ in MATCHERS}
+
+
+def cmd_matchers():
+    s, e = A[:2]
+    print(" ".join("%s=%s" % (l, "fired" if v else "not-fired") for l, v in sorted(matcher_fired(s, e).items())))
+
+
+def hook_status(s, e):
+    """Codex's own status lines for event e on stderr ("hook: <Event> Completed|Failed|...")."""
+    return sorted(set(re.findall(r"hook: %s (\w+)" % e, rd(os.path.join(RUN, "out", s + ".err")))))
 
 
 def payloads(s, e):
@@ -747,9 +912,11 @@ def pc5(tools_env, r_dir):
     out_files, events = [], {}
     for e in EVENTS:
         if e in ("PreToolUse", "PostToolUse"):
-            for s, c in PC5_CLASS.items():
+            done = set()
+            for s, c in PC5_CLASS:
                 ps = payloads(s, e)
-                if ps:
+                if ps and c not in done:
+                    done.add(c)
                     out_files.append(("%s-%s.json" % (e, c), ps[0]))
             seen = [s for s in PC5_ORDER if payloads(s, e)]
         else:
@@ -762,8 +929,8 @@ def pc5(tools_env, r_dir):
         for n, p in out_files:
             f.write("%s %s\n" % (n, p))
     seen_names = {}
-    for s, c in PC5_CLASS.items():
-        names = set()
+    for s, c in PC5_CLASS:
+        names = set(seen_names.get(c, []))
         for e in ("PreToolUse", "PostToolUse"):
             for p in payloads(s, e):
                 n = json.load(open(p)).get("tool_name")
@@ -802,24 +969,65 @@ def pc5(tools_env, r_dir):
         elif s == "pc5-stop-block":
             idx = [i + 1 for i, r in enumerate(rs) if i > 0 and "zp-block" in btext(r)]
             o.update(accepted=bool(idx), evidence="zp-block in request(s) %s" % idx)
-        elif s == "pc5-post-replace":
+        elif s in REP:
+            orig = "zp-orig" if "-shell-" in s else "tracer-mcp-probe-result"
             t = tool_outputs(rs[1]) if len(rs) > 1 else ""
-            o.update(accepted="zp-replaced" in t and "zp-orig" not in t,
-                     evidence="request 2 tool output holds zp-replaced: %s, zp-orig: %s" % ("zp-replaced" in t, "zp-orig" in t))
+            o.update(accepted="zp-replaced" in t and orig not in t, codex_status=hook_status(s, ev),
+                     evidence="request 2 tool output holds zp-replaced: %s, %s: %s; hook status %s" % (
+                         "zp-replaced" in t, orig, orig in t, hook_status(s, ev) or "none"))
         else:
             hit = len(rs) > 1 and "zp-post" in btext(rs[1])
             o.update(accepted=hit, evidence="zp-post in request 2: %s" % hit)
         outs[s] = o
         kinds[kind] = kinds.get(kind, False) or o["accepted"]
+    replacement = {c: {x: (outs["pc5-rep-%s-%s" % (c, x)]["accepted"] if ran("pc5-rep-%s-%s" % (c, x))
+                           else why_not("pc5-rep-%s-%s" % (c, x))) for x in REP_SHAPES} for c in REP_CLASSES}
+    matchers = {e: {"%s (%s)" % (label, m): matcher_fired("pc5-match", e)[label] for label, m in MATCHERS}
+                for e in ("PreToolUse", "PostToolUse")} if ran("pc5-match") else why_not("pc5-match")
+    if isinstance(matchers, dict):
+        for e in matchers:
+            matchers[e]["no matcher"] = bool(payloads("pc5-match", e))
+    subagent = {"attempts": [x for x in ("pc5-sub",) if ran(x)],
+                "parent_kept_alive": "a %s call of sleep 15 after the spawn (rule pc5-sub-wait)" % env.get("SHELL_TOOL", "")
+                if os.path.exists(os.path.join(RUN, "sse", "pc5-sub-wait.sse")) else "no",
+                "parent_requests": len(resp("pc5-sub")),
+                "SubagentStart": bool(payloads("pc5-sub", "SubagentStart")),
+                "SubagentStop": bool(payloads("pc5-sub", "SubagentStop"))}
     need = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SubagentStart", "SubagentStop"]
     missing = [e for e in need if not isinstance(events[e], list)] + \
               ["%s shape" % k for k in ("context", "deny", "block", "replacement") if not kinds.get(k)]
     wjson(os.path.join(RUN, "sum", "hooks", "outputs.json"), {
-        "events": events, "shapes": outs, "result": "failed" if missing else "verified",
+        "events": events, "shapes": outs, "replacement": replacement, "matchers": matchers, "subagent": subagent,
+        "result": "failed" if missing else "verified",
         "why": "missing: " + ", ".join(missing) if missing else "every needed event has a payload and each kind an accepted shape"})
 
 
-PC12 = ["pc12-default", "pc12-exclude", "pc12-case", "pc12-core", "pc12-none"]
+PC12 = ["pc12-default", "pc12-all", "pc12-exclude", "pc12-case", "pc12-core", "pc12-none"]
+
+
+def pc12_grade(ex, de, case, all_):
+    """(result, why) from the variable names of pc12-exclude, -default, -case and -all (None: not measured)."""
+    if None in (ex, de, case, all_):
+        return "failed", "not measured: " + ", ".join(n for n, v in (("pc12-exclude", ex), ("pc12-default", de),
+                                                                     ("pc12-case", case), ("pc12-all", all_)) if v is None)
+    bad = []
+    if "MOCK_API_KEY" in ex or "HTTPS_PROXY" in ex:
+        bad.append("pc12-exclude keeps an excluded name")
+    if "ZP_SET" not in ex:
+        bad.append("pc12-exclude lacks ZP_SET")
+    if "MOCK_API_KEY" not in de:
+        bad.append("pc12-default lacks MOCK_API_KEY")
+    if "MOCK_API_KEY" not in all_:
+        bad.append("the control pc12-all (inherit all, empty exclude) lacks MOCK_API_KEY")
+    if bad:
+        return "failed", "; ".join(bad)
+    return "verified", "exclude and set apply in tool shells; the default and the inherit-all control pass MOCK_API_KEY; " \
+        "pc12-case: exclude %s letter case" % ("ignores" if "MOCK_API_KEY" not in case else "keeps")
+
+
+def cmd_pc12grade():
+    v = [None if x == "-" else x.split() for x in A[:4]]
+    print(pc12_grade(*v)[0])
 
 
 def pc12():
@@ -833,14 +1041,33 @@ def pc12():
         out[s] = {"names": sorted(set(re.findall(r"(?m)^([A-Za-z_][A-Za-z0-9_]*)=", t)))}
         if s == "pc12-exclude":
             out[s]["zp_set"] = "ZP_SET=zp-set" in t
-    ex, de = out["pc12-exclude"].get("names"), out["pc12-default"].get("names")
-    ok = ex is not None and de is not None and "MOCK_API_KEY" not in ex and "HTTPS_PROXY" not in ex \
-        and out["pc12-exclude"].get("zp_set") and "MOCK_API_KEY" in de
-    out["result"] = "verified" if ok else "failed"
-    out["why"] = "exclude and set apply in tool shells; the default passes MOCK_API_KEY" if ok else \
-        "pc12-exclude or pc12-default did not show the expected names" if ex is not None and de is not None else \
-        "no tool output: " + (out["pc12-exclude"].get("why") or out["pc12-default"].get("why") or "")
+    case = out["pc12-case"].get("names")
+    if case is not None:
+        out["pc12-case"]["exclude_ignores_case"] = "MOCK_API_KEY" not in case
+    out["result"], out["why"] = pc12_grade(*(out[x].get("names") for x in ("pc12-exclude", "pc12-default", "pc12-case", "pc12-all")))
     wjson(os.path.join(RUN, "sum", "config", "shell-env.json"), out)
+
+
+def network():
+    """config/network.txt: per scenario, the refused CONNECT lines of its window (host counts) and
+    its responses_websocket stderr lines (time stamps cut, first 3)."""
+    conn = rd(os.path.join(RUN, "rec", "connect.txt")).splitlines()
+    out, total = [], {}
+    for s in lines(os.path.join(RUN, "out", "order.txt")):
+        w = rd(os.path.join(RUN, "out", s + ".conn")).split()
+        part = conn[int(w[0]):int(w[1])] if len(w) == 2 else []
+        hosts = {}
+        for l in part:
+            h = l.rsplit(" refused", 1)[0]
+            hosts[h] = hosts.get(h, 0) + 1
+            total[h] = total.get(h, 0) + 1
+        wsl = [re.sub(r"^\S+Z\s+", "", l) for l in lines(os.path.join(RUN, "out", s + ".err")) if "responses_websocket" in l]
+        out.append("== %s: connect %s; responses_websocket lines %d" % (
+            s, ", ".join("%s x%d" % (h, n) for h, n in sorted(hosts.items())) or "none", len(wsl)))
+        out += ["  " + l for l in wsl[:3]]
+    out.insert(0, "all refused CONNECT lines: " + (", ".join("%s x%d" % (h, n) for h, n in sorted(total.items())) or "none"))
+    with open(os.path.join(RUN, "sum", "config", "network.txt"), "w") as f:
+        f.write("\n".join(out) + "\n")
 
 
 def cmd_analyze():
@@ -849,12 +1076,17 @@ def cmd_analyze():
     pc4()
     pc5(tools_env, r_dir)
     pc12()
+    network()
     strict_report(version, with_state == "1", url, prem)
 
 
 {"home": cmd_home, "sse": cmd_sse, "rule": cmd_rule, "shellargs": cmd_shellargs, "pc5toml": cmd_pc5toml,
  "tools": cmd_tools, "form": cmd_form, "strict-gen": cmd_strict_gen, "strict-judge": cmd_strict_judge,
- "analyze": cmd_analyze}[CMD]()
+ "analyze": cmd_analyze, "evidence": cmd_evidence, "tui-choice": cmd_tui_choice,
+ # entry points of the synthetic tests
+ "shown": lambda: print(shown_fns()[(A[0], A[1])](A[2])), "control": lambda: print(control_line(A[0])),
+ "logfilter": lambda: print("\n".join(trust_log_lines(A))), "sqlite-dump": lambda: print("\n".join(sqlite_dump(A[0], A[1:]))),
+ "matchers": cmd_matchers, "pc12grade": cmd_pc12grade}[CMD]()
 PY
 cxpy() { python3 -I "$RUN/cx.py" "$RUN" "$@"; }
 
@@ -862,6 +1094,7 @@ cxpy() { python3 -I "$RUN/cx.py" "$RUN" "$@"; }
 CX_FEAT=hooks
 # cx_fresh: no project .codex folder of an earlier scenario is left in R or $RUN/other.
 cx_fresh() { rm -rf "$R/.codex" "$RUN/other/.codex"; }
+# CX_UNTRUSTED: "" trusts the projects, 1 writes trust_level = "untrusted", none writes no projects table.
 # cx_home <scenario> env|auth [<extra toml file>]: a fresh CODEX_HOME $RUN/cxh-<scenario> (and fresh
 # project folders) with config.toml at the mock: one base_url line, "$MOCK_URL/v1".
 cx_home() {
@@ -874,7 +1107,19 @@ cx_home() {
 }
 # cx_project <dir> <toml file>: the project config of <dir>.
 cx_project() { mkdir -p "$1/.codex"; cp "$2" "$1/.codex/config.toml"; }
-cx_count() { ls "$RUN/rec" | grep -c '^[0-9][0-9]*\.json$' || true; }
+cx_count() {
+  _c=0
+  for _f in "$RUN"/rec/[0-9]*.json; do [ ! -e "$_f" ] || _c=$((_c + 1)); done
+  echo "$_c"
+}
+# cx_conn: the line count of the mock's connect.txt (0 when missing).
+cx_conn() { if [ -e "$RUN/rec/connect.txt" ]; then wc -l <"$RUN/rec/connect.txt" | tr -d ' '; else echo 0; fi; }
+# cx_pkg_rm <CODEX_EXE>: remove that run's package copy, the first folder of the path under $RUN.
+cx_pkg_rm() {
+  case "$1" in
+    "$RUN"/codex-pkg.*/p/*) _pk=${1#"$RUN"/}; rm -rf "${RUN:?}/${_pk%%/*}" ;;
+  esac
+}
 # cx_run <scenario> <codex exec args...>: one codex exec with prompt zp-<scenario>; out/<s>.out,
 # .err, .rc, .seq (<record folder> <first> <last>); the side files a run writes (auth-who, mcp-who,
 # hooks-who) move to out/<s>.<name>; project folders are kept in proj/<s>/; the package copy is removed.
@@ -882,7 +1127,7 @@ CX_REC=rec-a
 cx_run() {
   _s=$1
   shift
-  _b=$(cx_count)
+  _b=$(cx_count) _cb=$(cx_conn)
   rm -f "$RUN/auth-who" "$RUN/mcp-who" "$RUN/hooks-who"
   rm -f "$RUN/out/$_s.done"
   # A subshell: a harness refusal (n2_daemon_flag, codex_env, the daemon scan, check_abort) exits
@@ -901,7 +1146,9 @@ cx_run() {
   read -r _rc CODEX_VERSION CODEX_EXE <"$RUN/out/$_s.done"
   echo "$_rc" >"$RUN/out/$_s.rc"
   echo "$CX_REC $((_b + 1)) $(cx_count)" >"$RUN/out/$_s.seq"
-  case "$CODEX_EXE" in "$RUN"/codex-pkg.*/p/*) rm -rf "${CODEX_EXE%/p/*}" ;; esac
+  echo "$_cb $(cx_conn)" >"$RUN/out/$_s.conn"
+  echo "$_s" >>"$RUN/out/order.txt"
+  cx_pkg_rm "$CODEX_EXE"
   for _f in auth-who mcp-who hooks-who; do [ ! -e "$RUN/$_f" ] || mv "$RUN/$_f" "$RUN/out/$_s.$_f"; done
   mkdir -p "$RUN/proj/$_s"
   [ ! -d "$R/.codex" ] || cp -R "$R/.codex" "$RUN/proj/$_s/repo.codex"
@@ -920,6 +1167,7 @@ cx_sse() { _o=$1 _k=$2; shift 2; cxpy sse "$_o" "$_k" "$@"; }
 cx_tools() {
   # shellcheck disable=SC2046
   cxpy tools "$RUN/tools.env" $(cx_reqs pc5-probe)
+  # shellcheck disable=SC1091 # written at run time by cx.py tools
   . "$RUN/tools.env"
 }
 # shell_args <command text>: the arguments JSON for SHELL_TOOL.
@@ -937,6 +1185,12 @@ b_shell() {
   cxpy rule "$RUN/rules.json" "$1" "$RUN/sse/$1.sse" "${3:-}"
 }
 b_ok() { [ -e "$RUN/sse/$1.sse" ]; }
+# b_mcp <scenario>: phase B rule: the first reply is an MCP_TOOL call (in its namespace).
+b_mcp() {
+  b_need "$MCP_TOOL" mcp "$1" || return 0
+  cx_sse "$RUN/sse/$1.sse" call "$MCP_TOOL" "call_$(echo "$1" | tr - _)" '{}' "$MCP_NS"
+  cxpy rule "$RUN/rules.json" "$1" "$RUN/sse/$1.sse"
+}
 # pc3_group <group> <mode> <project toml> <cli -c args...>: runs <group>-cli, -proj and -both.
 pc3_group() {
   _g=$1 _m=$2 _p=$3
@@ -962,11 +1216,16 @@ pc4_sources() {
   hook_toml "echo project-inline >>$_mk" >"$R/.codex/config.toml"
   hook_json "echo project-json >>$_mk" >"$R/.codex/hooks.json"
 }
-# pc4_after <scenario>: keep the CODEX_HOME config.toml, its file list and its log folder.
+# pc4_before <scenario>: CODEX_HOME's config.toml as it is before the run (for the evidence diff).
+pc4_before() { cp "$CX_HOME/config.toml" "$RUN/out/$1.config.before"; }
+# pc4_after <scenario> [<marker scenario>]: keep the CODEX_HOME config.toml, its file list and its log
+# folder; write trust/evidence-<scenario>.txt (config diff, SQLite tables and hook rows, the trees
+# of CODEX_HOME, the repo and HOME).
 pc4_after() {
   cp "$CX_HOME/config.toml" "$RUN/out/$1.config.toml"
   (cd "$CX_HOME" && find . -type f | sed 's|^\./||' | LC_ALL=C sort) >"$RUN/out/$1.files"
   [ ! -d "$CX_HOME/log" ] || cp -R "$CX_HOME/log" "$RUN/out/$1.log"
+  cxpy evidence "$1" "$CX_HOME" "$R" "$H" "$RUN/trust-${2:-$1}"
 }
 pc4_run() {
   _s4=$1
@@ -974,13 +1233,105 @@ pc4_run() {
   cx_home "$_s4" env
   pc4_sources "$_s4"
   rm -f "$RUN/trust-$_s4"
+  pc4_before "$_s4"
   cx_run "$_s4" "$@"
   pc4_after "$_s4"
 }
+# --- The TUI in a pane of a private tmux server (F3: interactive hook approval) ---
+TMUX_BIN=$(command -v tmux) || { echo "premises: tmux is not on PATH"; exit 1; }
+SOCK=$RUN/s
+[ ${#SOCK} -le 100 ] || { echo "premises: the tmux socket path is longer than 100 characters; set N2_SCRATCH or TMPDIR to a short folder"; exit 1; }
+tm() { LC_ALL=C "$TMUX_BIN" -S "$SOCK" -f /dev/null "$@"; }
+tm_kill() { tm kill-server 2>/dev/null || true; }
+n2_trap_chain tm_kill
+# pane_wait <ERE> <polls>: up to <polls> captures of session $TS's pane, 0.5 s apart, into
+# $RUN/pane.txt; 0 when one matches <ERE> (any case), 1 when the TUI ended or the polls ran out.
+pane_wait() {
+  _i=0
+  while [ "$_i" -lt "$2" ]; do
+    _i=$((_i + 1))
+    tm capture-pane -p -t "=$TS:" >"$RUN/pane.tmp" 2>/dev/null || return 1
+    mv "$RUN/pane.tmp" "$RUN/pane.txt"
+    sleep 0.5
+    ! grep -qiE -- "$1" "$RUN/pane.txt" || return 0
+    [ ! -e "$RUN/$TS-exit" ] || return 1
+  done
+  return 1
+}
+# keep <name>: the last capture as trust/tui-<name>.txt (published through scrub); none: a note.
+keep() { if [ -e "$RUN/pane.txt" ]; then cp "$RUN/pane.txt" "$RUN/sum/trust/tui-$1.txt"; else echo '(no capture)' >"$RUN/sum/trust/tui-$1.txt"; fi; }
+key() { tm send-keys -t "=$TS:" "$1" 2>/dev/null || true; sleep 0.5; }
+send() { tm send-keys -t "=$TS:" -l "$1" 2>/dev/null || true; sleep 0.5; key Enter; }
+# tui_hooks <scenario>: the TUI (run_codex --no-daemon, no bypass flag) with the current CX_HOME:
+# capture the start; while the pane shows a hook prompt (cx.py tui-choice), keep it and send the
+# approving key (at most 3); one turn (zp-<scenario>, reply zp-tui-reply); /hooks; quit. Keys go to
+# out/<scenario>.keys; .rc, .seq, .conn as cx_run. A harness refusal ends the part (exit 1).
+tui_hooks() {
+  TS=$1
+  {
+    printf "PREMISES_DIR='%s'\nN2_AGENTS=codex\nN2_SCRATCH='%s'\n" "$PREMISES_DIR" "$N2_SCRATCH"
+    # shellcheck disable=SC2016
+    echo '. "$PREMISES_DIR/lib.sh"'
+    printf "RUN='%s'; H='%s'; R='%s'; CX_HOME='%s'; MOCK_URL='%s'; MOCK_PID='%s'\n" "$RUN" "$H" "$R" "$CX_HOME" "$MOCK_URL" "$MOCK_PID"
+    echo "trap '[ -e \"\$RUN/$TS-exit\" ] || : >\"\$RUN/$TS-refused\"' EXIT"
+    # --no-daemon: a TUI run must not start the shared daemon (n2_daemon_flag).
+    echo "set -- --no-daemon -c 'approval_policy=\"never\"'"
+    echo "{ n2_daemon_flag \"\$@\"; codex_env; n2_procs daemon || exit 1; } >\"\$RUN/$TS-pre.txt\" 2>&1"
+    echo "rc=0; run_codex \"\$@\" || rc=\$?; echo \"\$rc\" >\"\$RUN/$TS-exit\""
+  } >"$RUN/$TS-tui.sh"
+  rm -f "$RUN/$TS-exit" "$RUN/$TS-refused" "$RUN/pane.txt"
+  : >"$RUN/out/$TS.keys"
+  _b=$(cx_count) _cb=$(cx_conn)
+  tm new-session -d -s "$TS" -x 220 -y 50 /bin/sh "$RUN/$TS-tui.sh"
+  pane_wait 'hook|gpt-mock' 60 || true
+  keep start
+  _k=1
+  while [ "$_k" -le 3 ] && [ -e "$RUN/pane.txt" ] && [ ! -e "$RUN/$TS-exit" ]; do
+    _key=$(cxpy tui-choice "$RUN/pane.txt")
+    [ -n "$_key" ] || break
+    keep "prompt-$_k"
+    echo "prompt $_k: key $_key" >>"$RUN/out/$TS.keys"
+    key "$_key"
+    pane_wait 'gpt-mock' 6 || true
+    keep "after-key-$_k"
+    _k=$((_k + 1))
+  done
+  send "zp-$TS"
+  pane_wait zp-tui-reply 120 || true
+  keep turn
+  send /hooks
+  pane_wait hook 6 || true
+  keep hooks-command
+  key Escape; key Escape; key C-c; key C-c
+  _i=0
+  while [ ! -e "$RUN/$TS-exit" ] && [ "$_i" -lt 20 ]; do _i=$((_i + 1)); sleep 0.5; done
+  tm_kill
+  if [ -e "$RUN/$TS-refused" ] || [ ! -e "$RUN/$TS-exit" ]; then
+    echo "premises: $TS: the TUI run was refused or did not end:"
+    cat "$RUN/$TS-pre.txt" 2>/dev/null || true
+    grep -h '^premises:' "$RUN/pane.txt" 2>/dev/null || true
+    check_abort
+    exit 1
+  fi
+  cp "$RUN/$TS-exit" "$RUN/out/$TS.rc"
+  cp "$RUN/$TS-pre.txt" "$RUN/out/$TS.err"
+  echo "$CX_REC $((_b + 1)) $(cx_count)" >"$RUN/out/$TS.seq"
+  echo "$_cb $(cx_conn)" >"$RUN/out/$TS.conn"
+  echo "$TS" >>"$RUN/out/order.txt"
+  # The pane's codex_env check and run_codex each made a package copy.
+  for _p in "$RUN"/codex-pkg.*; do [ ! -e "$_p" ] || rm -rf "$_p"; done
+  echo "codex config: $TS (TUI) exit $(cat "$RUN/$TS-exit"), requests $(($(cx_count) - _b))"
+}
+
 # pc5_home <scenario> [<event> <hook rules file>]: CODEX_HOME with all fourteen events logged and the
 # probe MCP server.
 pc5_home() {
   cxpy pc5toml "$RUN/x/$1.toml" "$1" "$PREMISES_DIR" ${2:+"$2" "$3"}
+  cx_home "$1" env "$RUN/x/$1.toml"
+}
+# pc5_home_match <scenario>: as pc5_home, plus the MATCHERS groups on PreToolUse and PostToolUse.
+pc5_home_match() {
+  cxpy pc5toml "$RUN/x/$1.toml" "$1" "$PREMISES_DIR" "" "" match
   cx_home "$1" env "$RUN/x/$1.toml"
 }
 # hook_rule <scenario> <event> <output json>: hook_log.py rules file, one use.
@@ -993,6 +1344,8 @@ pc5_run() { cx_run "$1" --dangerously-bypass-hook-trust -c features.apply_patch_
 
 # ================================ phase A: no tool calls ================================
 printf '[]\n' >"$RUN/rules.json"
+cx_sse "$RUN/sse/pc4-tui.sse" text zp-tui-reply
+cxpy rule "$RUN/rules.json" pc4-tui "$RUN/sse/pc4-tui.sse"
 start_mock "$RUN/rules.json"
 
 # PC3: CODEX_HOME against ~/.codex (the scratch HOME's planted ~/.codex, never the owner's).
@@ -1069,8 +1422,14 @@ CX_UNTRUSTED=1
 pc4_run pc4-untrusted --dangerously-bypass-hook-trust
 CX_UNTRUSTED=""
 pc4_run pc4-trust --trust
+# --trust on a project with no trust_level at all (F3a): what it writes.
+CX_UNTRUSTED=none
+pc4_run pc4-trust-new --trust
+CX_UNTRUSTED=""
+# shellcheck disable=SC2034 # EXTRA_ENV is read by lib.sh's run_codex
 EXTRA_ENV="RUST_LOG=debug"
 pc4_run pc4-log
+# shellcheck disable=SC2034 # as above
 EXTRA_ENV=""
 # The hooks feature flag: none, and the deprecated name (PC-6 saw its warning).
 CX_FEAT=""
@@ -1078,20 +1437,35 @@ pc4_run pc4-feature-default --dangerously-bypass-hook-trust
 CX_FEAT=codex_hooks
 pc4_run pc4-feature-legacy --dangerously-bypass-hook-trust
 CX_FEAT=hooks
+# pc4-tui (F3b): the four sources, no bypass flag, the interactive TUI: approve a hook prompt if one
+# shows; then pc4-tui-after: exec, no flag, on the same CODEX_HOME (does the approval persist).
+cx_home pc4-tui env
+pc4_sources pc4-tui
+rm -f "$RUN/trust-pc4-tui"
+pc4_before pc4-tui
+tui_hooks pc4-tui
+pc4_after pc4-tui
+[ ! -e "$RUN/trust-pc4-tui" ] || mv "$RUN/trust-pc4-tui" "$RUN/trust-pc4-tui.tui"
+pc4_before pc4-tui-after
+cx_run pc4-tui-after
+[ ! -e "$RUN/trust-pc4-tui" ] || mv "$RUN/trust-pc4-tui" "$RUN/trust-pc4-tui-after"
+[ ! -e "$RUN/trust-pc4-tui.tui" ] || mv "$RUN/trust-pc4-tui.tui" "$RUN/trust-pc4-tui"
+pc4_after pc4-tui-after pc4-tui
 # pc4-prewritten: the source scenario's CODEX_HOME rebuilt at the same path (the record key and hash
 # may name it), with the hooks.state tables Codex wrote, no flag.
-_src=$(cxpy form pc4-trust pc4-none pc4-bypass pc4-untrusted pc4-log)
+_src=$(cxpy form pc4-tui pc4-tui-after pc4-trust pc4-trust-new pc4-none pc4-bypass pc4-untrusted pc4-log)
 if [ -n "$_src" ]; then
-  [ "$_src" != pc4-untrusted ] || CX_UNTRUSTED=1
+  case "$_src" in pc4-untrusted) CX_UNTRUSTED=1 ;; pc4-trust-new) CX_UNTRUSTED=none ;; esac
   cx_home "$_src" env
   CX_UNTRUSTED=""
   pc4_sources "$_src"
   cat "$RUN/sum/hooks-state.toml" >>"$CX_HOME/config.toml"
+  pc4_before pc4-prewritten
   [ ! -e "$RUN/trust-$_src" ] || mv "$RUN/trust-$_src" "$RUN/trust-$_src.first"
   cx_run pc4-prewritten
   [ ! -e "$RUN/trust-$_src" ] || mv "$RUN/trust-$_src" "$RUN/trust-pc4-prewritten"
   [ ! -e "$RUN/trust-$_src.first" ] || mv "$RUN/trust-$_src.first" "$RUN/trust-$_src"
-  pc4_after pc4-prewritten
+  pc4_after pc4-prewritten "$_src"
   echo "$_src" >"$RUN/out/pc4-prewritten.src"
 fi
 HONORED=0
@@ -1118,8 +1492,11 @@ while :; do
     "key remote_compaction")
       if [ "$_rcv" = false ]; then _rcv='"unsupported"'; else _removed="$_removed remote_compaction"; fi ;;
     "key "*)
-      case " $_removed " in *" ${_v#key } "*) break ;; esac
-      _removed="$_removed ${_v#key }" ;;
+      _ids=$(echo "${_v#key }" | tr , ' ')
+      for _id in $_ids; do
+        case " $_removed " in *" $_id "*) break 2 ;; esac
+        _removed="$_removed $_id"
+      done ;;
     *) break ;;
   esac
   _n=$((_n + 1))
@@ -1141,7 +1518,7 @@ cx_tools
 printf '[]\n' >"$RUN/rules.json"
 : >>"$RUN/out/skipped.txt"
 _big='{"input_tokens": 50000, "output_tokens": 10, "total_tokens": 50010}'
-for _s in pc3-env-cli pc3-env-proj pc3-env-both pc12-default pc12-exclude pc12-case pc12-core pc12-none; do
+for _s in pc3-env-cli pc3-env-proj pc3-env-both pc12-default pc12-all pc12-exclude pc12-case pc12-core pc12-none; do
   b_shell "$_s" env
 done
 for _s in pc3-compact-cli pc3-compact-proj pc3-compact-both pc3-compact-v2 pc3-window-cli pc3-window-proj pc3-window-both; do
@@ -1150,8 +1527,12 @@ done
 b_shell pc5-shell "echo zp-shell"
 b_shell pc5-deny "echo ran >>$R/zp-ran-deny"
 b_shell pc5-deny-block "echo ran >>$R/zp-ran-deny2"
-b_shell pc5-post-replace "echo zp-orig"
 b_shell pc5-post-block "echo zp-orig"
+b_shell pc5-match "echo zp-match"
+for _x in str obj mcp; do
+  b_shell "pc5-rep-shell-$_x" "echo zp-orig"
+  b_mcp "pc5-rep-mcp-$_x"
+done
 _patch=$(printf '*** Begin Patch\n*** Add File: zp.txt\n+zp\n*** End Patch')
 if b_need "$PATCH_TOOL" patch pc5-patch; then
   if [ "$PATCH_KIND" = custom ]; then
@@ -1162,13 +1543,18 @@ if b_need "$PATCH_TOOL" patch pc5-patch; then
   fi
   cxpy rule "$RUN/rules.json" pc5-patch "$RUN/sse/pc5-patch.sse"
 fi
-if b_need "$MCP_TOOL" mcp pc5-mcp; then
-  cx_sse "$RUN/sse/pc5-mcp.sse" call "$MCP_TOOL" call_pc5_mcp '{}' "$MCP_NS"
-  cxpy rule "$RUN/rules.json" pc5-mcp "$RUN/sse/pc5-mcp.sse"
-fi
+b_mcp pc5-mcp
 if b_need "$SPAWN_TOOL" spawn pc5-sub && b_need "$SPAWN_ARG" spawn-argument pc5-sub; then
   cx_sse "$RUN/sse/pc5-sub.sse" call "$SPAWN_TOOL" call_pc5_sub "{\"$SPAWN_ARG\": \"zp-pc5-sub-child\"}" "$SPAWN_NS"
   cxpy rule "$RUN/rules.json" pc5-sub "$RUN/sse/pc5-sub.sse"
+  # F6: the parent's next request (it holds the spawn's output) gets a sleep call, so the parent
+  # turn lasts until the child has stopped (wait_agent needs the child's id, unknown in advance).
+  if [ -n "$SHELL_TOOL" ]; then
+    _y=""
+    [ "$SHELL_YIELD" != 1 ] || _y=20000
+    cx_sse "$RUN/sse/pc5-sub-wait.sse" call "$SHELL_TOOL" call_pc5_sub_wait "$(cxpy shellargs "$SHELL_ARG" "$SHELL_ARRAY" "sleep 15" "$_y")"
+    cxpy rule "$RUN/rules.json" pc5-sub-wait "$RUN/sse/pc5-sub-wait.sse" "" 'function_call_output[^{}]*"call_pc5_sub"'
+  fi
 fi
 start_mock "$RUN/rules.json"
 
@@ -1199,16 +1585,26 @@ for _s in pc5-shell pc5-patch pc5-mcp pc5-sub; do
   pc5_home "$_s"
   pc5_run "$_s"
 done
+# PC5: matchers (F4).
+if b_ok pc5-match; then
+  pc5_home_match pc5-match
+  pc5_run pc5-match
+fi
 # PC5: output shapes.
 hook_rule pc5-ctx-start SessionStart '{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "zp-ctx-start"}}'
 hook_rule pc5-ctx-prompt UserPromptSubmit '{"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": "zp-ctx-prompt"}}'
 hook_rule pc5-deny PreToolUse '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "zp-deny"}}'
 hook_rule pc5-deny-block PreToolUse '{"decision": "block", "reason": "zp-deny2"}'
 hook_rule pc5-stop-block Stop '{"decision": "block", "reason": "zp-block"}'
-hook_rule pc5-post-replace PostToolUse '{"hookSpecificOutput": {"hookEventName": "PostToolUse", "updatedToolOutput": "zp-replaced"}}'
+# F5: each replacement shape on the shell tool and on an MCP tool.
+hook_rule pc5-rep-shell-str PostToolUse '{"hookSpecificOutput": {"hookEventName": "PostToolUse", "updatedToolOutput": "zp-replaced"}}'
+hook_rule pc5-rep-shell-obj PostToolUse '{"hookSpecificOutput": {"hookEventName": "PostToolUse", "updatedToolOutput": {"content": [{"type": "text", "text": "zp-replaced"}]}}}'
+hook_rule pc5-rep-shell-mcp PostToolUse '{"hookSpecificOutput": {"hookEventName": "PostToolUse", "updatedMCPToolOutput": {"content": [{"type": "text", "text": "zp-replaced"}]}}}'
+for _x in str obj mcp; do cp "$RUN/hk-rules/pc5-rep-shell-$_x.json" "$RUN/hk-rules/pc5-rep-mcp-$_x.json"; done
 hook_rule pc5-post-block PostToolUse '{"decision": "block", "reason": "zp-post"}'
 for _p in pc5-ctx-start:SessionStart pc5-ctx-prompt:UserPromptSubmit pc5-stop-block:Stop pc5-deny:PreToolUse \
-  pc5-deny-block:PreToolUse pc5-post-replace:PostToolUse pc5-post-block:PostToolUse; do
+  pc5-deny-block:PreToolUse pc5-post-block:PostToolUse pc5-rep-shell-str:PostToolUse pc5-rep-shell-obj:PostToolUse \
+  pc5-rep-shell-mcp:PostToolUse pc5-rep-mcp-str:PostToolUse pc5-rep-mcp-obj:PostToolUse pc5-rep-mcp-mcp:PostToolUse; do
   _s=${_p%%:*} _e=${_p#*:}
   case "$_s" in pc5-ctx-* | pc5-stop-block) ;; *) b_ok "$_s" || continue ;; esac
   pc5_home "$_s" "$_e" "$RUN/hk-rules/$_s.json"
@@ -1216,10 +1612,11 @@ for _p in pc5-ctx-start:SessionStart pc5-ctx-prompt:UserPromptSubmit pc5-stop-bl
 done
 
 # PC12: shell_environment_policy.
-for _s in pc12-default pc12-exclude pc12-case pc12-core pc12-none; do
+for _s in pc12-default pc12-all pc12-exclude pc12-case pc12-core pc12-none; do
   b_ok "$_s" || continue
   case "$_s" in
     pc12-default) : >"$RUN/x/$_s.toml" ;;
+    pc12-all) printf '[shell_environment_policy]\ninherit = "all"\nexclude = []\n' >"$RUN/x/$_s.toml" ;;
     pc12-exclude) printf '[shell_environment_policy]\ninherit = "all"\nexclude = ["MOCK_*", "HTTPS_PROXY"]\nset = { ZP_SET = "zp-set" }\n' >"$RUN/x/$_s.toml" ;;
     pc12-case) printf '[shell_environment_policy]\ninherit = "all"\nexclude = ["mock_api_key"]\n' >"$RUN/x/$_s.toml" ;;
     pc12-core) printf '[shell_environment_policy]\ninherit = "core"\n' >"$RUN/x/$_s.toml" ;;
@@ -1239,6 +1636,7 @@ rm -f "$RUN/sum/hooks/.payloads"
   scrub "$RUN/sum/$_f" >"$RUN/fx/$_f"
 done
 [ -z "$(find "$RUN/fx" -type l)" ] || { echo "premises: a link in the fixtures"; exit 1; }
+# shellcheck disable=SC2153 # CODEX_FX is set by lib.sh
 rm -rf "$CODEX_FX/config" "$CODEX_FX/trust" "$CODEX_FX/hooks"
 mkdir -p "$CODEX_FX"
 cp -R "$RUN/fx/." "$CODEX_FX/"
