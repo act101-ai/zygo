@@ -9,3 +9,5 @@ control_model_shown=yes
 control_dir_shown=yes
 control_tui_exit=0
 differs=yes
+warnings_total=2
+warnings_captured=2

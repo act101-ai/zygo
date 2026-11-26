@@ -5,7 +5,7 @@
   "headers": {
     "x-codex-beta-features": "remote_compaction_v2",
     "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
-    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000004\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000005\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"parent_thread_id\":\"00000000-0000-4000-8000-000000000003\",\"parent_turn_id\":\"00000000-0000-4000-8000-000000000006\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000006\",\"subagent_kind\":\"thread_spawn\",\"thread_source\":\"subagent\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"42b149b7dbd6c5a0ed3fc1b1a99491422f7525fc\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795651469787,\"analytics_enabled\":true,\"model\":\"gpt-mock-pc6\"}",
+    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000004\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000005\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"parent_thread_id\":\"00000000-0000-4000-8000-000000000003\",\"parent_turn_id\":\"00000000-0000-4000-8000-000000000006\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000006\",\"subagent_kind\":\"thread_spawn\",\"thread_source\":\"subagent\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"00f77094cdb17f8a6abef4ec9c1d4e5994cbd824\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795656170576,\"analytics_enabled\":true,\"model\":\"gpt-mock-pc6\"}",
     "x-codex-parent-thread-id": "00000000-0000-4000-8000-000000000003",
     "x-openai-subagent": "collab_spawn",
     "x-client-request-id": "00000000-0000-4000-8000-000000000001",
@@ -17,7 +17,7 @@
     "originator": "codex_exec",
     "user-agent": "codex_exec/0.172.0 (os omitted) xterm-256color (codex_exec; 0.172.0)",
     "accept-encoding": "zstd,gzip",
-    "host": "127.0.0.1:51193",
+    "host": "127.0.0.1:52350",
     "content-length": "31504"
   },
   "credential_headers": [
@@ -30,7 +30,7 @@
     "input": [
       {
         "type": "message",
-        "id": "msg_4ee01416-03e7-5ac5-b8a9-0dacbf48fc60",
+        "id": "msg_837120af-f456-5962-9673-b7dde8ddafdc",
         "role": "developer",
         "content": [
           {
@@ -41,7 +41,7 @@
       },
       {
         "type": "message",
-        "id": "msg_01a2152b-01f7-77a2-afaf-d4e3ecad319f",
+        "id": "msg_01a21572-bcc0-7df2-81e6-adc88a9233fb",
         "role": "developer",
         "content": [
           {
@@ -60,7 +60,7 @@
       },
       {
         "type": "message",
-        "id": "msg_01a2152b-01f7-77a2-afaf-d4fab7e0ff0b",
+        "id": "msg_01a21572-bcc0-7df2-81e6-addbc8a24e85",
         "role": "user",
         "content": [
           {
@@ -71,7 +71,7 @@
       },
       {
         "type": "message",
-        "id": "msg_01a2152b-01fb-74d1-8211-afa3dcf987e5",
+        "id": "msg_01a21572-bcf8-73a0-9d83-e3f9026cea05",
         "role": "user",
         "content": [
           {
@@ -334,16 +334,16 @@
     ],
     "prompt_cache_key": "00000000-0000-4000-8000-000000000003",
     "client_metadata": {
-      "session_id": "00000000-0000-4000-8000-000000000003",
       "x-codex-installation-id": "00000000-0000-4000-8000-000000000002",
-      "x-codex-parent-thread-id": "00000000-0000-4000-8000-000000000003",
-      "parent_turn_id": "00000000-0000-4000-8000-000000000006",
-      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000004\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000005\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"parent_thread_id\":\"00000000-0000-4000-8000-000000000003\",\"parent_turn_id\":\"00000000-0000-4000-8000-000000000006\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000006\",\"subagent_kind\":\"thread_spawn\",\"thread_source\":\"subagent\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"42b149b7dbd6c5a0ed3fc1b1a99491422f7525fc\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795651469787,\"analytics_enabled\":true,\"model\":\"gpt-mock-pc6\"}",
-      "turn_id": "00000000-0000-4000-8000-000000000004",
-      "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
       "x-openai-subagent": "collab_spawn",
+      "x-codex-parent-thread-id": "00000000-0000-4000-8000-000000000003",
+      "session_id": "00000000-0000-4000-8000-000000000003",
+      "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
+      "thread_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": "00000000-0000-4000-8000-000000000004",
       "root_turn_id": "00000000-0000-4000-8000-000000000006",
-      "thread_id": "00000000-0000-4000-8000-000000000001"
+      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000004\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000005\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"parent_thread_id\":\"00000000-0000-4000-8000-000000000003\",\"parent_turn_id\":\"00000000-0000-4000-8000-000000000006\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000006\",\"subagent_kind\":\"thread_spawn\",\"thread_source\":\"subagent\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"00f77094cdb17f8a6abef4ec9c1d4e5994cbd824\",\"has_changes\":false}},\"turn_started_at_unix_ms\":1795656170576,\"analytics_enabled\":true,\"model\":\"gpt-mock-pc6\"}",
+      "parent_turn_id": "00000000-0000-4000-8000-000000000006"
     }
   },
   "reply": "default"

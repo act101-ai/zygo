@@ -1,3 +1,4 @@
+=== capture 1
 
   >_ OpenAI Codex (v0.172.0)
      /repo
@@ -8,7 +9,7 @@
 
 • tracer-pc11-reply
 
-  Worked for <1s • 12:06 AM
+  Worked for <1s • 1:24 AM
 
 
 
@@ -45,6 +46,57 @@
 
 
 
+
+
+  k keep & next · esc dismiss & close · ⌃o copy · ←/→ warning
+=== capture 2
+
+  >_ OpenAI Codex (v0.172.0)
+     /repo
+
+
+› tracer-pc11-turn
+
+
+• tracer-pc11-reply
+
+  Worked for <1s • 1:24 AM
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  Warnings · 2 of 2 · MCP · codex_tui
+
+  MCP client for `codex_tui` failed to start: MCP startup failed: handshaking with MCP server failed: Send message error Transport
+  [codex_rmcp_client::tool_list_changes::ToolListChanges<codex_rmcp_client::event_notification_transport::EventNotificationTransport<rmcp::transport::worker::WorkerTransport<rmcp::transport::streamable_http_client::StreamableHttpClientWorker<codex_
+  rmcp_client::http_client_adapter::StreamableHttpClientAdapter>>>>] error: unexpected server response: HTTP 403: {"error":{"message":"mock: proxy request refused"}}, when send initialize request: Send message error Transport
+  [codex_rmcp_client::tool_list_changes::ToolListChanges<codex_rmcp_client::event_notification_transport::EventNotificationTransport<rmcp::transport::worker::WorkerTransport<rmcp::transport::streamable_http_client::StreamableHttpClientWorker<codex_
+  rmcp_client::http_client_adapter::StreamableHttpClientAdapter>>>>] error: unexpected server response: HTTP 403: {"error":{"message":"mock: proxy request refused"}}, when send initialize request
+
+  MCP startup incomplete (failed: codex_tui)
 
 
   k keep & next · esc dismiss & close · ⌃o copy · ←/→ warning

@@ -47,4 +47,4 @@
 › Ask Codex to do anything
 
   gpt-mock default
-  ← for agents · ? for shortcuts                                                                                                                                                                                                 ⚠ 1 warning · f2 to view
+  ← for agents · ? for shortcuts
