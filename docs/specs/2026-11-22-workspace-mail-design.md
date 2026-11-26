@@ -111,10 +111,11 @@ CLI (W§12 additions):
 
 | Command | Does |
 |---|---|
-| `zygo mail send <to> [--subject <s>] [--file <path> \| -]` | Send as `cli` (or as the member when `ZYGO_PANE` is set). |
-| `zygo mail read [--name <n>] [--max <k>]` | Read a member's mail (default: the member of this pane). |
-| `zygo mail ls [<name>]` | Unread counts per member, or subjects for one. |
-| `zygo mail watch [<name>] [--timeout <dur>]` | Block until a file lands in `new/`, print one line per message (`<id> <from> <subject>`), exit 0; exit 1 at timeout (default 25m). For a lead under a bounded tool (for example a Monitor tool). It does not move the file. |
+| `zygo mail send <to> [--subject <s>] [--file <path> \| -]` | Send as `cli` (or as the member when `ZYGO_PANE` is set). `<to>` can be `<name>@<host>` (mail sync design S§7.2): to a remote address, the S§8.6 send-time pass, the outbox write, then the sync child (S§8.1). |
+| `zygo mail read [--name <n>] [--max <k>]` | Read a member's mail (default: the member of this pane). `<n>` is a member of this machine; `<name>@<this host>` works as `<name>` (S§7.2). |
+| `zygo mail ls [<name>]` | Unread counts per member, then the sync line when sync is set for the workspace (S§10.3); or subjects for one member of this machine (S§7.2). |
+| `zygo mail watch [<name>] [--timeout <dur>]` | Block until a file lands in `new/`, print one line per message (`<id> <from> <subject>`), exit 0; exit 1 at timeout (default 25m). For a lead under a bounded tool (for example a Monitor tool). It does not move the file. With sync on, it starts the sync child at its start and then each `sync_gap` and does not wait for it; imported mail shows at the next look (S§8.1). `<name>` is a member of this machine (S§7.2). |
+| `zygo mail sync [--name <workspace>] [--prune] [--take-host] [--new-identity] [--drop-host <host>] [--yes]` | Sync the workspace's mail with the side branch of its remote (mail sync design S§8.1, S§8.3, S§7.6). |
 
 Slash forms: `/zygo:mail` (list) only, per O14; send and read stay tools, because their text is content.
 
@@ -235,6 +236,7 @@ Mail sync between machines adds `[mail] host`, `[mail] sync_gap` and the per-wor
 | 2026-11-25 | M§8a | author's call (lead) | Mail sync design S§16 and S§10.4: item 8 gains the "Other machines" clause after the member list, at most 64 addresses (MS-20). |
 | 2026-11-26 | M-C6, M§8a | author's call (lead) | Workspace definition design R§14 and R§9.3: member names also come from approved repository files (R§7); item 8 lists each member's job in brackets and ends with the member's job sentence, after the mail tail, so the S§10.4 clause keeps its place (WD-18). M-C6 keeps the S-G6 side-branch sentence from the mail sync design S§16 row. |
 | 2026-11-26 | M§8 | mail sync design S§16 | mail_send takes addresses and runs the send-time pass; mail_list returns the remote addresses (S§7.2, S§8.6, S§10.4; MS-19). |
+| 2026-11-26 | M§8 | mail sync design S§16 | CLI: `zygo mail sync` is a new verb; send takes addresses; read, ls and watch take local members; ls ends with the sync line; watch starts the sync child (S§7.2, S§8.1, S§10.3; MS-18). |
 | 2026-11-26 | M§5 | author's call (lead) | Deliveries and maildir removals take mail/lock (shared/exclusive) and read the member records under it, so a send from an older state read, or one in flight, cannot make mail/<key>/ again after a record removal; up removes dropped maildirs after phase = up or its undo (FX-13). |
 | 2026-11-26 | M§5 | author's call (lead) | A read takes mail/lock shared for its list and moves, so a removal cannot run between them, and follows no link at mail/, mail/<key>/, new/ or cur/ (FX-13 review F1, F2). |
 | 2026-11-26 | M§5 | author's call (lead) | The repair step in phase up or down and up on a running session also remove maildirs with no record, best effort, so one left by a failed removal does not stay (FX-13 review F3). |
