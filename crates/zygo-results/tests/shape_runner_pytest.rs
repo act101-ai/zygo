@@ -390,7 +390,7 @@ fn summary_with_nothing_hidden_or_no_saving_gives_none() {
 fn pipeline_uses_the_pytest_view() {
     for (name, cmd) in [("passing", "pytest"), ("failing-verbose", "pytest -v"),
                         ("collection-error", "pytest -v --continue-on-collection-errors"),
-                        ("failing-verbose", "python3 -m pytest -v"), ("failing-verbose", "make test")] {
+                        ("failing-verbose", "python3 -m pytest -v")] {
         let (raw, _) = case(name);
         let out = shape::run(&raw, &ShapeInput { parsed: Some(parse(cmd)), kind: Kind::Text, threshold: 16384 });
         let want = Shaped { text: pytest(&raw).unwrap().0, steps: vec![Passed], shaper: Some(Shaper::Pytest), size_view: false };

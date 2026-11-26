@@ -1,0 +1,7 @@
+[zygo shaped this output: passed tests hidden. The full output (297 lines, 9435 bytes) is saved as result 00000000000000000000000000; read it with result_view, result_search or result_tree.]
+[zygo: 1 packages with no test files hidden]
+[zygo: 292 lines of passed tests hidden]
+PASS
+ok  	example.com/gotestfix/group	0.038s
+PASS
+ok  	example.com/gotestfix/parse	0.005s

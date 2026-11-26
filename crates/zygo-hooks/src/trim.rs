@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 use zygo_config::ResultsConfig;
-use zygo_core::hook::{HookInput, HookOutput};
+use zygo_core::hook::{error_line, HookInput, HookOutput};
 use zygo_core::overrides::Overrides;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
@@ -17,14 +17,14 @@ use zygo_usage::TrimRow;
 use zygo_work::hooks::units_on_session;
 use zygo_work::log::{self, Kind as LogKind, LogLine};
 
+use crate::pre_compact::flag_path;
+use crate::session_start::mechanics_with_overrides;
+
 /// §10.1: the tools whose result text is trimmed.
 const HOOKED: [&str; 5] = ["Bash", "Read", "Grep", "Glob", "WebFetch"];
 
 /// Reads `ZYGO_SESSION_DIR` and the usage database path from the environment; loads no config.
 pub fn run(input: &HookInput) -> anyhow::Result<HookOutput> {
-    if target(input).is_none() {
-        return Ok(HookOutput::None);
-    }
     let Some(dir) = SessionDir::from_env() else { return Ok(HookOutput::None) };
     trim_in(input, &dir, &Paths::from_env().usage_db)
 }
@@ -98,7 +98,9 @@ fn target(input: &HookInput) -> Option<(String, String)> {
     Some((tool.to_owned(), text))
 }
 
-/// O§7.8 "When PO2 fails": whether the agent shows a cleared `stderr` as empty. OS-34 sets it to the PO2 result.
+/// O§7.8: whether a hook output with `stderr` "" leaves the model no stderr text. True, as the PO2 row of
+/// `docs/premises.md` (verified, Claude Code 2.1.332, where the hook input carries stderr in `stdout`): the hook
+/// shapes both streams, sets `stderr` to "" and counts both; false selects "When PO2 fails".
 pub const PO2_STDERR_CLEARED: bool = true;
 
 /// O§7.13: whether a `PostToolUseFailure` hook output replaces the text the model sees after a failed Bash call.
@@ -109,7 +111,7 @@ pub const PO1_HOLDS: bool = false;
 /// Options of the trim hook.
 #[derive(Debug, Clone, Copy)]
 pub struct TrimOpts {
-    /// O§7.11: how long the usage write waits on a busy database before the row is dropped.
+    /// O§7.11, O-C10: how long the usage write may wait in total, on a busy database, before the row is dropped.
     pub db_bound: Duration,
     /// O§7.8: true shapes stdout and stderr together and clears `stderr`; false shapes stdout only.
     pub stderr_cleared: bool,
@@ -129,7 +131,8 @@ impl Default for TrimOpts {
     }
 }
 
-/// §10.1: store a result over the threshold in the session's results directory and return the head/tail view in its place.
+/// §10.1: store a result over the threshold in the session's results directory and return the head/tail view in its place;
+/// first takes the subagent's re-inject flag and adds the mechanics text as `additionalContext` (T§9.2 item 2).
 pub fn trim_in(input: &HookInput, dir: &SessionDir, usage_db: &Path) -> anyhow::Result<HookOutput> {
     trim_in_with(input, dir, usage_db, &TrimOpts::default())
 }
@@ -221,8 +224,57 @@ fn used(p: &Pending, tool: &str, cfg: &ResultsConfig) -> bool {
     if p.shaped.is_none() { pv < p.counted } else { p.counted.saturating_sub(pv) >= MIN_SAVING_BYTES as u64 }
 }
 
-/// §10.1, O§7.8: store a result in the session's results directory and return its shaped or head/tail view in its place.
+/// T§9.2 item 2: the flag first, then the trim of §10.1, O§7.8.
 pub fn trim_in_with(input: &HookInput, dir: &SessionDir, usage_db: &Path, opts: &TrimOpts) -> anyhow::Result<HookOutput> {
+    let m = take_flag(input, dir)?;
+    match trim_out(input, dir, usage_db, opts) {
+        Ok(out) => Ok(with_context(out, m)),
+        Err(e) if m.is_some() => {
+            error_line(&format!("{e:#}"));
+            Ok(with_context(HookOutput::None, m))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// T§9.2 item 2: for a `PostToolUse` input whose `agent_id` passes `flag_path`, removes the flag and returns M.
+/// No flag, or a flag that cannot be stat'ed or removed, gives `None`; a stat error other than NotFound or a failed
+/// remove writes one stderr line (T§14 item 2).
+fn take_flag(input: &HookInput, dir: &SessionDir) -> anyhow::Result<Option<String>> {
+    if input.event.as_deref() != Some("PostToolUse") {
+        return Ok(None);
+    }
+    let Some(p) = input.agent_id.as_deref().and_then(|id| flag_path(dir, id)) else { return Ok(None) };
+    let cannot_remove = |e: std::io::Error| {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            error_line(&format!("trim: cannot remove {}: {e}", p.display()));
+        }
+        Ok(None)
+    };
+    if let Err(e) = std::fs::symlink_metadata(&p) {
+        return cannot_remove(e);
+    }
+    let v = SessionView::load(dir)?;
+    match std::fs::remove_file(&p) {
+        Ok(()) => Ok(Some(mechanics_with_overrides(dir, &v))),
+        Err(e) => cannot_remove(e),
+    }
+}
+
+/// `out` with `additionalContext` = `m` added; `out` unchanged when `m` is `None`.
+fn with_context(out: HookOutput, m: Option<String>) -> HookOutput {
+    let Some(m) = m else { return out };
+    match out {
+        HookOutput::Json(mut v) => {
+            v["hookSpecificOutput"]["additionalContext"] = json!(m);
+            HookOutput::Json(v)
+        }
+        _ => HookOutput::Json(json!({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": m}})),
+    }
+}
+
+/// §10.1, O§7.8: store a result in the session's results directory and return its shaped or head/tail view in its place.
+fn trim_out(input: &HookInput, dir: &SessionDir, usage_db: &Path, opts: &TrimOpts) -> anyhow::Result<HookOutput> {
     let Some((tool, text)) = target(input) else { return Ok(HookOutput::None) };
     let sv = SessionView::load(dir)?;
     // §17.1: `overrides.json` is read on every call.
@@ -253,7 +305,7 @@ pub fn trim_in_with(input: &HookInput, dir: &SessionDir, usage_db: &Path, opts: 
         shaper: Some(p.shaper.as_str().into()),
     };
     // C6, O§7.11: busy past the bound or broken: no row, the view stands.
-    if zygo_usage::Store::open_bounded(usage_db, opts.db_bound).and_then(|u| u.insert_trim(&row)).is_err() {
+    if zygo_usage::Store::open_bounded_total(usage_db, opts.db_bound).and_then(|u| u.insert_trim(&row)).is_err() {
         note("usage store unavailable");
     }
     let cwd = input.raw.get("cwd").and_then(Value::as_str).unwrap_or(".");

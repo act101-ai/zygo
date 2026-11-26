@@ -1,0 +1,8 @@
+[zygo shaped this output: progress lines removed. The full output (7 lines, 9112 bytes) is saved as result 00000000000000000000000000; read it with result_view, result_search or result_tree.]
+[stderr]
+Cloning into 'dst'...
+remote: Enumerating objects: 2002, done.        
+remote: Counting objects: 100% (2002/2002), done.        
+remote: Compressing objects: 100% (2/2), done.        
+remote: Total 2002 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)        
+Receiving objects: 100% (2002/2002), 82.85 KiB | 1.69 MiB/s, done.

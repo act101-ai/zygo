@@ -1,0 +1,17 @@
+[zygo shaped this output: passed tests hidden, build progress hidden. The full output (135 lines, 3941 bytes) is saved as result 00000000000000000000000000; read it with result_view, result_search or result_tree.]
+
+running 120 tests
+[zygo: 120 passed and 0 ignored test lines hidden]
+
+test result: ok. 120 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+[zygo: 1 build progress lines hidden]
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.33s
+     Running unittests src/lib.rs (target/debug/deps/scratch-b66679a8c20ae5f6)
+     Running tests/crash.rs (target/debug/deps/crash-06b6539749caaeec)
+error: test failed, to rerun pass `--test crash`
+
+Caused by:
+  process didn't exit successfully: `/repo/target/debug/deps/crash-06b6539749caaeec` (signal: 6, SIGABRT: process abort signal)

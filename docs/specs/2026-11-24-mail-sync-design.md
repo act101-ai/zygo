@@ -42,7 +42,7 @@ This spec covers three items:
 
 ## 4. Constraints
 
-- **S-C1** M-C1 to M-C6 apply. C6 applies to each new hook branch: a sync error never changes a hook decision.
+- **S-C1** M-C1 to M-C6 (M-C6 as amended in workspace definition design R§14) apply. C6 applies to each new hook branch: a sync error never changes a hook decision.
 - **S-C2** Mail is content (M-C2). No subject, body, address, host name, member name or path that holds one goes into a log, `workspace.json`, a usage row, a commit message or a ref name **(lead)**. A log line names ULIDs, pattern ids, check names, blob ids and counts only.
 - **S-C3** zygo writes only `refs/heads/zygo/<x>` on the remote. A force push goes only to that branch, only with the lease of S§9 **(operator)**.
 - **S-C4** Every git call is built by the hardened builder `git_command` (`crates/zygo-plugins/src/sync.rs:32-58`: no repository hooks, no fsmonitor, no LFS filter, no `ext::` transport, `GIT_TERMINAL_PROMPT=0`, `ssh -o BatchMode=yes`), plus `-c gc.auto=0 -c maintenance.auto=false -c fetch.writeCommitGraph=false` on each call **(lead)**. Each call runs under the runner of S§8.7, with a deadline.
@@ -335,7 +335,7 @@ The imported log grows by 27 bytes per delivered message and is never trimmed wh
 - **Base.** The tip of this pass: the commit of this pass's accepted push, if there was one, else the fetched tip **(lead)**. A prune never uses a fetch from before this pass's own push.
 - **Tree.** The base tree, less each message file `<name>@<host>/<ULID>.json` whose ULID is in the valid `ack/<host>.json` of the base tree. Nothing else is removed: no registry, no ack, no message that its host has not acknowledged. No clock and no `keep` is used (S-C8).
 - **Commit.** `commit-tree` with no parent, message `zygo mail [skip ci]`.
-- **Push.** `git push --porcelain --force-with-lease=refs/heads/<branch>:<base> <remote> <commit>:refs/heads/<branch>`. The lease is the base. A push from another machine after the base makes the lease fail; the prune is then skipped in this pass; the next pass tries again. Thus a prune never removes a message that it did not see in its base, and the messages of this pass's own push are in its base and are not acknowledged yet, so they stay.
+- **Push.** `git push --porcelain --force-with-lease=refs/heads/<branch>:<base> <remote> <commit>:refs/heads/<branch>`. The lease is the base. A push from another machine after the base makes the lease fail; the prune is then skipped in this pass; the next pass tries again. Any other failure of the prune's git work (the commit count, the tree and commit, or the push: a rejection other than the lease, a git error or the deadline) also skips the prune and does not fail the pass: the pass ends as without a prune, and the sync report gets the note `prune skipped (<check>)`; the next pass tries again. A failed check of "Only its own branch" stops the pass. Thus a prune never removes a message that it did not see in its base, and the messages of this pass's own push are in its base and are not acknowledged yet, so they stay.
 - **Only its own branch.** The branch name must pass the `sync` form of S§11 (prefix `zygo/`), and the base must have `ZYGO-MAIL`. Both are checked again just before the force push.
 - **After a prune**, other machines fetch with the `+` refspec (S§6.5); their next pass builds on the new root. Each owner removes the pruned ULIDs from its own ack (S§7.4). The old objects stay on the server and in local object stores until each one runs its own garbage collection.
 
@@ -364,7 +364,7 @@ A host that is idle for months keeps its mail on the branch, and the branch grow
 
 ### 10.4 Agent text
 
-M§8a item 8 gains one clause when sync is on and the member cache is not empty, after the member list: `Other machines: <address>, <address>, …; mail them by the full address.` At most 64 addresses, then `and <n> more; mail_list lists all`. `mail_list` returns the remote addresses from the member cache. The tool description of `mail_send` adds: "To a member on another machine, use `<name>@<host>`." No message text goes into this text (M§8a).
+M§8a item 8 gains one clause when sync is on for the workspace and the member cache is not empty, after the member list, before "Send with": `Other machines: <address>, <address>, …; mail them by the full address.` Each address is `<name>@<host>`, in host order, then names as stored, each address once; the addresses are joined with `, `. At most 64 addresses; when there are more, the last of the 64 is followed by `, and <n> more; mail_list lists all`, before `; mail them by the full address.`, where `<n>` is the number of addresses left out. Sync off, a config that does not load, or an empty cache gives no clause. `mail_list` returns the remote addresses from the member cache. The tool description of `mail_send` adds: "To a member on another machine, use `<name>@<host>`." No message text goes into this text (M§8a).
 
 ### 10.5 Output of remote values
 
@@ -475,7 +475,7 @@ Each row is one case, walked end to end.
 - **M§5** `from` and `to` can hold a full address (S§6.2). The file format and its version do not change.
 - **M§6** Gains the address grammar (S§7.2) and the reserved name `zygo`.
 - **M-C4** Holds for `mail/`. Synced mail also exists in the repository's object store and on the remote (S§13 limit 3, S-C7).
-- **M-C6** Holds: no file of a checkout sends mail or names a local member. The side branch delivers mail only after the user-config opt-in (S-G6).
+- **M-C6** Holds: a cloned repository cannot send mail. Member names come from user config or from approved repository files (workspace definition design R§7). The side branch delivers mail only after the user-config opt-in (S-G6).
 - **M§8, M§8a** `mail_send` takes addresses; `mail_list` returns remote addresses; item 8 gains one clause (S§10.4). `zygo mail sync` is a new verb; `zygo mail ls` shows a sync line and the outbox and refused counts; `zygo mail watch` syncs (S§8.1).
 - **M§11** Gains `host`, `sync_gap` and `[mail.workspace.<name>]` (S§11).
 - **W§7.1** Gains the cache path `$HOME/.cache/zygo/workspaces/<id>/mail-sync/` and the state paths `mail/outbox/` and `mail/sync/`.
@@ -492,7 +492,7 @@ P3-1 is not built. "The mail module" is the place where the P3-1 build puts the 
 | `crates/zygo-work/src/repo.rs:61-75` | Make `run_bounded_out` reachable from the mail module (or copy it), and add the stream mode (S§8.7). |
 | `crates/zygo-redact` | No change. Called from the mail module (S§8.6). |
 | `crates/zygo-hooks/src/workspace.rs` | The rate-limited spawn of the sync child on `session`, `prompt`, `stop` and `tool-end` (S§8.1, S§8.4), on the pattern of `start_snapshot_child` (`:484-513`). |
-| `crates/zygo-hooks/src/session_text.rs` | The item 8 clause (S§10.4). |
+| `crates/zygo-hooks/src/mail.rs` | The item 8 clause (S§10.4). |
 | `crates/zygo-mcp/src/tools/` (mail tools of P3-1) | Addresses, the send-time pass, remote addresses in `mail_list`, the description sentence. |
 | `crates/zygo/src/cmd/` (mail command of P3-1) | `zygo mail sync` and its options, the hidden `--ws-id <id> --background` form (AU44), the sync in `watch`, the sync line in `ls`, `esc` for remote values. |
 | `crates/zygo/src/cmd/mod.rs` | The results sweep is skipped for `mail sync --background`, as for `ws` (AU71): it runs on hook events. |
@@ -558,3 +558,6 @@ Each check is a test or a command. A "machine" in a test is one `HOME` with its 
 - 2026-11-25 · S§8.5 · author's call · reading a folder stops at its target's inbox room, so one full inbox does not stop import for the others.
 - 2026-11-25 · S§8.4 · author's call · a last_start later than now no longer stops hook starts until the clock passes it (MS-16 review F2).
 - 2026-11-25 · S§8.3 · author's call (lead) · MS-13 review F2: an outbox file that cannot be read stayed in the outbox and took a place in the 1000 of each pass, so 1000 such files stopped every later message; it now moves to `mail/outbox/refused/` with one `read` line and takes no place.
+- 2026-11-25 · S§9 · author's call (lead) · a prune failure other than a lost lease skips the prune and does not fail the pass (MS-14 review F1).
+- 2026-11-25 · S§10.4, S§17 · author's call (lead) · Clause form fixed to the M§8a text of MS-20; each address once; clause code in mail.rs (ML-9 put item 8 there).
+- 2026-11-26 · S-C1, S§16 · author's call (lead) · M-C6 restated to follow workspace definition design R§14 (WD-18).

@@ -1,0 +1,5 @@
+[zygo shaped this output: repeated lines counted. The full output (43 lines, 2799 bytes) is saved as result 00000000000000000000000000; read it with result_view, result_search or result_tree.]
+[stderr]
+   Compiling warnbuild v0.1.0 (/repo)
+warning: warnbuild@0.1.0: libfoo not found; using the bundled copy [repeated 40 times]
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.21s
