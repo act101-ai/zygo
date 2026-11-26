@@ -316,10 +316,19 @@ fn ls_sync_line_off_cases() {
     assert_eq!(ls(&x), MEMBERS);
 }
 
+/// `git` with no global or system config and no template folder (MS-18 review F4), so the hooks, signing, templates
+/// and `insteadOf` rules of the user who runs the tests cannot change a result. Every git that a test starts is made
+/// here.
+fn git_cmd() -> std::process::Command {
+    let mut c = std::process::Command::new("git");
+    c.env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_TEMPLATE_DIR", "");
+    c
+}
+
 /// `git -c user.name=t -c user.email=t@t.invalid -c commit.gpgSign=false <args>` in `dir`; panics on a non-zero
 /// exit; the stdout without its trailing newline. (Copied from `tests/mail_sync_cli.rs`.)
 fn git(dir: &Path, args: &[&str]) -> String {
-    let o = std::process::Command::new("git")
+    let o = git_cmd()
         .args(["-c", "user.name=t", "-c", "user.email=t@t.invalid", "-c", "commit.gpgSign=false"])
         .args(args).current_dir(dir).output().unwrap();
     assert!(o.status.success(), "git {args:?}: {}", err(&o));
