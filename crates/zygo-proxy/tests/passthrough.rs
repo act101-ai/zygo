@@ -520,6 +520,20 @@ fn upstream_429_error_type_and_message_recorded() {
     assert_eq!((w[0].session.as_str(), w[0].model.as_str(), w[0].ts), (g.session.as_str(), q.model.as_str(), q.ts));
 }
 
+#[test] // RS-14 (K§6.4.4): the client's own login is no provider key: an answer that echoes it, in the body or a
+         // header, 2xx or not, reaches the client unchanged
+fn upstream_echo_of_the_login_reaches_the_client_unchanged() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    for status in [200u16, 401] {
+        let e = json!({"type":"error","error":{"type":"authentication_error","message":format!("bad login {OAT}")}});
+        t.anth.answer(status, &[("x-echo", BEARER)], &e);
+        let r = post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main"));
+        assert_eq!((r.0, hv(&r.1, "x-echo")), (status, BEARER));
+        assert_eq!(r.2, e.to_string().into_bytes());
+    }
+}
+
 #[test] // FIX-10: a 2xx answer writes no upstream_errors row
 fn upstream_200_records_no_error() {
     let t = setup("");
