@@ -194,7 +194,6 @@ Session text (T, SX nodes):
 | OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | TODO | judgment | — |
 | OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4 | TODO | judgment | — |
 | MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | TODO | judgment | — |
-| OS-34 | Set the stderr branch as PO2 decided | OS-33, OS-24 | DONE | mechanical | plan bba3b8b4 · node 9cd2b7fa, 399ed252, 7b268ebc · acceptance pass (po2_ 3 passed; shaping_hook 29 passed) · PR #184 |
 | WD-18 | Session text: each member's job and the job sentence | WD-11, ML-9, ML-10, MS-20 | DONE | implementation | plan 97283bcc · node 445b4399, 875618e6, f4fcd2fd, dbff60d9 · acceptance pass (job_ 8 listed; session_text 51 passed) · PR #189 |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | TODO | implementation | — |
 | OS-35 | Fixture views through the hook: goldens, floors, recovery, bless guard | OS-34, OS-32, OS-42 | DONE | judgment | 3a9dbffb · 3c10f93d · f788f46d · acceptance pass (shaping 14) · PR #198 |
@@ -202,7 +201,7 @@ Session text (T, SX nodes):
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | TODO | implementation | — |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
 | OS-36 | The never-worse check over every case and the built inputs | OS-35 | TODO | judgment | — |
-| OS-37 | On-demand latency test, ignored in CI | OS-35 | PLANNED | implementation | — |
+| OS-37 | On-demand latency test, ignored in CI | OS-35 | DONE | implementation | 98d82be5 · b5c27cbd · 77c6726f · acceptance pass (shaping_latency 5 ignored) · PR #200 |
 | WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | TODO | judgment | — |
 | MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17, FX-15 | TODO | implementation | — |
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | TODO | implementation | — |
@@ -415,3 +414,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | WD-18 DONE: item 8 lists each member's job and ends with the member's job sentence (R§9.3); review F1 (mail sync M-C6 restatement) and F2 part 1 (non-JOBS value) fixed in spec text; F2 part 2 refuted (one orchestrator per loadout, check.rs:241) |
 | 2026-11-26 | OS-42 DONE: no view hides another runner's failure section; a wrapper at any depth, a PYTEST_ADDOPTS word, -p no:capture or an -o addopts override turns the pytest view off; O§7.6 (lead) awaiting operator ratification · PR #196 |
 | 2026-11-26 | OS-35 DONE: 20 fixture views through the hook, id masked; floors, row bytes, recovery and bless guard tested; PO1-failed cases checked as none, their failing floor on the runner view; review F1-F6, F8 fixed, F7, F9 refuted · PR #198 |
+| 2026-11-26 | OS-37 DONE: 4 O§8.5 budget tests and the child process, ignored in CI; sized inputs keep each case's shaping path; shape-on and shape-off rows asserted; review F1-F3, F5 fixed, F4 wording, F5 timeout refuted · PR #200 |
