@@ -147,8 +147,9 @@ pub struct LaunchOpts {
     /// commit and digest, never by a default-branch read; a pin that is gone, not approved or unread stops the launch.
     pub definition: Option<Pin>,
     /// R§7.4: set to the pin of this launch's own default-branch read when that read is approved and gives the
-    /// requested profile, and that profile passes `validate` and is applied; never set by a pinned launch. The member
-    /// callback reads it before its start write.
+    /// requested profile, and that profile passes `validate` and is applied; cleared when the session grant refuses
+    /// the profile (`profile_warning`, serve mode); never set by a pinned launch. The member callback reads it before
+    /// its start write.
     pub definition_out: Option<Arc<Mutex<Option<Pin>>>>,
     /// `Some`: the built-in layer is this table (`load_with_builtin`).
     #[cfg(feature = "test-hooks")]
@@ -462,6 +463,11 @@ impl Launcher {
         };
         if let Some(w) = &grant.profile_warning {
             out.line(&format!("zygo: {}; launching without the profile", zygo_plugins::check::esc(w)));
+            // R§7.4 bullet 2, R§12: the session refused the profile, so this start did not apply it; no pin goes to
+            // the callback.
+            if let Some(o) = &opts.definition_out {
+                *o.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            }
         }
         if let Some(n) = &grant.usage_note {
             out.line(&format!("zygo: {}", zygo_plugins::check::esc(n)));

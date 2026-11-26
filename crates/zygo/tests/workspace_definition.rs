@@ -469,6 +469,110 @@ fn l12_a_read_profile_that_validate_refuses_gives_no_pin() { // R§7.4 bullet 2 
     assert_eq!(cell.lock().unwrap().clone(), None, "a profile that was not applied gives no pin: {}", r.err);
 }
 
+/// A team server on 127.0.0.1:0 for one serve launch, as the recorder of `serve_client.rs`: the team config of
+/// `builtin()`, no marketplace, `grant` for `POST /v1/zygo/sessions` and 204 for every other request.
+fn team_server(fx: &Fx, grant: String) -> String {
+    use std::io::{Read, Write};
+    let ctx = zygo_config::LoadContext { paths: fx.paths.clone(), repo: None, team: None };
+    let merged = zygo_config::load_with_builtin(&ctx, builtin()).unwrap();
+    let config = serde_json::to_string(&zygo_proxy::team::TeamConfigReply::from_merged(&merged)).unwrap();
+    let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let url = format!("http://{}/", l.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for s in l.incoming() {
+            let Ok(mut s) = s else { return };
+            let (config, grant) = (config.clone(), grant.clone());
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                let head_end = loop {
+                    let Ok(n @ 1..) = s.read(&mut chunk) else { return };
+                    buf.extend_from_slice(&chunk[..n]);
+                    if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break i;
+                    }
+                };
+                let head = String::from_utf8_lossy(&buf[..head_end]).into_owned();
+                let len: usize = head
+                    .split("\r\n")
+                    .filter_map(|l| l.split_once(':'))
+                    .find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length"))
+                    .and_then(|(_, v)| v.trim().parse().ok())
+                    .unwrap_or(0);
+                while buf.len() < head_end + 4 + len {
+                    let Ok(n @ 1..) = s.read(&mut chunk) else { return };
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                let mut first = head.split(' ');
+                let (status, body) = match (first.next(), first.next()) {
+                    (Some("GET"), Some("/v1/zygo/config")) => (200, config),
+                    (Some("GET"), Some("/v1/zygo/plugins")) => (200, "{\"marketplace\":[]}".to_string()),
+                    (Some("POST"), Some("/v1/zygo/sessions")) => (200, grant),
+                    _ => (204, String::new()),
+                };
+                let ctype = if body.is_empty() { "" } else { "content-type: application/json\r\n" };
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 {status} X\r\n{ctype}content-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            });
+        }
+    });
+    url
+}
+
+#[test]
+fn l14_a_serve_grant_that_refuses_the_profile_gives_no_pin() { // R§7.4 bullet 2 (a start that applied the profile), R§12 row; review R2-1
+    let fx = fx();
+    approve(&fx.app, &fx.paths.approvals_file);
+    // A real grant from a local proxy, with the server's profile refusal (zygo-proxy session.rs `create`).
+    let ctx = zygo_config::LoadContext { paths: fx.paths.clone(), repo: None, team: None };
+    let proxy = zygo_proxy::Proxy::start_local_with(
+        Arc::new(zygo_config::load_with_builtin(&ctx, builtin()).unwrap()),
+        zygo_proxy::server::StartOpts::default(),
+    )
+    .unwrap();
+    let g = proxy
+        .create_session(zygo_proxy::session::SessionRequest {
+            agent: Agent::ClaudeCode,
+            agent_version: String::new(),
+            profile: None,
+            passthrough: false,
+            repo: None,
+            work: None,
+            stored_values: Vec::new(),
+            known_plugins: Default::default(),
+        })
+        .unwrap();
+    proxy.shutdown();
+    let mut grant = serde_json::to_value(&g).unwrap();
+    grant["profile_warning"] = "profile.rust.overrides.code: model is not in the catalog".into();
+    let url = team_server(&fx, grant.to_string());
+    std::fs::write(&fx.paths.config_file, "[server]\ntoken = \"env:ZYGO_TEAM_TOKEN\"\n").unwrap();
+    let cell: Arc<Mutex<Option<Pin>>> = Arc::default();
+    let at_callback: Arc<Mutex<Option<Option<Pin>>>> = Arc::default();
+    let r = run(&fx, Arc::new(Rec::default()), |o| {
+        o.env.0.push((OsString::from("ZYGO_TEAM_TOKEN"), OsString::from(zygo_proxy::team::new_token().0)));
+        o.server = Some(url.clone());
+        o.definition_out = Some(cell.clone());
+        let (c, seen) = (cell.clone(), at_callback.clone());
+        o.on_session = Some(Box::new(move |_, _, _, _, _| {
+            *seen.lock().unwrap() = Some(c.lock().unwrap().clone());
+            Ok(())
+        }));
+    });
+    assert_eq!(r.code, 2, "{}", r.err);
+    assert_eq!(
+        count(&r.err, "zygo: profile.rust.overrides.code: model is not in the catalog; launching without the profile"),
+        1,
+        "{}",
+        r.err
+    );
+    assert_eq!(at_callback.lock().unwrap().clone(), Some(None), "the callback saw a pin: {}", r.err);
+    assert_eq!(cell.lock().unwrap().clone(), None, "a profile the server refused gives no pin: {}", r.err);
+}
+
 /// `bin/git`: appends each call (`$*`) to `<root>/git.log`; with `fail_ls_tree`, an `ls-tree` call exits 1 with no
 /// output; else it runs the git of the test's `PATH` (the harness `PATH` is `bin` only). The log starts empty.
 fn fake_git(h: &Harness, fail_ls_tree: bool) {
