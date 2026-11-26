@@ -88,6 +88,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | DONE | judgment | 4cf4c8c1, f313648b, 845cb854 · acc 22/22 · PR #143 |
 | ML-10 | Delivery by hooks: Stop block, prompt line, SessionStart line, OpenCode per-request line | ML-9, ML-17 | DONE | judgment | 5f0212b1, 3643f93d, 1efbd8a3, bc17d413, 9946594d, 9fe2d6ef, 9a57d777, 68c3fa62 · acc 14 mail_ tests, 26/26 · PR #144 |
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | DONE | implementation | d19e88f5, 0b457de5 · acc 12/12, 1/1, 234/234 · PR #149 |
+| ML-11 | MCP tools `mail_send`, `mail_read`, `mail_list` | ML-6, ML-7 | DONE | implementation | ec5fda7c, 590b9c00 · acc 17/17, 42/42 · PR #146 |
 
 ## Log
 
