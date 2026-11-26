@@ -65,9 +65,10 @@ pub const HOSTED_ITEMS: [&str; 12] = [
 /// The longest client-sent name or type echoed in an error message (K§6.7 hostile input).
 const ECHO_MAX: usize = 64;
 
-/// The first `ECHO_MAX` characters of `x`.
-fn cut(x: &str) -> &str {
-    x.char_indices().nth(ECHO_MAX).map_or(x, |(i, _)| &x[..i])
+/// A client name or type as an error message may echo it: its first `ECHO_MAX` characters, each control character
+/// replaced with `?`.
+fn cut(x: &str) -> String {
+    x.chars().take(ECHO_MAX).map(|c| if c.is_control() { '?' } else { c }).collect()
 }
 
 /// The three top-level lists, keys in body order, the first failure returned: a refused or unknown field →

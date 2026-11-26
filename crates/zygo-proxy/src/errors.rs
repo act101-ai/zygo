@@ -6,7 +6,9 @@ use http::StatusCode;
 use serde_json::{json, Value};
 use zygo_config::Dialect;
 
-/// An error the proxy answers itself (§7.3): `type` = `code`. Messages are fixed texts (no header, token or body value).
+/// An error the proxy answers itself (§7.3): `type` = `code`. Messages are fixed texts (no header, token or body value),
+/// except that a `400 zygo_bad_request` may echo a client field name or type name (K§6.4.3), cut to 64 characters with
+/// each control character replaced by `?`.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{code}: {message}")]
 pub struct ZygoError {
