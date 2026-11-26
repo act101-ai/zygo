@@ -229,6 +229,9 @@ pub(crate) struct Launch {
     /// Member name in a workspace pane (M§6)
     #[arg(long)]
     pub(crate) name: Option<String>,
+    /// R§7.4: the saved pin of a `ws run` start; never a flag.
+    #[arg(skip)]
+    pub(crate) definition: Option<zygo_config::repo_def::Pin>,
     /// Arguments passed to the agent
     #[arg(last = true)]
     pub(crate) rest: Vec<String>,
@@ -246,6 +249,9 @@ pub(crate) struct LaunchOpenCode {
     pub(crate) yolo: bool,
     #[arg(long)]
     pub(crate) name: Option<String>,
+    /// R§7.4: the saved pin of a `ws run` start; never a flag.
+    #[arg(skip)]
+    pub(crate) definition: Option<zygo_config::repo_def::Pin>,
     #[arg(last = true)]
     pub(crate) rest: Vec<String>,
 }
