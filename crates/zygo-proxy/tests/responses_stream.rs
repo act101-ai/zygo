@@ -563,3 +563,249 @@ fn json_response_same_content() {
     assert_eq!(r["status"], "incomplete");
     assert_eq!(r["incomplete_details"]["reason"], "max_output_tokens");
 }
+
+// ---- review round 1 findings ----
+
+/// The one terminal event of `evs`, asserted to be `response.failed` with `message`; the encoder holds nothing.
+fn assert_failed(e: &Encoder, evs: &[SseEvent], message: &str) {
+    assert_sequence(evs);
+    let t = terminals(evs);
+    assert_eq!(t.len(), 1, "{:?}", types(evs));
+    assert_eq!(t[0].event, "response.failed");
+    assert_eq!(t[0].data["response"]["error"], json!({"code":"api_error","message":message}));
+    assert_eq!(evs.last().unwrap().event, "response.failed");
+    assert_eq!(e.held(), 0);
+    assert!(e.ended());
+}
+
+/// Whole delta events of 64 KiB each on block 0 until their sum passes `HOLD_MAX`, one push each.
+fn push_deltas_past_hold_max(e: &mut Encoder, d: impl Fn(&str) -> Value) -> Vec<SseEvent> {
+    let part = "x".repeat(64 << 10);
+    let one = sse(&[delta(0, d(&part))]);
+    (0..HOLD_MAX / part.len() + 2).flat_map(|_| e.push(one.as_bytes())).collect()
+}
+
+#[test]
+fn f5_custom_tool_from_history_returns_as_custom_tool_call() {
+    // PC-5's compaction request sends `tools: []`; its history here also holds an `apply_patch` custom call.
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/compaction-request.json");
+    let rec: Value = serde_json::from_slice(&std::fs::read(p).unwrap()).unwrap();
+    let mut body = rec["body"].clone();
+    assert_eq!(body["tools"], json!([]));
+    body["max_output_tokens"] = json!(100);
+    let input = body["input"].as_array_mut().unwrap();
+    let last = input.pop().unwrap();
+    input.push(json!({"type":"custom_tool_call","call_id":"call_p0","name":"apply_patch","input":"*** Begin Patch\n"}));
+    input.push(json!({"type":"custom_tool_call_output","call_id":"call_p0","output":"ok"}));
+    input.push(last);
+    let (m, codes) = request(&body, &tgt(), None).unwrap();
+    assert!(m["tools"].as_array().unwrap().iter().any(|t| t["name"] == "apply_patch"), "{}", m["tools"]);
+    assert!(codes.iter().any(|c| c.0.starts_with("tools_from_history:")), "{codes:?}");
+
+    let calls = Calls::of(&body);
+    let mut ev = vec![message_start()];
+    ev.extend(tool_block(0, "toolu_p", "apply_patch", &[&json!({"input":"x"}).to_string()]));
+    ev.extend(end("tool_use"));
+    let items = items_done(&run(&mut Encoder::new("role-x", &tgt(), calls.clone()), &ev));
+    assert_eq!(items[0]["type"], "custom_tool_call");
+    assert_eq!(items[0]["input"], "x");
+    let msg = json!({"content":[{"type":"tool_use","id":"toolu_p","name":"apply_patch","input":{"input":"x"}}],
+        "stop_reason":"tool_use","usage":{}});
+    assert_eq!(response(&msg, "role-x", &tgt(), &calls).0["output"][0]["type"], "custom_tool_call");
+    // A function call in the history declares no custom tool.
+    let msg = json!({"content":[{"type":"tool_use","id":"toolu_e","name":"exec_command","input":{}}],
+        "stop_reason":"tool_use","usage":{}});
+    assert_eq!(response(&msg, "role-x", &tgt(), &calls).0["output"][0]["type"], "function_call");
+}
+
+#[test]
+fn f1_reasoning_mark_over_mark_max_is_not_sent() {
+    // ~3.3 MiB of thinking: held within HOLD_MAX, its base64 mark over MARK_MAX.
+    let part = "t".repeat(64 << 10);
+    let n = 53;
+    let mut ev = vec![message_start(), start(0, json!({"type":"thinking","thinking":"","signature":""}))];
+    ev.extend((0..n).map(|_| delta(0, json!({"type":"thinking_delta","thinking":part}))));
+    ev.push(delta(0, json!({"type":"signature_delta","signature":"sig1"})));
+    ev.push(stop(0));
+    ev.extend(text_block(1, &["ok"]));
+    ev.extend(end("end_turn"));
+    let mut e = enc();
+    let evs = run(&mut e, &ev);
+    assert_sequence(&evs);
+    assert_eq!(evs.last().unwrap().event, "response.completed");
+    let items = items_done(&evs);
+    assert_eq!(items[0]["type"], "reasoning");
+    assert!(items[0].get("encrypted_content").is_none(), "mark sent");
+    assert_eq!(items[0]["summary"][0]["text"].as_str().unwrap().len(), n * part.len());
+    assert_eq!(e.adjustments(), vec![adj("reasoning_unmarked:1")]);
+
+    let thinking = part.repeat(n);
+    let msg = json!({"content":[{"type":"thinking","thinking":thinking,"signature":"s"},
+        {"type":"redacted_thinking","data":"R1"}],"stop_reason":"end_turn","usage":{}});
+    let (r, codes) = response(&msg, "role-x", &tgt(), &Calls::default());
+    assert!(r["output"][0].get("encrypted_content").is_none());
+    assert!(r["output"][1]["encrypted_content"].is_string());
+    assert_eq!(codes, vec![adj("reasoning_unmarked:1")]);
+}
+
+#[test]
+fn f2_data_lines_with_no_blank_line_fail_inside_one_push() {
+    // Six 1 MiB data lines of one event, no blank line, in one chunk.
+    let mib = "x".repeat(1 << 20);
+    let mut chunk = String::from("data: {\"type\":\"future_event\",\"a0\":\"x\"\n");
+    for i in 1..=6 {
+        chunk.push_str(&format!("data: ,\"a{i}\":\"{mib}\"\n"));
+    }
+    let mut e = enc();
+    let mut evs = run(&mut e, &[message_start()]);
+    evs.extend(e.push(chunk.as_bytes()));
+    assert_failed(&e, &evs, "upstream event too long");
+
+    // Three such lines and the blank line: an unknown event, dropped, nothing held.
+    let mut chunk = String::from("data: {\"type\":\"future_event\",\"a0\":\"x\"\n");
+    for i in 1..=3 {
+        chunk.push_str(&format!("data: ,\"a{i}\":\"{mib}\"\n"));
+    }
+    chunk.push_str("data: }\n\n");
+    let mut e = enc();
+    let evs = run(&mut e, &[message_start()]);
+    assert!(e.push(chunk.as_bytes()).is_empty());
+    assert_eq!(e.held(), 0);
+    assert_eq!(evs.len(), 2);
+    assert!(!e.ended());
+}
+
+#[test]
+fn f2_one_line_over_hold_max_in_one_chunk_fails() {
+    let mut e = enc();
+    let mut evs = run(&mut e, &[message_start()]);
+    let line = format!("data: {}\n\n", "x".repeat(HOLD_MAX + 1));
+    evs.extend(e.push(line.as_bytes()));
+    assert_failed(&e, &evs, "upstream event too long");
+}
+
+#[test]
+fn f3_partial_line_during_tool_call_names_the_line() {
+    let mut e = enc();
+    let mut evs = run(&mut e, &[message_start()]);
+    evs.extend(run(&mut e, &tool_block(0, "t", "n", &["{\"a\":1"])[..2]));
+    evs.extend(e.push(b"data: "));
+    let chunk = vec![b'x'; 64 << 10];
+    for c in std::iter::repeat_n(&chunk, HOLD_MAX / chunk.len() + 2) {
+        evs.extend(e.push(c));
+    }
+    assert_failed(&e, &evs, "upstream stream line too long");
+}
+
+#[test]
+fn f3_f6_text_past_hold_max_fails() {
+    let mut e = enc();
+    let mut evs = run(&mut e, &[message_start(), start(0, json!({"type":"text","text":""}))]);
+    evs.extend(push_deltas_past_hold_max(&mut e, |x| json!({"type":"text_delta","text":x})));
+    assert_failed(&e, &evs, "upstream content block too long");
+}
+
+#[test]
+fn f3_f6_thinking_past_hold_max_fails() {
+    let mut e = enc();
+    let mut evs = run(&mut e, &[message_start(), start(0, json!({"type":"thinking","thinking":"","signature":""}))]);
+    evs.extend(push_deltas_past_hold_max(&mut e, |x| json!({"type":"thinking_delta","thinking":x})));
+    assert_failed(&e, &evs, "upstream content block too long");
+}
+
+#[test]
+fn f3_f6_custom_tool_input_past_hold_max_fails() {
+    let calls = Calls::of(&json!({"tools":[{"type":"custom","name":"apply_patch"}]}));
+    let mut e = Encoder::new("role-x", &tgt(), calls);
+    let tool = start(0, json!({"type":"tool_use","id":"t","name":"apply_patch","input":{}}));
+    let mut evs = run(&mut e, &[message_start(), tool]);
+    evs.extend(push_deltas_past_hold_max(&mut e, |x| json!({"type":"input_json_delta","partial_json":x})));
+    assert_failed(&e, &evs, "upstream tool call too long");
+}
+
+#[test]
+fn f4_stop_reasons() {
+    for (reason, event, status, detail) in [
+        ("model_context_window_exceeded", "response.incomplete", "incomplete", Some("max_output_tokens")),
+        ("refusal", "response.incomplete", "incomplete", Some("content_filter")),
+        ("pause_turn", "response.completed", "completed", None),
+        ("end_turn", "response.completed", "completed", None),
+        ("stop_sequence", "response.completed", "completed", None),
+    ] {
+        let mut ev = vec![message_start()];
+        ev.extend(text_block(0, &["a"]));
+        ev.extend(end(reason));
+        let evs = run(&mut enc(), &ev);
+        assert_sequence(&evs);
+        let last = evs.last().unwrap();
+        assert_eq!(last.event, event, "{reason}");
+        assert_eq!(last.data["response"]["status"], status, "{reason}");
+        let msg = json!({"content":[{"type":"text","text":"a"}],"stop_reason":reason,"usage":{}});
+        let (r, _) = response(&msg, "role-x", &tgt(), &Calls::default());
+        assert_eq!(r["status"], status, "{reason}");
+        for resp in [&last.data["response"], &r] {
+            match detail {
+                Some(d) => assert_eq!(resp["incomplete_details"], json!({"reason":d}), "{reason}"),
+                None => assert!(resp.get("incomplete_details").is_none(), "{reason}"),
+            }
+        }
+    }
+}
+
+#[test]
+fn f6_utf8_one_byte_chunks_equal_whole() {
+    let mut ev = vec![
+        message_start(),
+        start(0, json!({"type":"thinking","thinking":"","signature":""})),
+        delta(0, json!({"type":"thinking_delta","thinking":"思考 ü"})),
+        delta(0, json!({"type":"signature_delta","signature":"sig"})),
+        stop(0),
+    ];
+    ev.extend(text_block(1, &["héllo ", "日本", " 🎉"]));
+    ev.extend(tool_block(2, "toolu_u", "exec_command", &["{\"cmd\":\"é", "cho 🎉\"}"]));
+    ev.extend(end("tool_use"));
+    let whole = run(&mut enc(), &ev);
+    let bytes = sse(&ev).into_bytes();
+    let mut e = enc();
+    let one: Vec<SseEvent> = bytes.chunks(1).flat_map(|c| e.push(c)).collect();
+    assert_eq!(norm_all(&one), norm_all(&whole));
+    let items = items_done(&one);
+    assert_eq!(items[0]["summary"][0]["text"], "思考 ü");
+    assert_eq!(items[1]["content"][0]["text"], "héllo 日本 🎉");
+    assert_eq!(items[2]["arguments"], "{\"cmd\":\"écho 🎉\"}");
+}
+
+#[test]
+fn f6_signature_only_thinking() {
+    let ev = vec![
+        message_start(),
+        start(0, json!({"type":"thinking","thinking":"","signature":""})),
+        delta(0, json!({"type":"signature_delta","signature":"sigonly"})),
+        stop(0),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}),
+        json!({"type":"message_stop"}),
+    ];
+    let evs = run(&mut enc(), &ev);
+    assert_sequence(&evs);
+    assert_eq!(
+        types(&evs),
+        vec!["response.created", "response.in_progress", "response.output_item.added", "response.output_item.done",
+            "response.completed"]
+    );
+    let item = &items_done(&evs)[0];
+    assert_eq!(item["summary"], json!([]));
+    assert_eq!(
+        decode_thinking(item["encrypted_content"].as_str().unwrap(), &tgt()),
+        Some(json!({"type":"thinking","thinking":"","signature":"sigonly"}))
+    );
+}
+
+#[test]
+fn note_error_message_cut_as_echo() {
+    let long = format!("a\u{7}b\u{200B}c\u{2028}{}", "x".repeat(100));
+    let ev = vec![message_start(), json!({"type":"error","error":{"type":"api_error","message":long}})];
+    let evs = run(&mut enc(), &ev);
+    let want: String = format!("a?b?c?{}", "x".repeat(58));
+    assert_eq!(want.chars().count(), 64);
+    assert_eq!(evs.last().unwrap().data["response"]["error"]["message"], want);
+}
