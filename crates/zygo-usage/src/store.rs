@@ -64,9 +64,39 @@ fn insert_error(conn: &Connection, e: &UpstreamErrorRow) -> Result<()> {
 /// The schema version this build writes to `PRAGMA user_version`.
 pub const SCHEMA_VERSION: i64 = 1;
 
-/// The longest wait of each usage-store statement in the trim hook and the MCP server's read-back write
+/// The longest wait, in elapsed time, of each usage-store statement in the trim hook and the MCP server's read-back write
 /// (O§7.11, O-C10).
 pub const HOOK_DB_BOUND: Duration = Duration::from_millis(100);
+
+/// The sleep of the bounded open's busy handler at each busy count, the last one repeated (O§7.11: a mechanic, not a
+/// contract; SQLite's first seven delays).
+const BUSY_SLEEPS_MS: [u64; 7] = [1, 2, 5, 10, 15, 20, 25];
+
+/// The bounded open's busy handler state (O§7.11, O-C10): the bound and the instant of the first busy call of the
+/// current lock cycle. SQLite's own busy timeout adds up requested sleeps, not elapsed time (OS-38).
+#[doc(hidden)]
+pub struct BusyWait {
+    bound: Duration,
+    start: Option<Instant>,
+}
+
+impl BusyWait {
+    pub fn new(bound: Duration) -> BusyWait {
+        BusyWait { bound, start: None }
+    }
+
+    /// The busy call `count` of a lock cycle at `now`: `Some(sleep)` retries after `sleep`, `None` gives up. SQLite
+    /// passes count 0 at the first busy call of each statement run, which restarts the clock. No sleep passes the bound.
+    pub fn next(&mut self, count: i32, now: Instant) -> Option<Duration> {
+        if count == 0 {
+            self.start = Some(now);
+        }
+        let start = *self.start.get_or_insert(now);
+        let left = self.bound.checked_sub(now.saturating_duration_since(start)).filter(|d| !d.is_zero())?;
+        let i = usize::try_from(count).unwrap_or(0).min(BUSY_SLEEPS_MS.len() - 1);
+        Some(Duration::from_millis(BUSY_SLEEPS_MS[i]).min(left))
+    }
+}
 
 /// The `trims` columns the full open adds to an older table (O§6.5 item 3), in order.
 const TRIM_COLUMNS: [(&str, &str); 3] = [("result_id", "TEXT"), ("command", "TEXT"), ("shaper", "TEXT")];
@@ -188,16 +218,24 @@ impl Store {
         Ok(Store { conn })
     }
 
-    /// The bounded open of the trim hook and the MCP server's read-back write (O§7.11): `bound` is the busy timeout of each
-    /// lock wait, with no retry loop (SQLite's own WAL-read retry is not governed by the busy timeout). No database file,
+    /// The bounded open of the trim hook and the MCP server's read-back write (O§7.11): each statement waits at most
+    /// `bound` of elapsed time on a busy database (its own busy handler, [`BusyWait`], not SQLite's busy timeout), with no retry loop
+    /// (SQLite's own WAL-read retry is not governed by the busy handler). No database file,
     /// directory, schema or column is created (O§6.5 item 3), so the open takes no write lock; SQLite may create the `-wal`
     /// and `-shm` side files of an existing WAL database on first read. A database of another schema version is an error.
     pub fn open_bounded(path: &Path, bound: Duration) -> Result<Store> {
-        let conn = Connection::open_with_flags(
+        let mut conn = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        conn.busy_timeout(bound)?;
+        let mut wait = BusyWait::new(bound);
+        conn.busy_handler(Some(move |count: i32| match wait.next(count, Instant::now()) {
+            Some(sleep) => {
+                std::thread::sleep(sleep);
+                true
+            }
+            None => false,
+        }))?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version != SCHEMA_VERSION {
             return Err(anyhow!(
