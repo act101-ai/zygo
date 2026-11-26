@@ -457,4 +457,40 @@ mod tests {
         let flat: Vec<usize> = chunks(&items, |_| 100, |_| 0).concat();
         assert_eq!(flat, items);
     }
+
+    /// The command-line characters of the paths of `run`.
+    fn argv(run: &[&str]) -> usize { run.iter().map(|p| arg_len(p)).sum() }
+
+    /// The path lengths of each run of `paths`: a short form of the runs for the asserts.
+    fn shape(paths: &[&str]) -> Vec<Vec<usize>> { path_chunks(paths).iter().map(|r| r.iter().map(|p| p.len()).collect()).collect() }
+
+    #[test] // review round 3 R2-2: path runs past one budget, each within it, in order
+    fn path_chunks_cut_a_long_list_in_order_within_the_budget() {
+        let owned: Vec<String> = (0..2500).map(|i| format!("m{i}@b")).collect();
+        let paths: Vec<&str> = owned.iter().map(String::as_str).collect();
+        assert!(argv(&paths) > ARGV_BUDGET);
+        let runs = path_chunks(&paths);
+        assert!(runs.len() > 1);
+        assert!(runs.iter().all(|r| !r.is_empty() && argv(r) <= ARGV_BUDGET), "{:?}", runs.iter().map(|r| argv(r)).collect::<Vec<_>>());
+        assert!(runs.concat() == paths, "the runs do not give the paths in order");
+    }
+
+    #[test] // review round 3 R2-2: a path exactly at the budget is one run
+    fn path_chunks_a_path_at_the_budget_is_one_run() {
+        let at = "p".repeat(ARGV_BUDGET - 3);
+        assert_eq!(arg_len(&at), ARGV_BUDGET);
+        assert_eq!(shape(&[at.as_str()]), [vec![ARGV_BUDGET - 3]]);
+        assert_eq!(shape(&[at.as_str(), "q"]), [vec![ARGV_BUDGET - 3], vec![1]]);
+    }
+
+    #[test] // review round 3 R2-2: a path longer than the budget gets its own run
+    fn path_chunks_a_path_past_the_budget_goes_alone() {
+        let long = "p".repeat(ARGV_BUDGET);
+        assert_eq!(shape(&["a", long.as_str(), "bc"]), [vec![1], vec![ARGV_BUDGET], vec![2]]);
+    }
+
+    #[test] // review round 3 R2-2: no path, no run
+    fn path_chunks_an_empty_list_has_no_run() {
+        assert!(path_chunks(&[]).is_empty());
+    }
 }
