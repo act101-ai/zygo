@@ -118,7 +118,6 @@ fn shaped_marker(raw: &str, steps: &str, id: &str) -> String {
 
 #[test]
 fn trim_opts_default_branch_is_po2_constant() {
-    assert!(trim::PO2_STDERR_CLEARED); // true until OS-34
     let o = TrimOpts::default();
     assert_eq!(o.stderr_cleared, trim::PO2_STDERR_CLEARED);
     assert_eq!(o.db_bound, zygo_usage::store::HOOK_DB_BOUND);
@@ -320,6 +319,33 @@ fn stderr_kept_branch_counts_stdout_only() {
     assert_eq!(r["stderr"], se.as_str());
     assert_eq!(stored(&e, &id), raw.as_bytes());
     assert_eq!(rows(&e), [(10240, 7552, Some(id), Some("cargo test".to_string()), Some("clean".to_string()))]);
+}
+
+#[test]
+fn po2_stderr_cleared_equals_the_premise_row() {
+    // O§7.8 "Output, `PostToolUse`" and "When PO2 fails", O§10 "PO2 fails", O§16 item 10, O§17 PO2
+    let p = std::fs::read_to_string(shaping::repo().join("docs/premises.md")).unwrap();
+    let row = p.lines().find(|l| l.starts_with("| PO2 |")).unwrap();
+    let status = row.split(" | ").nth(5).unwrap();
+    assert!(status == "verified" || status == "failed", "{row}");
+    assert_eq!(trim::PO2_STDERR_CLEARED, status == "verified");
+    // the default TrimOpts takes the item 10 branch of that result
+    let o = TrimOpts::default();
+    assert_eq!(o.stderr_cleared, trim::PO2_STDERR_CLEARED);
+    let e = env(true);
+    let (so, se) = streams();
+    let raw = format!("{so}[stderr]\n{se}");
+    let r = resp(&run(&e, Agent::ClaudeCode, &bash(json!("cargo test"), &so, &se), &o));
+    let id = ids(&e)[0].clone();
+    assert!(r["stdout"].as_str().unwrap().starts_with(&shaped_marker(&raw, "color codes removed", &id)));
+    assert_eq!(stored(&e, &id), raw.as_bytes());
+    if trim::PO2_STDERR_CLEARED {
+        assert_eq!(r["stderr"], "");
+        assert_eq!(rows(&e), [(16393, 13705, Some(id), Some("cargo test".to_string()), Some("clean".to_string()))]);
+    } else {
+        assert_eq!(r["stderr"], se.as_str());
+        assert_eq!(rows(&e), [(10240, 7552, Some(id), Some("cargo test".to_string()), Some("clean".to_string()))]);
+    }
 }
 
 #[test]
