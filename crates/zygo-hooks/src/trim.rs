@@ -143,9 +143,16 @@ fn compose(stdout: &str, stderr: &str) -> String {
 }
 
 /// O§7.10: steps 1-4 under `catch_unwind`; a panic gives the raw text with only the size view.
+#[cfg_attr(not(feature = "test-hooks"), allow(unused_variables))]
 fn shape_guarded(src: &str, si: &ShapeInput, opts: &TrimOpts) -> Shaped {
-    let _ = opts;
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| shape::run(src, si))).unwrap_or_else(|_| {
+    let steps = || {
+        #[cfg(feature = "test-hooks")]
+        if opts.shape_panic {
+            panic!("forced by ZYGO_TEST_SHAPE_PANIC");
+        }
+        shape::run(src, si)
+    };
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(steps)).unwrap_or_else(|_| {
         let over = src.len() as u64 > si.threshold;
         Shaped { text: src.to_string(), steps: vec![], shaper: over.then_some(Shaper::Size), size_view: over }
     })

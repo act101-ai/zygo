@@ -326,3 +326,23 @@ fn read_keeps_the_size_view() {
     assert!(c.contains('\x1b') && c.contains("[zygo trimmed this output: 707 lines,"));
     assert_eq!((rows(&e)[0].3.as_deref(), rows(&e)[0].4.as_deref()), (None, Some("size")));
 }
+
+#[test]
+fn shaper_panic_gives_size_view_of_raw_text() {
+    // O§7.10, O§10 "Shaper panics", O§16 item 12
+    let panic = TrimOpts { shape_panic: true, ..Default::default() };
+    let e = env(true);
+    let big = colored(3532);
+    assert!(big.len() >= 100 * 1024);
+    let input = bash(json!("echo x"), &big, "");
+    let got = run(&e, Agent::ClaudeCode, &input, &panic);
+    assert_eq!(masked(&e, &got), off(&input).0);
+    assert!(resp(&got)["stdout"].as_str().unwrap().contains('\x1b'));
+    assert_eq!(rows(&e)[0].4.as_deref(), Some("size"));
+    let e = env(true);
+    let small = bash(json!("echo x"), &colored(70), "");
+    assert_eq!(run(&e, Agent::ClaudeCode, &small, &panic), "");
+    assert!(ids(&e).is_empty() && rows(&e).is_empty());
+    let got = run(&e, Agent::ClaudeCode, &small, &TrimOpts::default());
+    assert!(resp(&got)["stdout"].as_str().unwrap().starts_with("[zygo shaped this output: color codes removed."));
+}
