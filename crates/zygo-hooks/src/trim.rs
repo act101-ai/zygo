@@ -98,7 +98,8 @@ fn target(input: &HookInput) -> Option<(String, String)> {
     Some((tool.to_owned(), text))
 }
 
-/// O§7.8 "When PO2 fails": whether the agent shows a cleared `stderr` as empty. OS-34 sets it to the PO2 result.
+/// O§7.8: whether the agent shows a cleared `stderr` as empty. True, as the PO2 row of `docs/premises.md` (verified,
+/// Claude Code 2.1.332): the hook shapes both streams, sets `stderr` to "" and counts both; false selects "When PO2 fails".
 pub const PO2_STDERR_CLEARED: bool = true;
 
 /// O§7.13: whether a `PostToolUseFailure` hook output replaces the text the model sees after a failed Bash call.
