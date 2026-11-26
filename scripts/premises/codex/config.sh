@@ -134,8 +134,8 @@ def why_not(s):
 
 # --- writers ---------------------------------------------------------------------------------
 def cmd_home():
-    out, mode, extra, url, key, untrusted = A[:6]
-    paths = A[6:]
+    out, mode, extra, url, key, untrusted, feat = A[:7]
+    paths = A[7:]
     text = rd(extra) if extra else ""
     top, tables, in_t = [], [], False
     for line in text.splitlines():
@@ -160,6 +160,8 @@ def cmd_home():
             seen.append(p)
     for p in seen:
         L += ["", "[projects.%s]" % q(p), 'trust_level = "%s"' % ("untrusted" if untrusted == "1" else "trusted")]
+    if feat:
+        L += ["", "[features]", "%s = true" % feat]
     L += [""] + tables
     with open(out, "w") as f:
         f.write("\n".join(L) + "\n")
@@ -612,7 +614,7 @@ def pc3():
     wjson(os.path.join(RUN, "sum", "config", "precedence.json"), prec)
 
 
-PC4 = ["pc4-none", "pc4-bypass", "pc4-untrusted", "pc4-trust", "pc4-log"]
+PC4 = ["pc4-none", "pc4-bypass", "pc4-untrusted", "pc4-trust", "pc4-log", "pc4-feature-default", "pc4-feature-legacy"]
 
 
 def pc4():
@@ -643,6 +645,12 @@ def pc4():
         r, w = "failed", "prewritten records were not honored (K-D13 takes branch 2 or 3)"
     wjson(os.path.join(RUN, "sum", "trust", "trust.json"), {
         "scenarios": scen, "where_kept": where or "none written", "bypass_effect": bypass,
+        "feature_flag": {"none": scen["pc4-feature-default"].get("sources_run"),
+                         "codex_hooks": scen["pc4-feature-legacy"].get("sources_run"),
+                         "hooks": scen["pc4-bypass"].get("sources_run"),
+                         "warnings": sorted({l for s in ("pc4-feature-default", "pc4-feature-legacy", "pc4-bypass")
+                                             for l in lines(os.path.join(RUN, "out", s + ".err")) if "deprecated" in l.lower()}),
+                         "note": "each run: --dangerously-bypass-hook-trust; every other scenario sets [features] hooks = true"},
         "prewritten_honored": honored, "result": r, "why": w})
     out = []
     for s in PC4 + ["pc4-prewritten"]:
@@ -806,16 +814,8 @@ def cmd_analyze():
 PY
 cxpy() { python3 -I "$RUN/cx.py" "$RUN" "$@"; }
 
-# cx_on_exit: a harness refusal inside cx_run goes to the run's .out/.err; show it.
-CX_CUR=""
-cx_on_exit() {
-  [ -n "$CX_CUR" ] || return 0
-  echo "premises: stopped during $CX_CUR:"
-  cat "$RUN/out/$CX_CUR.out" 2>/dev/null || true
-  tail -n 5 "$RUN/out/$CX_CUR.err" 2>/dev/null || true
-}
-n2_trap_chain cx_on_exit
-
+# CX_FEAT: the [features] flag cx_home sets to true (empty: none; pc4-feature-* measure the flag).
+CX_FEAT=hooks
 # cx_fresh: no project .codex folder of an earlier scenario is left in R or $RUN/other.
 cx_fresh() { rm -rf "$R/.codex" "$RUN/other/.codex"; }
 # cx_home <scenario> env|auth [<extra toml file>]: a fresh CODEX_HOME $RUN/cxh-<scenario> (and fresh
@@ -825,7 +825,7 @@ cx_home() {
   CX_HOME=$RUN/cxh-$1
   rm -rf "$CX_HOME"
   mkdir -p "$CX_HOME"
-  cxpy home "$CX_HOME/config.toml" "$2" "${3:-}" "$MOCK_URL" "$DUMMY_KEY" "${CX_UNTRUSTED:-}" "$R" "$RR" "$RUN/other"
+  cxpy home "$CX_HOME/config.toml" "$2" "${3:-}" "$MOCK_URL" "$DUMMY_KEY" "${CX_UNTRUSTED:-}" "$CX_FEAT" "$R" "$RR" "$RUN/other"
   [ "$(grep -c 'base_url' "$CX_HOME/config.toml")" = 1 ] || { echo "premises: $CX_HOME/config.toml has not one base_url line"; exit 1; }
 }
 # cx_project <dir> <toml file>: the project config of <dir>.
@@ -840,11 +840,21 @@ cx_run() {
   shift
   _b=$(cx_count)
   rm -f "$RUN/auth-who" "$RUN/mcp-who" "$RUN/hooks-who"
-  CX_CUR=$_s
-  _rc=0
-  run_codex exec --skip-git-repo-check -s workspace-write -c 'approval_policy="never"' "$@" "zp-$_s" \
-    </dev/null >"$RUN/out/$_s.out" 2>"$RUN/out/$_s.err" || _rc=$?
-  CX_CUR=""
+  rm -f "$RUN/out/$_s.done"
+  # A subshell: a harness refusal (n2_daemon_flag, codex_env, the daemon scan, check_abort) exits
+  # it before .done is written, and its message is in .out/.err; Codex's own status is data.
+  (
+    _rc=0
+    run_codex exec --skip-git-repo-check -s workspace-write -c 'approval_policy="never"' "$@" "zp-$_s" || _rc=$?
+    echo "$_rc $CODEX_VERSION $CODEX_EXE" >"$RUN/out/$_s.done"
+  ) </dev/null >"$RUN/out/$_s.out" 2>"$RUN/out/$_s.err" || true
+  if [ ! -s "$RUN/out/$_s.done" ]; then
+    echo "premises: $_s: the harness refused or stopped the run:"
+    cat "$RUN/out/$_s.out" "$RUN/out/$_s.err"
+    check_abort
+    exit 1
+  fi
+  read -r _rc CODEX_VERSION CODEX_EXE <"$RUN/out/$_s.done"
   echo "$_rc" >"$RUN/out/$_s.rc"
   echo "$CX_REC $((_b + 1)) $(cx_count)" >"$RUN/out/$_s.seq"
   case "$CODEX_EXE" in "$RUN"/codex-pkg.*/p/*) rm -rf "${CODEX_EXE%/p/*}" ;; esac
@@ -1014,6 +1024,12 @@ pc4_run pc4-trust --trust
 EXTRA_ENV="RUST_LOG=debug"
 pc4_run pc4-log
 EXTRA_ENV=""
+# The hooks feature flag: none, and the deprecated name (PC-6 saw its warning).
+CX_FEAT=""
+pc4_run pc4-feature-default --dangerously-bypass-hook-trust
+CX_FEAT=codex_hooks
+pc4_run pc4-feature-legacy --dangerously-bypass-hook-trust
+CX_FEAT=hooks
 # pc4-prewritten: the source scenario's CODEX_HOME rebuilt at the same path (the record key and hash
 # may name it), with the hooks.state tables Codex wrote, no flag.
 _src=$(cxpy form pc4-trust pc4-none pc4-bypass pc4-untrusted pc4-log)
