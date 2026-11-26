@@ -929,8 +929,51 @@ expect_fail 'forbidden content (OS version): fixtures/opencode/plant.txt:1: - OS
 
 CASE="PC-13: masked lines, prose and a shell key pass"
 D=$(mk pc13ok)
-printf '%s\n' 'x\n - Shell: (omitted)\n - OS Version: (os omitted)\n' 'Shell: zsh is the default' '"shell": "/bin/zsh"' > "$D/fixtures/claude-code/plant.txt"
+printf '%s\n' 'x\n - Shell: (omitted)\n - OS Version: (os omitted)\n' 'The Shell: zsh is the default' '"shell": "/bin/zsh"' > "$D/fixtures/claude-code/plant.txt"
 run "$D"
 expect_ok
+
+# PC-13 review round 1 F5, F6, F8: the forms of scrub.py ENV_SHELL and ENV_OS, the exact placeholders
+# only, and an escaped backslash then "n" is not a newline. F3: the Stainless arch and runtime version.
+TAB=$(printf '\t')
+# env_case <name> <planted line> <failure text after "forbidden content ">: one planted line in
+# fixtures/claude-code, and the failure it must give.
+env_case() {
+    CASE="PC-13 R1: $1"
+    D=$(mk "pc13r1_$N")
+    printf '%s\n' "$2" > "$D/fixtures/claude-code/plant.txt"
+    run "$D"
+    expect_fail "forbidden content ($3): fixtures/claude-code/plant.txt:1:$2"
+}
+env_case "lower case shell" 'x\n - shell: zsh\n' 'shell name'
+env_case "upper case OS version" ' - OS VERSION: Darwin 25.6.0' 'OS version'
+env_case "a tab after the colon" " - Shell:${TAB}zsh" 'shell name'
+env_case "an escaped tab after the colon" 'x\n - OS Version:\tDarwin 25.6.0\n' 'OS version'
+env_case "no dash at a line start" 'Shell: zsh' 'shell name'
+env_case "no dash after an escaped newline" 'x\nOS Version: Linux 6.8.0' 'OS version'
+env_case "a shell name in parentheses" 'x\n - Shell: (zsh)\n' 'shell name'
+env_case "the OS placeholder on the shell line" 'x\n - Shell: (os omitted)\n' 'shell name'
+env_case "an escaped backslash then an escaped newline" 'x\\\n - Shell: zsh' 'shell name'
+env_case "Stainless arch" '    "x-stainless-arch": "arm64",' 'Stainless arch'
+env_case "Stainless runtime version" '{\"X-Stainless-Runtime-Version\":\"v26.12.1\"}' 'Stainless runtime version'
+
+CASE="PC-13 R1: placeholders in any form, an escaped backslash then n, and the OS family pass"
+D=$(mk pc13r1ok)
+printf '%s\n' 'x\\n - Shell: zsh' "shell:${TAB}(omitted)" 'x\n - shell:\t(omitted)\nOS VERSION: (os omitted)\n' \
+    '    "x-stainless-arch": "(arch omitted)",' '{\"x-stainless-runtime-version\":\"(version omitted)\"}' \
+    '    "x-stainless-os": "MacOS",' > "$D/fixtures/claude-code/plant.txt"
+run "$D"
+expect_ok
+
+# PC-13 review round 1 F4: the rescrub_codex.py tests (same(), the folders and verbatim lists, ENV_LEAKS).
+CASE="PC-13 R1: rescrub_test.py"
+OUT=$(python3 -I "$ROOT/scripts/premises/rescrub_test.py" 2>&1)
+RC=$?
+N=$((N + 1))
+[ "$RC" -eq 0 ] || fail "exit $RC, expected 0"
+case "$(printf '%s\n' "$OUT" | tail -n 1)" in
+    'rescrub tests: ok ('*) ;;
+    *) fail "last line does not start with 'rescrub tests: ok ('" ;;
+esac
 
 echo "test-check-premises: ok ($N cases)"
