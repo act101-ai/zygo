@@ -138,6 +138,48 @@ CASES += [
      "<timezone>utc</timezone> <timezone>Etc/GMT</timezone> <timezone>GMT</timezone> "
      "<timezone>UTC+0</timezone> <timezone>UTC+00:00</timezone>", []),
 ]
+# PC-11: Codex OS keys, login shell, macOS writable roots, item ids, sandbox, marketplace and macOS env names.
+I1 = "da690f77-7707-5fdf-97a5-850943e7a34c"
+I2 = "8e32dd58-d565-50b3-83f4-72b17fc59ae7"
+PC11 = [
+    ("codex platformOs", '{"platformFamily":"unix","platformOs":"macos"}',
+     '{"platformFamily":"(os omitted)","platformOs":"(os omitted)"}', ["macos", "unix"]),
+    ("codex platformOs escaped", '{\\"platformOs\\":\\"linux\\"}', '{\\"platformOs\\":\\"(os omitted)\\"}', ["linux"]),
+    ("login shell tag", "<environment_context>\n  <cwd>/repo</cwd>\n  <shell>zsh</shell>\n</environment_context>",
+     "<environment_context>\n  <cwd>/repo</cwd>\n  <shell>(omitted)</shell>\n</environment_context>", ["zsh"]),
+    ("login shell tag, unicode escapes",
+     "\\u003cenvironment_context\\u003e\\u003cshell\\u003efish\\u003c/shell\\u003e\\u003c/environment_context\\u003e",
+     "\\u003cenvironment_context\\u003e\\u003cshell\\u003e(omitted)\\u003c/shell\\u003e\\u003c/environment_context\\u003e",
+     ["fish"]),
+    ("login shell tag, entities", "&lt;environment_context&gt;&lt;shell&gt;bash&lt;/shell&gt;&lt;/environment_context&gt;",
+     "&lt;environment_context&gt;&lt;shell&gt;(omitted)&lt;/shell&gt;&lt;/environment_context&gt;", ["bash"]),
+    # Review round 1 F6: the shell rules apply only to the environment_context block and command fields.
+    ("shell tag outside environment_context kept", "The <shell>bash</shell> tag names a shell.",
+     "The <shell>bash</shell> tag names a shell.", []),
+    ("login shell in model text kept", "Run /bin/bash -lc 'ls' to list files.", "Run /bin/bash -lc 'ls' to list files.", []),
+    ("macos writable root", "The writable roots are `/private/tmp`, `/repo`.", "The writable roots are `/tmp`, `/repo`.",
+     ["/private"]),
+    ("macos temp writable root", "roots `/private/var/folders/ab/cd_ef/T`, `/repo`", "roots `/tmp/x`, `/repo`",
+     ["/private", "cd_ef"]),
+    ("codex item ids", '{"a":"msg_' + I1 + '","b":"fco_' + I2 + '","c":"msg_' + I1 + '","d":"ctco_' + I2 + '"}',
+     '{"a":"msg_placeholder0001","b":"fco_placeholder0001","c":"msg_placeholder0001","d":"ctco_placeholder0001"}',
+     [I1, I2]),
+    ("codex item id after an escape", "a\\nmsg_" + I1, "a\\nmsg_placeholder0001", [I1]),
+    ("macos sandbox name", '{\\"sandbox\\":\\"seatbelt\\",\\"sandbox_mode\\":\\"workspace-write\\"}',
+     '{\\"sandbox\\":\\"(os omitted)\\",\\"sandbox_mode\\":\\"workspace-write\\"}', ["seatbelt"]),
+    ("linux sandbox name", '"sandbox":"linux_seccomp"', '"sandbox":"(os omitted)"', ["seccomp"]),
+    ("no sandbox kept", '"sandbox":"none"', '"sandbox":"none"', []),
+    ("marketplace os name", ".tmp/marketplace-macos-1a2b3c/x", ".tmp/marketplace-os-omitted/x", ["macos", "1a2b3c"]),
+    ("login shell in a command", '"command":"/bin/zsh -lc \'echo hi\'"', '"command":"(shell omitted) -lc \'echo hi\'"', ["zsh"]),
+    ("login shell in exec json", '{"command":"/opt/homebrew/bin/fish -lc \'ls\'"}',
+     '{"command":"(shell omitted) -lc \'ls\'"}', ["fish", "homebrew"]),
+    ("login shell in an escaped cmd field", '{\\"cmd\\":\\"/bin/bash -lc ls\\"}', '{\\"cmd\\":\\"(shell omitted) -lc ls\\"}',
+     ["bash"]),
+    ("macos env line", "__CF_USER_TEXT_ENCODING=0x1F5:0x0:0x0\nPATH=/bin", "(os env omitted)\nPATH=/bin",
+     ["0x1F5", "__CF"]),
+    ("macos env name in a list", '["HOME","__CF_USER_TEXT_ENCODING"]', '["HOME","(os env omitted)"]', ["__CF"]),
+]
+CASES += PC11
 # T8: the macOS LocalHostName and ComputerName, when scutil gives them (4 characters or more).
 for k in ("LocalHostName", "ComputerName"):
     try:
@@ -152,6 +194,12 @@ def scrub(path):
     with tempfile.TemporaryDirectory() as run:
         return subprocess.run([sys.executable, "-I", SCRUB, run, path], check=True,
                               capture_output=True, text=True).stdout
+
+
+def scrub_env(path, env):
+    with tempfile.TemporaryDirectory() as run:
+        return subprocess.run([sys.executable, "-I", SCRUB, run, path], check=True, capture_output=True,
+                              text=True, env=dict(os.environ, **env)).stdout
 
 
 def main():
@@ -250,11 +298,116 @@ def main():
                                  capture_output=True, text=True).stdout
         if got != "-repo -home-user -tmp-run-x\n":
             bad.append("dashed run paths with --: got %r" % (got,))
+        # PC-11: descriptions of tools inside a namespace tool; parameter descriptions kept.
+        t = os.path.join(d, "ns.json")
+        with open(t, "w") as f:
+            json.dump({"body": {"tools": [{"type": "namespace", "name": "multi_agent_v1", "description": "d", "tools": [
+                {"type": "function", "name": "spawn_agent", "description": "spawn-desc", "parameters": {
+                    "type": "object", "properties": {"agent_type": {"type": "string", "description": "role list"}}}}]}]}}, f)
+        got = json.loads(scrub(t))
+        ns = got["body"]["tools"][0]
+        inner = ns["tools"][0]
+        if (ns["description"] != "[omitted]" or inner["description"] != "[omitted]"
+                or inner["parameters"]["properties"]["agent_type"]["description"] != "role list"):
+            bad.append("namespace tool descriptions: got %r" % (got,))
+        # PC-11: a harness tool listing (a top-level list of tools) gets its descriptions omitted.
+        listing = [{"type": "function", "name": "a", "description": "x", "parameters": {}},
+                   {"type": "namespace", "name": "n", "description": "y",
+                    "tools": [{"type": "function", "name": "b", "description": "z", "parameters": {}}]},
+                   {"type": "web_search"}]
+        t = os.path.join(d, "tools.json")
+        with open(t, "w") as f:
+            json.dump(listing, f)
+        got = json.loads(scrub(t))
+        want = json.loads(json.dumps(listing).replace('"x"', '"[omitted]"').replace('"y"', '"[omitted]"')
+                          .replace('"z"', '"[omitted]"'))
+        if got != want:
+            bad.append("tool listing descriptions: got %r" % (got,))
+        # PC-11: a list that is not a tool listing keeps its descriptions.
+        t = os.path.join(d, "events.json")
+        with open(t, "w") as f:
+            json.dump([{"event": "x", "description": "kept"}], f)
+        got = json.loads(scrub(t))
+        if got != [{"event": "x", "description": "kept"}]:
+            bad.append("non-listing list kept: got %r" % (got,))
+        # PC-11: a second scrub of the PC-11 inputs changes nothing.
+        t = os.path.join(d, "idem.txt")
+        with open(t, "w") as f:
+            f.write("\n".join(c[1] for c in PC11) + "\n")
+        a = scrub(t)
+        t2 = os.path.join(d, "idem2.txt")
+        with open(t2, "w") as f:
+            f.write(a)
+        if scrub(t2) != a:
+            bad.append("pc-11 rules idempotent: a second scrub changes the text")
+        # Review round 1 F6: in a captured JSON object, only an exec command field loses its shell.
+        t = os.path.join(d, "exec.json")
+        with open(t, "w") as f:
+            json.dump({"item": {"type": "command_execution", "command": "/bin/zsh -lc 'x'",
+                                "aggregated_output": "/bin/bash -lc y"}}, f)
+        got = json.loads(scrub(t))["item"]
+        if got["command"] != "(shell omitted) -lc 'x'" or got["aggregated_output"] != "/bin/bash -lc y":
+            bad.append("exec command field: got %r" % (got,))
+        # Review round 1 F2: one id map per capture folder (SCRUB_IDMAP, shared by the folder's files):
+        # the same id gets the same placeholder in two files, different ids get different placeholders.
+        with tempfile.TemporaryDirectory() as m:
+            mp = os.path.join(m, "ids.json")
+            a, b = os.path.join(d, "ida.json"), os.path.join(d, "idb.json")
+            with open(a, "w") as f:
+                json.dump({"x": "msg_" + I1}, f)
+            with open(b, "w") as f:
+                json.dump({"x": "msg_" + I2, "y": "msg_" + I1, "z": "fco_" + I2}, f)
+            got = [json.loads(scrub_env(p, {"SCRUB_IDMAP": mp})) for p in (a, b)]
+        want = [{"x": "msg_placeholder0001"},
+                {"x": "msg_placeholder0002", "y": "msg_placeholder0001", "z": "fco_placeholder0001"}]
+        if got != want:
+            bad.append("item ids, one map per folder: got %r" % (got,))
+        # Review round 1 F3: time-bearing ULIDs of response and item ids (resp_<ulid>, msg_<ulid>_<n>,
+        # fc_<ulid>_<n>) -> a ULID of time 0, one map per folder; a response and its items stay paired.
+        u = ["01" + "ABCDEFGHJK" + "MNPQRSTVWXYZ" + "0" + c for c in "123"]
+        p = ["0" * 22 + "%04d" % n for n in (1, 2, 3)]
+        with tempfile.TemporaryDirectory() as m:
+            mp = os.path.join(m, "ids.json")
+            a, b = os.path.join(d, "ua.sse"), os.path.join(d, "ub.sse")
+            with open(a, "w") as f:
+                f.write('data: {"id":"resp_%s","item":{"id":"msg_%s_0"}} fc_%s_1\n' % (u[0], u[0], u[1]))
+            with open(b, "w") as f:
+                f.write('{\\"id\\":\\"msg_%s_0\\"} resp_%s\n' % (u[0], u[2]))
+            got = [scrub_env(x, {"SCRUB_IDMAP": mp}) for x in (a, b)]
+            with open(a, "w") as f:
+                f.write(got[0])
+            again = scrub_env(a, {"SCRUB_IDMAP": mp})
+        want = ['data: {"id":"resp_%s","item":{"id":"msg_%s_0"}} fc_%s_1\n' % (p[0], p[0], p[1]),
+                '{\\"id\\":\\"msg_%s_0\\"} resp_%s\n' % (p[0], p[2])]
+        if got != want or again != want[0]:
+            bad.append("ulid ids, one map per folder: got %r, again %r" % (got, again))
+        # Review round 1 F5: SCRUB_FIXED=1 takes the user name from SCRUB_USER and the host names from
+        # SCRUB_HOSTS, not from the machine, so a check gives the same result on every machine.
+        t = os.path.join(d, "fixed.txt")
+        with open(t, "w") as f:
+            f.write("zzuserq on zzhostq; %s on %s\n" % (user, host))
+        got = scrub_env(t, {"SCRUB_FIXED": "1", "SCRUB_USER": "zzuserq", "SCRUB_HOSTS": "zzhostq"})
+        if got != "user on host; %s on %s\n" % (user, host):
+            bad.append("fixed user and host names: output not as wanted [not shown]")
+        # Review round 2 G4: the user-name rule is case-insensitive and matches whole words only;
+        # a user name of "user" (any case) changes nothing.
+        with open(t, "w") as f:
+            f.write("Zzuserq ZZUSERQ zzuserqx x_zzuserq User\n")
+        got = [scrub_env(t, {"SCRUB_FIXED": "1", "SCRUB_USER": n, "SCRUB_HOSTS": ""}) for n in ("zzuserq", "user")]
+        if got != ["user user zzuserqx x_zzuserq User\n", "Zzuserq ZZUSERQ zzuserqx x_zzuserq User\n"]:
+            bad.append("user name any case, whole word: got %r" % (got,))
+        # Review round 2 G2: a Codex item id in upper-case hex is scrubbed like a lower-case one.
+        t = os.path.join(d, "upper.json")
+        with open(t, "w") as f:
+            json.dump({"x": "msg_" + I1.upper(), "y": "fco_" + I1}, f)
+        got = json.loads(scrub(t))
+        if got != {"x": "msg_placeholder0001", "y": "fco_placeholder0001"}:
+            bad.append("upper-case item id: got %r" % (got,))
     for b in bad:
         print("scrub test fail: " + b)
     if bad:
         sys.exit(1)
-    print("scrub tests: ok (%d)" % (len(CASES) + 6))
+    print("scrub tests: ok (%d)" % (len(CASES) + 16))
 
 
 main()

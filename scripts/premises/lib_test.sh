@@ -1176,6 +1176,28 @@ c=X50; cxprep $c caller
 child $c 0 "new_run x; start_mock; $(mockrec X50); run_codex exec hi; stop_mock; (cd \"\$RUN\" && codex_record base)"; run $c; killmock $c
 res "X50 codex_record from a subshell in the run folder passes" 0 isolation_is X50 0.172.0
 
+# S1 (PC-11 review round 1 F2, round 2 G5): scrub shares one Codex item-id map across one part's
+# files ($N2_SCRATCH/scrub-ids-<part>.json): the same id gets the same placeholder in two files, a
+# different id a different one. A second part (S1p) in the same scratch dir starts its own map.
+I1=da690f77-7707-5fdf-97a5-850943e7a34c I2=8e32dd58-d565-50b3-83f4-72b17fc59ae7
+printf '{"a":"msg_%s"}\n' "$I1" >"$T/S1a.json"
+printf '{"a":"msg_%s","b":"msg_%s"}\n' "$I2" "$I1" >"$T/S1b.json"
+c=S1; prep $c caller; ERR=$T/$c.err
+child $c 0 "new_run x; scrub '$T/S1a.json' >'$T/S1a.out'; new_run y; scrub '$T/S1b.json' >'$T/S1b.out'; exit 0"; run $c
+rc1=$rc
+mkdir -p "$T/tmp-S1p"
+child S1p 0 "new_run z; scrub '$T/S1b.json' >'$T/S1p.out'; exit 0"; run S1p
+[ "$rc1" -eq 0 ] || rc=$rc1
+s1() {
+  grep -qF '"a": "msg_placeholder0001"' "$T/S1a.out" && grep -qF '"a": "msg_placeholder0002"' "$T/S1b.out" &&
+    grep -qF '"b": "msg_placeholder0001"' "$T/S1b.out" || { why="$(tr '\n' ' ' <"$T/S1a.out")| $(tr '\n' ' ' <"$T/S1b.out")"; return 1; }
+  grep -qF '"a": "msg_placeholder0001"' "$T/S1p.out" && grep -qF '"b": "msg_placeholder0002"' "$T/S1p.out" ||
+    { why="second part: $(tr '\n' ' ' <"$T/S1p.out")"; return 1; }
+  [ -f "$T/keep-S1/scrub-ids-S1.json" ] && [ -f "$T/keep-S1/scrub-ids-S1p.json" ] && [ ! -e "$T/keep-S1/scrub-ids.json" ] ||
+    { why="maps: $(ls "$T/keep-S1")"; return 1; }
+}
+res "S1 scrub maps Codex item ids with one map per part (scrub-ids-<part>.json)" 0 s1
+
 if [ "$bad" -eq 0 ]; then echo "lib tests: ok ($n)"; exit 0; fi
 echo "lib tests: $bad failed"
 exit 1

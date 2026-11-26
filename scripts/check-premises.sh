@@ -326,6 +326,38 @@ scan '[A-Za-z]:(\\\\|\\|/)Users(\\\\|\\|/)' "$VX" 'Windows home path' i
 scan "${L}gh[pousr]_[A-Za-z0-9]{20,}" '' 'GitHub token'
 scan 'github_pat_[A-Za-z0-9_]{20,}' '' 'GitHub token'
 scan 'eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.' '' 'JWT'
+# cx_scan <ERE> <label> [i] [<drop sed -E script>]: as scan, over fixtures/codex only (PC-11 leak
+# classes of Codex captures); the verbatim files are exempt.
+cx_scan() {
+  o=-aE; [ "${3:-}" != i ] || o=-aiE
+  # shellcheck disable=SC2086
+  hit=$(grep -rn $o -- "$1" fixtures/codex 2>/dev/null | grep -av -E -- "$VX" | tr '\000' ' ' |
+    while IFS= read -r ln; do
+      [ -z "${4:-}" ] || printf '%s\n' "$ln" | sed -E "$4" | grep -q $o -- "$1" || continue
+      printf '%s\n' "$ln"
+    done | head -n 1)
+  [ -z "$hit" ] || fail "forbidden content ($2): $(printf '%s\n' "$hit" | head -n 1 | cut -c1-160)"
+}
+# TAG <shell> and ECX <environment_context> in their three bracket forms (plain, <..>, &lt;..&gt;).
+# The shell rules have the scope of scrub.py (review round 2 G1): the <shell> tag after an
+# environment_context opening on the same line (a captured block is one JSON string line;
+# rescrub_codex.py --check also reads blocks over several lines), and a login shell path at the start
+# of an exec "command" or "cmd" field. Prose that names a shell passes.
+TAG='(<|\\u003[cC]|&lt;)shell(>|\\u003[eE]|&gt;)'
+ECX='(<|\\u003[cC]|&lt;)environment_context(>|\\u003[eE]|&gt;)'
+CMD='\\?"(command|cmd)\\?"[[:space:]]*:[[:space:]]*\\?"(/[^[:space:]"'"'"'\\/]+)*/(zsh|bash|fish|sh|dash|ksh|mksh|tcsh|csh) -lc'
+# /private/tmp followed by "/" or the end of the path (as scrub.py); seatbelt as a JSON key or value.
+cx_scan '/private/tmp([^A-Za-z0-9_.-]|$)' 'macOS temporary path'
+cx_scan '\\?"seatbelt\\?"' 'macOS sandbox name' i
+cx_scan "$ECX.*$TAG" 'login shell tag' '' "s/$TAG\\(omitted\\)//g"
+cx_scan "$CMD" 'login shell command'
+cx_scan '\\?"platform(Os|Family)\\?"[[:space:]]*:[[:space:]]*\\?"' 'OS name' '' 's/\\?"platform(Os|Family)\\?"[[:space:]]*:[[:space:]]*\\?"\(os omitted\)//g'
+cx_scan '(msg|fco|ctco)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' 'Codex item id' i
+cx_scan '__CF' 'macOS env name'
+cx_scan 'marketplace-(macos|linux|windows)-[A-Za-z0-9_-]' 'marketplace OS name'
+# A time-bearing ULID after a lower-case prefix (resp_, msg_, fc_; scrub.py ULID); a placeholder of
+# time 0 is dropped. A bare ULID has no rule (Codex ids carry a prefix; ordinary hashes would match).
+cx_scan "${L}[a-z]{1,8}_[0-7][0-9A-HJKMNP-TV-Z]{25}([^0-9A-Za-z]|\$)" 'time-bearing id' '' 's/[a-z]{1,8}_0{10}[0-9A-HJKMNP-TV-Z]{16}//g'
 
 # name_scan <label> <name> [<word characters>] [<exempt ERE>]: the name as a whole word (any case;
 # it may hold spaces), also right after a JSON backslash escape. Word characters: A-Za-z0-9_ unless

@@ -202,9 +202,13 @@ run_claude_stream() {
   check_abort
 }
 
-# scrub <file>: write a fixture copy to stdout with machine paths and prompt text omitted.
+# scrub <file>: write a fixture copy to stdout with machine paths and prompt text omitted. One id
+# map per part ($N2_SCRATCH/scrub-ids-<part>.json, PC-11 review round 2; <part> is the name of the
+# script that sourced lib.sh, $0 without .sh): a Codex item id or ULID gets the same placeholder in
+# every file of the part, and different ids different ones. Other parts of the run have own maps.
 scrub() {
-  python3 -I "$PREMISES_DIR/scrub.py" "$RUN" "$1"
+  _n2_part=${0##*/}
+  SCRUB_IDMAP="$N2_SCRATCH/scrub-ids-${_n2_part%.sh}.json" python3 -I "$PREMISES_DIR/scrub.py" "$RUN" "$1"
 }
 
 # --- Codex (node PC-2) ---------------------------------------------------------------------------
@@ -500,7 +504,9 @@ n2_extra_check() {
 # (after a mock restart, a part removes or rewrites its config.toml); sets CODEX_ENV: env -i with
 # scratch HOME, CODEX_HOME, XDG and TMPDIR folders, the dummy key as MOCK_API_KEY, and HTTPS_PROXY,
 # HTTP_PROXY and ALL_PROXY at the mock (K§6.3.7), TERM the constant xterm-256color, TZ the constant
-# UTC (PC-10: no host timezone in a request). Every call,
+# UTC (PC-10: no host timezone in a request). No SHELL (PC-11): Codex takes the login shell from
+# the system user record, not from $SHELL, so scrub.py masks the shell name instead; this is
+# inferred from the captures (zsh with no SHELL in the environment), not measured. Every call,
 # after its fresh copy: CODEX_VERSION (that copy's --version) >= CODEX_MIN.
 codex_env() {
   CX_HOME=${CX_HOME:-$H/.codex}
