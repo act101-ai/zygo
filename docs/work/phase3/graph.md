@@ -210,7 +210,7 @@ Session text (T, SX nodes):
 | WD-17 | `zygo doctor` lines: workspace files, pool, member maximum | WD-7, WD-9 | DONE | implementation | d31d6c56, 8a15ab61, 2ec94a9a, 3a944a2d · definition_doctor 15/0 ; floor green · PR #119 |
 | ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | TODO | implementation | — |
 | MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | TODO | judgment | — |
-| OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | TODO | judgment | — |
+| OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | DONE | judgment | node commits 81332899, b442555c, 095ee7bb, 63e6f26a, fe154009, 725e2609; acceptance: shaping_hook 21/21, shaping_off 5/5, hooks_basic 60/60, hook_trim 6/6; floor ws 3432/0; PR #154 |
 | OS-31 | pytest runner view | OS-30, OS-20 | TODO | judgment | — |
 | WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | DONE | judgment | bae5b7af, 11d71492 · up_definition 35/0 ; floor green · PR #125 |
 | ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | TODO | mechanical | — |
@@ -403,3 +403,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | ML-6 DONE: wake of an idle member after a send (M§7.3); Files widened with state.rs (Store::live_session, plan drift D1); after_send_with for injected probe and clock (MS-13); keys woken in parallel; lock waits, no added gate. Review: 9 findings, 8 fixed, 1 in part · PR #143 |
 | 2026-11-25 | ML-10 DONE: Stop block (once, not while draining/stopping), prompt and SessionStart line, OpenCode per-request line; all off when [features] mail is off; unreadable mail/ changes no decision. Spec M§7.1, M§7.2, M§9 rewritten (author's call). Review: 6 fixed · PR #144 |
 | 2026-11-25 | ML-11 DONE: MCP tools mail_send, mail_read, mail_list; review H2 fixed (stopping block follows AU83), H1/M1/L2-L4 carried, M2/L1 refuted; PR #146. |
+| 2026-11-25 | OS-28 DONE (PR #154): trim hook runs the shaping pipeline on Bash output; review R1-R4 fixed (opencode test input, kind sniffed on stdout, non-string stderr kept, 4 MiB bound on raw text); new node OS-41 for marker room in kind views. |
