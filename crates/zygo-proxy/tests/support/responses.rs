@@ -5,12 +5,10 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use axum::extract::Request;
-use axum::response::Response;
 use bytes::Bytes;
 use http::{HeaderMap, StatusCode};
 use serde_json::Value;
@@ -38,52 +36,104 @@ pub const MAX_OUTPUT: u64 = 32000;
 
 type Got = (String, HeaderMap, Vec<u8>);
 type Reply = (u16, String, Vec<u8>);
+type Hold = Arc<Mutex<Option<tokio::sync::oneshot::Receiver<()>>>>;
 
 struct Upstream {
     addr: SocketAddr,
     got: Arc<Mutex<Vec<Got>>>,
     reply: Arc<Mutex<Reply>>,
+    /// Set: the reply ends before its `content-length` (`reply_cut`).
+    cut: Arc<AtomicBool>,
+    /// Set: the next reply's connection stays open after the body until the test releases it (`reply_held`).
+    hold: Hold,
     _stop: tokio::sync::oneshot::Sender<()>,
 }
 
 impl Upstream {
     /// 127.0.0.1:0, own runtime thread, stopped on drop; records (path with query, headers, body) and answers the
-    /// current reply.
+    /// current reply in raw HTTP/1.1, one request per connection.
     fn start(reply: Reply) -> Upstream {
         let got: Arc<Mutex<Vec<Got>>> = Arc::default();
         let reply = Arc::new(Mutex::new(reply));
+        let cut: Arc<AtomicBool> = Arc::default();
+        let hold: Hold = Arc::default();
         let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         l.set_nonblocking(true).unwrap();
         let addr = l.local_addr().unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let (g2, r2) = (got.clone(), reply.clone());
+        let (g2, r2, c2, h2) = (got.clone(), reply.clone(), cut.clone(), hold.clone());
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
             rt.block_on(async move {
                 let l = tokio::net::TcpListener::from_std(l).unwrap();
-                let app = axum::Router::new().fallback(move |req: Request| {
-                    let (g3, r3) = (g2.clone(), r2.clone());
-                    async move {
-                        let path = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_default();
-                        let headers = req.headers().clone();
-                        let body = axum::body::to_bytes(req.into_body(), usize::MAX).await.unwrap().to_vec();
-                        g3.lock().unwrap().push((path, headers, body));
-                        let (status, ctype, b) = r3.lock().unwrap().clone();
-                        Response::builder()
-                            .status(status)
-                            .header("content-type", ctype)
-                            .body(axum::body::Body::from(b))
-                            .unwrap()
+                let serve = async {
+                    loop {
+                        let Ok((s, _)) = l.accept().await else { continue };
+                        let (g3, r3, c3, h3) = (g2.clone(), r2.clone(), c2.clone(), h2.clone());
+                        tokio::spawn(async move {
+                            let _ = exchange(s, &g3, &r3, &c3, &h3).await;
+                        });
                     }
-                });
+                };
                 tokio::select! {
-                    _ = async { axum::serve(l, app).await } => {}
+                    _ = serve => {}
                     _ = rx => {}
                 }
             });
         });
-        Upstream { addr, got, reply, _stop: tx }
+        Upstream { addr, got, reply, cut, hold, _stop: tx }
     }
+}
+
+/// One request read from `s` (its head, then `content-length` body bytes) and recorded; then the reply with
+/// `connection: close`. Cut: `content-length` is one byte more than the body sent, and the connection closes after the
+/// body, so the proxy reads the body and then a read error (an early end), with no timer. Held: the connection closes
+/// only when the test releases it.
+async fn exchange(mut s: tokio::net::TcpStream, got: &Mutex<Vec<Got>>, reply: &Mutex<Reply>, cut: &AtomicBool, hold: &Hold) -> std::io::Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 16 * 1024];
+    let end = loop {
+        if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            break i;
+        }
+        let n = s.read(&mut chunk).await?;
+        if n == 0 {
+            return Ok(());
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    };
+    let head = String::from_utf8_lossy(&buf[..end]).into_owned();
+    let mut lines = head.split("\r\n");
+    let path = lines.next().and_then(|l| l.split(' ').nth(1)).unwrap_or_default().to_string();
+    let mut headers = HeaderMap::new();
+    for l in lines {
+        let (k, v) = l.split_once(':').expect("a header line");
+        headers.append(http::HeaderName::from_bytes(k.trim().as_bytes()).unwrap(), http::HeaderValue::from_str(v.trim()).unwrap());
+    }
+    assert!(!headers.contains_key("transfer-encoding"), "the mock reads content-length bodies only: {headers:?}");
+    let len: usize = headers.get("content-length").map_or(0, |v| v.to_str().unwrap().parse().unwrap());
+    let mut body = buf[end + 4..].to_vec();
+    while body.len() < len {
+        let n = s.read(&mut chunk).await?;
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&chunk[..n]);
+    }
+    body.truncate(len);
+    got.lock().unwrap().push((path, headers, body));
+    let (status, ctype, b) = reply.lock().unwrap().clone();
+    let reason = StatusCode::from_u16(status).ok().and_then(|c| c.canonical_reason()).unwrap_or("Status");
+    let declared = b.len() + usize::from(cut.load(Ordering::SeqCst));
+    let head = format!("HTTP/1.1 {status} {reason}\r\ncontent-type: {ctype}\r\ncontent-length: {declared}\r\nconnection: close\r\n\r\n");
+    s.write_all(head.as_bytes()).await?;
+    s.write_all(&b).await?;
+    let held = hold.lock().unwrap().take();
+    if let Some(rx) = held {
+        let _ = rx.await;
+    }
+    s.shutdown().await
 }
 
 struct Keys(HashMap<String, Secret>);
@@ -291,7 +341,25 @@ impl Harness {
 
     /// The mock's reply to every later request.
     pub fn reply_with(&self, status: u16, content_type: &str, body: Vec<u8>) {
+        self.up.cut.store(false, Ordering::SeqCst);
+        *self.up.hold.lock().unwrap() = None;
         *self.up.reply.lock().unwrap() = (status, content_type.to_string(), body);
+    }
+
+    /// As `reply_with`, but the connection closes one byte before the declared `content-length`: the proxy reads
+    /// `body`, then a read error.
+    pub fn reply_cut(&self, status: u16, content_type: &str, body: Vec<u8>) {
+        *self.up.reply.lock().unwrap() = (status, content_type.to_string(), body);
+        self.up.cut.store(true, Ordering::SeqCst);
+    }
+
+    /// As `reply_cut`, but the connection stays open after `body` until the returned sender sends or drops: the proxy
+    /// has read the body and waits for its last byte; then a read error.
+    pub fn reply_held(&self, status: u16, content_type: &str, body: Vec<u8>) -> tokio::sync::oneshot::Sender<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        *self.up.hold.lock().unwrap() = Some(rx);
+        self.reply_cut(status, content_type, body);
+        tx
     }
 
     fn usage_db(&self) -> PathBuf {
@@ -300,8 +368,9 @@ impl Harness {
 
     /// The session's usage rows, once every `post` wrote its row. Call it only when every `post` reached a model route.
     pub fn usage_rows(&self) -> Vec<RequestRow> {
-        // The bound the other proxy test files use for this wait; it returns as soon as the rows are written.
-        assert!(self.h.usage_written(self.posts.load(Ordering::SeqCst), Duration::from_secs(10)), "usage rows not written");
+        // No total limit: a missing row hangs the test instead of failing a timing assertion. Each call returns as
+        // soon as the rows are written; its Duration is only how often the loop asks again.
+        while !self.h.usage_written(self.posts.load(Ordering::SeqCst), Duration::from_secs(1)) {}
         Store::open(&self.usage_db()).unwrap().requests_for_session(&self.session).unwrap()
     }
 }
