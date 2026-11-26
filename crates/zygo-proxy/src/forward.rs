@@ -659,16 +659,10 @@ fn pc14_message(m: &str) -> String {
 /// The error code with which Codex runs its own recovery for an over-long prompt (PC14, K§6.4.4).
 const CONTEXT_CODE: &str = "context_length_exceeded";
 
-/// An over-long prompt's message by the PC14 rule (K§6.4.4): a `prompt is too long` text as it is, or Anthropic's full
-/// `max_tokens` limit form cleaned (`pc14_message`); `None` for any other message.
+/// An over-long prompt's message by the PC14 rule (K§6.4.4): a `prompt is too long` text or Anthropic's full
+/// `max_tokens` limit form, cleaned (`pc14_message`, K§6.4.3 obligation 6); `None` for any other message.
 fn pc14_form(message: &str) -> Option<String> {
-    if message.starts_with("prompt is too long") {
-        Some(message.to_string())
-    } else if anthropic_limit_form(message) {
-        Some(pc14_message(message))
-    } else {
-        None
-    }
+    (message.starts_with("prompt is too long") || anthropic_limit_form(message)).then(|| pc14_message(message))
 }
 
 /// Anthropic's refusal when input plus `max_tokens` is over the window, in full (the form Claude Code parses).

@@ -520,6 +520,22 @@ fn in_stream_context_error_pc14_code() {
     assert_eq!(*e, json!({"code":"context_length_exceeded","message":"prompt is too long: 1200 tokens > 1000 maximum"}));
 }
 
+#[test] // review round 2 G2, K§6.4.3 obligation 6: a `prompt is too long` message gets the 512-character cap and cleaning
+fn in_stream_prompt_too_long_capped_and_cleaned() {
+    let h = start(A);
+    let m = format!("prompt is too long: 1 tokens > 0 maximum \u{1b}[2J\u{202e}{}", "z".repeat(5000));
+    h.reply_with(200, SSE, failing(json!({"type":"invalid_request_error","message":m})));
+    let (_, _, b) = h.post(R, &codex_request("after-custom-tool-call-output"));
+    let evs = events(&b);
+    let (last, d) = evs.last().unwrap();
+    assert_eq!(last, "response.failed");
+    let e = &d["response"]["error"];
+    assert_eq!(e["code"], "context_length_exceeded");
+    let msg = e["message"].as_str().unwrap();
+    assert!(msg.chars().count() <= 512, "{} characters", msg.chars().count());
+    assert!(!msg.contains('\u{1b}') && !msg.contains('\u{202e}'), "{msg:?}");
+}
+
 #[test] // review round 1 F5: the provider key never reaches the client in an in-stream error, whole or cut
 fn in_stream_error_message_without_key() {
     let h = start(A);
