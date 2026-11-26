@@ -15,7 +15,8 @@ use zygo_core::{
     session_view::SessionView,
 };
 use zygo_hooks::trim::{self, TrimOpts};
-use zygo_results::shape::{self, command, ShapeInput};
+use zygo_results::shape::{self, command, ShapeInput, Shaper};
+use zygo_results::Kind;
 use zygo_usage::store::HOOK_DB_BOUND;
 
 const RUNS: usize = 200; // O§8.5
@@ -47,17 +48,70 @@ fn report(label: &str, mut times: Vec<Duration>) -> Duration {
     p95
 }
 
-/// The case's `stdout` then `stderr`, repeated, cut to at most `n` bytes at a char boundary (Decision 2).
-fn sized(c: &Case, n: usize) -> String {
-    let base = format!("{}{}", String::from_utf8_lossy(&c.stdout), String::from_utf8_lossy(&c.stderr));
-    assert!(!base.is_empty(), "{}/{}: no text", c.shaper, c.name);
-    let mut s = base.repeat(n.div_ceil(base.len()));
-    let mut end = n.min(s.len());
-    while !s.is_char_boundary(end) {
-        end -= 1;
+/// Copy of the private `compose` of `trim.rs:141` (O§7.2): `stdout`, then `[stderr]` and `stderr` on a line of
+/// their own when `stderr` is not empty.
+fn compose(stdout: &str, stderr: &str) -> String {
+    let mut raw = stdout.to_string();
+    if !stderr.is_empty() {
+        if !raw.is_empty() && !raw.ends_with('\n') {
+            raw.push('\n');
+        }
+        raw.push_str("[stderr]\n");
+        raw.push_str(stderr);
     }
-    s.truncate(end);
-    s
+    raw
+}
+
+/// The text steps 1-4 get for `c` and its kind, as `trim.rs:195-200` builds them with the `TrimOpts` of
+/// `tests/shaping.rs`. Claude Code: `compose(stdout, stderr)` when `PO2_STDERR_CLEARED`, else `stdout`; the kind
+/// of `stdout`. OpenCode: the hook's one output text, `stdout` then `stderr` (`common::shaping::hook_input`).
+fn source(c: &Case) -> (String, Kind) {
+    let (out, err) = (String::from_utf8_lossy(&c.stdout), String::from_utf8_lossy(&c.stderr));
+    let (stdout, src) = if c.meta["agent"] == "opencode" {
+        let t = format!("{out}{err}");
+        (t.clone(), t)
+    } else if trim::PO2_STDERR_CLEARED {
+        (out.to_string(), compose(&out, &err))
+    } else {
+        (out.to_string(), out.to_string())
+    };
+    assert!(!src.is_empty(), "{}/{}: no text", c.shaper, c.name);
+    (src, zygo_results::kind::sniff(stdout.as_bytes()))
+}
+
+/// `src` grown or cut to exactly `n` bytes on its shaping path (Decision 2). JSON: one array of whole copies of
+/// the document, padded with JSON spaces, so the kind view still parses it. Other text longer than `n`: cut at
+/// the last char boundary. Shorter: copies cut to `n - len`, then one whole copy, so the text still ends as the
+/// case does (the pytest summary is on the last line, `runner.rs:100-104`).
+fn sized(src: &str, kind: Kind, n: usize) -> String {
+    let cut = |mut s: String, n: usize| {
+        let mut end = n.min(s.len());
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s.truncate(end);
+        s
+    };
+    if kind == Kind::Json {
+        let doc = src.trim_end();
+        let mut s = String::from("[");
+        while s.len() + doc.len() + 2 <= n {
+            if s.len() > 1 {
+                s.push(',');
+            }
+            s.push_str(doc);
+        }
+        s.push(']');
+        while s.len() < n {
+            s.push(' ');
+        }
+        return s;
+    }
+    if src.len() >= n {
+        return cut(src.to_string(), n);
+    }
+    let room = n - src.len();
+    cut(src.repeat(room.div_ceil(src.len())), room) + src
 }
 
 /// The case with the most raw bytes; Claude Code `PostToolUse` (Decision 4).
@@ -89,6 +143,13 @@ fn session(shape: bool) -> tempfile::TempDir {
     t
 }
 
+/// The `shaper` of each `trims` row in `root/usage.db`, by rowid.
+fn shapers(root: &Path) -> Vec<String> {
+    let c = rusqlite::Connection::open(root.join("usage.db")).unwrap();
+    let mut q = c.prepare("SELECT shaper FROM trims ORDER BY rowid").unwrap();
+    q.query_map([], |r| r.get::<_, Option<String>>(0)).unwrap().map(|s| s.unwrap().unwrap_or_default()).collect()
+}
+
 /// The wall time of one hook process on `stdin` with root `root` (Decision 3).
 fn hook_process(root: &Path, stdin: &[u8]) -> Duration {
     let start = Instant::now();
@@ -100,8 +161,14 @@ fn hook_process(root: &Path, stdin: &[u8]) -> Duration {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
-    let o = child.wait_with_output().unwrap();
+    let mut w = child.stdin.take().unwrap();
+    // A child that exits before it reads gives a broken pipe here; its status and stderr show in the assert below.
+    let o = std::thread::scope(|s| {
+        s.spawn(move || {
+            let _ = w.write_all(stdin);
+        });
+        child.wait_with_output().unwrap()
+    });
     let t = start.elapsed();
     assert!(o.status.success(), "{o:?}");
     assert!(String::from_utf8_lossy(&o.stdout).contains("child_trim_process ... ok"), "{o:?}");
@@ -112,14 +179,17 @@ fn hook_process(root: &Path, stdin: &[u8]) -> Duration {
 fn steps_over(n: usize, budget: Duration) -> Vec<String> {
     let mut over = vec![];
     for c in shaping::cases(None) {
-        let text = sized(&c, n);
-        assert!(text.len() > n - 4, "{}/{}: {} bytes", c.shaper, c.name, text.len());
+        let (src, kind) = source(&c);
+        let text = sized(&src, kind, n);
+        assert_eq!(text.len(), n, "{}/{}", c.shaper, c.name);
         assert!(text.len() <= shape::SHAPE_MAX_BYTES, "{}/{}: steps 1-4 skipped", c.shaper, c.name);
-        let si = ShapeInput {
-            parsed: Some(command::parse(c.meta["command"].as_str().unwrap_or(""))),
-            kind: zygo_results::kind::sniff(text.as_bytes()),
-            threshold: SessionView::default().trim_threshold_bytes,
-        };
+        let parsed = Some(command::parse(c.meta["command"].as_str().unwrap_or("")));
+        let si = ShapeInput { parsed: parsed.clone(), kind, threshold: SessionView::default().trim_threshold_bytes };
+        // The sized text takes the case's own path: the same shaper and steps as the case text. The case text
+        // gets threshold 0, so step 4 may run on a case under the threshold, as it does on the sized text.
+        let base = shape::run(&src, &ShapeInput { parsed, kind, threshold: 0 });
+        let got = shape::run(&text, &si);
+        assert_eq!((got.shaper, &got.steps), (base.shaper, &base.steps), "{}/{}: {n} bytes left the case's path", c.shaper, c.name);
         let times = (0..RUNS)
             .map(|_| {
                 let start = Instant::now();
@@ -156,13 +226,18 @@ fn shaping_steps_on_4_mib_p95_within_100_ms() {
 #[ignore = "timing: shaping latency budget, run on demand"]
 fn hook_process_shape_on_p95_within_50_ms_of_shape_off() {
     let _g = serial();
-    let input = serde_json::to_vec(&shaping::hook_input(&largest())).unwrap();
+    let big = largest();
+    let input = serde_json::to_vec(&shaping::hook_input(&big)).unwrap();
     let (on, off) = (session(true), session(false));
     let (mut on_t, mut off_t) = (vec![], vec![]);
     for _ in 0..RUNS {
         off_t.push(hook_process(off.path(), &input));
         on_t.push(hook_process(on.path(), &input));
     }
+    // The arms differ: shape on records the case's shaper, shape off the size view (`trim.rs:194`, `:305`).
+    assert_eq!(big.shaper, Shaper::Diff.as_str(), "{}", big.name);
+    assert_eq!(shapers(on.path()), vec![Shaper::Diff.as_str().to_string(); RUNS]);
+    assert_eq!(shapers(off.path()), vec![Shaper::Size.as_str().to_string(); RUNS]);
     let (off_p95, on_p95) = (report("process shape=false", off_t), report("process shape=true", on_t));
     assert!(on_p95 <= off_p95 + PROCESS_EXTRA_P95, "O§8.5: p95 {on_p95:?} > {off_p95:?} + 50 ms");
 }
