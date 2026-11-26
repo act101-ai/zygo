@@ -30,6 +30,7 @@
 # - T6: tmux targets are exact and sessions this script did not start are left alone (a private
 #   tmux server with no config file, through a tmux shim on PATH; only that server is killed, and its socket file is removed).
 # - ML16 (node ML-16): live-mail.sh with no argument exits 2; --pm and --m12 in a copied tree, with stubs that answer --version with the pins, a tmux shim that logs each call, MOCK_URL at a dead port and a made-up HOME: one LIVE line per id, the fixtures written in the copy, only stubs started, every tmux call on a private server (-S, -f /dev/null), no process, server, socket file or private folder left; usage (exit 2, no stub called) for no argument, --pm --m12, --foo, -- --pm; a caller-exported PREMISES_DIR is not written; a PREMISES_DIR with a space or a double quote is refused; PM1 1.1 passes on the hook inputs of the stub claude; --m12-judge gives the 12.2/12.3 verdicts of fixed transcripts.
+# - FX20 (node FX-20): live-detach.sh --zygo in a copied tree, on the stub claude and a stub zygo whose up fails: exit 0, one LIVE PW15 line; the record head line "launch zygo 9.8.7, real down" and the LIVE PW15 text "launch zygo 9.8.7 real down, tmux <version>" name zygo once; with a zygo stub whose --version prints nothing, "launch zygo ?, real down" and "launch zygo ? real down, tmux <version>"; only stubs ran, every tmux call on a private server, nothing left; the repository's fixtures/tmux/pw15-*.txt unchanged.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
@@ -487,6 +488,54 @@ else
   mjudge none "$JT/missing.jsonl"; J="$JT/none/M12.txt"
   t=1; [ "$rc" -eq 0 ] && grep -q '^12[.]2 FAIL .*found in its transcript: false' "$J" && grep -q '^12[.]3 FAIL ' "$J" && t=0
   mcase "ML16 judge: no transcript: 12.2 and 12.3 FAIL" "$t" "$J"
+fi
+
+# --- FX20: live-detach.sh --zygo on stubs: the PW15 record line names zygo once ------------------
+# A copied tree; a zygo stub whose `up` exits 1 (no agent pane starts) and whose other calls exit 0;
+# a setsid shim for the PATH check only (the --zygo path never calls setsid).
+DT="$T/dtree"
+mkdir -p "$DT/scripts" "$DT/docs" "$T/dtbin" "$T/mscr-pw15" "$T/mscr-pw15e"
+cp -R "$HERE" "$DT/scripts/premises"; cp "$REPO/docs/premises.md" "$DT/docs/"
+printf '#!/bin/sh\necho "$0" >"%s/zygo.$$"\ncase "${1:-}" in --version) echo "zygo 9.8.7"; exit 0 ;; up) exit 1 ;; esac\nexit 0\n' "$MARK" >"$MSTUB/zygo-pw15"
+printf '#!/bin/sh\necho "$0" >"%s/zygo.$$"\ncase "${1:-}" in --version) exit 0 ;; up) exit 1 ;; esac\nexit 0\n' "$MARK" >"$MSTUB/zygo-pw15e"
+printf '#!/bin/sh\nexec "$@"\n' >"$T/dtbin/setsid"
+chmod +x "$MSTUB/zygo-pw15" "$MSTUB/zygo-pw15e" "$T/dtbin/setsid"
+if [ "$mguard" -ne 0 ] || ! command -v jq >/dev/null 2>&1 || ! command -v perl >/dev/null 2>&1; then
+  no "FX20: stubs, tmux shim, jq or perl not found; live-detach.sh not run"
+else
+  cksum "$REPO"/fixtures/tmux/pw15-*.txt >"$T/pw15.before"
+  ls "$MARK" >"$T/m-pw15.before"; : >"$TLOG"
+  rc=0
+  env -u CLAUDE_CONFIG_DIR -u TMUX -u ZYGO_SESSION_DIR PATH="$T/dtbin:$MPATH" HOME="$MH" PREMISES_DIR="$DT/scripts/premises" \
+    N2_SCRATCH="$T/mscr-pw15" "$SH" "$DT/scripts/premises/live-detach.sh" --zygo "$MSTUB/zygo-pw15" >"$T/m-pw15.out" 2>&1 || rc=$?
+  o="$T/m-pw15.out"
+  t=1; [ "$rc" -eq 0 ] && [ "$(grep -c '^LIVE PW15 ' "$o")" -eq 1 ] && grep -q '^LIVE PW15 failed ' "$o" && t=0
+  mcase "FX20 --zygo: exit $rc, one LIVE PW15 line (failed on stubs)" "$t" "$o"
+  h=$(sed -n 1p "$DT/fixtures/tmux/pw15-down.txt" 2>/dev/null)
+  t=1; [ "$h" = "launch zygo 9.8.7, real down" ] && t=0
+  mcase "FX20 --zygo: the PW15 record head line is \"launch zygo 9.8.7, real down\" (zygo once)" "$t" "$DT/fixtures/tmux/pw15-down.txt"
+  l=$(sed -n 's/^LIVE PW15 [a-z]* ([^)]*): \([^;]*\);.*/\1/p' "$o")
+  t=1; case "$l" in "launch zygo 9.8.7 real down, tmux "*) t=0 ;; esac
+  mcase "FX20 --zygo: the LIVE PW15 text starts \"launch zygo 9.8.7 real down, tmux \" (zygo once; got: $l)" "$t"
+  t=1; mstubs pw15 zygo && mstubs pw15 claude && mtmux && [ -z "$(mleft pw15)" ] && t=0
+  mcase "FX20 --zygo: only stubs ran, every tmux call on a private server, nothing left" "$t" "$TLOG"
+  # The same run on a zygo stub whose --version prints nothing: the fallback still names zygo once.
+  ls "$MARK" >"$T/m-pw15e.before"; : >"$TLOG"
+  rc=0
+  env -u CLAUDE_CONFIG_DIR -u TMUX -u ZYGO_SESSION_DIR PATH="$T/dtbin:$MPATH" HOME="$MH" PREMISES_DIR="$DT/scripts/premises" \
+    N2_SCRATCH="$T/mscr-pw15e" "$SH" "$DT/scripts/premises/live-detach.sh" --zygo "$MSTUB/zygo-pw15e" >"$T/m-pw15e.out" 2>&1 || rc=$?
+  o="$T/m-pw15e.out"
+  h=$(sed -n 1p "$DT/fixtures/tmux/pw15-down.txt" 2>/dev/null)
+  t=1; [ "$rc" -eq 0 ] && [ "$h" = "launch zygo ?, real down" ] && t=0
+  mcase "FX20 --zygo, empty version: exit $rc, the PW15 record head line is \"launch zygo ?, real down\" (zygo once)" "$t" "$DT/fixtures/tmux/pw15-down.txt"
+  l=$(sed -n 's/^LIVE PW15 [a-z]* ([^)]*): \([^;]*\);.*/\1/p' "$o")
+  t=1; case "$l" in "launch zygo ? real down, tmux "*) t=0 ;; esac
+  mcase "FX20 --zygo, empty version: the LIVE PW15 text starts \"launch zygo ? real down, tmux \" (zygo once; got: $l)" "$t" "$o"
+  t=1; mstubs pw15e zygo && mstubs pw15e claude && mtmux && [ -z "$(mleft pw15e)" ] && t=0
+  mcase "FX20 --zygo, empty version: only stubs ran, every tmux call on a private server, nothing left" "$t" "$TLOG"
+  cksum "$REPO"/fixtures/tmux/pw15-*.txt >"$T/pw15.after"
+  t=1; cmp -s "$T/pw15.before" "$T/pw15.after" && t=0
+  mcase "FX20 the repository's fixtures/tmux/pw15-*.txt are unchanged after both runs" "$t"
 fi
 
 # --- U4: every agent program that ran was a stub; no wrapped sleep is left ------------------------
