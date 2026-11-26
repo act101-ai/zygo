@@ -494,7 +494,6 @@ impl ClaudeCode {
             failure.push(entry(Some("*"), "workspace --event tool-end"));
             h.insert("Stop".into(), json!([entry(None, "workspace --event stop")]));
             h.insert("StopFailure".into(), json!([entry(None, "workspace --event stop")]));
-            h.insert("SubagentStart".into(), json!([entry(None, "workspace --event subagent-start")]));
             h.insert("SessionEnd".into(), json!([entry(None, "workspace --event session-end")]));
             subagent_stop.push(entry(None, "workspace --event subagent-stop"));
         }
@@ -519,6 +518,12 @@ impl ClaudeCode {
             prompt.push(entry(None, "workspace --event prompt"));
         }
         h.insert("UserPromptSubmit".into(), json!(prompt));
+        // T§6.3 item 1: every launch; a member's workspace entry comes second.
+        let mut subagent_start = vec![entry(None, "session-start")];
+        if member {
+            subagent_start.push(entry(None, "workspace --event subagent-start"));
+        }
+        h.insert("SubagentStart".into(), json!(subagent_start));
         h.insert("PreCompact".into(), json!([entry(None, "pre-compact")]));
         Value::Object(h)
     }
