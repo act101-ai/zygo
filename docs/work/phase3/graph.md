@@ -195,7 +195,6 @@ Session text (T, SX nodes):
 | OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4 | TODO | judgment | — |
 | MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | TODO | judgment | — |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | TODO | implementation | — |
-| OS-35 | Fixture views through the hook: goldens, floors, recovery, bless guard | OS-34, OS-32, OS-42 | DONE | judgment | 3a9dbffb · 3c10f93d · f788f46d · acceptance pass (shaping 14) · PR #198 |
 | SX-4 | `hook trim` takes the flag and adds `additionalContext` = mechanics text, once (T§9.2 item 2) | SX-1, SX-3, OS-34 | DONE | judgment | plan 5441dd4c · node d37419f1, 927b1246, 86db8ba5 · acceptance pass (trim 17 listed; reinject trim 17 passed; zygo-hooks 344 passed) · PR #191 |
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | TODO | implementation | — |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
@@ -205,7 +204,8 @@ Session text (T, SX nodes):
 | MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17, FX-15 | TODO | implementation | — |
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | TODO | implementation | — |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | TODO | mechanical | — |
-| OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37 | TODO | lookup | — |
+| OS-45 | Bound the usage-store wait in elapsed time | — | DONE | judgment | fb717aba · aecf74d2 · a0378951 · acceptance pass (busy_wait 7, zygo-usage, zygo-hooks, readbacks) · PR #203 |
+| OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45 | TODO | lookup | — |
 | WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | TODO | implementation | — |
 | WD-21 | PR1 live check (operator): two pool members send two logins | WD-14, ML-19 | TODO | mechanical | — |
 | WD-22 | PR2 live check (operator): per-session settings act the same on a pool directory | WD-14, WD-21 | TODO | mechanical | — |
@@ -415,3 +415,5 @@ Session text (T, SX nodes):
 | 2026-11-26 | OS-35 DONE: 20 fixture views through the hook, id masked; floors, row bytes, recovery and bless guard tested; PO1-failed cases checked as none, their failing floor on the runner view; review F1-F6, F8 fixed, F7, F9 refuted · PR #198 |
 | 2026-11-26 | OS-36 DONE: O§8.3 never-worse check over every case and 11 built inputs; bless refuses a failing view; item 5 rejects hidden failure-section lines; review F1, F3, F4 fixed, F2 refuted (contract oracle) · PR #201 |
 | 2026-11-26 | OS-37 DONE: 4 O§8.5 budget tests and the child process, ignored in CI; sized inputs keep each case's shaping path; shape-on and shape-off rows asserted; review F1-F3, F5 fixed, F4 wording, F5 timeout refuted · PR #200 |
+| 2026-11-26 | OS-45 added: OS-38 run failed O§8.5 budget 4 (lock held p95 159.27 ms > 150 ms); SQLite busy_timeout counts requested sleep, macOS sleeps ~1.5x, breaking O-C10; OS-38 now depends on OS-45 |
+| 2026-11-26 | OS-45 DONE: bounded open uses its own elapsed-time busy handler; lock-held hook p95 159.27 → 128.05 ms (release, macOS); review F1, F2, F4 fixed; F3 (O-C10 per call on a non-WAL db) open for a new row · PR #203 |
