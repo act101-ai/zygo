@@ -14,6 +14,17 @@ OUT=""
 RC=0
 N=0
 
+# TCP_TIMES=1 (off by default; a report, not a test): mk and each check-premises.sh run print
+# "test-check-premises: time <seconds> <step> <case>" on stderr (mk runs in $(...), so the next
+# "other" step includes it).
+TCP_T0=""
+tick() {
+    [ "${TCP_TIMES:-}" = 1 ] || return 0
+    t=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
+    [ -z "$TCP_T0" ] || awk -v a="$TCP_T0" -v b="$t" -v s="$1" -v c="$CASE" 'BEGIN { printf "test-check-premises: time %.3f %s %s\n", b - a, s, c }' >&2
+    TCP_T0=$t
+}
+
 fail() {
     printf '%s\n' "test-check-premises: FAIL $CASE: $1" >&2
     printf '%s\n' "$OUT" >&2
@@ -23,6 +34,7 @@ fail() {
 # mk <name>: a copy tree $T/<name> with the script, its helpers, the fixtures and the documents
 # it reads, at the same relative paths, and fixtures/codex (made when the tree has none); prints its path.
 mk() {
+    tick other
     d="$T/$1"
     mkdir -p "$d/scripts" "$d/docs/specs"
     cp "$ROOT/scripts/check-premises.sh" "$d/scripts/"
@@ -33,6 +45,7 @@ mk() {
     done
     cp "$ROOT/docs/specs/2026-11-18-zygo-design.md" "$ROOT/docs/specs/2026-11-20-workspaces-design.md" "$d/docs/specs/"
     mkdir -p "$d/fixtures/codex"
+    tick mk
     echo "$d"
 }
 
@@ -102,16 +115,20 @@ pin_codex() {
 
 # run <dir>: runs the copy's script; N2_FORBIDDEN_NAMES is cleared, so no case inherits it from the caller.
 run() {
+    tick other
     OUT=$(unset N2_FORBIDDEN_NAMES; sh "$1/scripts/check-premises.sh" 2>&1)
     RC=$?
     N=$((N + 1))
+    tick check
 }
 
 # run_names <dir> <names>: as run, with N2_FORBIDDEN_NAMES set to the names for the script.
 run_names() {
+    tick other
     OUT=$(N2_FORBIDDEN_NAMES="$2" sh "$1/scripts/check-premises.sh" 2>&1)
     RC=$?
     N=$((N + 1))
+    tick check
 }
 
 expect_ok() {
