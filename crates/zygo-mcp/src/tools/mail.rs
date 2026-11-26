@@ -1,5 +1,6 @@
 //! The mail tools mail_send, mail_read, mail_list (M§8, M§8a item 2, M§9).
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -176,13 +177,8 @@ impl Mail {
             return Vec::new();
         }
         let Ok(sp) = SyncPaths::new(&self.paths, &self.ws_id) else { return Vec::new() };
-        let mut out: Vec<String> = Vec::new();
-        for a in read_cache(&sp).addresses() {
-            if !out.contains(&a) {
-                out.push(a);
-            }
-        }
-        out
+        let mut seen: HashSet<String> = HashSet::new();
+        read_cache(&sp).addresses().into_iter().filter(|a| seen.insert(a.clone())).collect()
     }
 
     /// S§7.2: a `to` without `@` is local (M§8). A `to` with `@` resolves against the host in force with sync on;
