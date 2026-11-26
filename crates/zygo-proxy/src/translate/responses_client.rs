@@ -141,8 +141,16 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
     if c.messages.first().is_none_or(|(role, _)| *role != "user") {
         return Err(bad("input: the conversation must start with a user message"));
     }
-    let tools = tools(req, &mut d)?;
-    let choice = tool_choice(req, &tools)?;
+    let mut tools = tools(req, &mut d)?;
+    let mut choice = tool_choice(req, &tools)?;
+    let from_history = history_tools(&c.messages, &tools);
+    if !from_history.is_empty() {
+        if tools.is_empty() {
+            choice = Some(json!({"type":"none"}));
+        }
+        d.from_history = from_history.len();
+        tools.extend(from_history);
+    }
 
     let mut out = Map::new();
     out.insert("model".into(), model.clone());
@@ -219,11 +227,13 @@ struct Drops {
     documents: u32,
     tools: BTreeMap<String, u32>,
     items: BTreeMap<String, u32>,
+    /// Tools declared from the call history.
+    from_history: usize,
 }
 
 impl Drops {
-    /// `custom_tool_as_function`, `reasoning_dropped`, `documents_dropped`, then `tools_dropped` and `items_dropped`
-    /// by type; no zero count.
+    /// `custom_tool_as_function`, `reasoning_dropped`, `documents_dropped`, `tools_dropped` and `items_dropped` by
+    /// type, then `tools_from_history`; no zero count.
     fn codes(&self) -> Vec<Adjustment> {
         let mut out = Vec::new();
         if self.custom {
@@ -236,6 +246,9 @@ impl Drops {
         }
         out.extend(self.tools.iter().map(|(t, n)| Adjustment(format!("tools_dropped:{t}:{n}"))));
         out.extend(self.items.iter().map(|(t, n)| Adjustment(format!("items_dropped:{t}:{n}"))));
+        if self.from_history > 0 {
+            out.push(Adjustment(format!("tools_from_history:{}", self.from_history)));
+        }
         out
     }
 }
@@ -452,6 +465,19 @@ fn tools(req: &Value, d: &mut Drops) -> Result<Vec<Value>, ZygoError> {
         out.push(x);
     }
     Ok(out)
+}
+
+/// One tool per distinct `tool_use` name in `messages` that `tools` does not define, in first-use order (K§6.4.3
+/// obligation 6): Anthropic refuses a `tool_use` block whose name no sent tool defines.
+fn history_tools(messages: &[(&'static str, Vec<Value>)], tools: &[Value]) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    for b in messages.iter().flat_map(|(_, content)| content).filter(|b| s(b, "type") == Some("tool_use")) {
+        let Some(name) = s(b, "name") else { continue };
+        if !tools.iter().chain(&out).any(|t| s(t, "name") == Some(name)) {
+            out.push(json!({"name":name,"description":"history only","input_schema":{"type":"object"}}));
+        }
+    }
+    out
 }
 
 /// `tool_choice` with `parallel_tool_calls` (obligation 7), against the `tools` sent: with none, both are omitted and
