@@ -166,7 +166,7 @@ fn fixture_cargo_color_has_no_esc() {
     // FX-16 (F4): `ESC ( B` leaves no `B`
     assert!(!out.contains("okB"));
     assert_eq!(out.lines().count(), raw.lines().count());
-    let summary = "test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s";
+    let summary = "test result: ok. 120 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s";
     assert!(out.lines().any(|o| o == summary));
     for l in fixture("cargo-test-color", "must_keep").lines() {
         assert!(out.lines().any(|o| o == l), "{l}");

@@ -41,7 +41,8 @@ const FAILED_CC: Floor = if trim::PO1_HOLDS { Floor::Failing } else { Floor::NoC
 
 /// Each O§8.1 table row's case folders, with the O§8.2 row each is checked against.
 const CASES: &[(&str, &str, Floor)] = &[
-    ("clean", "cargo-test-color", Floor::Clean),
+    // O§8.2 checks a view against its own shaper's floor: this case gets the libtest view.
+    ("clean", "cargo-test-color", Floor::LibtestPassing),
     ("clean", "git-clone-progress", Floor::Clean),
     ("clean", "git-diff-color-crlf", Floor::Clean),
     // O§8.1 "no change"
@@ -398,7 +399,9 @@ fn problems(c: &Case, f: Floor, g: &Got) -> Vec<String> {
         }
         Floor::LibtestPassing => {
             floor(80, &mut p);
-            for l in raw_s.split('\n').filter(|l| l.starts_with("test result: ")) {
+            // The raw lines after clean (O§7.4): in a colored raw text a summary line holds escape bytes.
+            let cleaned = clean(&raw_s, reuse(c)).map_or(raw_s.clone(), |(t, _)| t);
+            for l in cleaned.split('\n').filter(|l| l.starts_with("test result: ")) {
                 if !g.view.split('\n').any(|x| x == l) {
                     p.push(format!("{at}: summary line not in the view: {l:?}"));
                 }
