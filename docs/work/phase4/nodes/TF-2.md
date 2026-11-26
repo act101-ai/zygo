@@ -1,7 +1,7 @@
 # TF-2 — CI runs the premise test scripts
 
 **Spec:** none (CI defect); PC-13 round-2 review G3; Global constraints "No CI test runs a real `claude`, `opencode` or `codex` binary" and "No test … may pass or fail by wall-clock time"
-**Files:** `.github/workflows/ci.yml`, `scripts/premises/lib_test.sh` (CI-friendly waits and its "not run by CI" header line; round 2: the traps, the recorded process groups and servers, the socket timeouts, cases G1-G5), `scripts/premises/lib.sh` (round 1 F3: the port-file waits; CI run 1: n2_scan's /proc owner check; round 2: N2_PART_MARK unset at source time, ps lstart in UTC), `scripts/premises/scrub_test.py` (CI run 1: the SCRUB_FIXED case only), `scripts/premises/mock_upstream.py` and `scripts/premises/https_static.py` (CI run 3: server_bind only), `scripts/test-check-premises.sh` (CI run 3: the TCP_TIMES report only)
+**Files:** `.github/workflows/ci.yml`, `scripts/premises/lib_test.sh` (CI-friendly waits and its "not run by CI" header line; round 2: the traps, the recorded process groups and servers, the socket timeouts, cases G1-G5; round 3: the G1 helper's sigwait, stopall's TERM to the recorded pid, the G1 and J6 records in `$T`, cases J2, J3a-J3c, J6 and G3b, the header line on two runs at once), `scripts/premises/lib.sh` (round 1 F3: the port-file waits; CI run 1: n2_scan's /proc owner check; round 2: N2_PART_MARK unset at source time, ps lstart in UTC), `scripts/premises/scrub_test.py` (CI run 1: the SCRUB_FIXED case only), `scripts/premises/mock_upstream.py` and `scripts/premises/https_static.py` (CI run 3: server_bind only), `scripts/test-check-premises.sh` (CI run 3: the TCP_TIMES report only)
 **Consumes:** —
 **Produces:** CI job `premises` (round 1 F5; was job `test`) runs the five premise test scripts on `ubuntu-latest` and `macos-latest`
 **Acceptance:** each command run alone from the repository root: `test "$(grep -oE 'scripts/(premises/scrub_test\.py|premises/rescrub_test\.py|test-check-premises\.sh|premises/lib_test\.sh|check-premises\.sh)' .github/workflows/ci.yml | sort -u | wc -l)" -eq 5` → exit 0 (ci.yml names each of the five scripts); `python3 -I scripts/premises/scrub_test.py` → exit 0; `python3 -I scripts/premises/rescrub_test.py` → exit 0; `sh scripts/test-check-premises.sh` → exit 0; `sh scripts/premises/lib_test.sh` → exit 0; `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → exit 0; then the CI run of the node's pull request is green on ubuntu, macOS and Windows, with the five new steps run on ubuntu and macOS. No real agent runs in CI (every script uses stubs or none); no network beyond what the scripts already use (127.0.0.1 only).
@@ -259,3 +259,61 @@ missing case and G6 removes timeouts.
   input" (`check-premises.sh:431`) to stderr, and `run_names` (`test-check-premises.sh:128`) takes
   stderr into the output it compares. Neither file is changed in this round; the CI shells (dash on
   ubuntu, bash 3.2 on macOS) do not print the warning, and CI run 3 passed it on both.
+
+## Round 3 review
+
+H2-H6 are fixed in `63af9148`; H1 is rejected with the reason below (one header line added in
+`63af9148`). Each fix has a case or a recorded check that fails on the code before it (H3, H4: a
+mutation), then passes.
+
+- H1, rejected: G2c and G2d (and the n2_procs cases) fail when two lib_test runs overlap on one
+  host: run A's non-dumpable helper that started after run B's mark makes run B fail closed. CI runs
+  one lib_test per runner. A non-dumpable process of this uid that started during the part cannot
+  be told from a leaked one, and fail-closed is the PC-10 privacy design. `lib_test.sh`'s header
+  now says: do not run two copies at once on one host.
+- H2 (fix), fixed in `63af9148`: the G1 helper (`g1h.py`) wrote the name in a TERM handler and
+  raised SystemExit; with WINCH pending at the same time, the WINCH handler also ran before the
+  process ended and wrote SIGWINCH over it. The helper now blocks TERM and WINCH and takes one with
+  `signal.sigwait`: with both pending, the lower number (TERM); it writes that name once and ends.
+  New case J2 (the helper alone: STOP, TERM, WINCH, CONT, then wait for it): before the fix
+  "FAIL: J2 … (the helper wrote SIGWINCH)", after it ok. Recorded check (scratch `h2.sh`, 8 runs of
+  that sequence on the helper text from each version): old helper `got=SIGWINCH` 8/8, new helper
+  `got=SIGTERM` 8/8.
+- H3 (fix, missing test), fixed in `63af9148`: `pgrec <case> <pid>` checks that `$T/<case>.pgid`
+  names the pid and that `ps -o pgid=` of the pid is the pid itself (a live group leader);
+  `stoprec <case>` stops the group as the traps do: a shell sources `stop.sh` with `T` = a folder
+  that holds only a copy of the record, and exits (its EXIT trap runs `stopall`). R5 and B4 now
+  stop their group this way at their ready file (J3b, J3c); sigrun takes `STOPALL` as its signal
+  for the same (new case J3a, which also checks that the own dir is kept with exit 143). When the
+  record is wrong, the case records a FAIL and sends the TERM itself, so it does not hang. The
+  assertions of R5 and B4 are unchanged (rc 143, kept dir, no partial file). Mutation (the three
+  `echo "$bp" >"$T/…pgid"` lines deleted, scratch copy): `lib tests: 3 failed` (J3a, J3b, J3c:
+  "…pgid holds '', want <pid>"); before the round the same mutation gave `ok (176)`.
+- H4 (fix, missing test), fixed in `63af9148`: G3 runs twice, with `TZ=America/New_York` (G3) and
+  `TZ=Europe/Berlin` (G3b), the same mark 1793514600 and start 1793515200. Mutation m3c
+  (`calendar.timegm` → `time.mktime` in `n2_scan`, `TZ=UTC` kept for ps): `lib tests: 1 failed`
+  ("G3b … (rc 0, stdout: )": the start read in Berlin time is an hour early, before the mark, and
+  the scan skips it: fail-open). G3 still passes under m3c (west of UTC the error goes the other
+  way).
+- H5 (fix), fixed in `63af9148`: lib_test records each G1 driver's pid in `$T/<case>-drv.dpid`, and
+  the driver records the helper's group in `$T/<case>-h.pgid` beside its own record; `stopall`
+  reads both. J6's driver is recorded the same way. G1's assertions are unchanged; each G1 case
+  removes the two records after it. Recorded check (scratch `h5.sh`): run `TMPDIR=<fresh folder> sh
+  scripts/premises/lib_test.sh &`; wait, with no count limit, until `<folder>/tmp.*/G1TERM.ready`
+  exists; `kill -s STOP`, `kill -s TERM`, `kill -s CONT` to lib_test; `wait` for it; `pgrep -af
+  <folder>`. Before the fix: `lib_test rc=143`, and three processes left: the driver
+  (`/usr/bin/sh …/G1TERM.sh`), its `sh -c 'python3 -I "$1" … & wait'` and the `g1h.py` helper.
+  After the fix, three runs: each `lib_test rc=143`, `pgrep rc=1` (no process), no stderr lines.
+- H6 (fix), fixed in `63af9148`: `stopall` sends TERM to the group and to the recorded pid itself.
+  Closed window: a trap that runs after the record is written but before the child's `setpgrp`
+  (the record names a process that leads no group yet: `kill -- -<pid>` is ESRCH) now ends that
+  process (perl before its exec), so it cannot form its group and run on. Window left: a trap that
+  runs between the fork and the `echo` of the record does not see the child. New case J6: a driver
+  sources `stop.sh`, records the pid of a helper in its own process group (no group of its own) and
+  waits; lib_test TERMs the driver, waits for it, then sends WINCH to the helper. Before the fix
+  "FAIL: J6 … (the helper got SIGWINCH)"; after it ok.
+- Verification at `63af9148` (Linux, bash 5.3 as `/bin/sh`, no dash): `lib tests: ok (183)` (176 +
+  J2, J3a (2 lines), J3b, J3c, J6, G3b); `scrub tests: ok (156)`; `rescrub tests: ok (172)`;
+  `check-premises: ok (P1 … PC19)` with `N2_FORBIDDEN_NAMES=zzcinameq`; the Acceptance grep →
+  exit 0. `test-check-premises.sh` exits 1 on this host with one failure, H1 (the bash 5.3 null-byte
+  warning, as in round 2; node TF-3).
