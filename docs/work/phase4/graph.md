@@ -92,7 +92,8 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | RS-6 | Cache markers at forward time on the Anthropic upstream body of a Responses client | RS-5 | TODO | judgment | — |
 | RS-7 | Window rewrite for a Responses client, Anthropic and Responses upstreams | RS-5 | TODO | judgment | — |
 | RS-8 | `GET /openai/v1/models` in the PC7 shape, other PC1 paths, chat route stays 404 | RS-3 | TODO | implementation | — |
-| BS-1 | Base-spec notes: §8.1 (the registry is the capability list) and §7.6 v2 (the Responses client route is built) | CF-4, RS-5, RS-6, RS-7, RS-8 | TODO | mechanical | — |
+| RS-9 | Codex namespace tools: flatten into function tools for Anthropic and chat upstreams, map their calls back | RS-1, RS-2, PC-5 | TODO | judgment | — |
+| BS-1 | Base-spec notes: §8.1 (the registry is the capability list) and §7.6 v2 (the Responses client route is built) | CF-4, RS-5, RS-6, RS-7, RS-8, RS-9 | TODO | mechanical | — |
 | CC-0 | Take `main` (with phase 3) into `phase-4` | CF-1, CF-2, CF-3, CF-4, PC-1, PC-2, PC-3, PC-4, PC-5, PC-6, PC-7, RS-1, RS-2, RS-3, RS-4, RS-5, RS-6, RS-7, RS-8, BS-1 | BLOCKED(operator: phase 3 merged into main) | implementation | — |
 | CC-1 | Client-branch inventory at the P4-6 base commit, written under Observed (K§6.9) | CC-0 | TODO | judgment | — |
 | CC-2 | `scripts/check-test-edits.sh` and its `syn` helper: the per-node test-edit check (K-C7, amended) | CC-0 | TODO | implementation | — |
@@ -136,3 +137,4 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-25 | PC-9 DONE: gate 2 rounds + nit round; evidence paths must be plain repo paths (no symlinked dir), ver_test copies cited evidence; G5 case-variant limit recorded (nodes/PC-9.md); PR #136 merged 256e5cae. |
 | 2026-11-25 | PC-11 added (author's call): Codex captures keep platformOs, the login shell, macOS writable roots and namespace tool descriptions (PC-3 review G3); scrub and re-scrub in place before PC-7. |
 | 2026-11-25 | PC-3 DONE: gate 3 rounds; recaptured on the PC-10 harness; apply_patch via a minimal catalog (run p) only; item-id/platformOs/shell scrub gaps to PC-11; PR #137 merged 0d665799. |
+| 2026-11-25 | RS-9 added (author's call): RS-1 drops Codex namespace tools (multi_agent_v1 subagent tools) on Anthropic/chat upstreams; RS-9 flattens them and maps calls back from PC-5's captures. Remote-compaction items noted for P4-9. |
