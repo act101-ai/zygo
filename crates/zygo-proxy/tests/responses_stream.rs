@@ -391,6 +391,23 @@ fn stream_tool_args_over_hold_max_fails() {
 }
 
 #[test]
+fn stream_one_chunk_of_small_blocks_over_hold_max_completes() {
+    // The bound counts held bytes, not the size of one push: the lines already read are not held.
+    let text = "y".repeat(64 << 10);
+    let n = HOLD_MAX / text.len() + 2;
+    let mut ev = vec![message_start()];
+    for i in 0..n as u64 {
+        ev.extend(text_block(i, &[&text]));
+    }
+    ev.extend(end("end_turn"));
+    let mut e = enc();
+    let evs = run(&mut e, &ev);
+    assert_eq!(evs.last().unwrap().event, "response.completed");
+    assert_eq!(items_done(&evs).len(), n);
+    assert_eq!(e.held(), 0);
+}
+
+#[test]
 fn stream_fail_and_finish() {
     let mut e = enc();
     assert!(e.fail("upstream_error", "gone").is_empty());

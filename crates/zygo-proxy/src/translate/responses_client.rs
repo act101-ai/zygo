@@ -1,14 +1,17 @@
-//! Responses client → Messages (K§6.4.3, K§6.7).
+//! Responses client → Messages, and Messages SSE (and JSON) → Responses SSE (and JSON) (K§6.4.3, K§6.7).
 
 use std::collections::{BTreeMap, HashSet};
 
 use serde_json::{json, Map, Value};
 use zygo_config::Facts;
+use zygo_core::ids::ulid;
 
-use super::reasoning::decode_thinking;
+use super::reasoning::{decode_thinking, encode_thinking};
+use super::sse::SseEvent;
 use super::{input_of, s, Target, DOC_OMITTED};
 use crate::errors::ZygoError;
 use crate::pipeline::Adjustment;
+use crate::tee::HOLD_MAX;
 
 /// Top-level fields this translator maps (K§6.4.3).
 pub const MAPPED: [&str; 12] = [
@@ -561,4 +564,592 @@ fn tool_choice(req: &Value, tools: &[Value]) -> Result<Option<Value>, ZygoError>
         }
     }
     Ok(tc)
+}
+
+// ---- Messages → Responses (K§6.4.3 stream obligations 1-9) ----
+
+/// What the client's request says about its tools that the call items need (K§6.4.3 stream obligation 2).
+#[derive(Debug, Clone, Default)]
+pub struct Calls {
+    /// The names of the client's `custom` tools: a call of one returns as a `custom_tool_call` item.
+    custom: HashSet<String>,
+}
+
+impl Calls {
+    /// The `name` of each `tools[]` entry of type `custom` with a string name; anything else is ignored.
+    pub fn of(req: &Value) -> Calls {
+        let tools = req.get("tools").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
+        let custom = tools.iter().filter(|t| s(t, "type") == Some("custom")).filter_map(|t| s(t, "name"));
+        Calls { custom: custom.map(str::to_owned).collect() }
+    }
+
+    fn is_custom(&self, name: &str) -> bool {
+        self.custom.contains(name)
+    }
+
+    /// The only builder of a call item (RS-9 extends it): a `tool_use` with id `call_id`, name `name` and arguments
+    /// `args` (JSON text) as a `function_call` item, or a `custom_tool_call` item for a client `custom` tool. `None`
+    /// gives the `output_item.added` form.
+    fn item(&self, ulid: &str, oi: usize, call_id: &str, name: &str, args: Option<&str>) -> Value {
+        let status = if args.is_some() { "completed" } else { "in_progress" };
+        if self.is_custom(name) {
+            let input = args.map_or_else(String::new, custom_input);
+            json!({"type":"custom_tool_call","id":item_id("ctc", ulid, oi),"call_id":call_id,"name":name,
+                "input":input,"status":status})
+        } else {
+            json!({"type":"function_call","id":item_id("fc", ulid, oi),"call_id":call_id,"name":name,
+                "arguments":args.unwrap_or(""),"status":status})
+        }
+    }
+}
+
+/// A custom tool call's `input`: the string field `input` of the arguments, else the arguments as received.
+fn custom_input(args: &str) -> String {
+    serde_json::from_str::<Value>(args)
+        .ok()
+        .and_then(|v| s(&v, "input").map(str::to_owned))
+        .unwrap_or_else(|| args.to_owned())
+}
+
+fn item_id(p: &str, ulid: &str, oi: usize) -> String {
+    format!("{p}_{ulid}_{oi}")
+}
+
+/// A `message` item; `None` gives the `output_item.added` form.
+fn text_item(id: &str, text: Option<&str>) -> Value {
+    match text {
+        Some(t) => json!({"type":"message","id":id,"role":"assistant","status":"completed",
+            "content":[{"type":"output_text","text":t,"annotations":[]}]}),
+        None => json!({"type":"message","id":id,"role":"assistant","status":"in_progress","content":[]}),
+    }
+}
+
+/// A `reasoning` item that carries `block` (a `thinking` or `redacted_thinking` block) zygo-marked for `t`, with
+/// `summary` as its summary text (none when empty); `None` gives the `output_item.added` form.
+fn reasoning_item(id: &str, summary: &str, block: Option<&Value>, t: &Target) -> Value {
+    let Some(block) = block else { return json!({"type":"reasoning","id":id,"summary":[]}) };
+    let summary = if summary.is_empty() { json!([]) } else { json!([{"type":"summary_text","text":summary}]) };
+    json!({"type":"reasoning","id":id,"summary":summary,"encrypted_content":encode_thinking(t, block)})
+}
+
+fn thinking_block(thinking: &str, signature: &str) -> Value {
+    json!({"type":"thinking","thinking":thinking,"signature":signature})
+}
+
+fn redacted_block(data: &str) -> Value {
+    json!({"type":"redacted_thinking","data":data})
+}
+
+/// Messages usage: input, cache read, cache write, output (absent = 0).
+type Usage = [u64; 4];
+
+fn usage_fields(u: Option<&Value>) -> Usage {
+    let n = |k: &str| u.and_then(|u| u.get(k)).and_then(Value::as_u64).unwrap_or(0);
+    [n("input_tokens"), n("cache_read_input_tokens"), n("cache_creation_input_tokens"), n("output_tokens")]
+}
+
+/// Responses usage (stream obligation 5).
+fn response_usage(u: Usage) -> Value {
+    let input = u[0] + u[1] + u[2];
+    json!({"input_tokens":input,"input_tokens_details":{"cached_tokens":u[1]},"output_tokens":u[3],
+        "total_tokens":input + u[3]})
+}
+
+/// The Response object with no output.
+fn response_object(ulid: &str, model: &str, status: &str) -> Value {
+    json!({"id":format!("resp_{ulid}"),"object":"response","model":model,"status":status,"output":[]})
+}
+
+/// The terminal form of R for `stop_reason` (stream obligation 5): `max_tokens` → incomplete, else completed.
+fn finished(mut r: Value, stop_reason: Option<&str>, u: Usage) -> Value {
+    if stop_reason == Some("max_tokens") {
+        r["status"] = json!("incomplete");
+        r["incomplete_details"] = json!({"reason":"max_output_tokens"});
+    } else {
+        r["status"] = json!("completed");
+    }
+    r["usage"] = response_usage(u);
+    r
+}
+
+/// A server tool block, dropped with `server_tool_dropped` (stream obligation 3).
+fn is_server_tool(ty: &str) -> bool {
+    ty == "server_tool_use" || ty.ends_with("_tool_result")
+}
+
+const SERVER_TOOL_DROPPED: &str = "server_tool_dropped";
+
+/// The Messages event types the encoder reads; any other (`ping` too) is dropped (stream obligation 7).
+const EVENTS: [&str; 7] = [
+    "message_start",
+    "content_block_start",
+    "content_block_delta",
+    "content_block_stop",
+    "message_delta",
+    "message_stop",
+    "error",
+];
+
+/// A Messages body as one Response object (stream obligation 8), with its adjustment codes; the items are those of
+/// the stream's `output_item.done` events.
+pub fn response(msg: &Value, model: &str, t: &Target, calls: &Calls) -> (Value, Vec<Adjustment>) {
+    let ulid = ulid();
+    let mut output = Vec::new();
+    let mut dropped = false;
+    for b in msg.get("content").and_then(Value::as_array).into_iter().flatten() {
+        let oi = output.len();
+        let str_of = |k: &str| s(b, k).unwrap_or("");
+        match str_of("type") {
+            "text" => output.push(text_item(&item_id("msg", &ulid, oi), Some(str_of("text")))),
+            "thinking" => {
+                let block = thinking_block(str_of("thinking"), str_of("signature"));
+                output.push(reasoning_item(&item_id("rs", &ulid, oi), str_of("thinking"), Some(&block), t));
+            }
+            "redacted_thinking" => {
+                let block = redacted_block(str_of("data"));
+                output.push(reasoning_item(&item_id("rs", &ulid, oi), "", Some(&block), t));
+            }
+            "tool_use" => {
+                let args = b.get("input").map_or_else(|| "{}".to_owned(), Value::to_string);
+                output.push(calls.item(&ulid, oi, str_of("id"), str_of("name"), Some(&args)));
+            }
+            ty => dropped |= is_server_tool(ty),
+        }
+    }
+    let u = usage_fields(msg.get("usage"));
+    let mut r = finished(response_object(&ulid, model, "completed"), s(msg, "stop_reason"), u);
+    r["output"] = Value::Array(output);
+    let codes = if dropped { vec![Adjustment(SERVER_TOOL_DROPPED.into())] } else { vec![] };
+    (r, codes)
+}
+
+enum Kind {
+    Text,
+    Thinking,
+    Redacted,
+    /// A tool call; `delta`: a non-empty `input_json_delta` came (until then the block's `text` holds the start's
+    /// `input` as compact JSON).
+    Call { custom: bool, call_id: String, name: String, delta: bool },
+}
+
+/// The open content block: its Messages `index`, its item's `output_index` and id, and its held text, thinking,
+/// redacted data or arguments (`text`) and signature (`sig`).
+struct Block {
+    index: u64,
+    oi: usize,
+    iid: String,
+    kind: Kind,
+    text: String,
+    sig: String,
+    /// A thinking block's summary part was opened.
+    part: bool,
+}
+
+impl Block {
+    fn held(&self) -> usize {
+        self.text.len() + self.sig.len()
+    }
+}
+
+/// Messages SSE → Responses SSE for one response (K§6.4.3 stream obligations 1-7, 9).
+///
+/// The event sequence it emits, kept in this one place (PC-12 serves exactly this from the mock). Every event's
+/// `data` has `type` = the event name and `sequence_number` rising by one from 0. R = `{id: "resp_<ULID>", object:
+/// "response", model: <client model>, status, output: []}`; `oi` = `output_index`, counted over emitted items from 0;
+/// `iid` = `item_id`, `<msg|rs|fc|ctc>_<ULID>_<oi>`.
+///
+/// 1. Start, at the first event that is not `ping` or of unknown type: `response.created {response: R}`,
+///    `response.in_progress {response: R}`, R `status` `in_progress`.
+/// 2. Per content block, in order:
+///    - `text`: `response.output_item.added {oi, item}`; `response.content_part.added {iid, oi, content_index: 0,
+///      part}`; per non-empty `text_delta` `response.output_text.delta {iid, oi, content_index: 0, delta}`; at stop
+///      `response.output_text.done {iid, oi, content_index: 0, text}`, `response.content_part.done {iid, oi,
+///      content_index: 0, part}`, `response.output_item.done {oi, item}`.
+///    - `thinking`: `response.output_item.added`; at the first non-empty `thinking_delta`
+///      `response.reasoning_summary_part.added {iid, oi, summary_index: 0, part}`, then per non-empty delta
+///      `response.reasoning_summary_text.delta {iid, oi, summary_index: 0, delta}`; at stop, if a part was opened,
+///      `response.reasoning_summary_text.done {…, text}`, `response.reasoning_summary_part.done {…, part}`; then
+///      `response.output_item.done`.
+///    - `redacted_thinking`: `response.output_item.added`, `response.output_item.done`.
+///    - `tool_use`: `response.output_item.added`; per non-empty `input_json_delta`
+///      `response.function_call_arguments.delta {iid, oi, delta}`; at stop `response.function_call_arguments.done
+///      {iid, oi, arguments}`, `response.output_item.done`.
+///    - `tool_use` of a client `custom` tool: `response.output_item.added`; at stop
+///      `response.custom_tool_call_input.delta {iid, oi, delta: input}`, `response.custom_tool_call_input.done
+///      {iid, oi, input}`, `response.output_item.done`.
+///    - `server_tool_use`, `*_tool_result`: no event, adjustment `server_tool_dropped` (obligation 3). Another block
+///      type: no event.
+/// 3. Exactly one terminal event. At `message_stop`: `response.completed {response: R, status completed, usage}`, or
+///    for `stop_reason` `max_tokens` `response.incomplete {response: R, status incomplete, incomplete_details:
+///    {reason: max_output_tokens}, usage}`. On an upstream `error` event, unparsable `data`, held bytes over
+///    `HOLD_MAX`, `fail` or an early end: `response.failed {response: R, status failed, error: {code, message}}`.
+///    R's `output` stays `[]`: each item reached the client in its `response.output_item.done` (obligation 5).
+pub struct Encoder {
+    model: String,
+    t: Target,
+    calls: Calls,
+    ulid: String,
+    seq: u64,
+    started: bool,
+    ended: bool,
+    /// The bytes after the last newline, and where the next newline search starts.
+    buf: Vec<u8>,
+    pos: usize,
+    /// The current event's `data` lines, joined with `\n`.
+    data: Option<Vec<u8>>,
+    open: Option<Block>,
+    next_oi: usize,
+    usage: Usage,
+    stop_reason: Option<String>,
+    dropped: bool,
+}
+
+impl Encoder {
+    pub fn new(model: &str, t: &Target, calls: Calls) -> Encoder {
+        Encoder {
+            model: model.to_owned(),
+            t: t.clone(),
+            calls,
+            ulid: ulid(),
+            seq: 0,
+            started: false,
+            ended: false,
+            buf: Vec::new(),
+            pos: 0,
+            data: None,
+            open: None,
+            next_oi: 0,
+            usage: [0; 4],
+            stop_reason: None,
+            dropped: false,
+        }
+    }
+
+    /// Messages SSE bytes in, Responses events out. Each byte is scanned once; the held bytes stay within `HOLD_MAX`
+    /// (obligation 9).
+    pub fn push(&mut self, chunk: &[u8]) -> Vec<SseEvent> {
+        let mut out = Vec::new();
+        if self.ended {
+            return out;
+        }
+        self.buf.extend_from_slice(chunk);
+        let mut start = 0;
+        while let Some(i) = self.buf[self.pos..].iter().position(|&b| b == b'\n') {
+            let end = self.pos + i;
+            let line = self.buf[start..end].to_vec();
+            start = end + 1;
+            self.pos = start;
+            self.line(&line, &mut out);
+            if self.ended {
+                self.free();
+                return out;
+            }
+        }
+        self.buf.drain(..start);
+        // No newline in the rest: the next search starts after it.
+        self.pos = self.buf.len();
+        self.bound(self.buf.len(), &mut out);
+        out
+    }
+
+    /// One `response.failed` when the stream started and has not ended; else nothing (before the start the caller
+    /// owns the HTTP status, K§6.4.4).
+    pub fn fail(&mut self, code: &str, message: &str) -> Vec<SseEvent> {
+        let mut out = Vec::new();
+        if self.started && !self.ended {
+            self.failed(code, message, &mut out);
+        }
+        out
+    }
+
+    /// The held tail as a last line and event; with no terminal event then, `response.failed` `upstream stream ended
+    /// early` (after a start, when none came).
+    pub fn finish(&mut self) -> Vec<SseEvent> {
+        let mut out = Vec::new();
+        if self.ended {
+            return out;
+        }
+        let tail = std::mem::take(&mut self.buf);
+        self.pos = 0;
+        if !tail.is_empty() {
+            self.line(&tail, &mut out);
+        }
+        if let Some(d) = self.data.take().filter(|_| !self.ended) {
+            self.dispatch(&d, &mut out);
+        }
+        if !self.ended {
+            self.failed("api_error", "upstream stream ended early", &mut out);
+        }
+        out
+    }
+
+    /// A terminal event was emitted.
+    pub fn ended(&self) -> bool {
+        self.ended
+    }
+
+    /// The held bytes: the partial line, the current event's `data` and the open item's text, thinking or arguments.
+    pub fn held(&self) -> usize {
+        self.buf.len() + self.data.as_ref().map_or(0, Vec::len) + self.open.as_ref().map_or(0, Block::held)
+    }
+
+    /// `server_tool_dropped`, once, when a server tool block was dropped (obligation 3).
+    pub fn adjustments(&self) -> Vec<Adjustment> {
+        if self.dropped {
+            vec![Adjustment(SERVER_TOOL_DROPPED.into())]
+        } else {
+            vec![]
+        }
+    }
+
+    /// One line, `\r` stripped: a `data` line is held, a blank line dispatches the held event, others are ignored.
+    fn line(&mut self, line: &[u8], out: &mut Vec<SseEvent>) {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() {
+            if let Some(d) = self.data.take() {
+                self.dispatch(&d, out);
+            }
+        } else if let Some(d) = line.strip_prefix(b"data:") {
+            let d = d.strip_prefix(b" ").unwrap_or(d);
+            match &mut self.data {
+                Some(held) => {
+                    held.push(b'\n');
+                    held.extend_from_slice(d);
+                }
+                None => self.data = Some(d.to_vec()),
+            }
+        }
+    }
+
+    /// Over `HOLD_MAX` with `partial` bytes of a line held: everything held is freed, then `response.failed`
+    /// (obligation 9). Within a push, the lines of the chunk already read are not held.
+    fn bound(&mut self, partial: usize, out: &mut Vec<SseEvent>) {
+        let held = partial + self.data.as_ref().map_or(0, Vec::len) + self.open.as_ref().map_or(0, Block::held);
+        if self.ended || held <= HOLD_MAX {
+            return;
+        }
+        let m = match &self.open {
+            Some(b) if b.held() > 0 && matches!(b.kind, Kind::Call { .. }) => "upstream tool call too long",
+            Some(b) if b.held() > 0 => "upstream content block too long",
+            _ => "upstream stream line too long",
+        };
+        self.failed("api_error", m, out);
+    }
+
+    fn free(&mut self) {
+        self.buf = Vec::new();
+        self.pos = 0;
+        self.data = None;
+        self.open = None;
+    }
+
+    fn emit(&mut self, name: &str, mut data: Value, out: &mut Vec<SseEvent>) {
+        data["type"] = json!(name);
+        data["sequence_number"] = json!(self.seq);
+        self.seq += 1;
+        out.push(SseEvent { event: name.to_owned(), data });
+    }
+
+    fn r(&self, status: &str) -> Value {
+        response_object(&self.ulid, &self.model, status)
+    }
+
+    fn start(&mut self, out: &mut Vec<SseEvent>) {
+        self.started = true;
+        let r = self.r("in_progress");
+        self.emit("response.created", json!({"response":r}), out);
+        self.emit("response.in_progress", json!({"response":r}), out);
+    }
+
+    /// Frees all held bytes, starts the stream if needed, emits `response.failed` and ends it (obligation 6).
+    fn failed(&mut self, code: &str, message: &str, out: &mut Vec<SseEvent>) {
+        self.free();
+        if !self.started {
+            self.start(out);
+        }
+        let mut r = self.r("failed");
+        r["error"] = json!({"code":code,"message":message});
+        self.emit("response.failed", json!({"response":r}), out);
+        self.ended = true;
+    }
+
+    /// One whole event's `data`, by its `type` (obligations 2-7).
+    fn dispatch(&mut self, d: &[u8], out: &mut Vec<SseEvent>) {
+        let Ok(v) = serde_json::from_slice::<Value>(d) else {
+            return self.failed("api_error", "upstream event is not JSON", out);
+        };
+        let ty = s(&v, "type").unwrap_or("");
+        if !EVENTS.contains(&ty) {
+            return;
+        }
+        if !self.started {
+            self.start(out);
+        }
+        let index = v.get("index").and_then(Value::as_u64);
+        match ty {
+            "message_start" => self.usage = usage_fields(v.get("message").and_then(|m| m.get("usage"))),
+            "content_block_start" => {
+                self.close(out);
+                if let (Some(i), Some(b)) = (index, v.get("content_block")) {
+                    self.open_block(i, b, out);
+                }
+            }
+            "content_block_delta" => {
+                if let (Some(i), Some(d)) = (index, v.get("delta")) {
+                    self.delta(i, d, out);
+                }
+            }
+            "content_block_stop" => {
+                if self.open.as_ref().is_some_and(|b| Some(b.index) == index) {
+                    self.close(out);
+                }
+            }
+            "message_delta" => {
+                if let Some(r) = v.get("delta").and_then(|d| s(d, "stop_reason")) {
+                    self.stop_reason = Some(r.to_owned());
+                }
+                for (have, new) in self.usage.iter_mut().zip(usage_fields(v.get("usage"))) {
+                    *have = (*have).max(new);
+                }
+            }
+            "message_stop" => {
+                self.close(out);
+                let r = finished(self.r("in_progress"), self.stop_reason.as_deref(), self.usage);
+                let name = if r["status"] == "incomplete" { "response.incomplete" } else { "response.completed" };
+                self.emit(name, json!({"response":r}), out);
+                self.ended = true;
+            }
+            _ => {
+                let e = v.get("error");
+                let code = e.and_then(|e| s(e, "type")).filter(|c| is_code(c)).unwrap_or("api_error");
+                let message = e.and_then(|e| s(e, "message")).unwrap_or("");
+                self.failed(code, message, out);
+            }
+        }
+    }
+
+    fn open_block(&mut self, index: u64, cb: &Value, out: &mut Vec<SseEvent>) {
+        let str_of = |k: &str| s(cb, k).unwrap_or("");
+        let oi = self.next_oi;
+        let rs = || reasoning_item(&item_id("rs", &self.ulid, oi), "", None, &self.t);
+        let (kind, text, item) = match str_of("type") {
+            "text" => (Kind::Text, String::new(), text_item(&item_id("msg", &self.ulid, oi), None)),
+            "thinking" => (Kind::Thinking, String::new(), rs()),
+            "redacted_thinking" => (Kind::Redacted, str_of("data").to_owned(), rs()),
+            "tool_use" => {
+                let (call_id, name) = (str_of("id").to_owned(), str_of("name").to_owned());
+                let item = self.calls.item(&self.ulid, oi, &call_id, &name, None);
+                let args = cb.get("input").map_or_else(|| "{}".to_owned(), Value::to_string);
+                (Kind::Call { custom: self.calls.is_custom(&name), call_id, name, delta: false }, args, item)
+            }
+            ty => {
+                self.dropped |= is_server_tool(ty);
+                return;
+            }
+        };
+        self.next_oi += 1;
+        let iid = s(&item, "id").unwrap_or("").to_owned();
+        let is_text = matches!(kind, Kind::Text);
+        self.open = Some(Block { index, oi, iid: iid.clone(), kind, text, sig: String::new(), part: false });
+        self.emit("response.output_item.added", json!({"output_index":oi,"item":item}), out);
+        if is_text {
+            let part = json!({"type":"output_text","text":"","annotations":[]});
+            let ev = json!({"item_id":iid,"output_index":oi,"content_index":0,"part":part});
+            self.emit("response.content_part.added", ev, out);
+        }
+        self.bound(0, out);
+    }
+
+    /// A delta of the open block; another index, or a delta type that is not the block's, is dropped.
+    fn delta(&mut self, index: u64, d: &Value, out: &mut Vec<SseEvent>) {
+        let Some(mut b) = self.open.take() else { return };
+        if b.index == index {
+            let (iid, oi) = (b.iid.clone(), b.oi);
+            match (&mut b.kind, s(d, "type")) {
+                (Kind::Text, Some("text_delta")) => {
+                    if let Some(x) = s(d, "text").filter(|x| !x.is_empty()) {
+                        b.text.push_str(x);
+                        let ev = json!({"item_id":iid,"output_index":oi,"content_index":0,"delta":x});
+                        self.emit("response.output_text.delta", ev, out);
+                    }
+                }
+                (Kind::Thinking, Some("thinking_delta")) => {
+                    if let Some(x) = s(d, "thinking").filter(|x| !x.is_empty()) {
+                        if !b.part {
+                            b.part = true;
+                            let part = json!({"type":"summary_text","text":""});
+                            let ev = json!({"item_id":iid,"output_index":oi,"summary_index":0,"part":part});
+                            self.emit("response.reasoning_summary_part.added", ev, out);
+                        }
+                        b.text.push_str(x);
+                        let ev = json!({"item_id":iid,"output_index":oi,"summary_index":0,"delta":x});
+                        self.emit("response.reasoning_summary_text.delta", ev, out);
+                    }
+                }
+                (Kind::Thinking, Some("signature_delta")) => b.sig.push_str(s(d, "signature").unwrap_or("")),
+                (Kind::Call { custom, delta, .. }, Some("input_json_delta")) => {
+                    if let Some(x) = s(d, "partial_json").filter(|x| !x.is_empty()) {
+                        if !*delta {
+                            *delta = true;
+                            b.text.clear();
+                        }
+                        b.text.push_str(x);
+                        if !*custom {
+                            let ev = json!({"item_id":iid,"output_index":oi,"delta":x});
+                            self.emit("response.function_call_arguments.delta", ev, out);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.open = Some(b);
+        self.bound(0, out);
+    }
+
+    /// The open block's done events, if one is open.
+    fn close(&mut self, out: &mut Vec<SseEvent>) {
+        let Some(b) = self.open.take() else { return };
+        let (iid, oi) = (b.iid.as_str(), b.oi);
+        let item = match &b.kind {
+            Kind::Text => {
+                let ev = json!({"item_id":iid,"output_index":oi,"content_index":0,"text":b.text});
+                self.emit("response.output_text.done", ev, out);
+                let part = json!({"type":"output_text","text":b.text,"annotations":[]});
+                let ev = json!({"item_id":iid,"output_index":oi,"content_index":0,"part":part});
+                self.emit("response.content_part.done", ev, out);
+                text_item(iid, Some(&b.text))
+            }
+            Kind::Thinking => {
+                if b.part {
+                    let ev = json!({"item_id":iid,"output_index":oi,"summary_index":0,"text":b.text});
+                    self.emit("response.reasoning_summary_text.done", ev, out);
+                    let part = json!({"type":"summary_text","text":b.text});
+                    let ev = json!({"item_id":iid,"output_index":oi,"summary_index":0,"part":part});
+                    self.emit("response.reasoning_summary_part.done", ev, out);
+                }
+                reasoning_item(iid, &b.text, Some(&thinking_block(&b.text, &b.sig)), &self.t)
+            }
+            Kind::Redacted => reasoning_item(iid, "", Some(&redacted_block(&b.text)), &self.t),
+            Kind::Call { custom, call_id, name, .. } => {
+                if *custom {
+                    let input = custom_input(&b.text);
+                    let ev = json!({"item_id":iid,"output_index":oi,"delta":input});
+                    self.emit("response.custom_tool_call_input.delta", ev, out);
+                    let ev = json!({"item_id":iid,"output_index":oi,"input":input});
+                    self.emit("response.custom_tool_call_input.done", ev, out);
+                } else {
+                    let ev = json!({"item_id":iid,"output_index":oi,"arguments":b.text});
+                    self.emit("response.function_call_arguments.done", ev, out);
+                }
+                self.calls.item(&self.ulid, oi, call_id, name, Some(&b.text))
+            }
+        };
+        self.emit("response.output_item.done", json!({"output_index":oi,"item":item}), out);
+    }
+}
+
+/// An upstream error type usable as a Responses error `code`: 1-32 characters of `[a-z0-9_]`.
+fn is_code(c: &str) -> bool {
+    (1..=32).contains(&c.len()) && c.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
