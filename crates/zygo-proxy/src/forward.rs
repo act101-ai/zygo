@@ -338,6 +338,10 @@ async fn run(
     // The Responses field lists before any stage (K§11 item 12).
     if route == ModelRoute::Responses {
         responses_client::check_fields(&body)?;
+        // Before candidate selection: one answer whichever candidate serves (K§6.4.3 Responses → Responses).
+        if body.get("include").is_some_and(|i| !i.is_null() && !i.is_array()) {
+            return Err(ZygoError::bad_request("include must be an array"));
+        }
     }
     // The client's tools as received, for the call items of the answer (K§6.4.3 stream obligation 2).
     let calls = (route == ModelRoute::Responses).then(|| responses_client::Calls::of(&body));
@@ -510,7 +514,7 @@ async fn run(
     // A translated body reaches the tee as Messages events or a Messages body: the mapper output, an Anthropic
     // upstream, or `translate_response` (K§6.4.2 C3).
     let form = if translated { Dialect::Anthropic } else { c.dialect };
-    let key =c.key.as_ref().map(|k| k.expose());
+    let key = c.key.as_ref().map(|k| k.expose());
     let estimate = string_bytes(&ctx.body).div_ceil(BYTES_PER_TOKEN);
     let mut headers = response_headers(resp.headers(), translated, s.team_label.is_some());
     let mut adjustments = ctx.adjustments;
@@ -936,7 +940,12 @@ const ENCRYPTED_REASONING: &str = "reasoning.encrypted_content";
 
 /// A Responses body toward an openai candidate (K§6.4.3 Responses → Responses): store := false, include gains
 /// reasoning.encrypted_content, then model_body. body is left as it was.
-fn responses_same(body: &mut Value, raw: &Bytes, changed: bool, c: &Candidate) -> Result<(Bytes, Vec<Adjustment>, NullMap), ZygoError> {
+fn responses_same(
+    body: &mut Value,
+    raw: &Bytes,
+    changed: bool,
+    c: &Candidate,
+) -> Result<(Bytes, Vec<Adjustment>, NullMap), ZygoError> {
     let store_ok = body.get("store") == Some(&Value::Bool(false));
     let include = match body.get("include") {
         None | Some(Value::Null) => Some(json!([ENCRYPTED_REASONING])),
@@ -1450,6 +1459,10 @@ impl Drop for Flow {
         // The encoder's codes (K§6.4.3 obligations 2, 3) reach the row.
         if let Some(Encode::Stream(s)) = &self.encode {
             self.rctx.adjustments.extend(s.enc.adjustments());
+        }
+        // A 2xx Responses stream with no usage read: the zero counts are marked (K§6.4.2 C3).
+        if self.rctx.status.is_success() && self.tee.usage_unread() {
+            self.rctx.adjustments.push(Adjustment("usage_unread".into()));
         }
         // Codes a line stage added (§10.2.3) reach the row, not the headers.
         self.pending.row.adjustments = names(&self.rctx.adjustments);

@@ -67,6 +67,8 @@ pub struct Tee {
     usage: Usage,
     /// `None` until a usage object carries a part of the split.
     split: Option<CacheSplit>,
+    /// A streamed line gave a usage object.
+    read_any: bool,
 }
 
 /// The usage object of one SSE line, and whether it starts the numbers (`message_start` `message.usage`) or
@@ -85,15 +87,18 @@ fn line_usage(line: &[u8]) -> Option<(bool, Value)> {
     u.map(|u| (start, u.take()))
 }
 
-/// The `response.usage` object of one SSE `data:` line whose `type` is `response.completed` or `response.incomplete`
-/// (K§6.4.2 C3); `None` for every other line and when `usage` is not an object.
+/// The `response.usage` object of one SSE `data:` line whose `type` is `response.completed`, `response.incomplete` or
+/// `response.failed` (K§6.4.2 C3); `None` for every other line and when `usage` is not an object.
 pub fn responses_usage(line: &[u8]) -> Option<Value> {
     let d = line.strip_prefix(b"data:")?;
     if !d.windows(5).any(|w| w == b"usage") {
         return None;
     }
     let mut v = serde_json::from_slice::<Value>(d.trim_ascii()).ok()?;
-    if !matches!(v.get("type").and_then(Value::as_str), Some("response.completed" | "response.incomplete")) {
+    if !matches!(
+        v.get("type").and_then(Value::as_str),
+        Some("response.completed" | "response.incomplete" | "response.failed")
+    ) {
         return None;
     }
     let u = v.get_mut("response")?.get_mut("usage")?.take();
@@ -182,6 +187,7 @@ impl Tee {
             keep: false,
             usage: Usage::default(),
             split: None,
+            read_any: false,
         }
     }
 
@@ -266,6 +272,12 @@ impl Tee {
         self.usage
     }
 
+    /// A stream read in the Responses form that gave no usage object, e.g. a terminal line over HOLD_MAX
+    /// (K§6.4.2 C3).
+    pub fn usage_unread(&self) -> bool {
+        self.streamed && self.lines == Dialect::Openai && !self.read_any
+    }
+
     /// The 5-minute and 1-hour parts of the cache writes, when the upstream reports them (AU33).
     pub fn cache_split(&self) -> Option<CacheSplit> {
         self.split
@@ -314,6 +326,7 @@ impl Tee {
 
     fn read(&mut self, line: &[u8]) {
         if let Some((start, u)) = usage_line(self.lines, line) {
+            self.read_any = true;
             self.usage.apply(start, &u);
             CacheSplit::read(&mut self.split, &u, !start);
         }

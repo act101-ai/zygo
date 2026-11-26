@@ -9,6 +9,7 @@ mod support;
 use http::HeaderMap;
 use serde_json::{json, Value};
 use support::{codex_request, Harness, MODEL, PROVIDER, UPSTREAM_MODEL};
+use zygo_proxy::tee::HOLD_MAX;
 use zygo_config::Dialect;
 use zygo_core::Agent;
 use zygo_usage::RequestRow;
@@ -193,6 +194,7 @@ fn stream_passes_bytes_and_records_completed_usage() {
     assert_eq!(rows.len(), 1);
     assert_eq!((rows[0].status, rows[0].provider.as_str(), rows[0].route.as_str()), (200, PROVIDER, "/openai/v1/responses"));
     assert_eq!(counts(&rows[0]), (100, 20, 0, 30));
+    assert!(!rows[0].adjustments.iter().any(|a| a == "usage_unread"), "{:?}", rows[0].adjustments);
 }
 
 /// K§6.4.2 C3: a `response.incomplete` ending carries the counts.
@@ -256,6 +258,7 @@ fn responses_usage_reads_terminal_lines_only() {
     let line = |v: Value| format!("data: {v}").into_bytes();
     assert_eq!(responses_usage(&line(json!({"type":"response.completed","response":{"usage":usage_up()}}))), Some(usage_up()));
     assert_eq!(responses_usage(&line(json!({"type":"response.incomplete","response":{"usage":usage_up()}}))), Some(usage_up()));
+    assert_eq!(responses_usage(&line(json!({"type":"response.failed","response":{"usage":usage_up()}}))), Some(usage_up()));
     assert_eq!(responses_usage(&line(json!({"type":"response.created","response":{"usage":null}}))), None);
     assert_eq!(responses_usage(&line(json!({"type":"response.completed","response":{"usage":null}}))), None);
     assert_eq!(responses_usage(&line(json!({"type":"message_delta","usage":{"output_tokens":3}}))), None);
@@ -273,4 +276,130 @@ fn non_2xx_passes_status_and_body() {
     assert_eq!(s.as_u16(), 400);
     assert_eq!(&b[..], &reply[..]);
     assert_eq!(h.usage_rows()[0].status, 400);
+}
+
+/// A second provider of `MODEL` on the same mock, speaking `anthropic` only.
+const SECOND: &str = "p-rs-a";
+
+fn second_provider() -> String {
+    format!(
+        "[[model.provider]]\nname = \"{SECOND}\"\nbase_url = \"{{UPSTREAM}}\"\ndialects = [\"anthropic\"]\n\
+         upstream_model = \"{UPSTREAM_MODEL}\"\nkey = \"keychain:k-rs\"\n"
+    )
+}
+
+/// An Anthropic Messages 2xx body.
+fn message_json() -> Vec<u8> {
+    serde_json::to_vec(&json!({"id":"msg_up","type":"message","role":"assistant","model":"up-rs","content":[{"type":"text","text":"hi"}],
+        "stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":7,"output_tokens":3}}))
+    .unwrap()
+}
+
+/// RS-5 review F1: an `include` of another JSON type is a 400 before candidate selection, also when a second
+/// candidate could serve the request.
+#[test]
+fn include_not_array_400_with_second_candidate() {
+    let h = Harness::start(Dialect::Openai, Agent::ClaudeCode, &second_provider());
+    h.reply_with(200, JSON, message_json());
+    let (s, _, b) = h.post(R, &with_include(json!("reasoning.encrypted_content")));
+    assert_eq!(s.as_u16(), 400, "{}", String::from_utf8_lossy(&b));
+    assert_eq!(oai_err(&b), json!({"type":"zygo_bad_request","message":"include must be an array"}));
+    assert!(h.upstream_paths().is_empty(), "{:?}", h.upstream_paths());
+}
+
+/// RS-5 review F2 (a), §7.3: an `openai` candidate that answers 5xx or 429 falls back to the next candidate; the
+/// `anthropic` candidate gets the Messages body of the client's body (no forced `store`, no appended `include`): the
+/// same body an `anthropic`-only config sends.
+#[test]
+fn fallback_after_5xx_or_429_translates_the_client_body() {
+    let mut req = codex_request("turn-with-reasoning");
+    req["store"] = json!(true);
+    req.as_object_mut().unwrap().remove("include");
+    req["stream"] = json!(false);
+    let only = Harness::start(Dialect::Anthropic, Agent::ClaudeCode, "");
+    only.reply_with(200, JSON, message_json());
+    let (s, _, _) = only.post(R, &req);
+    assert_eq!(s.as_u16(), 200);
+    let want = only.upstream_bodies().pop().unwrap();
+    for status in [500u16, 503, 429] {
+        let h = Harness::start(Dialect::Openai, Agent::ClaudeCode, &second_provider());
+        let err = br#"{"error":{"type":"server_error","message":"busy"}}"#.to_vec();
+        h.reply_seq(vec![(status, JSON, err)]);
+        h.reply_with(200, JSON, message_json());
+        let (s, _, b) = h.post(R, &req);
+        assert_eq!(s.as_u16(), 200, "{status}: {}", String::from_utf8_lossy(&b));
+        assert_eq!(serde_json::from_slice::<Value>(&b).unwrap()["object"], "response", "{status}");
+        assert_eq!(h.upstream_paths(), ["/v1/responses", "/v1/messages"], "{status}");
+        let ups = h.upstream_bodies();
+        assert_eq!(ups[0]["store"], json!(false), "{status}");
+        assert_eq!(ups[1], want, "{status}");
+        let rows = h.usage_rows();
+        assert_eq!((rows[0].status, rows[0].provider.as_str()), (200, SECOND), "{status}");
+    }
+}
+
+/// RS-5 review F2 (b), K§6.4.4: a streamed non-2xx on the same-dialect path passes with its status and body.
+#[test]
+fn streamed_non_2xx_passes_status_and_body() {
+    let h = start();
+    let reply = sse(&[json!({"type":"error","sequence_number":0,"code":"invalid_request","message":"bad item","param":null})]);
+    h.reply_with(400, SSE, reply.clone());
+    let (s, hd, b) = h.post(R, &codex_request("turn-with-reasoning"));
+    assert_eq!(s.as_u16(), 400);
+    assert!(hv(&hd, "content-type").starts_with(SSE));
+    assert_eq!(&b[..], &reply[..]);
+    assert_eq!(h.usage_rows()[0].status, 400);
+}
+
+/// RS-5 review F2 (c), K§6.4.3: a request stage's edit (redaction) reaches the passthrough body.
+#[test]
+fn redaction_reaches_passthrough_body() {
+    let h = Harness::start(Dialect::Openai, Agent::ClaudeCode, "[redaction.content]\ndeny = [\"plimsoq\"]\n");
+    h.reply_with(200, SSE, completed());
+    let mut body = codex_request("turn-with-reasoning");
+    body["input"].as_array_mut().unwrap().push(json!({"type":"message","role":"user",
+        "content":[{"type":"input_text","text":"say plimsoq"}]}));
+    let (s, hd, _) = h.post(R, &body);
+    assert_eq!(s.as_u16(), 200);
+    assert_eq!(h.upstream_paths(), ["/v1/responses"]);
+    let sent = String::from_utf8(h.upstream_raw().pop().unwrap()).unwrap();
+    assert!(!sent.contains("plimsoq"), "the denied word reached the upstream");
+    assert!(sent.contains("say "), "the edited item reached the upstream");
+    assert_eq!(hv(&hd, "x-zygo-redacted"), "1");
+}
+
+/// RS-5 review F3, K§6.4.2 C3: a Responses stream whose terminal line is over HOLD_MAX is not read; the row has zero
+/// counts and the code `usage_unread`.
+#[test]
+fn unread_terminal_line_marks_usage_unread() {
+    let h = start();
+    let mut evs = resp_events("response.completed", "completed", usage_up());
+    let last = evs.len() - 1;
+    evs[last]["response"]["output"][0]["content"][0]["text"] = json!("x".repeat(HOLD_MAX));
+    let up = sse(&evs);
+    h.reply_with(200, SSE, up.clone());
+    let (s, _, b) = h.post(R, &codex_request("turn-with-reasoning"));
+    assert_eq!(s.as_u16(), 200);
+    assert_eq!(b.len(), up.len());
+    let rows = h.usage_rows();
+    assert_eq!(counts(&rows[0]), (0, 0, 0, 0));
+    assert!(rows[0].adjustments.iter().any(|a| a == "usage_unread"), "{:?}", rows[0].adjustments);
+}
+
+/// RS-5 review F4, K§6.4.2 C3: a `response.failed` ending carries the counts.
+#[test]
+fn failed_usage_recorded() {
+    let h = start();
+    let up = sse(&resp_events(
+        "response.failed",
+        "failed",
+        json!({"input_tokens":90,"input_tokens_details":{"cached_tokens":30},"output_tokens":4,"total_tokens":94}),
+    ));
+    h.reply_with(200, SSE, up.clone());
+    let (s, _, b) = h.post(R, &codex_request("turn-with-reasoning"));
+    assert_eq!(s.as_u16(), 200);
+    assert_eq!(&b[..], &up[..]);
+    let rows = h.usage_rows();
+    assert_eq!(counts(&rows[0]), (60, 30, 0, 4));
+    assert!(!rows[0].adjustments.iter().any(|a| a == "usage_unread"), "{:?}", rows[0].adjustments);
 }
