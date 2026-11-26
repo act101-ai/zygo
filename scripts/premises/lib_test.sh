@@ -104,12 +104,19 @@ run() {
 }
 # sigact <case>: the action of a signal case.
 sigact() { printf '%s' "echo \$\$ >'$T/$1.pid'; sleep 30 & echo \$! >'$T/$1.sleep'; : >'$T/$1.ready'; wait"; }
-# waitready <file>: poll 0.1 s apart until the file exists, with no count limit (TF-2: no case
-# passes or fails by wall-clock time; the CI job timeout is the bound).
+# waitready <file> <pid>: poll 0.1 s apart until the file exists or the producer <pid> is dead, with
+# no count limit (TF-2: no case passes or fails by wall-clock time). When the pid is dead, the file
+# is checked once more: 0 if it exists, else 1.
 waitready() {
   while [ ! -f "$1" ]; do
+    kill -0 "$2" 2>/dev/null || { [ -f "$1" ]; return; }
     sleep 0.1
   done
+}
+# waitin <file> <pid file> <name>: the same wait as the text of a child's loop; the producer's pid is
+# read from <pid file>. A producer dead with no file exits the child with 2 and says so on stderr.
+waitin() {
+  printf '%s' "while [ ! -f '$1' ]; do if ! kill -0 \"\$(cat '$2')\" 2>/dev/null; then [ -f '$1' ] || { echo '$3 exited before it was ready' >&2; exit 2; }; break; fi; sleep 0.1; done"
 }
 # sigrun <case> <signal>: run $T/<case>.sh in the background, signal it when ready; sets rc and NR.
 # perl resets INT to its default first: a background command of a non-interactive shell starts with
@@ -119,7 +126,7 @@ sigrun() {
   perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die' \
     env PATH="$CP" TMPDIR="$T/tmp-$1" $XENV "$SH" "$T/$1.sh" >"$T/$1.out" 2>"$T/$1.err" &
   bp=$!
-  if waitready "$T/$1.ready"; then
+  if waitready "$T/$1.ready" "$bp"; then
     kill -s "$2" "$(cat "$T/$1.pid")"
     wait "$bp"
     rc=$?
@@ -144,7 +151,7 @@ res() {
   name=$1 want=$2
   shift 2
   why=""
-  if [ "$NR" = 1 ]; then no "$name" "not ready in 5 s"; return; fi
+  if [ "$NR" = 1 ]; then no "$name" "exited before it was ready; stderr: $(tr '\n' '|' <"$ERR")"; return; fi
   if [ "$rc" -ne "$want" ]; then no "$name" "exit $rc, want $want; stderr: $(tr '\n' '|' <"$ERR")"; return; fi
   if "$@"; then ok "$name"; else no "$name" "$why"; fi
 }
@@ -378,7 +385,7 @@ c=R5; prep $c own; ERR=$T/$c.err; rall $c
 printf '%s\n' ": >'$T/R5.ready'; sleep 30" >"$T/$c-pd/run-smoke.sh"
 perl -e 'setpgrp(0, 0); exec @ARGV or die' env PATH="$CP" TMPDIR="$T/tmp-$c" "$SH" "$T/$c-pd/run-all.sh" >"$T/$c.out" 2>"$T/$c.err" &
 bp=$!
-if waitready "$T/R5.ready"; then
+if waitready "$T/R5.ready" "$bp"; then
   kill -s TERM -- "-$bp"
   wait "$bp"
   rc=$?
@@ -884,10 +891,12 @@ res "B3 a source file with another sha256 fails" 1 out_has B3 "premises: config.
 # B4, B5 (G7): the schema fetch goes to a temporary file in the run folder, removed on a signal or a
 # failed check; the fixture folder never holds a partial file. A local server stands in for the URL.
 cat >"$T/srv.py" <<'PY'
-import socket, sys, time
+import os, socket, sys, time
 mode, port_file, ready = sys.argv[1:4]
 s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(5)
-open(port_file, "w").write(str(s.getsockname()[1]))
+with open(port_file + ".tmp", "w") as f:
+    f.write(str(s.getsockname()[1]))
+os.rename(port_file + ".tmp", port_file)
 c, _ = s.accept(); c.recv(4096)
 if mode == "hang":
     c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n{\"partial\": ")
@@ -902,7 +911,8 @@ fprep() {
   prep "$1" caller; ERR=$T/$1.err; mkdir -p "$T/fx-$1" "$T/$1-pd/codex"; XENV="$XENV CODEX_FX=$T/fx-$1"
   cp "$T/B-pd/lib.sh" "$T/B-pd/ver.sh" "$T/B-pd/scrub.py" "$T/B-pd/mock_upstream.py" "$T/$1-pd/"
   python3 -I "$T/srv.py" "$2" "$T/$1.port" "$T/$1.ready" & SRV=$!
-  waitready "$T/$1.port"; sleep 0.1
+  # The server writes the port file to a temporary name and renames it, so it is whole once it exists.
+  waitready "$T/$1.port" "$SRV" || NR=1
   sed "s|^URL=.*|URL=http://127.0.0.1:$(cat "$T/$1.port")/s|" "$T/B-pd/codex/base.sh" >"$T/$1-pd/codex/base.sh"
 }
 # no_partial <case>: no file in CODEX_FX and no schema temporary in the run folder.
@@ -914,7 +924,9 @@ c=B4; fprep $c hang
 # shellcheck disable=SC2086
 perl -e 'setpgrp(0, 0); exec @ARGV or die' env PATH="$CP" TMPDIR="$T/tmp-$c" $XENV "$SH" "$T/$c-pd/codex/base.sh" >"$T/$c.out" 2>"$T/$c.err" &
 bp=$!
-if waitready "$T/$c.ready"; then sleep 0.3; kill -s TERM -- "-$bp"; wait "$bp"; rc=$?; else NR=1; kill -s KILL -- "-$bp" 2>/dev/null; wait "$bp"; rc=$?; fi
+# The server writes B4.ready after it has accepted base.sh's request and sent the partial body: by
+# then base.sh has made its schema temporary and set its trap, and curl is reading the body.
+if waitready "$T/$c.ready" "$bp"; then kill -s TERM -- "-$bp"; wait "$bp"; rc=$?; else NR=1; kill -s KILL -- "-$bp" 2>/dev/null; wait "$bp"; rc=$?; fi
 kill "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null
 res "B4 a TERM during the schema fetch leaves no partial file" 143 no_partial B4
 c=B5; fprep $c bad
@@ -966,7 +978,7 @@ cc -o "$T/dmn/codex" "$T/dmn.c" || { echo "lib tests: cc failed"; exit 1; }
 # its pid, and leaves it running.
 N2D_READY=$T/X34.ready "$T/dmn/codex" app-server --listen unix:// --managed-daemon &
 echo $! >"$T/X34.dpid"
-waitready "$T/X34.ready" || echo "lib tests: X34 stub daemon not ready"
+waitready "$T/X34.ready" "$(cat "$T/X34.dpid")" || no "X34 stub daemon" "exited before it was ready"
 c=X34; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X34); run_codex exec hi"; run $c; killmock $c
 x34() {
   dpid=$(cat "$T/X34.dpid")
@@ -990,7 +1002,7 @@ done
 # X36: a process of the run folder still runs after the part (a daemon left by a TUI run):
 # codex_record exits 1 and names its pid.
 c=X36; cxprep $c caller
-child $c 0 "new_run x; start_mock; $(mockrec X36); run_codex exec hi; mkdir -p \"\$RUN/pk\"; cp '$T/dmn/codex' \"\$RUN/pk/codex\"; N2D_READY='$T/X36.ready' \"\$RUN/pk/codex\" app-server --managed-daemon & echo \$! >'$T/X36.dpid'; while [ ! -f '$T/X36.ready' ]; do sleep 0.1; done; stop_mock; codex_record base"
+child $c 0 "new_run x; start_mock; $(mockrec X36); run_codex exec hi; mkdir -p \"\$RUN/pk\"; cp '$T/dmn/codex' \"\$RUN/pk/codex\"; N2D_READY='$T/X36.ready' \"\$RUN/pk/codex\" app-server --managed-daemon & echo \$! >'$T/X36.dpid'; $(waitin "$T/X36.ready" "$T/X36.dpid" 'X36 stub daemon'); stop_mock; codex_record base"
 run $c; killmock $c
 x36() { out_has X36 "premises: codex_record: a process of this run folder still runs (pid $(cat "$T/X36.dpid"), $T/keep-X36/x/pk/codex); stop it (TUI runs pass --no-daemon)"; }
 res "X36 a process of the run folder left running: codex_record exits 1 and names it" 1 x36
@@ -1042,7 +1054,7 @@ res "X38b with an exported N2_TEST_ROOT codex_record passes and writes no test_r
 mkdir -p "$T/dmn2"
 cp "$T/dmn/codex" "$T/dmn2/codex"
 c=X39; cxprep $c caller
-child $c 0 "new_run x; start_mock; $(mockrec X39); run_codex exec hi; (cd \"\$RUN\" && export N2D_READY='$T/X39a.ready' && exec '$T/dmn/codex' daemon pid-update-loop) & echo \$! >'$T/X39a.dpid'; (cd \"\$R\" && export PATH='$T/dmn2':\$PATH N2D_READY='$T/X39b.ready' && exec codex app-server) & echo \$! >'$T/X39b.dpid'; while [ ! -f '$T/X39a.ready' ] || [ ! -f '$T/X39b.ready' ]; do sleep 0.1; done; stop_mock; codex_record base"
+child $c 0 "new_run x; start_mock; $(mockrec X39); run_codex exec hi; (cd \"\$RUN\" && export N2D_READY='$T/X39a.ready' && exec '$T/dmn/codex' daemon pid-update-loop) & echo \$! >'$T/X39a.dpid'; (cd \"\$R\" && export PATH='$T/dmn2':\$PATH N2D_READY='$T/X39b.ready' && exec codex app-server) & echo \$! >'$T/X39b.dpid'; $(waitin "$T/X39a.ready" "$T/X39a.dpid" 'X39a stub daemon'); $(waitin "$T/X39b.ready" "$T/X39b.dpid" 'X39b stub daemon'); stop_mock; codex_record base"
 run $c; killmock $c
 x39() {
   out_has X39 "premises: codex_record: a process with its cwd in this run folder still runs (pid $(cat "$T/X39a.dpid"), $T/dmn/codex); stop it (TUI runs pass --no-daemon)" || return 1
@@ -1127,7 +1139,7 @@ res "X45 an exported MOCK_ALT_KEY is refused at source time" 1 x45
 # X46 (G4): lib.sh's own n2_procs (no seam) in left mode: a stub process with its cwd in the run
 # folder is named and the call returns 1.
 c=X46; cxprep $c caller; NOSEAM=1
-child $c 0 "new_run x; (cd \"\$RUN\" && export N2D_READY='$T/X46.ready' && exec '$T/dmn/codex' sleeper) & echo \$! >'$T/X46.dpid'; while [ ! -f '$T/X46.ready' ]; do sleep 0.1; done; n2_procs left"
+child $c 0 "new_run x; (cd \"\$RUN\" && export N2D_READY='$T/X46.ready' && exec '$T/dmn/codex' sleeper) & echo \$! >'$T/X46.dpid'; $(waitin "$T/X46.ready" "$T/X46.dpid" 'X46 stub daemon'); n2_procs left"
 run $c
 x46() { out_has X46 "premises: codex_record: a process with its cwd in this run folder still runs (pid $(cat "$T/X46.dpid"), $T/dmn/codex); stop it (TUI runs pass --no-daemon)"; }
 res "X46 the real n2_procs left names a process with its cwd in the run folder" 1 x46
@@ -1149,7 +1161,7 @@ fi
 # found by the path in its command line.
 N2D_READY=$T/X48.ready perl -e 'exec { shift } @ARGV' "$T/dmn/codex" "$T/pc10 sp/bin/codex" app-server &
 echo $! >"$T/X48.dpid"
-waitready "$T/X48.ready" || echo "lib tests: X48 stub daemon not ready"
+waitready "$T/X48.ready" "$(cat "$T/X48.dpid")" || no "X48 stub daemon" "exited before it was ready"
 c=X48; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X48); run_codex exec hi"; run $c; killmock $c
 res "X48 an app-server with a blank in its path: run_codex refuses" 1 out_has X48 "premises: a codex app-server runs outside this run folder (pid $(cat "$T/X48.dpid"), $T/pc10 sp/bin/codex); codex not started; it is left running"
 kill "$(cat "$T/X48.dpid")" 2>/dev/null; rm -f "$T/X48.dpid"
@@ -1196,6 +1208,30 @@ s1() {
     { why="maps: $(ls "$T/keep-S1")"; return 1; }
 }
 res "S1 scrub maps Codex item ids with one map per part (scrub-ids-<part>.json)" 0 s1
+
+# --- TF-2: waits end when the producer dies ------------------------------------------------------
+# W1: a producer that exits at once without the file: waitready returns 1 (no count limit, no time).
+true & wp=$!
+if waitready "$T/W1.never" "$wp"; then no "W1 waitready returns 1 when the producer exits without the file" "it returned 0"; else ok "W1 waitready returns 1 when the producer exits without the file"; fi
+# W2: a producer that writes the file and exits: waitready returns 0 (the file is checked again).
+: >"$T/W2.ready" & wp=$!
+if waitready "$T/W2.ready" "$wp"; then ok "W2 waitready returns 0 when the producer wrote the file and exited"; else no "W2 waitready returns 0 when the producer wrote the file and exited" "it returned 1"; fi
+# W3: the child's loop (waitin): a producer that exits without the file stops the child with 2.
+c=W3; prep $c own; ERR=$T/$c.err
+child $c 0 "true & echo \$! >'$T/W3.dpid'; $(waitin "$T/W3.never" "$T/W3.dpid" 'W3 producer'); exit 0"; run $c
+res "W3 a child's wait exits 2 when the producer exits without the file" 2 grep -qxF 'W3 producer exited before it was ready' "$ERR"
+# W4: a mock that dies before it writes its port file (a missing rules file): start_mock fails at once.
+c=W4; cxprep $c caller; child $c 0 "new_run x; start_mock '$T/W4-none.json'; echo went-on >'$T/W4.on'"; run $c
+w4() { out_has W4 "mock did not start" && [ ! -e "$T/W4.on" ] || { why="${why:-the script went on}"; return 1; }; }
+res "W4 start_mock: a mock that dies says mock did not start, exit 1" 1 w4
+# W5: a web server that dies before it writes its port file (no certificate: a stub openssl).
+mkdir -p "$T/ossl"; printf '#!/bin/sh\nexit 0\n' >"$T/ossl/openssl"; chmod +x "$T/ossl/openssl"
+c=W5; cxprep $c caller; CP=$T/ossl:$T/bin; child $c 0 "new_run x; start_web '$T'; echo went-on >'$T/W5.on'"; run $c
+w5() { out_has W5 "web did not start" && [ ! -e "$T/W5.on" ] || { why="${why:-the script went on}"; return 1; }; }
+res "W5 start_web: a server that dies says web did not start, exit 1" 1 w5
+# W6: sigrun's not-ready branch: a child that exits 0 without the ready file sets NR=1, signals nothing.
+c=W6; prep $c own; ERR=$T/$c.err; child $c 0 'exit 0'; sigrun $c TERM
+if [ "$NR" = 1 ] && [ "$rc" = 0 ]; then ok "W6 sigrun: a child that exits before it is ready sets NR=1"; else no "W6 sigrun: a child that exits before it is ready sets NR=1" "NR=$NR rc=$rc"; fi
 
 if [ "$bad" -eq 0 ]; then echo "lib tests: ok ($n)"; exit 0; fi
 echo "lib tests: $bad failed"

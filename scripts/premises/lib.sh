@@ -106,6 +106,16 @@ json.dump({"hasCompletedOnboarding": True, "numStartups": 5, "theme": "dark",
 PY
 }
 
+# n2_wait_port <port file> <pid>: poll 0.1 s apart until the server <pid> has written the port file
+# (it writes a temporary name and renames it) or is dead, with no count limit. When the pid is dead,
+# the file is checked once more: 0 if it holds a port, else 1.
+n2_wait_port() {
+  while [ ! -s "$1" ]; do
+    kill -0 "$2" 2>/dev/null || { [ -s "$1" ]; return; }
+    sleep 0.1
+  done
+}
+
 # start_mock [rules.json]: start the mock for this run; sets MOCK_URL and MOCK_PID. Refused (exit 1)
 # while the mock of an earlier start_mock still runs: stop_mock first.
 # MOCK_ALT_KEY (PC-10, optional): a second credential the mock accepts like the dummy key; each
@@ -121,8 +131,7 @@ start_mock() {
     ${1:+--rules "$1"} --port-file "$RUN/port" >"$RUN/mock.log" 2>&1 &
   MOCK_PID=$!
   n2_mock_trap
-  i=0
-  while [ ! -s "$RUN/port" ]; do i=$((i + 1)); [ $i -lt 100 ] || { echo "mock did not start"; exit 1; }; sleep 0.1; done
+  n2_wait_port "$RUN/port" "$MOCK_PID" || { echo "mock did not start"; exit 1; }
   MOCK_URL="http://127.0.0.1:$(cat "$RUN/port")"
 }
 
@@ -768,8 +777,7 @@ start_web() {
   WEB_CA="$RUN/web-cert.pem"
   python3 -I "$PREMISES_DIR/https_static.py" "$1" "$WEB_CA" "$RUN/web-key.pem" "$RUN/web-port" >"$RUN/web.log" 2>&1 &
   WEB_PID=$!
-  i=0
-  while [ ! -s "$RUN/web-port" ]; do i=$((i + 1)); [ $i -lt 100 ] || { echo "web did not start"; exit 1; }; sleep 0.1; done
+  n2_wait_port "$RUN/web-port" "$WEB_PID" || { echo "web did not start"; exit 1; }
   WEB_URL="https://127.0.0.1:$(cat "$RUN/web-port")"
   EXTRA_ENV="$EXTRA_ENV NODE_EXTRA_CA_CERTS=$WEB_CA"
 }
