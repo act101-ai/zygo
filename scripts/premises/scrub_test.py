@@ -180,6 +180,129 @@ PC11 = [
     ("macos env name in a list", '["HOME","__CF_USER_TEXT_ENCODING"]', '["HOME","(os env omitted)"]', ["__CF"]),
 ]
 CASES += PC11
+# PC-13: the shell name and OS version lines of a Claude Code environment block.
+CASES += [
+    ("claude code env block", "Platform: darwin\n - Shell: zsh\n - OS Version: Darwin 25.6.0\n - Downloaded files",
+     "Platform: darwin\n - Shell: (omitted)\n - OS Version: (os omitted)\n - Downloaded files", ["zsh", "25.6.0"]),
+    ("claude code env block, json-escaped", "x\\n - Shell: bash\\n - OS Version: Linux 6.8.0-49-generic\\n - y",
+     "x\\n - Shell: (omitted)\\n - OS Version: (os omitted)\\n - y", ["bash", "6.8.0"]),
+    ("shell outside an env block kept", 'The Shell: zsh is the default; "shell": "/bin/zsh"',
+     'The Shell: zsh is the default; "shell": "/bin/zsh"', []),
+    ("env block placeholders kept", " - Shell: (omitted)\n - OS Version: (os omitted)",
+     " - Shell: (omitted)\n - OS Version: (os omitted)", []),
+    # Review round 1 F5: any case, any whitespace after the colon (space, tab, escaped \t), with or
+    # without the leading "- ", at a line start or after a literal or escaped newline.
+    ("env block, lower case", "x\n - shell: zsh\n - os version: Darwin 25.6.0",
+     "x\n - shell: (omitted)\n - os version: (os omitted)", ["zsh", "25.6.0"]),
+    ("env block, upper case", "x\n - SHELL: zsh\n - OS VERSION: Darwin 25.6.0",
+     "x\n - SHELL: (omitted)\n - OS VERSION: (os omitted)", ["zsh", "25.6.0"]),
+    ("env block, tab after the colon", "x\n - Shell:\tzsh\n - OS Version:\tDarwin 25.6.0",
+     "x\n - Shell:\t(omitted)\n - OS Version:\t(os omitted)", ["zsh", "25.6.0"]),
+    ("env block, escaped tab after the colon", "x\\n - Shell:\\tzsh\\n - OS Version:\\tDarwin 25.6.0",
+     "x\\n - Shell:\\t(omitted)\\n - OS Version:\\t(os omitted)", ["zsh", "25.6.0"]),
+    ("env block, no dash", "Shell: zsh\nOS Version: Darwin 25.6.0",
+     "Shell: (omitted)\nOS Version: (os omitted)", ["zsh", "25.6.0"]),
+    ("env block, no dash after an escaped newline", "x\\nShell: fish\\nOS Version: Linux 6.8.0",
+     "x\\nShell: (omitted)\\nOS Version: (os omitted)", ["fish", "6.8.0"]),
+    # Review round 2 G1 (replaces round 1 F8, fail closed): one or more backslashes then "n" or "r", a
+    # carriage return, or a \u000a escape starts a line.
+    ("G1: escaped backslash then n", "x\\\\n - Shell: zsh", "x\\\\n - Shell: (omitted)", ["zsh"]),
+    ("env block, escaped backslash then escaped newline", "x\\\\\\n - Shell: zsh",
+     "x\\\\\\n - Shell: (omitted)", ["zsh"]),
+    ("G1: plant.sse partial_json",
+     'data: {"delta":{"type":"input_json_delta","partial_json":"{\\"text\\": \\"a\\\\n - Shell: zsh\\\\n - OS Version: '
+     'Darwin 25.6.0\\"}"}}',
+     'data: {"delta":{"type":"input_json_delta","partial_json":"{\\"text\\": \\"a\\\\n - Shell: (omitted)\\\\n - '
+     'OS Version: (os omitted)\\"}"}}', ["zsh", "25.6.0"]),
+    ("G1: .summary.json doubly escaped", '{"summary": "a\\\\n - Shell: zsh\\\\n - OS Version: Darwin 25.6.0"}',
+     '{"summary": "a\\\\n - Shell: (omitted)\\\\n - OS Version: (os omitted)"}', ["zsh", "25.6.0"]),
+    ("G1: \\u000a escape", "x\\u000a - Shell: zsh\\u000A - OS Version: Darwin 25.6.0",
+     "x\\u000a - Shell: (omitted)\\u000A - OS Version: (os omitted)", ["zsh", "25.6.0"]),
+    ("G1: carriage return", "x\r - Shell: zsh\rOS Version: Darwin 25.6.0",
+     "x\r - Shell: (omitted)\rOS Version: (os omitted)", ["zsh", "25.6.0"]),
+    ("G1: escaped carriage return", "x\\r - Shell: zsh", "x\\r - Shell: (omitted)", ["zsh"]),
+    # Review round 2 G2: the dash form for any value; the dashless form only with a capital first
+    # letter and a host value. Prose and a YAML key are kept.
+    ("G2: dash form, any value", " - Shell: anything at all", " - Shell: (omitted)", ["anything"]),
+    ("G2: prose shell line kept", "Shell: run make first", "Shell: run make first", []),
+    ("G2: prose OS line kept", "OS version: check it is 14 or later", "OS version: check it is 14 or later", []),
+    ("G2: YAML shell key kept", "x\n  shell: bash\n", "x\n  shell: bash\n", []),
+    ("G2: dashless shell path", "Shell: /bin/zsh\nShell: /opt/homebrew/bin/fish",
+     "Shell: (omitted)\nShell: (omitted)", ["/bin/zsh", "fish"]),
+    ("G2: dashless OS values", "OS Version: macOS 15.1\nOS Version: Windows 10.0.26100",
+     "OS Version: (os omitted)\nOS Version: (os omitted)", ["15.1", "26100"]),
+    # Review round 2 G5: the key's own placeholder as the whole value; CRLF; anchored Stainless values.
+    ("G5: wrong placeholder on the shell line", " - Shell: (os omitted)", " - Shell: (omitted)", []),
+    ("G5: placeholder then text", " - Shell: (omitted) zsh", " - Shell: (omitted)", ["zsh"]),
+    ("G5: placeholder in upper case", " - OS Version: (OS OMITTED)", " - OS Version: (os omitted)", []),
+    ("G5: CRLF", "x\r\n - Shell: zsh\r\n - OS Version: Darwin 25.6.0\r\n",
+     "x\r\n - Shell: (omitted)\r\n - OS Version: (os omitted)\r\n", ["zsh", "25.6.0"]),
+    ("G5: Stainless wrong placeholder", '"x-stainless-arch": "(version omitted)"', '"x-stainless-arch": "(arch omitted)"',
+     []),
+    ("G5: Stainless placeholder then text", '"x-stainless-runtime-version": "(version omitted)v26"',
+     '"x-stainless-runtime-version": "(version omitted)"', ["v26"]),
+    ("G5: Stainless CRLF header line", "x-stainless-arch: arm64\r\nx-stainless-arch: (arch omitted)\r\n",
+     "x-stainless-arch: (arch omitted)\r\nx-stainless-arch: (arch omitted)\r\n", ["arm64"]),
+    # Review round 2 G8: quoted values and no-break spaces.
+    ("G8: quoted value", ' - Shell: "zsh"\nShell: "bash"', ' - Shell: "(omitted)"\nShell: "(omitted)"', ["zsh", "bash"]),
+    ("G8: escaped quoted value", 'x\\n - Shell: \\"zsh\\"', 'x\\n - Shell: \\"(omitted)\\"', ["zsh"]),
+    ("G8: no-break space", " - Shell: zsh\n - OS Version:\\u00a0Darwin 25.6.0",
+     " - Shell: (omitted)\n - OS Version:\\u00a0(os omitted)", ["zsh", "25.6.0"]),
+    # Review round 1 F3: the Stainless SDK's architecture and runtime version headers.
+    ("stainless arch and runtime version", '"x-stainless-arch": "arm64", "X-Stainless-Runtime-Version": "v26.12.1"',
+     '"x-stainless-arch": "(arch omitted)", "X-Stainless-Runtime-Version": "(version omitted)"', ["arm64", "26.12.1"]),
+    ("stainless headers, escaped", '{\\"x-stainless-arch\\":\\"x64\\",\\"x-stainless-runtime-version\\":\\"v22.1.0\\"}',
+     '{\\"x-stainless-arch\\":\\"(arch omitted)\\",\\"x-stainless-runtime-version\\":\\"(version omitted)\\"}',
+     ["x64", "22.1.0"]),
+    ("stainless header line", "x-stainless-arch: arm64\nx-stainless-os: MacOS",
+     "x-stainless-arch: (arch omitted)\nx-stainless-os: MacOS", ["arm64"]),
+    ("stainless placeholders kept", '"x-stainless-arch": "(arch omitted)", "x-stainless-runtime-version": "(version omitted)"',
+     '"x-stainless-arch": "(arch omitted)", "x-stainless-runtime-version": "(version omitted)"', []),
+    # Review round 1 F7: the process id in a Claude Code messaging socket path.
+    ("messaging socket pid", "/tmp/cc-socks/95709.sock", "/tmp/cc-socks/<pid>.sock", ["95709"]),
+]
+# PC-13 review round 3. H1: a quoted Stainless value is replaced up to its closing quote; an unquoted
+# one up to the line end (or a quote or backslash: a header line inside a JSON string); a "," or a blank
+# does not end it (fails closed).
+H1_INPUTS = ["x-stainless-arch=arm64, x-stainless-os=MacOS", "x-stainless-arch: arm64 ",
+             '"x-stainless-arch": "arm64 extra"', "x-stainless-runtime-version: v26.1.0, node"]
+CASES += [
+    ("H1: header pair with a comma", H1_INPUTS[0], "x-stainless-arch=(arch omitted)", ["arm64"]),
+    ("H1: trailing blank", H1_INPUTS[1], "x-stainless-arch: (arch omitted)", ["arm64"]),
+    ("H1: quoted value with a blank", H1_INPUTS[2], '"x-stainless-arch": "(arch omitted)"', ["arm64", "extra"]),
+    ("H1: runtime version then a comma", H1_INPUTS[3], "x-stainless-runtime-version: (version omitted)",
+     ["26.1.0", "node"]),
+    ("H1: placeholder then a value", "x-stainless-arch: (arch omitted) arm64", "x-stainless-arch: (arch omitted)",
+     ["arm64"]),
+    ("H1: header line in a JSON string", '{\\"h\\":\\"x-stainless-arch: arm64 x\\\\nk: v\\"}',
+     '{\\"h\\":\\"x-stainless-arch: (arch omitted)\\\\nk: v\\"}', ["arm64"]),
+    ("H1: escaped quoted value with a blank", '{\\"x-stainless-arch\\":\\"arm64 extra\\",\\"k\\":1}',
+     '{\\"x-stainless-arch\\":\\"(arch omitted)\\",\\"k\\":1}', ["arm64", "extra"]),
+    # H3: more dashless host values (OS names, shells, shell paths, Windows shell paths).
+    ("H3: Windows_NT", "OS Version: Windows_NT 10.0.26100", "OS Version: (os omitted)", ["Windows_NT", "26100"]),
+    ("H3: Windows then a blank", "OS Version: Windows Server 2022", "OS Version: (os omitted)", ["Server", "2022"]),
+    ("H3: Linux distributions", "OS Version: Ubuntu 24.04\nOS Version: Debian 12\nOS Version: Fedora 40",
+     "OS Version: (os omitted)\nOS Version: (os omitted)\nOS Version: (os omitted)", ["24.04", "Debian", "Fedora"]),
+    ("H3: BSD and NixOS", "OS Version: FreeBSD 14.1\nOS Version: OpenBSD 7.5\nOS Version: NixOS 24.05",
+     "OS Version: (os omitted)\nOS Version: (os omitted)\nOS Version: (os omitted)", ["14.1", "OpenBSD", "NixOS"]),
+    ("H3: OS name without a version kept", "OS Version: Ubuntu is fine", "OS Version: Ubuntu is fine", []),
+    ("H3: more shell names", "Shell: nu\nShell: mksh\nShell: csh\nShell: xonsh",
+     "Shell: (omitted)\nShell: (omitted)\nShell: (omitted)\nShell: (omitted)", ["nu\n", "mksh", "csh", "xonsh"]),
+    ("H3: linuxbrew and NixOS shell paths", "Shell: /home/linuxbrew/.linuxbrew/bin/zsh\n"
+     "Shell: /run/current-system/sw/bin/bash\nShell: /nix/store/0a1b2c3d4e5f6g7h8i9j0k1l2m3n4p5q-zsh-5.9/bin/zsh",
+     "Shell: (omitted)\nShell: (omitted)\nShell: (omitted)", ["linuxbrew", "current-system", "zsh-5.9"]),
+    ("H3: Windows shell paths", "Shell: C:\\Program Files\\Git\\bin\\bash.exe\n"
+     "Shell: C:\\Program Files\\PowerShell\\7\\pwsh.exe\n"
+     "Shell: C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\nShell: C:\\Windows\\System32\\cmd.exe",
+     "Shell: (omitted)\nShell: (omitted)\nShell: (omitted)\nShell: (omitted)",
+     ["Program", "bash.exe", "pwsh", "powershell", "cmd.exe"]),
+    ("H3: Windows shell path, escaped backslashes", "x\\nShell: C:\\\\Program Files\\\\Git\\\\bin\\\\bash.exe\\n",
+     "x\\nShell: (omitted)\\n", ["Program", "bash.exe"]),
+    ("H3: dash form, Windows shell path", " - Shell: C:\\Program Files\\Git\\bin\\bash.exe",
+     " - Shell: (omitted)", ["Program", "bash.exe"]),
+    # H5: a socket path with escaped slashes.
+    ("H5: escaped socket path", "\\/tmp\\/cc-socks\\/95709.sock", "\\/tmp\\/cc-socks\\/<pid>.sock", ["95709"]),
+]
 # T8: the macOS LocalHostName and ComputerName, when scutil gives them (4 characters or more).
 for k in ("LocalHostName", "ComputerName"):
     try:
@@ -284,9 +407,12 @@ def main():
         want = {"client": {"os_type": "(os omitted)", "os_version": "(os omitted)", "os_arch": "(os omitted)", "k": "v"}}
         if got != want:
             bad.append("json os keys: got %r" % (got,))
-        # F9: Claude's dashed form of a run path that holds "//" (so "--").
-        with tempfile.TemporaryDirectory() as run:
-            rr = os.path.realpath(run)
+        # F9: Claude's dashed form of a run path that holds "//" (so "--"). Review round 3 H6: the run
+        # folder has a fixed name ("pc13run", letters and digits only) under a temp root, so the dashed
+        # form never ends in a "-" that the next "-" could join.
+        with tempfile.TemporaryDirectory() as root:
+            rr = os.path.join(os.path.realpath(root), "pc13run")
+            os.mkdir(rr)
             head, tail = os.path.split(rr)
             dbl = head + "//" + tail
             alt = dbl[len("/private"):] if dbl.startswith("/private/") else dbl
@@ -403,11 +529,30 @@ def main():
         got = json.loads(scrub(t))
         if got != {"x": "msg_placeholder0001", "y": "fco_placeholder0001"}:
             bad.append("upper-case item id: got %r" % (got,))
+        # PC-13 review round 1 F3: Stainless headers of a captured request (keys of a parsed object, any
+        # case); the OS family header is kept.
+        t = os.path.join(d, "stainless.json")
+        with open(t, "w") as f:
+            json.dump({"headers": {"x-stainless-arch": "arm64", "X-Stainless-Runtime-Version": "v26.12.1",
+                                   "x-stainless-os": "MacOS"}}, f)
+        got = json.loads(scrub(t))
+        if got != {"headers": {"x-stainless-arch": "(arch omitted)", "X-Stainless-Runtime-Version": "(version omitted)",
+                               "x-stainless-os": "MacOS"}}:
+            bad.append("stainless header keys: got %r" % (got,))
+        # Review round 3 H2: a .json file of 100000 nested "[" (too deep to parse) takes the raw-text
+        # scrub, with no traceback.
+        t = os.path.join(d, "deep.json")
+        with open(t, "w") as f:
+            f.write("[" * 100000)
+        with tempfile.TemporaryDirectory() as run:
+            r = subprocess.run([sys.executable, "-I", SCRUB, run, t], capture_output=True, text=True)
+        if r.returncode != 0 or r.stdout != "[" * 100000 or "Traceback" in r.stderr:
+            bad.append("100000 nested lists: exit %d, stderr %r" % (r.returncode, r.stderr[-200:]))
     for b in bad:
         print("scrub test fail: " + b)
     if bad:
         sys.exit(1)
-    print("scrub tests: ok (%d)" % (len(CASES) + 16))
+    print("scrub tests: ok (%d)" % (len(CASES) + 18))
 
 
 main()

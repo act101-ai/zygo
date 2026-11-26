@@ -42,9 +42,11 @@ edit() {
 }
 
 # add_header <dir> <line>: inserts the line after the header line that starts `tmux: `. The line goes
-# through the environment (not awk -v), so its backslashes stay as written.
+# through the environment (not awk -v), so its backslashes stay as written. PC-13: docs/premises.md has
+# a real `Codex:` header since PC-12, so the planted line first replaces the copy's header line of the
+# same name (the text up to the first `:`, then `: `) before the first `## `.
 add_header() {
-    L="$2" awk '{ print } /^tmux: / { print ENVIRON["L"] }' "$1/docs/premises.md" > "$1/docs/premises.md.new" &&
+    L="$2" N="${2%%:*}: " awk 'index($0, ENVIRON["N"]) == 1 && !h { next } /^## / { h = 1 } { print } /^tmux: / { print ENVIRON["L"] }' "$1/docs/premises.md" > "$1/docs/premises.md.new" &&
         mv "$1/docs/premises.md.new" "$1/docs/premises.md"
     [ "$(grep -cxF -- "$2" "$1/docs/premises.md")" -eq 1 ] || fail "planted change did not apply"
 }
@@ -300,10 +302,10 @@ expect_fail "PW15-bash: expected exactly one row, found 2"
 CASE="a header line after the first ##"
 D=$(mk latehdr)
 evidence "$D"
-add_row "$D" "$(row PC1 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
-printf '\n%s\n' 'Codex: 0.172.0' >> "$D/docs/premises.md"
+add_row "$D" "$(row PC1 Cursor 1.0 verified fixtures/codex/pc1.txt)"
+printf '\n%s\n' 'Cursor: 1.0' >> "$D/docs/premises.md"
 run "$D"
-expect_fail "PC1: agent 'Codex' has no header line 'Codex: <version>' before the first '## ' of docs/premises.md"
+expect_fail "PC1: agent 'Cursor' has no header line 'Cursor: <version>' before the first '## ' of docs/premises.md"
 
 CASE="a header value with extra words"
 D=$(mk hdrwords)
@@ -367,8 +369,9 @@ run "$D"
 expect_fail "PC1: result 'passed' is not verified or failed"
 
 # hdr_twice <dir> <first> <second>: inserts both header lines after the `tmux: ` line, in that order.
+# PC-13: it first drops the copy's real `Codex: ` header lines before the first `## ` (since PC-12).
 hdr_twice() {
-    awk -v a="$2" -v b="$3" '{ print } /^tmux: / { print a; print b }' "$1/docs/premises.md" > "$1/docs/premises.md.new" &&
+    awk -v a="$2" -v b="$3" '/^Codex: / && !h { next } /^## / { h = 1 } { print } /^tmux: / { print a; print b }' "$1/docs/premises.md" > "$1/docs/premises.md.new" &&
         mv "$1/docs/premises.md.new" "$1/docs/premises.md"
     [ "$(grep -c '^Codex: ' "$1/docs/premises.md")" -eq 2 ] || fail "planted change did not apply"
 }
@@ -910,5 +913,175 @@ printf '%s\n' 'C:\Users\bob' > "$D/$UCSCH"
 pin_codex "$D" "$D/$UCSCH"
 run "$D"
 expect_fail 'forbidden content (Windows home path): fixtures/codex/CONFIG.schema.json:1:C:\Users\bob'
+
+# PC-13: the Claude Code environment block lines in fixtures/claude-code and fixtures/opencode.
+CASE="PC-13: a shell name in a Claude Code environment block"
+D=$(mk pc13shell)
+printf '%s\n' 'x\n - Shell: zsh\n' > "$D/fixtures/claude-code/plant.txt"
+run "$D"
+expect_fail 'forbidden content (shell name): fixtures/claude-code/plant.txt:1:x\n - Shell: zsh\n'
+
+CASE="PC-13: an OS version in an OpenCode fixture"
+D=$(mk pc13os)
+printf '%s\n' ' - OS Version: Darwin 25.6.0' > "$D/fixtures/opencode/plant.txt"
+run "$D"
+expect_fail 'forbidden content (OS version): fixtures/opencode/plant.txt:1: - OS Version: Darwin 25.6.0'
+
+CASE="PC-13: masked lines, prose and a shell key pass"
+D=$(mk pc13ok)
+printf '%s\n' 'x\n - Shell: (omitted)\n - OS Version: (os omitted)\n' 'The Shell: zsh is the default' '"shell": "/bin/zsh"' > "$D/fixtures/claude-code/plant.txt"
+run "$D"
+expect_ok
+
+# PC-13 review round 1 F5, F6, F8: the forms of scrub.py ENV_SHELL and ENV_OS, the exact placeholders
+# only, and an escaped backslash then "n" is not a newline. F3: the Stainless arch and runtime version.
+TAB=$(printf '\t')
+# env_case <name> <planted line> <failure text after "forbidden content ">: one planted line in
+# fixtures/claude-code, and the failure it must give.
+env_case() {
+    CASE="PC-13 R1: $1"
+    D=$(mk "pc13r1_$N")
+    printf '%s\n' "$2" > "$D/fixtures/claude-code/plant.txt"
+    run "$D"
+    expect_fail "forbidden content ($3): fixtures/claude-code/plant.txt:1:$2"
+}
+env_case "lower case shell" 'x\n - shell: zsh\n' 'shell name'
+env_case "upper case OS version" ' - OS VERSION: Darwin 25.6.0' 'OS version'
+env_case "a tab after the colon" " - Shell:${TAB}zsh" 'shell name'
+env_case "an escaped tab after the colon" 'x\n - OS Version:\tDarwin 25.6.0\n' 'OS version'
+env_case "no dash at a line start" 'Shell: zsh' 'shell name'
+env_case "no dash after an escaped newline" 'x\nOS Version: Linux 6.8.0' 'OS version'
+env_case "a shell name in parentheses" 'x\n - Shell: (zsh)\n' 'shell name'
+env_case "the OS placeholder on the shell line" 'x\n - Shell: (os omitted)\n' 'shell name'
+env_case "an escaped backslash then an escaped newline" 'x\\\n - Shell: zsh' 'shell name'
+env_case "Stainless arch" '    "x-stainless-arch": "arm64",' 'Stainless arch'
+env_case "Stainless runtime version" '{\"X-Stainless-Runtime-Version\":\"v26.12.1\"}' 'Stainless runtime version'
+
+CASE="PC-13 R1: placeholders in any form and the OS family pass"
+D=$(mk pc13r1ok)
+printf '%s\n' "shell:${TAB}(omitted)" 'x\n - shell:\t(omitted)\nOS VERSION: (os omitted)\n' \
+    '    "x-stainless-arch": "(arch omitted)",' '{\"x-stainless-runtime-version\":\"(version omitted)\"}' \
+    '    "x-stainless-os": "MacOS",' > "$D/fixtures/claude-code/plant.txt"
+run "$D"
+expect_ok
+
+# PC-13 review round 2. G1 (fail closed): any run of backslashes then n or r, a carriage return or a
+# \u000a escape starts a line; the reviewer's .sse partial_json and .summary.json forms fail.
+CR=$(printf '\r')
+NBSP=$(printf '\302\240')
+# env_file <name> <file> <planted line> <failure text after "forbidden content ">: as env_case, in the
+# named file under fixtures/claude-code.
+env_file() {
+    CASE="PC-13 R2: $1"
+    D=$(mk "pc13r2_$N")
+    printf '%s\n' "$3" > "$D/fixtures/claude-code/$2"
+    run "$D"
+    expect_fail "forbidden content ($4): $(printf '%s\n' "fixtures/claude-code/$2:1:$3" | cut -c1-160)"
+}
+env_file "G1 .sse partial_json" plant.sse 'data: {"delta":{"type":"input_json_delta","partial_json":"{\"text\": \"a\\n - Shell: zsh\"}"}}' 'shell name'
+env_file "G1 .summary.json" plant.summary.json '{"summary": "a\\n - OS Version: Darwin 25.6.0"}' 'OS version'
+env_case "R2 G1 escaped backslash then n" 'x\\n - Shell: zsh' 'shell name'
+env_case "R2 G1 \\u000a escape" 'x\u000A - Shell: zsh' 'shell name'
+env_case "R2 G1 escaped carriage return" 'x\r - OS Version: Darwin 25.6.0' 'OS version'
+env_case "R2 G1 carriage return" "x${CR} - Shell: zsh" 'shell name'
+# G2: the dashless form with a capital first letter and a host value fails.
+env_case "R2 G2 dashless shell path" 'Shell: /opt/homebrew/bin/fish' 'shell name'
+env_case "R2 G2 dashless upper case key" 'x\nSHELL: zsh' 'shell name'
+env_case "R2 G2 dashless OS value" 'OS Version: macOS 15.1' 'OS version'
+env_case "R2 G2 dash form, any value" ' - Shell: anything at all' 'shell name'
+# G5: the key's own placeholder, case-sensitive, as the whole value.
+env_case "R2 G5 placeholder in upper case" ' - Shell: (OMITTED)' 'shell name'
+env_case "R2 G5 placeholder then text" ' - OS Version: (os omitted) Darwin' 'OS version'
+env_case "R2 G5 arch placeholder on the OS line" ' - OS Version: (arch omitted)' 'OS version'
+env_case "R2 G5 Stainless placeholder then text" '"x-stainless-arch": "(arch omitted)x"' 'Stainless arch'
+env_case "R2 G5 Stainless wrong placeholder" '"x-stainless-runtime-version": "(arch omitted)"' 'Stainless runtime version'
+env_case "R2 G5 Stainless placeholder in upper case" 'x-stainless-arch: (ARCH OMITTED)' 'Stainless arch'
+env_case "R2 G5 CRLF leak" "x\\n - Shell: zsh${CR}" 'shell name'
+# G7: the messaging socket pid.
+env_case "R2 G7 socket pid" '"/tmp/cc-socks/95709.sock"' 'socket pid'
+# G8: quoted values and no-break spaces.
+env_case "R2 G8 quoted value" ' - Shell: "zsh"' 'shell name'
+env_case "R2 G8 escaped quoted value" 'x\n - Shell: \"zsh\"' 'shell name'
+env_case "R2 G8 dashless quoted value" 'Shell: "bash"' 'shell name'
+env_case "R2 G8 no-break space" " - Shell:${NBSP}zsh" 'shell name'
+env_case "R2 G8 escaped no-break space" ' - OS Version: Darwin 25.6.0' 'OS version'
+
+CASE="PC-13 R2: prose, a YAML key, placeholders in every form and CRLF pass"
+D=$(mk pc13r2ok)
+printf '%s\n' 'Shell: run make first' 'OS version: check it is 14 or later' '  shell: bash' 'shell: zsh' \
+    "x\\n - Shell: (omitted)${CR}" " - OS Version: (os omitted)${CR}" ' - Shell: "(omitted)"' \
+    'x\n - Shell: \"(omitted)\"\n - OS Version: \"(os omitted)\"' " - Shell:${NBSP}(omitted)" \
+    "x-stainless-arch: (arch omitted)${CR}" '{\"x-stainless-arch\":\"(arch omitted)\"}' \
+    '"/tmp/cc-socks/<pid>.sock"' 'Shell: zshrc is read' > "$D/fixtures/claude-code/plant.txt"
+run "$D"
+expect_ok
+
+# G4: a 1 MiB run of backslashes, then an environment line with no "n", finishes (no time asserted).
+CASE="PC-13 R2: G4 a 1 MiB backslash run"
+D=$(mk pc13r2long)
+awk 'BEGIN { s = "\\"; while (length(s) < 1048576) s = s s; print s " - Shell: zsh" }' > "$D/fixtures/claude-code/plant.txt"
+run "$D"
+expect_ok
+
+# PC-13 review round 3. H1: the reviewer's Stainless inputs fail; their scrub passes (a fixed point).
+env_case "R3 H1 comma-separated header pair" 'x-stainless-arch=arm64, x-stainless-os=MacOS' 'Stainless arch'
+env_case "R3 H1 trailing blank" 'x-stainless-arch: arm64 ' 'Stainless arch'
+env_case "R3 H1 quoted value with a blank" '"x-stainless-arch": "arm64 extra"' 'Stainless arch'
+env_case "R3 H1 runtime version then a comma" 'x-stainless-runtime-version: v26.1.0, node' 'Stainless runtime version'
+CASE="PC-13 R3: H1 the scrub of the reviewer's inputs passes"
+D=$(mk pc13r3h1)
+printf '%s\n' 'x-stainless-arch=arm64, x-stainless-os=MacOS' 'x-stainless-arch: arm64 ' \
+    '"x-stainless-arch": "arm64 extra"' 'x-stainless-runtime-version: v26.1.0, node' > "$T/h1.in"
+SCRUB_FIXED=1 SCRUB_USER=user SCRUB_HOSTS= python3 -I "$ROOT/scripts/premises/scrub.py" "$T" "$T/h1.in" \
+    > "$D/fixtures/claude-code/plant.txt" || fail "scrub.py failed"
+grep -qE 'arm64|MacOS|node' "$D/fixtures/claude-code/plant.txt" && fail "the scrub left a value"
+run "$D"
+expect_ok
+# The placeholder then a value, a "," or a blank fails (only a quote, a backslash, CR or the line end
+# may follow it).
+env_case "R3 H1 placeholder then a value" 'x-stainless-arch: (arch omitted) arm64' 'Stainless arch'
+env_case "R3 H1 placeholder then a comma" 'x-stainless-runtime-version: (version omitted), node' 'Stainless runtime version'
+env_case "R3 H1 placeholder then a blank" 'x-stainless-arch: (arch omitted) ' 'Stainless arch'
+# H3: more dashless host values.
+env_case "R3 H3 Windows_NT" 'OS Version: Windows_NT 10.0.26100' 'OS version'
+env_case "R3 H3 Windows then a blank" 'OS Version: Windows Server 2022' 'OS version'
+env_case "R3 H3 Ubuntu" 'OS Version: Ubuntu 24.04' 'OS version'
+env_case "R3 H3 Debian" 'OS Version: Debian 12' 'OS version'
+env_case "R3 H3 Fedora" 'OS Version: Fedora 40' 'OS version'
+env_case "R3 H3 FreeBSD" 'OS Version: FreeBSD 14.1' 'OS version'
+env_case "R3 H3 OpenBSD" 'OS Version: OpenBSD 7.5' 'OS version'
+env_case "R3 H3 NixOS" 'OS Version: NixOS 24.05' 'OS version'
+env_case "R3 H3 nu" 'Shell: nu' 'shell name'
+env_case "R3 H3 mksh" 'Shell: mksh' 'shell name'
+env_case "R3 H3 csh" 'Shell: csh' 'shell name'
+env_case "R3 H3 xonsh" 'Shell: xonsh' 'shell name'
+env_case "R3 H3 linuxbrew path" 'Shell: /home/linuxbrew/.linuxbrew/bin/zsh' 'shell name'
+env_case "R3 H3 NixOS system path" 'Shell: /run/current-system/sw/bin/bash' 'shell name'
+env_case "R3 H3 Nix store path" 'Shell: /nix/store/0a1b2c3d4e5f6g7h8i9j0k1l2m3n4p5q-zsh-5.9/bin/zsh' 'shell name'
+env_case "R3 H3 Windows bash.exe" 'Shell: C:\Program Files\Git\bin\bash.exe' 'shell name'
+env_case "R3 H3 Windows pwsh.exe" 'Shell: C:\Program Files\PowerShell\7\pwsh.exe' 'shell name'
+env_case "R3 H3 Windows powershell.exe" 'Shell: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' 'shell name'
+env_case "R3 H3 Windows cmd.exe" 'Shell: C:\Windows\System32\cmd.exe' 'shell name'
+env_case "R3 H3 Windows path, escaped backslashes" 'x\nShell: C:\\Program Files\\Git\\bin\\bash.exe\n' 'shell name'
+# H5: a socket path with escaped slashes.
+env_case "R3 H5 escaped socket path" '"\/tmp\/cc-socks\/95709.sock"' 'socket pid'
+
+CASE="PC-13 R3: prose, an escaped socket placeholder and a non-shell .exe pass"
+D=$(mk pc13r3ok)
+printf '%s\n' 'OS Version: Ubuntu is fine' 'OS Version: Windowsill' 'Shell: nushell is new' \
+    '"\/tmp\/cc-socks\/<pid>.sock"' 'Shell: C:\tools\bash.exe.bak' > "$D/fixtures/claude-code/plant.txt"
+run "$D"
+expect_ok
+
+# PC-13 review round 1 F4: the rescrub_codex.py tests (same(), the folders and verbatim lists, ENV_LEAKS).
+CASE="PC-13 R1: rescrub_test.py"
+OUT=$(python3 -I "$ROOT/scripts/premises/rescrub_test.py" 2>&1)
+RC=$?
+N=$((N + 1))
+[ "$RC" -eq 0 ] || fail "exit $RC, expected 0"
+case "$(printf '%s\n' "$OUT" | tail -n 1)" in
+    'rescrub tests: ok ('*) ;;
+    *) fail "last line does not start with 'rescrub tests: ok ('" ;;
+esac
 
 echo "test-check-premises: ok ($N cases)"

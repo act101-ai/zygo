@@ -186,7 +186,7 @@
   },
   "original_cwd": "/repo",
   "additional_directories": [],
-  "messaging_socket_path": "/tmp/cc-socks/95709.sock",
+  "messaging_socket_path": "/tmp/cc-socks/<pid>.sock",
   "fast_mode_state": "off",
   "fast_mode_disabled_reason": "sdk_opt_in_required",
   "per_turn_effort_active": false,

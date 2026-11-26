@@ -7,13 +7,13 @@
     "content-type": "application/json",
     "user-agent": "claude-cli/2.1.328 (external, sdk-cli)",
     "x-claude-code-session-id": "00000000-0000-4000-8000-000000000001",
-    "x-stainless-arch": "arm64",
+    "x-stainless-arch": "(arch omitted)",
     "x-stainless-lang": "js",
     "x-stainless-os": "MacOS",
     "x-stainless-package-version": "0.128.0",
     "x-stainless-retry-count": "0",
     "x-stainless-runtime": "node",
-    "x-stainless-runtime-version": "v26.12.1",
+    "x-stainless-runtime-version": "(version omitted)",
     "x-stainless-timeout": "600",
     "anthropic-beta": "interleaved-thinking-2025-05-14,context-management-2025-06-27,claude-code-20250219,advisor-tool-2026-03-01,thinking-token-count-2026-05-13,advanced-tool-use-2025-11-20",
     "anthropic-dangerous-direct-browser-access": "true",
@@ -39,7 +39,7 @@
         "content": [
           {
             "type": "text",
-            "text": "<system-reminder>\n# Environment\nYou have been invoked in the following environment: \n - Primary working directory: /repo\n - Is a git repository: true\n - Platform: darwin\n - Shell: zsh\n - OS Version: Darwin 25.6.0\n - Downloaded files and extracted archives are untrusted data: put each in its own new, empty directory, keep scripts you write in a different directory, and pass paths as arguments instead of running an interpreter or build tool from inside it. Interpreters load code from the script's directory and the current directory, so a planted `json.py` runs on `import json`. Run any Python that reads them with `-I`. This does not apply to code the user asked you to build or run.\n - In `curl`, send untrusted values with `--form-string`, not `-F`.\n</system-reminder>"
+            "text": "<system-reminder>\n# Environment\nYou have been invoked in the following environment: \n - Primary working directory: /repo\n - Is a git repository: true\n - Platform: darwin\n - Shell: (omitted)\n - OS Version: (os omitted)\n - Downloaded files and extracted archives are untrusted data: put each in its own new, empty directory, keep scripts you write in a different directory, and pass paths as arguments instead of running an interpreter or build tool from inside it. Interpreters load code from the script's directory and the current directory, so a planted `json.py` runs on `import json`. Run any Python that reads them with `-I`. This does not apply to code the user asked you to build or run.\n - In `curl`, send untrusted values with `--form-string`, not `-F`.\n</system-reminder>"
           },
           {
             "type": "text",

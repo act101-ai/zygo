@@ -59,6 +59,18 @@ r"""Fixture hygiene for N2: scrub.py <run dir> <file> -> scrubbed copy on stdout
 - PC-11 review round 2: the user-name rule matches the name in any case, as a whole word (a user
   name of "user", any case, changes nothing); a Codex item id matches in any case (msg_, fco_, ctco_
   + UUID; the same id in two cases gets one placeholder).
+- PC-13: the shell name in a Claude Code environment block line (" - Shell: <name>", at a line start
+  or after a JSON \n escape) -> "(omitted)"; the " - OS Version: <os> <version>" line ->
+  "(os omitted)"; a "shell" JSON key and prose are kept.
+- PC-13 review round 1: those lines in any case, with or without the leading "- ", with blanks or
+  escaped tabs after the colon, at a line start or after a JSON \n escape (not after an escaped
+  backslash then "n"); x-stainless-arch -> "(arch omitted)" and x-stainless-runtime-version ->
+  "(version omitted)" (keys of a parsed object, JSON text and header lines; any case; x-stainless-os,
+  the OS family, is kept, as is "Platform: darwin"); /cc-socks/<n>.sock -> /cc-socks/<pid>.sock.
+- PC-13 review round 2: a line start is also a carriage return, any run of backslashes then "n" or
+  "r", or a \u000a escape (fail closed); a dashless "Shell:" or "OS Version:" line (capital first
+  letter) is masked only for a host value; quoted values and no-break spaces; a Stainless value is
+  replaced whole by its own placeholder (see ENV_NL and STAINLESS_RE).
 """
 import getpass
 import json
@@ -199,6 +211,50 @@ ENV_CTX = re.compile(r"(?:<|\\u003[cC]|&lt;)environment_context(?:>|\\u003[eE]|&
 ULID = re.compile(B + r"([a-z]{1,8}_)(?!0{10})([0-7][0-9A-HJKMNP-TV-Z]{25})(?![0-9A-Za-z])")
 # PC-11: macOS __CF* env names (__CF_USER_TEXT_ENCODING=0x<uid>:... holds the user id).
 CF_ENV = re.compile(B + r"__CF[A-Za-z_]*(?:=[^\s\"'\\]*)?")
+# PC-13: the shell name and OS version lines of a Claude Code environment block (" - Shell: zsh",
+# " - OS Version: Darwin 25.6.0"). The same forms as rescrub_codex.py ENV_LEAKS and check-premises.sh
+# env_scan. Review round 2 G1 (fail closed): a line start is the text start, a real line feed or
+# carriage return, one or more backslashes then "n" or "r" (any depth of JSON escaping; a literal
+# backslash then "n" is a false positive, accepted), or a \u000a or \u000d escape (any case). Blanks or
+# escaped tabs may follow it. G2: the dash form ("- Shell: <v>", the key in any case) is masked for any
+# value; the dashless form only with a capital first letter ("Shell:", "OS Version:"; a YAML
+# "shell: bash" key is kept) and a host value: a known shell name or its path, or Darwin, Linux, Windows
+# or macOS then a version digit. G8: blanks, escaped tabs or no-break spaces after the colon, and a
+# quoted or \"-quoted value.
+ENV_NL = r"(?:^|\r|(?<!\\)\\+[nr]|\\[uU]000[aAdD])"
+ENV_IND = r"(?:[ \t]|\\t)*"
+ENV_WS = r"(?:[ \t\u00a0]|\\t|\\u00[aA]0)*"
+ENV_Q = r"(?:\\?[\"'])?"
+ENV_END = r"(?:$|[\r\n\\\"'])"
+# Review round 3 H3: more shell names and paths (Linuxbrew, NixOS, the Nix store, a Windows path to a
+# shell .exe, plain or with escaped backslashes) and OS names (Windows_NT, "Windows ", distributions).
+SHELL_DIR = (r"(?:(?:/usr(?:/local)?)?/bin/|/opt/homebrew/bin/|/home/linuxbrew/\.linuxbrew/bin/|"
+             r"/run/current-system/sw/bin/|/nix/store/[0-9a-z]+-[^/\s\"'\\]+/bin/)")
+WIN_SHELL = r"[a-z]:(?:\\{1,2}[^\\\r\n\"']+)*?\\{1,2}(?:bash|pwsh|powershell|cmd)\.exe"
+SHELL_VAL = (r"(?i:" + SHELL_DIR + r"?(?:zsh|bash|fish|sh|tcsh|csh|ksh|mksh|dash|nu|xonsh|pwsh|powershell|cmd)"
+             r"(?:\.exe)?|" + WIN_SHELL + r")(?![A-Za-z0-9_./-])")
+OS_VAL = r"(?:(?i:darwin|linux|windows|macos|ubuntu|debian|fedora|freebsd|openbsd|nixos)[ \t]*[0-9]|(?i:windows)[_ ])"
+SHELL_KEY = r"(?:-" + ENV_WS + r"(?i:shell)|S(?i:hell)(?=:" + ENV_WS + ENV_Q + SHELL_VAL + r"))"
+OS_KEY = r"(?:-" + ENV_WS + r"(?i:os version)|O(?i:s version)(?=:" + ENV_WS + ENV_Q + OS_VAL + r"))"
+# A Windows shell path is replaced whole (its backslashes are not line ends).
+ENV_SHELL = re.compile(r"(?m)(" + ENV_NL + ENV_IND + SHELL_KEY + ":" + ENV_WS + ENV_Q + r")(?:(?i:" + WIN_SHELL +
+                       r")(?![A-Za-z0-9_./-])|[^\s\\\"'][^\n\r\\\"']*)")
+ENV_OS = re.compile(r"(?m)(" + ENV_NL + ENV_IND + OS_KEY + ":" + ENV_WS + ENV_Q + r")[^\s\\\"'][^\n\r\\\"']*")
+# PC-13 review round 1 F3: the Stainless SDK's architecture and runtime version request headers (a
+# JSON key, plain or \"-escaped, or a header line; any case); x-stainless-os (the OS family) is kept.
+# Review round 2 G5: the whole value (a token, or a parenthesis then a token) becomes the key's own
+# placeholder, so a wrong placeholder or one with text after it is rewritten. Review round 3 H1: a
+# quoted value (plain or \"-escaped) is replaced up to its closing quote; an unquoted one up to the line
+# end, a quote or a backslash (a header line inside a JSON string); a "," or a blank does not end it, so
+# text after a value is lost (fails closed). Groups: 1 the key and separator, 2 the key, 3 the opening
+# quote.
+STAINLESS = {"x-stainless-arch": "(arch omitted)", "x-stainless-runtime-version": "(version omitted)"}
+STAINLESS_RE = re.compile(r"(\\?[\"']?((?i:x-stainless-(?:arch|runtime-version)))\\?[\"']?\s*[:=]\s*)"
+                          r"(?:(\\?[\"'])(?:(?!\3)(?:\\[^\r\n]|[^\\\r\n]))*"
+                          r"|[^\s\"'\\][^\r\n\"'\\]*)")
+# PC-13 review round 1 F7: the process id in a Claude Code messaging socket path (review round 3 H5:
+# also with escaped slashes).
+CC_SOCK = re.compile(r"(/cc-socks\\*/)[0-9]+(\.sock)")
 
 
 def s(text):
@@ -208,6 +264,10 @@ def s(text):
     text = MAC_OS_X.sub("(os omitted)", text)
     text = OS_JSON.sub(lambda m: m.group(1) + "(os omitted)", text)
     text = UNAME.sub("(os omitted)", text)
+    text = ENV_SHELL.sub(lambda m: m.group(1) + "(omitted)", text)
+    text = ENV_OS.sub(lambda m: m.group(1) + "(os omitted)", text)
+    text = STAINLESS_RE.sub(lambda m: m.group(1) + (m.group(3) or "") + STAINLESS[m.group(2).lower()], text)
+    text = CC_SOCK.sub(lambda m: m.group(1) + "<pid>" + m.group(2), text)
     text = SANDBOX.sub(lambda m: m.group(1) + "(os omitted)", text)
     text = MARKETPLACE.sub("marketplace-os-omitted", text)
     text = CMD_SHELL.sub(lambda m: m.group(1) + "(shell omitted) -lc", text)
@@ -246,6 +306,7 @@ def s(text):
 def walk(o):
     if isinstance(o, dict):
         return {s(k): "(os omitted)" if k in OS_KEYS and isinstance(v, str) else
+                STAINLESS[k.lower()] if k.lower() in STAINLESS and isinstance(v, str) else
                 LEAD_SHELL.sub("(shell omitted) -lc", s(v)) if k in CMD_KEYS and isinstance(v, str) else walk(v)
                 for k, v in o.items()}
     if isinstance(o, list):
@@ -272,7 +333,7 @@ def is_tool_listing(data):
 raw = open(path, encoding="utf-8", errors="replace").read()
 try:
     data = json.loads(raw)
-except ValueError:
+except (ValueError, RecursionError):  # review round 3 H2: too deep to parse -> the raw-text scrub
     sys.stdout.write(s(raw))
     save_ids()
     sys.exit(0)

@@ -358,6 +358,66 @@ cx_scan 'marketplace-(macos|linux|windows)-[A-Za-z0-9_-]' 'marketplace OS name'
 # A time-bearing ULID after a lower-case prefix (resp_, msg_, fc_; scrub.py ULID); a placeholder of
 # time 0 is dropped. A bare ULID has no rule (Codex ids carry a prefix; ordinary hashes would match).
 cx_scan "${L}[a-z]{1,8}_[0-7][0-9A-HJKMNP-TV-Z]{25}([^0-9A-Za-z]|\$)" 'time-bearing id' '' 's/[a-z]{1,8}_0{10}[0-9A-HJKMNP-TV-Z]{16}//g'
+# env_scan <ERE> <label> [<drop sed -E script>]: as cx_scan, case-sensitive, over fixtures/claude-code
+# and fixtures/opencode (PC-13). The drop script is applied to the hit's text (without its "path:line:"
+# prefix, so ^ is the line start); the hit fails only when the ERE still matches the result. grep and
+# sed run with LC_ALL=C, byte by byte, so the time stays linear on long lines (review round 2 G4). The
+# verbatim files are exempt.
+env_scan() {
+  hit=$(LC_ALL=C grep -rn -aE -- "$1" fixtures/claude-code fixtures/opencode 2>/dev/null | LC_ALL=C grep -av -E -- "$VX" | tr '\000' ' ' |
+    while IFS= read -r ln; do
+      [ -z "${3:-}" ] || printf '%s\n' "${ln#*:*:}" | LC_ALL=C sed -E "$3" | LC_ALL=C grep -qaE -- "$1" || continue
+      printf '%s\n' "$ln"
+    done | head -n 1)
+  [ -z "$hit" ] || fail "forbidden content ($2): $(printf '%s\n' "$hit" | head -n 1 | cut -c1-160)"
+}
+# ci <text>: an ERE for the text in any case ([Ss][Hh]...); the text holds no ERE syntax but . / ( ) | -.
+ci() {
+  printf '%s' "$1" | awk '{ for (i = 1; i <= length($0); i++) { c = substr($0, i, 1); u = toupper(c); l = tolower(c)
+    printf "%s", (u != l ? "[" u l "]" : c) } }'
+}
+CR=$(printf '\r')
+NBSP=$(printf '\302\240')
+# The Claude Code environment block lines, the forms of scrub.py ENV_SHELL and ENV_OS. A line start
+# (ENL, review round 2 G1, fail closed): the line start, a carriage return, one or more backslashes
+# then n or r, or a \u000a or \u000d escape. Blanks or escaped tabs may follow it (EIN). After the
+# colon: blanks, escaped tabs, no-break spaces (G8; EWS), and a quote, plain or \"-escaped (EQ). The
+# dash form, the key in any case, fails for any value but the key's own placeholder as the whole value
+# (then a quote, a backslash, a CR or the line end; F6, G5); the dashless form only with a capital
+# first letter and a host value (G2): a known shell name or its path, or Darwin, Linux, Windows or
+# macOS then a version digit.
+ENL='(^|'"$CR"'|\\+[nr]|\\[uU]000[aAdD])'
+EIN='([[:blank:]]|\\t)*'
+EWS='([[:blank:]]|\\t|'"$NBSP"'|\\u00[aA]0)*'
+EQ='(\\?["'"'"'])?'
+EEND='(["'"'"'\\'"$CR"']|$)'
+ESH=$(ci shell)
+EOS=$(ci 'os version')
+# Review round 3 H3: the host values of scrub.py SHELL_VAL and OS_VAL (Linuxbrew, NixOS and Nix store
+# shell paths, a Windows path to a shell .exe, plain or with escaped backslashes; Windows_NT, "Windows "
+# and Linux and BSD distributions).
+SHD="$(ci '((/usr(/local)?)?/bin/|/opt/homebrew/bin/|/home/linuxbrew/\.linuxbrew/bin/|/run/current-system/sw/bin/|/nix/store/')"'[0-9A-Za-z]+-[^/[:space:]"'"'"'\\]+/'"$(ci 'bin/)')"
+SHW='[A-Za-z]:(\\{1,2}[^\\"'"'$CR"']+)*\\{1,2}'"$(ci '(bash|pwsh|powershell|cmd)')"'\.[Ee][Xx][Ee]'
+SHV="($SHD?$(ci '(zsh|bash|fish|sh|tcsh|csh|ksh|mksh|dash|nu|xonsh|pwsh|powershell|cmd)(\.exe)?')|$SHW)"'([^A-Za-z0-9_./-]|$)'
+OSV="($(ci '(darwin|linux|windows|macos|ubuntu|debian|fedora|freebsd|openbsd|nixos)')[[:blank:]]*[0-9]|$(ci windows)[_ ])"
+EVAL='[^\\"'"'"'[:space:]]'
+# The drop keeps the character after the placeholder (group 3: EWS and EQ are groups 1 and 2), which
+# may start the next line.
+env_scan "$ENL$EIN-$EWS$ESH:$EWS$EQ$EVAL" 'shell name' "s/$ESH:$EWS$EQ\\(omitted\\)$EEND/\\3/g"
+env_scan "${ENL}${EIN}S$(ci hell):$EWS$EQ$SHV" 'shell name'
+env_scan "$ENL$EIN-$EWS$EOS:$EWS$EQ$EVAL" 'OS version' "s/$EOS:$EWS$EQ\\(os omitted\\)$EEND/\\3/g"
+env_scan "${ENL}${EIN}O$(ci 's version'):$EWS$EQ$OSV" 'OS version'
+# The Stainless SDK's arch and runtime version headers (scrub.py STAINLESS_RE; F3), any case; only the
+# key's own placeholder as the whole value is dropped (G5; group 3: XSA and XSR hold groups 1 and 2).
+# x-stainless-os, the OS family, is kept.
+XSA="$(ci x-stainless-arch)"'(\\?["'"'"'])?[[:space:]]*[:=][[:space:]]*(\\?["'"'"'])?'
+XSR="$(ci x-stainless-runtime-version)"'(\\?["'"'"'])?[[:space:]]*[:=][[:space:]]*(\\?["'"'"'])?'
+XSV='[^"'"'"'\\[:space:],]'
+env_scan "$XSA$XSV" 'Stainless arch' "s/$XSA"'\(arch omitted\)'"$EEND/\\3/g"
+env_scan "$XSR$XSV" 'Stainless runtime version' "s/$XSR"'\(version omitted\)'"$EEND/\\3/g"
+# The pid of a Claude Code messaging socket (scrub.py CC_SOCK; review round 2 G7; round 3 H5: also
+# with escaped slashes).
+env_scan '/cc-socks\\*/[0-9]+\.sock' 'socket pid'
 
 # name_scan <label> <name> [<word characters>] [<exempt ERE>]: the name as a whole word (any case;
 # it may hold spaces), also right after a JSON backslash escape. Word characters: A-Za-z0-9_ unless
