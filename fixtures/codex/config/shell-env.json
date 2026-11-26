@@ -35,8 +35,7 @@
       "XDG_CONFIG_HOME",
       "XDG_DATA_HOME",
       "XDG_STATE_HOME",
-      "_",
-      "__CF_USER_TEXT_ENCODING"
+      "_"
     ]
   },
   "pc12-all": {
@@ -75,8 +74,7 @@
       "XDG_CONFIG_HOME",
       "XDG_DATA_HOME",
       "XDG_STATE_HOME",
-      "_",
-      "__CF_USER_TEXT_ENCODING"
+      "_"
     ]
   },
   "pc12-exclude": {
@@ -114,8 +112,7 @@
       "XDG_DATA_HOME",
       "XDG_STATE_HOME",
       "ZP_SET",
-      "_",
-      "__CF_USER_TEXT_ENCODING"
+      "_"
     ],
     "zp_set": true
   },
@@ -154,8 +151,7 @@
       "XDG_CONFIG_HOME",
       "XDG_DATA_HOME",
       "XDG_STATE_HOME",
-      "_",
-      "__CF_USER_TEXT_ENCODING"
+      "_"
     ],
     "exclude_ignores_case": true
   },

@@ -38,7 +38,7 @@ table thread_read_receipts
 table thread_sections
 table thread_spawn_edges
 table threads
-  threads.rollout_path: /tmp/run/cxh-pc4-untrusted/sessions/2026/11/26/rollout-2026-11-26T07-26-10-00000000-0000-4000-8000-000000000001.jsonl
+  threads.rollout_path: /tmp/run/cxh-pc4-untrusted/sessions/2026/11/26/rollout-2026-11-26T08-10-48-00000000-0000-4000-8000-000000000001.jsonl
   threads.title: zp-pc4-untrusted
   threads.first_user_message: zp-pc4-untrusted
   threads.preview: zp-pc4-untrusted
@@ -54,13 +54,15 @@ table thread_turns
 0 .tmp/.staging.lock
 0 .tmp/plugins.sync.lock
 901 config.toml
-32768 goals_1.sqlite
+4096 goals_1.sqlite
+32768 goals_1.sqlite-shm
+32992 goals_1.sqlite-wal
 193 hooks.json
 36 installation_id
 49152 logs_2.sqlite
 45056 memories_1.sqlite
 40960 queue_1.sqlite
-41432 sessions/2026/11/26/rollout-2026-11-26T07-26-10-00000000-0000-4000-8000-000000000001.jsonl
+41432 sessions/2026/11/26/rollout-2026-11-26T08-10-48-00000000-0000-4000-8000-000000000001.jsonl
 17 skills/.system/.codex-system-skills.marker
 2781 skills/.system/create-statusline/SKILL.md
 43 skills/.system/create-statusline/agents/openai.yaml

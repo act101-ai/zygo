@@ -55,7 +55,7 @@ table thread_turns
 49152 logs_2.sqlite
 45056 memories_1.sqlite
 40960 queue_1.sqlite
-41452 sessions/2026/11/26/rollout-2026-11-26T07-26-22-00000000-0000-4000-8000-000000000001.jsonl
+41452 sessions/2026/11/26/rollout-2026-11-26T08-11-05-00000000-0000-4000-8000-000000000001.jsonl
 17 skills/.system/.codex-system-skills.marker
 2781 skills/.system/create-statusline/SKILL.md
 43 skills/.system/create-statusline/agents/openai.yaml
@@ -109,9 +109,13 @@ table thread_turns
 659 skills/.system/skill-installer/scripts/github_utils.py
 11917 skills/.system/skill-installer/scripts/install-skill-from-github.py
 2948 skills/.system/skill-installer/scripts/list-skills.py
-307200 state_5.sqlite
+4096 state_5.sqlite
+32768 state_5.sqlite-shm
+552112 state_5.sqlite-wal
 0 thread-writer-locks/.coordination.lock
-106496 thread_history_1.sqlite
+4096 thread_history_1.sqlite
+32768 thread_history_1.sqlite-shm
+234872 thread_history_1.sqlite-wal
 == repo files (size path; .git/ left out)
 207 .codex/config.toml
 201 .codex/hooks.json

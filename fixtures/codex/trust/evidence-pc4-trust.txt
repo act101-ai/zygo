@@ -38,7 +38,7 @@ table thread_read_receipts
 table thread_sections
 table thread_spawn_edges
 table threads
-  threads.rollout_path: /tmp/run/cxh-pc4-trust/sessions/2026/11/26/rollout-2026-11-26T07-26-12-00000000-0000-4000-8000-000000000001.jsonl
+  threads.rollout_path: /tmp/run/cxh-pc4-trust/sessions/2026/11/26/rollout-2026-11-26T08-10-50-00000000-0000-4000-8000-000000000001.jsonl
   threads.title: zp-pc4-trust
   threads.first_user_message: zp-pc4-trust
   threads.preview: zp-pc4-trust
@@ -54,15 +54,15 @@ table thread_turns
 0 .tmp/.staging.lock
 0 .tmp/plugins.sync.lock
 889 config.toml
-4096 goals_1.sqlite
-32768 goals_1.sqlite-shm
-32992 goals_1.sqlite-wal
+32768 goals_1.sqlite
 189 hooks.json
 36 installation_id
 49152 logs_2.sqlite
 45056 memories_1.sqlite
 40960 queue_1.sqlite
-41413 sessions/2026/11/26/rollout-2026-11-26T07-26-12-00000000-0000-4000-8000-000000000001.jsonl
+32768 queue_1.sqlite-shm
+41232 queue_1.sqlite-wal
+41416 sessions/2026/11/26/rollout-2026-11-26T08-10-50-00000000-0000-4000-8000-000000000001.jsonl
 17 skills/.system/.codex-system-skills.marker
 2781 skills/.system/create-statusline/SKILL.md
 43 skills/.system/create-statusline/agents/openai.yaml
@@ -120,7 +120,7 @@ table thread_turns
 32768 state_5.sqlite-shm
 552112 state_5.sqlite-wal
 0 thread-writer-locks/.coordination.lock
-4096 thread_history_1.sqlite
+102400 thread_history_1.sqlite
 32768 thread_history_1.sqlite-shm
 234872 thread_history_1.sqlite-wal
 == repo files (size path; .git/ left out)

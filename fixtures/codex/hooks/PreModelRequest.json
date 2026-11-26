@@ -6,7 +6,7 @@
   "thread_id": "00000000-0000-4000-8000-000000000002",
   "turn_id": "00000000-0000-4000-8000-000000000003",
   "cwd": "/repo",
-  "transcript_path": "/tmp/run/cxh-pc5-probe/sessions/2026/11/26/rollout-2026-11-26T07-26-51-00000000-0000-4000-8000-000000000002.jsonl",
+  "transcript_path": "/tmp/run/cxh-pc5-probe/sessions/2026/11/26/rollout-2026-11-26T08-11-40-00000000-0000-4000-8000-000000000002.jsonl",
   "model": "gpt-mock",
   "hook_event_name": "PreModelRequest"
 }

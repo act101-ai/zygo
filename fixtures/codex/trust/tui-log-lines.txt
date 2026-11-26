@@ -1,0 +1,1 @@
+none: no TUI stderr or log line about config writes, trust, hooks or a loopback URL

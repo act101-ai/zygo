@@ -32,7 +32,7 @@ git -C "$RUN/other" -c user.name=t -c user.email=t@t commit -q --allow-empty -m 
 
 # cx.py: the part's Python (TOML writing, SSE authoring, tool selection, judging and summaries).
 cat >"$RUN/cx.py" <<'PY'
-import difflib, hashlib, json, os, re, sqlite3, sys, urllib.parse
+import difflib, hashlib, itertools, json, os, re, sqlite3, sys, urllib.parse
 
 RUN = sys.argv[1]
 CMD = sys.argv[2]
@@ -231,6 +231,7 @@ def cmd_pc5toml():
     out, s, prem = A[:3]
     ev, rules = (A[3], A[4]) if len(A) > 4 else ("", "")
     match = len(A) > 5 and A[5] == "match"
+    approve = not (len(A) > 6 and A[6] == "noapprove")
     L = []
     for e in EVENTS:
         c = "python3 -I %s/hook_log.py %s/hk/%s/%s" % (prem, RUN, s, e)
@@ -244,8 +245,8 @@ def cmd_pc5toml():
                       "command = %s" % q(c), ""]
     # default_tools_approval_mode: under approval_policy "never" Codex refuses an MCP call that needs
     # approval ("MCP tool call requires approval, but approval policy is never"; real run 2026-11-26).
-    L += ["[mcp_servers.probe]", 'command = "python3"', "args = %s" % q(["-I", prem + "/mcp_probe.py"]),
-          'default_tools_approval_mode = "approve"', ""]
+    L += ["[mcp_servers.probe]", 'command = "python3"', "args = %s" % q(["-I", prem + "/mcp_probe.py"])]
+    L += ['default_tools_approval_mode = "approve"', ""] if approve else [""]
     with open(out, "w") as f:
         f.write("\n".join(L))
 
@@ -367,6 +368,8 @@ def strict_keys(url, prem, key, rcv):
         ("exclude", "shell_environment_policy.exclude", "shell_environment_policy", "exclude = %s" % q(DENY), q(DENY)),
         ("mcp_command", "mcp_servers.zygo.command", "mcp_servers.zygo", 'command = "python3"', '"python3"'),
         ("mcp_args", "mcp_servers.zygo.args", "mcp_servers.zygo", "args = %s" % q(["-I", prem + "/mcp_probe.py"]), q(["-I", prem + "/mcp_probe.py"])),
+        ("mcp_approval", "mcp_servers.zygo.default_tools_approval_mode", "mcp_servers.zygo",
+         'default_tools_approval_mode = "approve"', '"approve"'),
         ("name", "model_providers.zygo.name", "model_providers.zygo", 'name = "zygo"', '"zygo"'),
         ("wire_api", "model_providers.zygo.wire_api", "model_providers.zygo", 'wire_api = "responses"', '"responses"'),
         ("base_url", "model_providers.zygo.base_url", "model_providers.zygo", "base_url = %s" % q(url + "/v1"), q(url + "/v1")),
@@ -558,6 +561,10 @@ def compaction(s):
     return None, ""
 
 
+# WS: the Responses WebSocket log target as a whole token (not feature.responses_websockets).
+WS = re.compile(r"\bresponses_websocket\b")
+
+
 def shown_fns():
     def path_side(tag):
         def f(s):
@@ -591,7 +598,7 @@ def shown_fns():
         err = rd(os.path.join(RUN, "out", s + ".err"))
         get = any(r.get("method") == "GET" and "websocket" in (r.get("headers") or {}).get("upgrade", "").lower()
                   for r in recs(s))
-        return "cli" if get or "responses_websocket" in err else "none"
+        return "cli" if get or WS.search(err) else "none"
 
     def env(s):
         rs = resp(s)
@@ -697,7 +704,7 @@ def pc3():
 
 
 PC4 = ["pc4-none", "pc4-bypass", "pc4-untrusted", "pc4-trust", "pc4-trust-new", "pc4-log", "pc4-feature-default",
-       "pc4-feature-legacy", "pc4-tui", "pc4-tui-after"]
+       "pc4-feature-legacy", "pc4-tui", "pc4-tui-after", "pc4-ctl-neg", "pc4-ctl-pos"]
 SOURCES = ("home-inline", "home-json", "project-inline", "project-json")
 
 
@@ -753,6 +760,23 @@ def sqlite_dump(db, needles):
     return out
 
 
+def log_rows(db):
+    """'level | target | body' of each row of a logs_2.sqlite logs table, read-only (mode=ro, else
+    immutable=1: a database with a -wal file and no -shm cannot be opened ro); [] when absent."""
+    if not os.path.exists(db):
+        return []
+    for mode in ("ro", "ro&immutable=1"):
+        try:
+            con = sqlite3.connect("file:%s?mode=%s" % (urllib.parse.quote(db), mode), uri=True)
+            rows = [" | ".join(str(x) for x in r if x is not None)
+                    for r in con.execute("select level, target, feedback_log_body from logs order by id")]
+            con.close()
+            return rows
+        except sqlite3.Error as x:
+            err = x
+    return ["error: %s" % err]
+
+
 def tree(d, skip_git=False):
     """'<size> <path>' for each file under d (relative paths, sorted; .git/ left out when asked)."""
     out = []
@@ -793,19 +817,206 @@ def cmd_evidence():
         f.write("\n".join(out) + "\n")
 
 
+TUI_PROMPT = "Hooks need review"
+TUI_OPTION = "Trust all and continue"
+
+
 def cmd_tui_choice():
-    """tui-choice <pane file>: the key that approves a hook prompt on the pane: an option digit, else
-    Enter; empty when the pane shows no hook prompt."""
+    """tui-choice <pane file>: the digit of the option labelled exactly TUI_OPTION on a pane that shows
+    TUI_PROMPT; else a driver-failed verdict (never a K-D13 verdict)."""
     t = rd(A[0])
-    if not (re.search("hook", t, re.I) and re.search(r"trust|review|approv|allow", t, re.I)):
-        print("")
+    if TUI_PROMPT not in t:
+        print("driver-failed: prompt not recognised")
         return
-    for d, label in re.findall(r"(?m)^\W*(\d)[.)]\s+(.+)$", t):
-        if re.search(r"trust|approv|allow|yes|run|enable", label, re.I) and \
-                not re.search(r"\bno\b|don.?t|never|deny|skip|disable|cancel", label, re.I):
+    for d, label in re.findall(r"(?m)^\W*(\d)\.\s+(.+?)\s*$", t):
+        if label == TUI_OPTION:
             print(d)
             return
-    print("Enter")
+    print("driver-failed: no option labelled '%s'" % TUI_OPTION)
+
+
+# --- G3: what trusted_hash is computed over ----------------------------------------------------
+def toml_handlers(text):
+    """{(event, group, handler): (matcher, handler dict)} of a config.toml's [[hooks.<E>]] groups (the
+    shapes this part writes: matcher, type, command, timeout)."""
+    out, ev, g, h, matcher, cur, counts = {}, None, -1, -1, None, None, {}
+    for line in text.splitlines():
+        m = re.match(r"\s*\[\[hooks\.([A-Za-z]+)\]\]\s*$", line)
+        if m:
+            ev = m.group(1)
+            counts[ev] = counts.get(ev, -1) + 1
+            g, h, matcher, cur = counts[ev], -1, None, None
+            continue
+        if re.match(r"\s*\[\[hooks\.[A-Za-z]+\.hooks\]\]\s*$", line) and ev:
+            h += 1
+            cur = {}
+            out[(ev, g, h)] = (matcher, cur)
+            continue
+        if re.match(r"\s*\[", line):
+            ev, cur = None, None
+            continue
+        kv = re.match(r'\s*([A-Za-z_]+)\s*=\s*(.+?)\s*$', line)
+        if kv and ev:
+            v = json.loads(kv.group(2)) if kv.group(2)[:1] in '"0123456789-tf' or kv.group(2) in ("true", "false") else kv.group(2)
+            if cur is None and kv.group(1) == "matcher":
+                matcher = v
+            elif cur is not None:
+                cur[kv.group(1)] = v
+    return out
+
+
+def json_handlers(text):
+    out = {}
+    for ev, groups in (json.loads(text).get("hooks") or {}).items():
+        for g, grp in enumerate(groups):
+            for h, hd in enumerate(grp.get("hooks") or []):
+                out[(ev, g, h)] = (grp.get("matcher"), hd)
+    return out
+
+
+def snake(e):
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", e).lower()
+
+
+def hash_records(cxh, sources):
+    """[(key, hash, source file, event, group, handler index, matcher, handler)] for each hooks.state
+    record of CODEX_HOME's config.toml whose source is in <sources> (real path -> file to read)."""
+    cfg = rd(os.path.join(cxh, "config.toml"))
+    out = []
+    for key, hx in re.findall(r'\[hooks\.state\."([^"]+)"\]\s*\ntrusted_hash = "sha256:([0-9a-f]+)"', cfg):
+        m = re.match(r"(.+):([a-z_]+):(\d+):(\d+)$", key)
+        if not m:
+            continue
+        f, ev_s, g, h = m.group(1), m.group(2), int(m.group(3)), int(m.group(4))
+        text = rd(sources.get(f, f))
+        hs = json_handlers(text) if f.endswith(".json") else toml_handlers(text)
+        hit = next(((ev, mt, hd) for (ev, gg, hh), (mt, hd) in hs.items() if snake(ev) == ev_s and gg == g and hh == h), None)
+        if hit:
+            out.append((key, hx, f, hit[0], g, h, hit[1], hit[2]))
+    return out
+
+
+DEFAULTS = {"timeout": None, "async": False, "statusMessage": None, "commandWindows": None, "additionalContextLimit": None}
+SNAKE = {"statusMessage": "status_message", "commandWindows": "command_windows", "additionalContextLimit": "additional_context_limit"}
+
+
+def hash_candidates(rec, file_bytes):
+    """(template tag, text) pairs for one record; a tag names the template, never a value."""
+    key, _, f, ev, g, h, matcher, hd = rec
+    cmd = hd.get("command", "")
+    yield "command", cmd
+    yield "key", key
+    yield "file-bytes", file_bytes
+    for sep in ("\n", ":", "\0", "|", ""):
+        yield "key%rcommand" % sep, key + sep + cmd
+        yield "command%rkey" % sep, cmd + sep + key
+        for evn in (ev, snake(ev)):
+            yield "event%s%rcommand" % ("" if evn == ev else "-snake", sep), evn + sep + cmd
+    present = [k for k in hd if k not in ("type", "command")]
+    opt = [k for k in DEFAULTS if k not in hd]
+    for n in range(len(opt) + 1):
+        for extra in itertools.combinations(opt, n):
+            fields = ["type", "command"] + present + list(extra)
+            for camel in (True, False):
+                nm = (lambda x: x) if camel else (lambda x: SNAKE.get(x, x))
+                orders = itertools.permutations(fields) if len(fields) <= 5 else [tuple(fields), tuple(sorted(fields))]
+                for order in orders:
+                    d = {nm(k): (hd[k] if k in hd else DEFAULTS[k]) for k in order}
+                    for sep in ((",", ":"), (", ", ": ")):
+                        tag = "handler[%s|%s|%s]" % ("/".join(order), "camel" if camel else "snake", "compact" if sep[0] == "," else "spaced")
+                        yield tag, json.dumps(d, separators=sep)
+                        for gt, gd in (("group", {"hooks": [d]}), ("group+matcher", {"matcher": matcher, "hooks": [d]}),
+                                       ("matcher+group", {"hooks": [d], "matcher": matcher})):
+                            yield gt + tag, json.dumps(gd, separators=sep)
+                        for evn in (ev, snake(ev)):
+                            for ek in ("event", "event_name", "hook_event_name"):
+                                yield "%s=%s+matcher+%s" % (ek, "camel" if evn == ev else "snake", tag), \
+                                    json.dumps(dict({ek: evn, "matcher": matcher}, **d), separators=sep)
+
+
+def sha(t):
+    return hashlib.sha256(t if isinstance(t, bytes) else t.encode()).hexdigest()
+
+
+def find_rule(recs, files):
+    """The template tags that give every record's hash (empty when none)."""
+    common = None
+    for rec in recs:
+        tags = {tag for tag, t in hash_candidates(rec, files.get(rec[2], b"")) if sha(t) == rec[1]}
+        common = tags if common is None else common & tags
+    return sorted(common or [])
+
+
+def cmd_hashrule():
+    """hashrule <scenario> <CODEX_HOME> <real path=file>...: sum/trust/hash-rule.json; with a rule,
+    x/ctl-pos.state (the positive control's record) for $RUN/cxh-pc4-ctl-pos/config.toml."""
+    sc, cxh = A[:2]
+    sources = dict(a.split("=", 1) for a in A[2:])
+    recs = hash_records(cxh, sources)
+    files = {}
+    for r in recs:
+        try:
+            files[r[2]] = open(sources.get(r[2], r[2]), "rb").read()
+        except OSError:
+            files[r[2]] = b""
+    rule = find_rule(recs, files) if recs else []
+    same = {}
+    for r in recs:
+        same.setdefault(r[7].get("command"), []).append(r)
+    dep = []
+    for cmd_, rs in same.items():
+        if len(rs) > 1:
+            for r in rs:
+                dep.append({"key": r[0].rsplit("/", 1)[-1], "event": r[3], "group": r[4], "matcher": r[6],
+                            "handler": r[7], "hash": r[1]})
+    n = sum(1 for r in recs[:1] for _ in hash_candidates(r, files.get(r[2], b"")))
+    out = {"scenario": sc, "records": [{"key": r[0], "trusted_hash": "sha256:" + r[1], "event": r[3], "group": r[4],
+                                        "handler_index": r[5], "matcher": r[6], "handler": r[7]} for r in recs],
+           "candidates_per_record": n, "rule": rule[0] if rule else None, "rules_matching_all": rule[:10],
+           "same_command_records": dep}
+    if rule:
+        ctl = os.path.realpath(os.path.join(RUN, "cxh-pc4-ctl-pos")) + "/config.toml"
+        hd = {"type": "command", "command": "echo ctl-pos >>%s/trust-pc4-ctl-pos" % RUN}
+        rec = (ctl + ":session_start:0:0", "", ctl, "SessionStart", 0, 0, None, hd)
+        text = dict(hash_candidates(rec, b""))[rule[0]]
+        with open(os.path.join(RUN, "x", "ctl-pos.state"), "w") as fh:
+            fh.write('\n[hooks.state."%s"]\ntrusted_hash = "sha256:%s"\n' % (rec[0], sha(text)))
+        out["positive_control_record"] = rec[0] + " sha256 by rule " + rule[0]
+    wjson(os.path.join(RUN, "sum", "trust", "hash-rule.json"), out)
+    print(rule[0] if rule else "")
+
+
+def cmd_variants():
+    """variants <scenario> <home hooks.json> <project hooks.json>: add groups with one shared command:
+    home: SessionStart g1 (no matcher), g2 (matcher zpm), g3 (timeout 30), UserPromptSubmit g0;
+    project: SessionStart g1. Equal hashes for equal inputs show what the hash covers."""
+    sc, home, proj = A[:3]
+    var = "echo zp-var >>%s/var-%s" % (RUN, sc)
+    hd = {"type": "command", "command": var}
+    d = json.load(open(home))
+    d["hooks"]["SessionStart"] += [{"hooks": [hd]}, {"matcher": "zpm", "hooks": [hd]}, {"hooks": [dict(hd, timeout=30)]}]
+    d["hooks"]["UserPromptSubmit"] = [{"hooks": [hd]}]
+    json.dump(d, open(home, "w"))
+    d = json.load(open(proj))
+    d["hooks"]["SessionStart"] += [{"hooks": [hd]}]
+    json.dump(d, open(proj, "w"))
+
+
+def cmd_tuilog():
+    """tuilog <scenario> <CODEX_HOME>: trust/tui-log-lines.txt: the TUI's stderr, CODEX_HOME/log and
+    logs_2.sqlite lines about config writes, trust, hooks, MCP URLs or a loopback address (no
+    feedback_tags line; at most 200)."""
+    sc, cxh = A[:2]
+    pat = re.compile(r"config/batchWrite|config/write|config/value|hooks/|trust|/mcp\b|127\.0\.0\.1:\d+|listen", re.I)
+    out = []
+    for p in [os.path.join(RUN, sc + "-stderr.txt")] + sorted(
+            os.path.join(dp, f) for dp, _, fs in os.walk(os.path.join(cxh, "log")) for f in fs):
+        out += ["%s: %s" % (os.path.basename(p), l[:400]) for l in rd(p).splitlines() if pat.search(l) and "feedback_tags" not in l]
+    for t in log_rows(os.path.join(cxh, "logs_2.sqlite")):
+        if pat.search(t) and "feedback_tags" not in t:
+            out.append("logs_2.sqlite: " + t[:400])
+    with open(os.path.join(RUN, "sum", "trust", "tui-log-lines.txt"), "w") as f:
+        f.write("\n".join(out[:200] or ["none: no TUI stderr or log line about config writes, trust, hooks or a loopback URL"]) + "\n")
 
 
 def pc4():
@@ -828,8 +1039,21 @@ def pc4():
         pre["form_from"] = src
         honored = bool(set(pre["sources_run"]) & set(SOURCES))
     bypass = sorted(set(scen["pc4-bypass"].get("sources_run", [])) - set(scen["pc4-none"].get("sources_run", [])))
-    if honored is True:
-        r, w = "verified", "hook trust records written before launch are honored"
+    driver = rd(os.path.join(RUN, "out", "pc4-tui.driver")).strip()
+    hr = json.loads(rd(os.path.join(RUN, "sum", "trust", "hash-rule.json"), "{}"))
+    neg = lines(os.path.join(RUN, "trust-pc4-ctl-neg")) if ran("pc4-ctl-neg") else None
+    pos = lines(os.path.join(RUN, "trust-pc4-ctl-pos")) if ran("pc4-ctl-pos") else None
+    controls = {"negative (wrong hash, must not run)": ("ran: %s" % neg if neg else "did not run") if neg is not None else why_not("pc4-ctl-neg"),
+                "positive (record computed by the rule for a command Codex never saw, must run)":
+                    ("ran" if pos else "did not run") if pos is not None else "not-run: no hash rule found"}
+    if driver:
+        r, w = driver, "the TUI driver did not see the prompt or the option; no K-D13 verdict"
+    elif honored is True and hr.get("rule") and neg == [] and pos:
+        r, w = "verified", "replayed records are honored; trusted_hash = sha256 of %s; a wrong hash does not run; a computed record runs" % hr["rule"]
+    elif honored is True:
+        r, w = "partial: replay only", "records Codex wrote are honored when written before launch, but %s" % (
+            "the hash rule is not found, so zygo cannot compute a record for its own command" if not hr.get("rule") else
+            "the controls did not behave (%s)" % controls)
     elif honored == "not-run":
         r, w = "failed", "no record form found (K-D13 takes branch 2 or 3)" if any(x["ran"] for x in scen.values()) else \
             "no PC4 run reached Codex"
@@ -843,8 +1067,11 @@ def pc4():
                          "warnings": sorted({l for s in ("pc4-feature-default", "pc4-feature-legacy", "pc4-bypass")
                                              for l in lines(os.path.join(RUN, "out", s + ".err")) if "deprecated" in l.lower()}),
                          "note": "each run: --dangerously-bypass-hook-trust; every other scenario sets [features] hooks = true"},
-        "trust_flag_on_untrusted_project": scen["pc4-trust-new"].get("sources_run"),
-        "tui": {"keys_sent": lines(os.path.join(RUN, "out", "pc4-tui.keys")) or "none (no hook prompt seen)",
+        "trust_flag_on_project_without_entry": scen["pc4-trust-new"].get("sources_run"),
+        "hash_rule": hr.get("rule") or "not found (%s candidates per record)" % hr.get("candidates_per_record", 0),
+        "controls": controls,
+        "tui": {"driver": driver or "prompt '%s' seen, option '%s' chosen" % (TUI_PROMPT, TUI_OPTION),
+                "keys_sent": lines(os.path.join(RUN, "out", "pc4-tui.keys")) or "none",
                 "sources_run_in_tui": scen["pc4-tui"].get("sources_run"),
                 "sources_run_in_exec_after": scen["pc4-tui-after"].get("sources_run"),
                 "captures": sorted(f for f in os.listdir(os.path.join(RUN, "sum", "trust")) if f.startswith("tui-"))},
@@ -877,7 +1104,7 @@ REP_SHAPES = {"str": {"updatedToolOutput": "zp-replaced"},
 REP = ["pc5-rep-%s-%s" % (c, x) for c in REP_CLASSES for x in REP_SHAPES]
 PC5_CLASS = [("pc5-shell", "shell"), ("pc5-patch", "patch"), ("pc5-mcp", "mcp"), ("pc5-sub", "spawn")] + \
     [(x, x.split("-")[2]) for x in REP]
-PC5_ORDER = ["pc5-probe", "pc5-shell", "pc5-patch", "pc5-mcp", "pc5-sub", "pc5-match", "pc5-ctx-start", "pc5-ctx-prompt",
+PC5_ORDER = ["pc5-probe", "pc5-shell", "pc5-patch", "pc5-mcp", "pc5-mcp-noapprove", "pc5-sub", "pc5-match", "pc5-ctx-start", "pc5-ctx-prompt",
              "pc5-deny", "pc5-deny-block", "pc5-stop-block", "pc5-post-block"] + REP
 SHAPES = dict({
     "pc5-ctx-start": ("context", "SessionStart"), "pc5-ctx-prompt": ("context", "UserPromptSubmit"),
@@ -894,6 +1121,17 @@ def matcher_fired(s, e):
 def cmd_matchers():
     s, e = A[:2]
     print(" ".join("%s=%s" % (l, "fired" if v else "not-fired") for l, v in sorted(matcher_fired(s, e).items())))
+
+
+def codex_reason(s):
+    """Codex's own stderr and log lines about a PostToolUse output it did not accept (at most 5)."""
+    pat = re.compile(r"PostToolUse|updated(MCP)?ToolOutput|hookSpecificOutput", re.I)
+    bad = re.compile(r"fail|error|invalid|unsupported|unknown|reject|ignor", re.I)
+    out = [l for l in lines(os.path.join(RUN, "out", s + ".err")) if pat.search(l) and bad.search(l) and "feedback_tags" not in l]
+    for t in log_rows(os.path.join(RUN, "cxh-" + s, "logs_2.sqlite")):
+        if pat.search(t) and bad.search(t) and "feedback_tags" not in t:
+            out.append(t)
+    return [re.sub(r"^\S+Z\s+", "", l)[:300] for l in out[:5]]
 
 
 def hook_status(s, e):
@@ -975,7 +1213,7 @@ def pc5(tools_env, r_dir):
         elif s in REP:
             orig = "zp-orig" if "-shell-" in s else "tracer-mcp-probe-result"
             t = tool_outputs(rs[1]) if len(rs) > 1 else ""
-            o.update(accepted="zp-replaced" in t and orig not in t, codex_status=hook_status(s, ev),
+            o.update(accepted="zp-replaced" in t and orig not in t, codex_status=hook_status(s, ev), codex_reason=codex_reason(s),
                      evidence="request 2 tool output holds zp-replaced: %s, %s: %s; hook status %s" % (
                          "zp-replaced" in t, orig, orig in t, hook_status(s, ev) or "none"))
         else:
@@ -990,6 +1228,12 @@ def pc5(tools_env, r_dir):
     if isinstance(matchers, dict):
         for e in matchers:
             matchers[e]["no matcher"] = bool(payloads("pc5-match", e))
+    na = "pc5-mcp-noapprove"
+    nat = tool_outputs(resp(na)[1]) if len(resp(na)) > 1 else ""
+    mcp_noapprove = {"PermissionRequest_payload": bool(payloads(na, "PermissionRequest")),
+                     "tool_output": nat[:300] if ran(na) else why_not(na),
+                     "refusal_text_seen": "MCP tool call requires approval, but approval policy is never" in nat} \
+        if ran(na) else why_not(na)
     subagent = {"attempts": [x for x in ("pc5-sub",) if ran(x)],
                 "parent_kept_alive": "a %s call of sleep 15 after the spawn (rule pc5-sub-wait)" % env.get("SHELL_TOOL", "")
                 if os.path.exists(os.path.join(RUN, "sse", "pc5-sub-wait.sse")) else "no",
@@ -1000,7 +1244,9 @@ def pc5(tools_env, r_dir):
     missing = [e for e in need if not isinstance(events[e], list)] + \
               ["%s shape" % k for k in ("context", "deny", "block", "replacement") if not kinds.get(k)]
     wjson(os.path.join(RUN, "sum", "hooks", "outputs.json"), {
-        "events": events, "shapes": outs, "replacement": replacement, "matchers": matchers, "subagent": subagent,
+        "events": events, "shapes": outs, "replacement": replacement,
+        "replacement_note": "each shape is the hookSpecificOutput of a PostToolUse output", "matchers": matchers,
+        "mcp_without_approval_mode": mcp_noapprove, "subagent": subagent,
         "result": "failed" if missing else "verified",
         "why": "missing: " + ", ".join(missing) if missing else "every needed event has a payload and each kind an accepted shape"})
 
@@ -1041,7 +1287,8 @@ def pc12():
         if t is None:
             out[s] = {"names": None, "why": why_not(s) if not rs else "no tool output in request 2"}
             continue
-        out[s] = {"names": sorted(set(re.findall(r"(?m)^([A-Za-z_][A-Za-z0-9_]*)=", t)))}
+        # __CF_USER_TEXT_ENCODING: set by macOS for every process, not by Codex's policy.
+        out[s] = {"names": sorted(set(re.findall(r"(?m)^([A-Za-z_][A-Za-z0-9_]*)=", t)) - {"__CF_USER_TEXT_ENCODING"})}
         if s == "pc12-exclude":
             out[s]["zp_set"] = "ZP_SET=zp-set" in t
     case = out["pc12-case"].get("names")
@@ -1064,7 +1311,8 @@ def network():
             h = l.rsplit(" refused", 1)[0]
             hosts[h] = hosts.get(h, 0) + 1
             total[h] = total.get(h, 0) + 1
-        wsl = [re.sub(r"^\S+Z\s+", "", l) for l in lines(os.path.join(RUN, "out", s + ".err")) if "responses_websocket" in l]
+        wsl = [re.sub(r"^\S+Z\s+", "", l) for l in lines(os.path.join(RUN, "out", s + ".err"))
+               if WS.search(l) and "feedback_tags" not in l]
         out.append("== %s: connect %s; responses_websocket lines %d" % (
             s, ", ".join("%s x%d" % (h, n) for h, n in sorted(hosts.items())) or "none", len(wsl)))
         out += ["  " + l for l in wsl[:3]]
@@ -1085,7 +1333,8 @@ def cmd_analyze():
 
 {"home": cmd_home, "sse": cmd_sse, "rule": cmd_rule, "shellargs": cmd_shellargs, "pc5toml": cmd_pc5toml,
  "tools": cmd_tools, "form": cmd_form, "strict-gen": cmd_strict_gen, "strict-judge": cmd_strict_judge,
- "analyze": cmd_analyze, "evidence": cmd_evidence, "tui-choice": cmd_tui_choice,
+ "analyze": cmd_analyze, "evidence": cmd_evidence, "tui-choice": cmd_tui_choice, "hashrule": cmd_hashrule, "variants": cmd_variants,
+ "tuilog": cmd_tuilog,
  # entry points of the synthetic tests
  "shown": lambda: print(shown_fns()[(A[0], A[1])](A[2])), "control": lambda: print(control_line(A[0])),
  "logfilter": lambda: print("\n".join(trust_log_lines(A))), "sqlite-dump": lambda: print("\n".join(sqlite_dump(A[0], A[1:]))),
@@ -1280,27 +1529,32 @@ tui_hooks() {
     # --no-daemon: a TUI run must not start the shared daemon (n2_daemon_flag).
     echo "set -- --no-daemon -c 'approval_policy=\"never\"'"
     echo "{ n2_daemon_flag \"\$@\"; codex_env; n2_procs daemon || exit 1; } >\"\$RUN/$TS-pre.txt\" 2>&1"
-    echo "rc=0; run_codex \"\$@\" || rc=\$?; echo \"\$rc\" >\"\$RUN/$TS-exit\""
+    # G5: RUST_LOG (on EXTRA_ENV_ALLOW) and the TUI's own stderr in a file.
+    echo "EXTRA_ENV=RUST_LOG=debug"
+    echo "rc=0; run_codex \"\$@\" 2>\"\$RUN/$TS-stderr.txt\" || rc=\$?; echo \"\$rc\" >\"\$RUN/$TS-exit\""
   } >"$RUN/$TS-tui.sh"
   rm -f "$RUN/$TS-exit" "$RUN/$TS-refused" "$RUN/pane.txt"
   : >"$RUN/out/$TS.keys"
   _b=$(cx_count) _cb=$(cx_conn)
   tm new-session -d -s "$TS" -x 220 -y 50 /bin/sh "$RUN/$TS-tui.sh"
-  pane_wait 'hook|gpt-mock' 60 || true
+  rm -f "$RUN/out/$TS.driver"
+  pane_wait 'Hooks need review' 60 || true
   keep start
-  _k=1
-  while [ "$_k" -le 3 ] && [ -e "$RUN/pane.txt" ] && [ ! -e "$RUN/$TS-exit" ]; do
-    _key=$(cxpy tui-choice "$RUN/pane.txt")
-    [ -n "$_key" ] || break
-    keep "prompt-$_k"
-    # A digit only moves the selection ("enter confirm" on the prompt): Enter confirms it.
-    case "$_key" in Enter) echo "prompt $_k: key Enter" ;; *) echo "prompt $_k: key $_key, then Enter" ;; esac >>"$RUN/out/$TS.keys"
-    key "$_key"
-    [ "$_key" = Enter ] || key Enter
-    pane_wait 'gpt-mock' 6 || true
-    keep "after-key-$_k"
-    _k=$((_k + 1))
-  done
+  _key=$(cxpy tui-choice "$RUN/pane.txt")
+  case "$_key" in
+    driver-failed*)
+      # No K-D13 verdict from this run: the screen is kept as tui-driver-failed.txt.
+      echo "$_key" >"$RUN/out/$TS.driver"
+      keep driver-failed ;;
+    *)
+      keep prompt-1
+      # A digit only moves the selection ("enter confirm" on the prompt): Enter confirms it.
+      echo "prompt 1: option $_key ('Trust all and continue'), then Enter" >>"$RUN/out/$TS.keys"
+      key "$_key"
+      key Enter
+      pane_wait 'gpt-mock' 10 || true
+      keep after-key-1 ;;
+  esac
   send "zp-$TS"
   pane_wait zp-tui-reply 120 || true
   keep turn
@@ -1335,6 +1589,11 @@ pc5_home() {
   cx_home "$1" env "$RUN/x/$1.toml"
 }
 # pc5_home_match <scenario>: as pc5_home, plus the MATCHERS groups on PreToolUse and PostToolUse.
+# pc5_home_noapp <scenario>: as pc5_home, the probe MCP server without default_tools_approval_mode.
+pc5_home_noapp() {
+  cxpy pc5toml "$RUN/x/$1.toml" "$1" "$PREMISES_DIR" "" "" "" noapprove
+  cx_home "$1" env "$RUN/x/$1.toml"
+}
 pc5_home_match() {
   cxpy pc5toml "$RUN/x/$1.toml" "$1" "$PREMISES_DIR" "" "" match
   cx_home "$1" env "$RUN/x/$1.toml"
@@ -1446,16 +1705,41 @@ CX_FEAT=hooks
 # shows; then pc4-tui-after: exec, no flag, on the same CODEX_HOME (does the approval persist).
 cx_home pc4-tui env
 pc4_sources pc4-tui
+# G3: groups that share one command (another group, a matcher, a timeout, another event, the project
+# file): which inputs change trusted_hash.
+cxpy variants pc4-tui "$CX_HOME/hooks.json" "$R/.codex/hooks.json"
 rm -f "$RUN/trust-pc4-tui"
 pc4_before pc4-tui
 tui_hooks pc4-tui
 pc4_after pc4-tui
+cxpy tuilog pc4-tui "$CX_HOME"
+# G3: the hash rule from the records the TUI wrote; then the negative control (a record with a wrong
+# hash) and, with a rule, the positive control (a record the part computed for a command Codex never
+# saw); both exec with no flag.
+_rule=$(cxpy hashrule pc4-tui "$CX_HOME")
 [ ! -e "$RUN/trust-pc4-tui" ] || mv "$RUN/trust-pc4-tui" "$RUN/trust-pc4-tui.tui"
 pc4_before pc4-tui-after
 cx_run pc4-tui-after
 [ ! -e "$RUN/trust-pc4-tui" ] || mv "$RUN/trust-pc4-tui" "$RUN/trust-pc4-tui-after"
 [ ! -e "$RUN/trust-pc4-tui.tui" ] || mv "$RUN/trust-pc4-tui.tui" "$RUN/trust-pc4-tui"
 pc4_after pc4-tui-after pc4-tui
+cx_home pc4-ctl-neg env
+hook_toml "echo ctl-neg >>$RUN/trust-pc4-ctl-neg" >>"$CX_HOME/config.toml"
+printf '\n[hooks.state."%s/config.toml:session_start:0:0"]\ntrusted_hash = "sha256:%s"\n' "$(n2_realpath "$CX_HOME")" \
+  0000000000000000000000000000000000000000000000000000000000000000 >>"$CX_HOME/config.toml"
+rm -f "$RUN/trust-pc4-ctl-neg"
+pc4_before pc4-ctl-neg
+cx_run pc4-ctl-neg
+pc4_after pc4-ctl-neg
+if [ -n "$_rule" ] && [ -s "$RUN/x/ctl-pos.state" ]; then
+  cx_home pc4-ctl-pos env
+  hook_toml "echo ctl-pos >>$RUN/trust-pc4-ctl-pos" >>"$CX_HOME/config.toml"
+  cat "$RUN/x/ctl-pos.state" >>"$CX_HOME/config.toml"
+  rm -f "$RUN/trust-pc4-ctl-pos"
+  pc4_before pc4-ctl-pos
+  cx_run pc4-ctl-pos
+  pc4_after pc4-ctl-pos
+fi
 # pc4-prewritten: the source scenario's CODEX_HOME rebuilt at the same path (the record key and hash
 # may name it), with the hooks.state tables Codex wrote, no flag.
 _src=$(cxpy form pc4-tui pc4-tui-after pc4-trust pc4-trust-new pc4-none pc4-bypass pc4-untrusted pc4-log)
@@ -1549,6 +1833,7 @@ if b_need "$PATCH_TOOL" patch pc5-patch; then
   cxpy rule "$RUN/rules.json" pc5-patch "$RUN/sse/pc5-patch.sse"
 fi
 b_mcp pc5-mcp
+b_mcp pc5-mcp-noapprove
 if b_need "$SPAWN_TOOL" spawn pc5-sub && b_need "$SPAWN_ARG" spawn-argument pc5-sub; then
   cx_sse "$RUN/sse/pc5-sub.sse" call "$SPAWN_TOOL" call_pc5_sub "{\"$SPAWN_ARG\": \"zp-pc5-sub-child\"}" "$SPAWN_NS"
   cxpy rule "$RUN/rules.json" pc5-sub "$RUN/sse/pc5-sub.sse"
@@ -1590,6 +1875,11 @@ for _s in pc5-shell pc5-patch pc5-mcp pc5-sub; do
   pc5_home "$_s"
   pc5_run "$_s"
 done
+# PC5: an MCP call with no approval mode (G4): PermissionRequest and Codex's refusal text.
+if b_ok pc5-mcp-noapprove; then
+  pc5_home_noapp pc5-mcp-noapprove
+  pc5_run pc5-mcp-noapprove
+fi
 # PC5: matchers (F4).
 if b_ok pc5-match; then
   pc5_home_match pc5-match
@@ -1613,8 +1903,13 @@ for _p in pc5-ctx-start:SessionStart pc5-ctx-prompt:UserPromptSubmit pc5-stop-bl
   _s=${_p%%:*} _e=${_p#*:}
   case "$_s" in pc5-ctx-* | pc5-stop-block) ;; *) b_ok "$_s" || continue ;; esac
   pc5_home "$_s" "$_e" "$RUN/hk-rules/$_s.json"
+  # G11: the replacement runs log at debug level, for Codex's reason behind "PostToolUse Failed".
+  # shellcheck disable=SC2034 # EXTRA_ENV is read by lib.sh's run_codex
+  case "$_s" in pc5-rep-*) EXTRA_ENV="RUST_LOG=debug" ;; *) EXTRA_ENV="" ;; esac
   pc5_run "$_s"
 done
+# shellcheck disable=SC2034 # as above
+EXTRA_ENV=""
 
 # PC12: shell_environment_policy.
 for _s in pc12-default pc12-all pc12-exclude pc12-case pc12-core pc12-none; do

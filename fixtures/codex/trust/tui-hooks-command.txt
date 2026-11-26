@@ -8,7 +8,7 @@
 
 • zp-tui-reply
 
-  Worked for <1s • 7:26 AM
+  Worked for <1s • 8:11 AM
 
 
 
@@ -42,9 +42,9 @@
   PostToolUse           0           0           After a tool executes
   PreCompact            0           0           Before context compaction
   PostCompact           0           0           After context compaction
-  SessionStart          4           4           When a new session starts
+  SessionStart          8           8           When a new session starts
   SessionEnd            0           0           Right before a session ends
-  UserPromptSubmit      0           0           When the user submits a prompt
+  UserPromptSubmit      1           1           When the user submits a prompt
 ↓
 
   enter details · esc close

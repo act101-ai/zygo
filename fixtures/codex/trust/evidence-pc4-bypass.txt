@@ -54,10 +54,8 @@ table thread_turns
 36 installation_id
 49152 logs_2.sqlite
 45056 memories_1.sqlite
-4096 queue_1.sqlite
-32768 queue_1.sqlite-shm
-41232 queue_1.sqlite-wal
-41420 sessions/2026/11/26/rollout-2026-11-26T07-26-07-00000000-0000-4000-8000-000000000001.jsonl
+40960 queue_1.sqlite
+41420 sessions/2026/11/26/rollout-2026-11-26T08-10-45-00000000-0000-4000-8000-000000000001.jsonl
 17 skills/.system/.codex-system-skills.marker
 2781 skills/.system/create-statusline/SKILL.md
 43 skills/.system/create-statusline/agents/openai.yaml
@@ -111,9 +109,7 @@ table thread_turns
 659 skills/.system/skill-installer/scripts/github_utils.py
 11917 skills/.system/skill-installer/scripts/install-skill-from-github.py
 2948 skills/.system/skill-installer/scripts/list-skills.py
-4096 state_5.sqlite
-32768 state_5.sqlite-shm
-552112 state_5.sqlite-wal
+307200 state_5.sqlite
 0 thread-writer-locks/.coordination.lock
 106496 thread_history_1.sqlite
 == repo files (size path; .git/ left out)

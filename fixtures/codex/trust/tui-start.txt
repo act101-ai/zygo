@@ -1,6 +1,6 @@
 
   Hooks need review
-  4 hooks are new or changed.
+  9 hooks are new or changed.
   Hooks can run outside the sandbox after you trust them.
 
 

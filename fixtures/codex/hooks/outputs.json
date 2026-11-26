@@ -4,6 +4,7 @@
       "pc5-probe",
       "pc5-shell",
       "pc5-mcp",
+      "pc5-mcp-noapprove",
       "pc5-sub",
       "pc5-match",
       "pc5-ctx-start",
@@ -23,6 +24,7 @@
       "pc5-probe",
       "pc5-shell",
       "pc5-mcp",
+      "pc5-mcp-noapprove",
       "pc5-sub",
       "pc5-match",
       "pc5-ctx-start",
@@ -41,6 +43,7 @@
     "PreToolUse": [
       "pc5-shell",
       "pc5-mcp",
+      "pc5-mcp-noapprove",
       "pc5-sub",
       "pc5-match",
       "pc5-deny",
@@ -53,7 +56,9 @@
       "pc5-rep-mcp-obj",
       "pc5-rep-mcp-mcp"
     ],
-    "PermissionRequest": "not seen",
+    "PermissionRequest": [
+      "pc5-mcp-noapprove"
+    ],
     "PostToolUse": [
       "pc5-shell",
       "pc5-mcp",
@@ -71,6 +76,7 @@
       "pc5-probe",
       "pc5-shell",
       "pc5-mcp",
+      "pc5-mcp-noapprove",
       "pc5-sub",
       "pc5-match",
       "pc5-ctx-start",
@@ -90,6 +96,7 @@
       "pc5-probe",
       "pc5-shell",
       "pc5-mcp",
+      "pc5-mcp-noapprove",
       "pc5-sub",
       "pc5-match",
       "pc5-ctx-start",
@@ -117,6 +124,7 @@
       "pc5-probe",
       "pc5-shell",
       "pc5-mcp",
+      "pc5-mcp-noapprove",
       "pc5-sub",
       "pc5-match",
       "pc5-ctx-start",
@@ -137,6 +145,7 @@
       "pc5-probe",
       "pc5-shell",
       "pc5-mcp",
+      "pc5-mcp-noapprove",
       "pc5-sub",
       "pc5-match",
       "pc5-ctx-start",
@@ -248,6 +257,9 @@
       "codex_status": [
         "Failed"
       ],
+      "codex_reason": [
+        "hook: PostToolUse Failed"
+      ],
       "evidence": "request 2 tool output holds zp-replaced: False, zp-orig: True; hook status ['Failed']"
     },
     "pc5-rep-shell-obj": {
@@ -271,6 +283,9 @@
       "accepted": false,
       "codex_status": [
         "Failed"
+      ],
+      "codex_reason": [
+        "hook: PostToolUse Failed"
       ],
       "evidence": "request 2 tool output holds zp-replaced: False, zp-orig: True; hook status ['Failed']"
     },
@@ -296,6 +311,9 @@
       "codex_status": [
         "Failed"
       ],
+      "codex_reason": [
+        "hook: PostToolUse Failed"
+      ],
       "evidence": "request 2 tool output holds zp-replaced: False, zp-orig: True; hook status ['Failed']"
     },
     "pc5-rep-mcp-str": {
@@ -312,6 +330,9 @@
       "accepted": false,
       "codex_status": [
         "Failed"
+      ],
+      "codex_reason": [
+        "hook: PostToolUse Failed"
       ],
       "evidence": "request 2 tool output holds zp-replaced: False, tracer-mcp-probe-result: True; hook status ['Failed']"
     },
@@ -337,6 +358,9 @@
       "codex_status": [
         "Failed"
       ],
+      "codex_reason": [
+        "hook: PostToolUse Failed"
+      ],
       "evidence": "request 2 tool output holds zp-replaced: False, tracer-mcp-probe-result: True; hook status ['Failed']"
     },
     "pc5-rep-mcp-mcp": {
@@ -361,6 +385,9 @@
       "codex_status": [
         "Failed"
       ],
+      "codex_reason": [
+        "hook: PostToolUse Failed"
+      ],
       "evidence": "request 2 tool output holds zp-replaced: False, tracer-mcp-probe-result: True; hook status ['Failed']"
     }
   },
@@ -376,6 +403,7 @@
       "mcp": false
     }
   },
+  "replacement_note": "each shape is the hookSpecificOutput of a PostToolUse output",
   "matchers": {
     "PreToolUse": {
       "exact (Bash)": true,
@@ -395,6 +423,11 @@
       "star (*)": true,
       "no matcher": true
     }
+  },
+  "mcp_without_approval_mode": {
+    "PermissionRequest_payload": true,
+    "tool_output": "Wall time: 0.0670 seconds\nOutput:\nMCP tool call requires approval, but approval policy is never",
+    "refusal_text_seen": true
   },
   "subagent": {
     "attempts": [

@@ -94,8 +94,13 @@
       ],
       "hooks_state_keys": [
         "/tmp/run/cxh-pc4-tui/hooks.json:session_start:0:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:1:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:2:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:3:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:user_prompt_submit:0:0",
         "/tmp/run/cxh-pc4-tui/config.toml:session_start:0:0",
         "/repo/.codex/hooks.json:session_start:0:0",
+        "/repo/.codex/hooks.json:session_start:1:0",
         "/repo/.codex/config.toml:session_start:0:0"
       ],
       "evidence": "evidence-pc4-tui.txt"
@@ -112,11 +117,30 @@
       ],
       "hooks_state_keys": [
         "/tmp/run/cxh-pc4-tui/hooks.json:session_start:0:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:1:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:2:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:3:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:user_prompt_submit:0:0",
         "/tmp/run/cxh-pc4-tui/config.toml:session_start:0:0",
         "/repo/.codex/hooks.json:session_start:0:0",
+        "/repo/.codex/hooks.json:session_start:1:0",
         "/repo/.codex/config.toml:session_start:0:0"
       ],
       "evidence": "evidence-pc4-tui-after.txt"
+    },
+    "pc4-ctl-neg": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [],
+      "hooks_state_keys": [
+        "/tmp/run/cxh-pc4-ctl-neg/config.toml:session_start:0:0"
+      ],
+      "evidence": "evidence-pc4-ctl-neg.txt"
+    },
+    "pc4-ctl-pos": {
+      "ran": false,
+      "why": "not run"
     },
     "pc4-prewritten": {
       "ran": true,
@@ -130,8 +154,13 @@
       ],
       "hooks_state_keys": [
         "/tmp/run/cxh-pc4-tui/hooks.json:session_start:0:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:1:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:2:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:3:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:user_prompt_submit:0:0",
         "/tmp/run/cxh-pc4-tui/config.toml:session_start:0:0",
         "/repo/.codex/hooks.json:session_start:0:0",
+        "/repo/.codex/hooks.json:session_start:1:0",
         "/repo/.codex/config.toml:session_start:0:0"
       ],
       "evidence": "evidence-pc4-prewritten.txt",
@@ -141,6 +170,7 @@
   "where_kept": [
     "pc4-tui: CODEX_HOME/config.toml [hooks.state.\"<key>\"]",
     "pc4-tui-after: CODEX_HOME/config.toml [hooks.state.\"<key>\"]",
+    "pc4-ctl-neg: CODEX_HOME/config.toml [hooks.state.\"<key>\"]",
     "pc4-prewritten: CODEX_HOME/config.toml [hooks.state.\"<key>\"]"
   ],
   "bypass_effect": [
@@ -173,10 +203,16 @@
     ],
     "note": "each run: --dangerously-bypass-hook-trust; every other scenario sets [features] hooks = true"
   },
-  "trust_flag_on_untrusted_project": [],
+  "trust_flag_on_project_without_entry": [],
+  "hash_rule": "not found (59383 candidates per record)",
+  "controls": {
+    "negative (wrong hash, must not run)": "did not run",
+    "positive (record computed by the rule for a command Codex never saw, must run)": "not-run: no hash rule found"
+  },
   "tui": {
+    "driver": "prompt 'Hooks need review' seen, option 'Trust all and continue' chosen",
     "keys_sent": [
-      "prompt 1: key 2, then Enter"
+      "prompt 1: option 2 ('Trust all and continue'), then Enter"
     ],
     "sources_run_in_tui": [
       "home-inline",
@@ -193,12 +229,13 @@
     "captures": [
       "tui-after-key-1.txt",
       "tui-hooks-command.txt",
+      "tui-log-lines.txt",
       "tui-prompt-1.txt",
       "tui-start.txt",
       "tui-turn.txt"
     ]
   },
   "prewritten_honored": true,
-  "result": "verified",
-  "why": "hook trust records written before launch are honored"
+  "result": "partial: replay only",
+  "why": "records Codex wrote are honored when written before launch, but the hash rule is not found, so zygo cannot compute a record for its own command"
 }

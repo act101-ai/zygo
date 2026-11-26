@@ -1,7 +1,7 @@
 == pc4-tui: CODEX_HOME/config.toml, before the run -> after (unified diff)
 --- before
 +++ after
-@@ -27,3 +27,23 @@
+@@ -27,3 +27,38 @@
  [[hooks.SessionStart.hooks]]
  type = "command"
  command = "echo home-inline >>/tmp/run/trust-pc4-tui"
@@ -9,16 +9,31 @@
 +[hooks.state]
 +
 +[hooks.state."/tmp/run/cxh-pc4-tui/hooks.json:session_start:0:0"]
-+trusted_hash = "sha256:55e9b7489682b7b901f05a5f2202dc43016bb9cb954791b8ad497f14e84916d6"
++trusted_hash = "sha256:94c3b802ff31763dd08af518b0d06009606df4f2046163dcc8941d2ee49fc430"
++
++[hooks.state."/tmp/run/cxh-pc4-tui/hooks.json:session_start:1:0"]
++trusted_hash = "sha256:0300424cb70daec7e1a284f497402bf1009eb59d1ddab6f62b4dafc3b767ce5a"
++
++[hooks.state."/tmp/run/cxh-pc4-tui/hooks.json:session_start:2:0"]
++trusted_hash = "sha256:65811a568587ace310741849194530e52f2eaa7e1017a1c561afdc4c5a6dc3c6"
++
++[hooks.state."/tmp/run/cxh-pc4-tui/hooks.json:session_start:3:0"]
++trusted_hash = "sha256:1a1a967297c9ad94b17a24f2a9d73d79b48c54833367fcdae0cf526cff6580bf"
++
++[hooks.state."/tmp/run/cxh-pc4-tui/hooks.json:user_prompt_submit:0:0"]
++trusted_hash = "sha256:f1cb9569547b5a00d9a0afce76b07ea7ecdfc1ab8a83927217de47d5a4870abe"
 +
 +[hooks.state."/tmp/run/cxh-pc4-tui/config.toml:session_start:0:0"]
-+trusted_hash = "sha256:b3fb0723d832ef70e8270ac4edb9c42f51c1dfa1e9933ddfdbe52f06cfc5ebb5"
++trusted_hash = "sha256:67961ac180de7d8043bc2ca96f6ab979a8986229f8a38a4859feea49f54cc416"
 +
 +[hooks.state."/repo/.codex/hooks.json:session_start:0:0"]
-+trusted_hash = "sha256:519d97284717c7ea6d9955df7cb45907c256542ceacbcb3cdc22543ad94baa1d"
++trusted_hash = "sha256:6d682ffea869604fcac02c0ce6018ecf976091d843a54034b08e7a9f1c068061"
++
++[hooks.state."/repo/.codex/hooks.json:session_start:1:0"]
++trusted_hash = "sha256:0300424cb70daec7e1a284f497402bf1009eb59d1ddab6f62b4dafc3b767ce5a"
 +
 +[hooks.state."/repo/.codex/config.toml:session_start:0:0"]
-+trusted_hash = "sha256:abdd72e8ae61fa1ca3798a8ac185f8b09fc680514cfd816aa719b3e2fa3e3e8b"
++trusted_hash = "sha256:ebd8448c4c4b5ef6998188a400d1ff891e1babba4f7994cf973f5b75bdce9cf5"
 +
 +[tui]
 +screen_reader_detection_done = true
@@ -73,19 +88,21 @@ table thread_turns
 3 .sandbox_migration
 0 .tmp/.staging.lock
 0 .tmp/plugins.sync.lock
-1923 config.toml
+3088 config.toml
 32768 goals_1.sqlite
+32768 goals_1.sqlite-shm
+32992 goals_1.sqlite-wal
 90 history.jsonl
-187 hooks.json
+849 hooks.json
 36 installation_id
 49152 logs_2.sqlite
-32768 logs_2.sqlite-shm
-49472 logs_2.sqlite-wal
 45056 memories_1.sqlite
 40960 queue_1.sqlite
+32768 queue_1.sqlite-shm
+41232 queue_1.sqlite-wal
 116 session_index.jsonl
 0 session_index.jsonl.lock
-45613 sessions/2026/11/26/rollout-2026-11-26T07-26-28-00000000-0000-4000-8000-000000000001.jsonl
+45613 sessions/2026/11/26/rollout-2026-11-26T08-11-12-00000000-0000-4000-8000-000000000001.jsonl
 17 skills/.system/.codex-system-skills.marker
 2781 skills/.system/create-statusline/SKILL.md
 43 skills/.system/create-statusline/agents/openai.yaml
@@ -147,7 +164,7 @@ table thread_turns
 0 tui-thread-reference-capabilities/00000000-0000-4000-8000-000000000001
 == repo files (size path; .git/ left out)
 196 .codex/config.toml
-190 .codex/hooks.json
+341 .codex/hooks.json
 == HOME files (size path)
 476 .claude/.claude.json
 177 .codex/config.toml
