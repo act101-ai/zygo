@@ -5,9 +5,16 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use serde_json::{json, Map, Value};
-use zygo_config::MailConfig;
+use zygo_config::{sync_for, LoadContext, MailConfig};
 use zygo_core::paths::Paths;
 use zygo_core::session_view::{Member, SessionView};
+use zygo_mail_sync::address::{resolve_to, To};
+use zygo_mail_sync::env::{Env, NoSeam, Spawner, SystemClock, TmuxWake};
+use zygo_mail_sync::outbox::send_remote_with;
+use zygo_mail_sync::public::LsRemote;
+use zygo_mail_sync::spawn::{trigger, ChildSpawner};
+use zygo_mail_sync::state::SyncPaths;
+use zygo_redact::DeadlinePolicy;
 use zygo_workspace::mail::{self, names, store, wake};
 use zygo_workspace::state::{Phase, Store, Workspace};
 
@@ -20,6 +27,8 @@ pub const NO_POLL: &str = "Do not poll; zygo wakes you when mail arrives.";
 const READ_DEFAULT: usize = 10;
 /// The error of `mail_send` while the workspace stops (M§9, AU86).
 const STOPPING: &str = "zygo: workspace is stopping";
+/// The error of an addressed send when the config does not load (MS-19 D2; the text of the sync gate line).
+const NO_CONFIG: &str = "zygo: mail sync cannot run: the config does not load";
 
 /// The send time: `SystemTime::now` in `tools`, a fixed time in the tests.
 #[doc(hidden)]
@@ -47,8 +56,32 @@ pub fn tools(ctx: &McpCtx) -> Vec<Box<dyn Tool>> {
 /// `tools` with the paths, the `[mail]` config, the clock and the waker given.
 #[doc(hidden)]
 pub fn tools_with(ctx: &McpCtx, paths: Paths, cfg: MailConfig, clock: Clock, wake: Waker) -> Vec<Box<dyn Tool>> {
+    tools_with_sync(ctx, paths, cfg, clock, wake, Box::new(ChildSpawner { zygo: zygo_program() }), DeadlinePolicy::default())
+}
+
+/// `tools_with` with the spawn of the sync child and the deadline policy of the send-time secret pass given
+/// (mail sync design S§8.1, S§8.6).
+#[doc(hidden)]
+pub fn tools_with_sync(
+    ctx: &McpCtx,
+    paths: Paths,
+    cfg: MailConfig,
+    clock: Clock,
+    wake: Waker,
+    spawner: Box<dyn Spawner>,
+    secret_policy: DeadlinePolicy,
+) -> Vec<Box<dyn Tool>> {
     let Some(member) = gate(ctx) else { return Vec::new() };
-    let m = Arc::new(Mail { paths, ws_id: member.ws_id, pane: member.pane, cfg, clock, wake });
+    let sync = Env {
+        paths: paths.clone(),
+        clock: Box::new(SystemClock),
+        probe: Box::new(LsRemote),
+        seam: Box::new(NoSeam),
+        spawner,
+        wake: Box::new(TmuxWake { tmux: tmux_program() }),
+        secret_policy,
+    };
+    let m = Arc::new(Mail { paths, ws_id: member.ws_id, pane: member.pane, cfg, clock, wake, sync });
     vec![Box::new(MailSend(Arc::clone(&m))), Box::new(MailRead(Arc::clone(&m))), Box::new(MailList(m))]
 }
 
@@ -73,6 +106,15 @@ fn tmux_program() -> PathBuf {
     found.unwrap_or_else(|| PathBuf::from("/dev/null/tmux"))
 }
 
+/// The zygo program that starts the sync child: the current executable (`zygo mcp`), canonical when it can be,
+/// else an empty path, whose start then fails with one `errors.log` line (MS-19 D6).
+fn zygo_program() -> PathBuf {
+    match std::env::current_exe() {
+        Ok(p) => std::fs::canonicalize(&p).unwrap_or(p),
+        Err(_) => PathBuf::new(),
+    }
+}
+
 fn executable(p: &std::path::Path) -> bool {
     let Ok(meta) = std::fs::metadata(p) else { return false };
     #[cfg(unix)]
@@ -91,6 +133,14 @@ struct Mail {
     cfg: MailConfig,
     clock: Clock,
     wake: Waker,
+    /// The seams of the sync child start after a remote send (S§8.1 row 1).
+    sync: Env,
+}
+
+/// Where `mail_send` sends: a local `to` for the M§5 send, or the result of a remote send (S§7.2).
+enum Route {
+    Local(String),
+    Sent(Value),
 }
 
 impl Mail {
@@ -105,6 +155,47 @@ impl Mail {
 
     fn dir(&self) -> PathBuf {
         mail::mail_dir(&self.paths, &self.ws_id)
+    }
+
+    /// The merged config, read at each call; `None` when it does not load (MS-19 D2).
+    fn config(&self) -> Option<zygo_config::Config> {
+        zygo_config::load(&LoadContext { paths: self.paths.clone(), repo: None, team: None }).ok().map(|m| m.config)
+    }
+
+    /// S§7.2: a `to` without `@` is local (M§8). A `to` with `@` resolves against the host in force with sync on;
+    /// a remote address goes through the S§7.2 rules and the S§8.6 send-time pass into the outbox, then the sync
+    /// child starts with no gap (S§8.1 row 1).
+    fn route(&self, ws: &Workspace, to: &str, subject: &str, body: &str) -> Result<Route, ToolError> {
+        if !to.contains('@') {
+            return Ok(Route::Local(to.into()));
+        }
+        let Some(cfg) = self.config() else { return Err(ToolError::Failed(NO_CONFIG.into())) };
+        let settings = sync_for(&cfg, &ws.name);
+        let own: Vec<String> = settings.iter().map(|s| s.host.clone()).collect();
+        let a = match resolve_to(to, &own) {
+            Err(e) => return Err(ToolError::Failed(e.line().into())),
+            Ok(To::Local(n)) => return Ok(Route::Local(n)),
+            Ok(To::All) => return Ok(Route::Local("all".into())),
+            Ok(To::Remote(a)) => a,
+        };
+        let sp = SyncPaths::new(&self.paths, &self.ws_id).map_err(|e| failed(mail::MailError::Io(e)))?;
+        let from = ws.members.get(&self.pane).and_then(|r| r.valid_name());
+        let id = send_remote_with(
+            &sp,
+            settings.as_ref(),
+            from,
+            &a,
+            subject,
+            body,
+            &cfg.redaction,
+            &ws.main_root,
+            (self.clock)(),
+            &self.sync.secret_policy,
+        )
+        .map_err(|e| ToolError::Failed(e.line()))?;
+        let store = Store::open(&self.paths, &self.ws_id);
+        trigger(&self.sync, &self.ws_id, None, &|t| store.log_error(&format!("mail_send: {t}")));
+        Ok(Route::Sent(json!({"sent": [{"id": id.to_string(), "to": format!("{}@{}", a.name, a.host)}], "refused": []})))
     }
 }
 
@@ -157,7 +248,11 @@ impl Tool for MailSend {
         if ws.phase == Phase::Stopping && !Store::open(&m.paths, &m.ws_id).op_lock_free() {
             return Err(ToolError::Failed(STOPPING.into()));
         }
-        let report = mail::send(&m.paths, &ws, Some(&m.pane), to, subject, body, &m.cfg, (m.clock)()).map_err(failed)?;
+        let to = match m.route(&ws, to, subject, body)? {
+            Route::Sent(v) => return Ok(v),
+            Route::Local(n) => n,
+        };
+        let report = mail::send(&m.paths, &ws, Some(&m.pane), &to, subject, body, &m.cfg, (m.clock)()).map_err(failed)?;
         let refused: Vec<String> = report.refused.iter().map(|r| r.error.to_string()).collect();
         if report.sent.is_empty() && !refused.is_empty() {
             return Err(ToolError::Failed(refused.join("\n")));
