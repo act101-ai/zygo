@@ -25,7 +25,7 @@ use zygo_mail_sync::sync::{run, run_with, Mode, Opts, SyncError, LOCK_WAIT, MAX_
 use zygo_redact::DeadlinePolicy;
 use zygo_workspace::mail::wake::{after_send_with, Probe as IdleProbe, WAKE_TEXT};
 use zygo_workspace::mux::{HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split};
-use zygo_workspace::state::Workspace;
+use zygo_workspace::state::{Phase, Store, Workspace};
 
 /// Every test holds this lock: a lock-sensitive test for writing, every other test for reading. A child that another
 /// thread of this process starts holds a copy of each open file description from its fork to its exec (O_CLOEXEC
@@ -793,6 +793,76 @@ fn sync_whose_state_folder_went_after_the_gate_makes_no_state_folder() {
         }
         assert!(fs::symlink_metadata(&state).is_err(), "{mode:?}: the state folder was made again");
     }
+}
+
+#[test] // S§8.3 step 3 (MS-21 review R2-2): a new record of the same id written after the gate stops the sync
+fn sync_whose_record_was_made_again_after_the_gate_stops_as_forgotten() {
+    let _g = exclusive();
+    let (_r, a) = one();
+    let a = Arc::new(a);
+    let state = a.paths.workspaces_dir().join(WS_ID);
+    // The same record in a new state folder, then a record with another name.
+    for rename in [false, true] {
+        for mode in [Mode::Cli, Mode::Child] {
+            a.workspace(&[(ALICE, "alice")]);
+            let (a2, gone) = (a.clone(), state.clone());
+            let h = after_gate(move || {
+                fs::remove_dir_all(&gone).unwrap();
+                a2.workspace(&[(ALICE, "alice")]);
+                if rename {
+                    Store::open(&a2.paths, WS_ID).update(Duration::from_secs(10), &mut |ws| {
+                        ws.name = "other".into();
+                        ws.tmux_session = "zygo-other".into();
+                        Ok(())
+                    }).unwrap();
+                }
+            });
+            let r = run(&hook_env(&a, h), WS_ID, mode);
+            match mode {
+                Mode::Cli => assert_eq!(r.unwrap_err(), SyncError::Stopped { line: FORGOTTEN.into(), check: "forgotten" }),
+                Mode::Child => assert_eq!(r.unwrap().passes, 0),
+            }
+            assert!(fs::symlink_metadata(a.sp().identity).is_err(), "rename {rename} {mode:?}: a pass ran");
+            assert_eq!(a.errors(), "", "rename {rename} {mode:?}");
+        }
+    }
+}
+
+#[test] // S§8.3 step 3 (MS-21 review R2-2): a record change that is not a new workspace (the phase) does not stop the sync
+fn sync_whose_record_phase_changed_after_the_gate_runs() {
+    let _g = exclusive();
+    let (_r, a) = one();
+    let a = Arc::new(a);
+    let a2 = a.clone();
+    let h = after_gate(move || {
+        Store::open(&a2.paths, WS_ID).update(Duration::from_secs(10), &mut |ws| {
+            ws.phase = Phase::Down;
+            ws.snapshot_seq += 1;
+            Ok(())
+        }).unwrap();
+    });
+    assert_eq!(run(&hook_env(&a, h), WS_ID, Mode::Cli).unwrap().passes, 1);
+}
+
+#[test] // S§8.3 step 3 (MS-21 review R2-2): a lock file unlinked and made again while the CLI waits: the lock taken is
+        // not the lock at `mail/sync/lock`, so the sync stops as forgotten
+fn cli_run_whose_lock_file_was_made_again_stops_as_forgotten() {
+    let _g = exclusive();
+    let (_r, a) = one();
+    let sp = a.sp();
+    fs::create_dir_all(&sp.sync).unwrap();
+    fs::File::create(&sp.lock).unwrap();
+    let held = take(&sp.lock);
+    let lock = sp.lock.clone();
+    let swap: Box<dyn FnOnce() + Send> = Box::new(move || {
+        fs::remove_file(&lock).unwrap();
+        fs::File::create(&lock).unwrap();
+        drop(held);
+    });
+    let e = Env { clock: Box::new(ForgetClock::new(T0, swap)), ..plain_env(&a) };
+    let err = run(&e, WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!(err, SyncError::Stopped { line: FORGOTTEN.into(), check: "forgotten" });
+    assert!(fs::symlink_metadata(&sp.identity).is_err() && fs::symlink_metadata(&sp.worktree).is_err());
 }
 
 #[test] // S§8.3 steps 3 and 17 (MS-21 review F1): a child whose record goes before its next pass ends silently, Ok

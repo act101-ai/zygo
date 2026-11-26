@@ -104,6 +104,10 @@ pub(crate) struct Ctx<'a> {
     pub(crate) sp: SyncPaths,
     pub(crate) store: Store,
     pub(crate) ws: Workspace,
+    /// The state folder `<workspaces_dir>/<id>/` that the gate read the record in, held open so its inode is not
+    /// used again while this sync runs (unix; `None` elsewhere): a forget and a new workspace of the same id make a
+    /// new folder (MS-21 review R2-2).
+    state_dir: Option<File>,
     pub(crate) cfg: Config,
     pub(crate) s: SyncSettings,
 }
@@ -168,7 +172,7 @@ pub fn run_with(env: &Env, ws_id: &str, mode: Mode, opts: &Opts) -> Result<Repor
             Err(_) if c.state_gone() => return forgotten(mode, report),
             Err(f) => return Err(c.stopped(f, false)),
         };
-        if c.forgotten() {
+        if c.forgotten(&lock) {
             drop(lock);
             return forgotten(mode, report);
         }
@@ -241,9 +245,24 @@ impl Ctx<'_> {
 
     pub(crate) fn log(&self, line: &str) { self.store.log_error(line) }
 
-    /// S§8.3 step 3 (MS-21 review F1): under the lock, before any write: the workspace record is gone or no longer
-    /// holds this id (read as the gate reads it), so `zygo ws forget` ran while this sync waited for the lock.
-    fn forgotten(&self) -> bool { !matches!(self.store.read(), Ok(Some(ws)) if ws.id == self.ws_id) }
+    /// S§8.3 step 3 (MS-21 review F1, R2-2): under the lock `lock`, before any write, `zygo ws forget` ran while this
+    /// sync waited: the workspace record (read as the gate reads it) is gone, or it is not the gate's workspace (its
+    /// id, name, common folder or main worktree differ, or, on unix, its state folder is a new one); or (unix) `lock`
+    /// is no longer the file at `mail/sync/lock` (the forget unlinked the file this sync waited on). A record change
+    /// that keeps the workspace (its phase, its snapshot count, its members) is not a forget.
+    fn forgotten(&self, lock: &File) -> bool {
+        let same_dir = match &self.state_dir {
+            Some(d) => file_id(d.metadata()).is_some_and(|id| file_id(std::fs::symlink_metadata(self.store.dir())) == Some(id)),
+            None => true,
+        };
+        let same = |ws: &Workspace| {
+            (&ws.id, &ws.name, &ws.common_dir, &ws.main_root)
+                == (&self.ws.id, &self.ws.name, &self.ws.common_dir, &self.ws.main_root)
+                && same_dir
+        };
+        let record_kept = matches!(self.store.read(), Ok(Some(ws)) if ws.id == self.ws_id && same(&ws));
+        !record_kept || !lock_is_at(lock, &self.sp.lock)
+    }
 
     /// S§8.3 steps 2-3 (MS-21 review R2-1): the state folder `<workspaces_dir>/<id>/` is gone, so `zygo ws forget`
     /// ran after the gate. The sync makes no mail folder in a missing state folder, so a failed mark or lock with
@@ -280,7 +299,38 @@ fn gate<'a>(env: &'a Env, ws_id: &'a str) -> Result<Ctx<'a>, SyncError> {
         .map_err(|_| SyncError::Stopped { line: GATE_CONFIG_LINE.into(), check: "config" })?
         .config;
     let s = sync_for(&cfg, &ws.name).map_err(SyncError::Off)?;
-    Ok(Ctx { env, ws_id, sp, store, ws, cfg, s })
+    let state_dir = open_state_dir(store.dir()).map_err(|_| record())?;
+    Ok(Ctx { env, ws_id, sp, store, ws, state_dir, cfg, s })
+}
+
+/// MS-21 review R2-2: the state folder `dir` opened with no link followed (unix), or `None` (other platforms).
+fn open_state_dir(dir: &Path) -> std::io::Result<Option<File>> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut o = OpenOptions::new();
+        o.read(true).custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC);
+        o.open(dir).map(Some)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(None)
+    }
+}
+
+/// The device and inode of `meta` (unix); `None` for an error, and on every other platform.
+fn file_id(meta: std::io::Result<std::fs::Metadata>) -> Option<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        meta.ok().map(|m| (m.dev(), m.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        None
+    }
 }
 
 /// S§8.3 steps 1 and 3, S§15: `f` under the gate and the CLI lock. A lock held by another after the CLI wait is
@@ -291,7 +341,7 @@ pub(crate) fn locked<T>(env: &Env, ws_id: &str, f: impl FnOnce(&Ctx) -> Result<T
     let c = gate(env, ws_id)?;
     env.seam.at("after_gate").map_err(|e| c.stopped(e.into(), false))?;
     let out = match take_lock(&c.sp, Mode::Cli, &*env.clock) {
-        Ok(Some(_lock)) if c.forgotten() => return Err(forgotten_error()),
+        Ok(Some(lock)) if c.forgotten(&lock) => return Err(forgotten_error()),
         Ok(Some(_lock)) => f(&c).map_err(|e| c.stopped(e, true)),
         Ok(None) => return Err(SyncError::Busy),
         Err(_) if c.state_gone() => return Err(forgotten_error()),
@@ -301,6 +351,23 @@ pub(crate) fn locked<T>(env: &Env, ws_id: &str, f: impl FnOnce(&Ctx) -> Result<T
         let _ = run_with(env, ws_id, Mode::Child, &Opts::default());
     }
     out
+}
+
+/// S§8.3 step 3 (MS-21 review R2-2): the locked file `lock` is the file at `path` now (unix: the same device and
+/// inode, `path` read with no link followed). A forget unlinks the lock file a waiting sync opened, so that sync can
+/// lock the old file while another sync locks a new one at `path`. The check is unix only: on other platforms it
+/// is always `true` (`zygo ws forget` does not run there: every workspace verb exits 2, OP5).
+fn lock_is_at(lock: &File, path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        let open = file_id(lock.metadata());
+        open.is_some() && open == file_id(std::fs::symlink_metadata(path))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (lock, path);
+        true
+    }
 }
 
 /// S§8.3 step 3: the lock on `mail/sync/lock`. Held by another (`Ok(None)`): at once for a child; the CLI tries each
