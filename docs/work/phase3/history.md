@@ -99,6 +99,8 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | MS-12 | Import: candidates, checks, crash-safe delivery | MS-6, MS-10, ML-2, ML-4 | DONE | judgment | 68fa626f, dc8f3ad4, cf388671 · import 23/0 ; floor green · PR #114 |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | DONE | mechanical | plan a8ac4f72 · commits 3e4c8baa, 0b4b6865 · PR #170 |
 | MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5, OS-4 | DONE | implementation | ea149eab, ad7d3736 · acc 18/18, 26/26 · PR #148 |
+| OS-27 | Shape-off baseline: hook output and stored file of the `97d8767` behavior | OS-9, OS-17, OS-18, OS-19, OS-20, OS-21 | DONE | implementation | abea1612, 74976374 · acc 5/5 · PR #140 |
+| OS-30 | Runner views: dispatch and the libtest view (pipeline step 3) | OS-29, OS-19 | DONE | judgment | 974fef24 plan; 6f4959d7, d1f02107, eef74481; shape_runner_libtest 20/20, shape_pipeline 24/24; PR #158 |
 
 ## Log
 
