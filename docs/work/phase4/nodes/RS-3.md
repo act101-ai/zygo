@@ -123,7 +123,7 @@ Produced:
   - Before the stream is built (after `:496`): `ctx.dialect == Openai && translated && status.is_success()` → `Err(read_failed(slot, c, &adjustments, upstream_bad_response()))` (removed by RS-4; no test claims it).
   - Check: `upstream_529_*`, `over_long_prompt_*`, `attribution_row_*` pass; all 12 pass. Commit `feat(proxy): RS-3 upstream errors before the first byte in the OpenAI shape`.
 
-- [ ] 7. **Existing test.** `tests/translate.rs` `wire_openai_routes_not_in_v1` (`:1384-1403`): remove the `("POST", "openai/v1/responses", …)` tuple from the loop (test-logic edit: the route is now served; `chat/completions` and `models` stay 404, the `GET openai/v1/responses` → 405 line stays). Check: `cargo test -p zygo-proxy --test translate` passes. Commit `test(proxy): RS-3 /openai/v1/responses is served`.
+- [x] 7. **Existing test.** `tests/translate.rs` `wire_openai_routes_not_in_v1` (`:1384-1403`): remove the `("POST", "openai/v1/responses", …)` tuple from the loop (test-logic edit: the route is now served; `chat/completions` and `models` stay 404, the `GET openai/v1/responses` → 405 line stays). Check: `cargo test -p zygo-proxy --test translate` passes. Commit `test(proxy): RS-3 /openai/v1/responses is served`.
 
 - [ ] 8. **Acceptance and floor.** Run alone: `test "$(cargo test -q -p zygo-proxy --test responses_route -- --list 2>/dev/null | grep -c ': test$')" -ge 7 && cargo test -p zygo-proxy --locked` → exit 0 with 12 tests listed. Then `cargo test --workspace --locked` (CI form, `ci.yml:53`) passes. Push `phase-4--RS-3`.
 
