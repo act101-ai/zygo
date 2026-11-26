@@ -310,3 +310,26 @@ fn nf_run_over_the_bound_loses_only_esc() {
     color("a\x1b$((((Bb", "a$((((Bb");
     color("a\x1b     xb", "a     xb");
 }
+
+#[test]
+fn esc_space_before_a_final_byte_is_an_nf_escape() {
+    // FX-21 review F5: SP is an intermediate and `b` a final byte, so `ESC SP b` goes whole
+    color("a\x1b b", "a");
+    // SP then a byte that is not a final byte: only `ESC` goes
+    color("a\x1b \u{e9}b", "a \u{e9}b");
+}
+
+#[test]
+fn nf_escape_removes_bytes_that_fx16_kept() {
+    // FX-21 review F1: hides more than FX-16 (which kept `- i` and ` 1`); the bytes are one
+    // nF sequence that a terminal consumes, so a terminal shows none of them
+    color("warn:\x1b - item", "warn:tem");
+    color("\x1b 1.2.3", ".2.3");
+}
+
+#[test]
+fn nf_intermediates_before_a_c0_control_lose_only_esc() {
+    // FX-21 review F5: a C0 control is not a final byte (`clean.rs` `_ => 1`)
+    color("a\x1b(\tb", "a(\tb");
+    color("a\x1b$(\x07b", "a$(\x07b");
+}
