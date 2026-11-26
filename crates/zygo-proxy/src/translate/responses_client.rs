@@ -459,7 +459,11 @@ fn tools(req: &Value, d: &mut Drops) -> Result<Vec<Value>, ZygoError> {
                 continue;
             }
         };
-        let mut x = json!({"name": field(tool, &format!("{ty} tool"), "name")?, "input_schema": schema});
+        let name = field(tool, &format!("{ty} tool"), "name")?;
+        if out.iter().any(|t: &Value| s(t, "name") == Some(name)) {
+            return Err(bad("tools: two tools have the same name"));
+        }
+        let mut x = json!({"name": name, "input_schema": schema});
         if let Some(desc) = tool.get("description").filter(|v| v.is_string()) {
             x["description"] = desc.clone();
         }
