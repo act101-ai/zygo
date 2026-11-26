@@ -31,7 +31,7 @@ use crate::provider::{loopback, unavailable, Candidate};
 use crate::resolve::Resolved;
 use crate::server::App;
 use crate::session::{InFlight, SessionState};
-use crate::tee::{CacheSplit, ErrorCapture, SseLine, Tee, Ticket, Usage, UsageSink, COPY_MAX, ERROR_BODY_MAX};
+use crate::tee::{CacheSplit, ErrorCapture, SseLine, Tee, Ticket, Usage, UsageSink, COPY_MAX, ERROR_BODY_MAX, HOLD_MAX};
 use crate::translate::schema::{NullMap, RestoreFilter};
 use crate::translate::{
     facts, is_response, responses_client, message_events, reasoning, schema, scrub, translate_error, translate_request, translate_response, SseEvent, StreamMapper,
@@ -1188,35 +1188,112 @@ struct Streamed {
     key: Option<Secret>,
     /// An upstream over-long prompt's message by the PC14 rule (K§6.4.4); the encoder cuts messages shorter.
     context: Option<String>,
+    /// The current event's `event` field is `error`.
+    error_event: bool,
+    /// The `data` lines of an error event split over lines, until its blank line.
+    held: Held,
+    /// The held `data` passed `HOLD_MAX`: the stream fails as the encoder fails an over-long event.
+    too_long: bool,
 }
+
+/// The `data` of a split error event, joined as SSE joins it (`\n` between lines).
+#[derive(Default)]
+enum Held {
+    #[default]
+    None,
+    Data(Vec<u8>),
+    /// Over `HOLD_MAX`: the rest of the event's `data` lines are dropped too.
+    Over,
+}
+
+/// The encoder's message for held event `data` over `HOLD_MAX` (`responses_client.rs` `EVENT_TOO_LONG`).
+const EVENT_TOO_LONG: &str = "upstream event too long";
+/// An SSE comment line: it takes the place of a held `data` line, and the encoder ignores it.
+const COMMENT: &[u8] = b":";
 
 impl Streamed {
     fn new(model: &str, t: &Target, calls: responses_client::Calls, key: Option<Secret>) -> Streamed {
         let spare = responses_client::Encoder::new(model, t, calls.clone());
-        Streamed { enc: responses_client::Encoder::new(model, t, calls), spare, key, context: None }
+        Streamed {
+            enc: responses_client::Encoder::new(model, t, calls),
+            spare,
+            key,
+            context: None,
+            error_event: false,
+            held: Held::None,
+            too_long: false,
+        }
     }
 
-    /// A Messages `error` line before the encoder: its message without the provider key. An over-long prompt
-    /// (`invalid_request_error` with a PC14 form, K§6.4.4) gets the code `context_length_exceeded`. A data line that is
-    /// no JSON (an event split over lines) has each occurrence of the key replaced: a JSON string holds no raw newline,
-    /// so the key is never split.
+    /// A Messages `error` event before the encoder: its message without the provider key. An over-long prompt
+    /// (`invalid_request_error` with a PC14 form, K§6.4.4) gets the code `context_length_exceeded`. An error event
+    /// split over several `data` lines (its `event` is `error`, or its first `data` line names `"error"`) is held to its
+    /// blank line, each held line sent on as an SSE comment, then sent as one `data` line read like a whole one. Lines of
+    /// other events are not held. A `data` line that is no JSON and not held has each occurrence of the key replaced.
     fn line(&mut self, l: &mut SseLine) {
-        let Some(d) = l.0.strip_prefix(b"data:") else { return };
+        if let Some(new) = self.replaced(&l.0) {
+            l.0 = new;
+        }
+    }
+
+    /// The bytes that take the place of `line` (without its `\n`); `None`: no change.
+    fn replaced(&mut self, line: &[u8]) -> Option<Vec<u8>> {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() {
+            self.error_event = false;
+            let Held::Data(d) = std::mem::take(&mut self.held) else { return None };
+            // The tee adds the blank line's `\n` after this `data` line's.
+            return Some(match self.error_data(&d) {
+                Some(v) => format!("data: {v}\n").into_bytes(),
+                None => {
+                    let t = scrub(&String::from_utf8_lossy(&d), self.key.as_ref().map(Secret::expose));
+                    format!("data:{}\n", t.replace('\n', "\ndata:")).into_bytes()
+                }
+            });
+        }
+        if let Some(name) = line.strip_prefix(b"event:") {
+            self.error_event = name.trim_ascii() == b"error";
+            return None;
+        }
+        let d = line.strip_prefix(b"data:")?;
+        let d = d.strip_prefix(b" ").unwrap_or(d);
+        match &mut self.held {
+            Held::None => {}
+            Held::Data(h) if h.len() + 1 + d.len() <= HOLD_MAX => {
+                h.push(b'\n');
+                h.extend_from_slice(d);
+                return Some(COMMENT.to_vec());
+            }
+            Held::Data(_) | Held::Over => {
+                self.held = Held::Over;
+                self.too_long = true;
+                return Some(COMMENT.to_vec());
+            }
+        }
         let key = self.key.as_ref().map(Secret::expose).filter(|k| !k.is_empty());
         let keyed = key.is_some_and(|k| d.windows(k.len()).any(|w| w == k.as_bytes()));
-        if !keyed && !d.windows(7).any(|w| w == b"\"error\"") {
-            return;
+        let named = d.windows(7).any(|w| w == b"\"error\"");
+        if !keyed && !named && !self.error_event {
+            return None;
         }
-        let Ok(mut v) = serde_json::from_slice::<Value>(d) else {
-            if keyed {
-                l.0 = format!("data:{}", scrub(&String::from_utf8_lossy(d), key)).into_bytes();
-            }
-            return;
-        };
+        if serde_json::from_slice::<serde::de::IgnoredAny>(d).is_ok() {
+            return self.error_data(d).map(|v| format!("data: {v}").into_bytes());
+        }
+        if named || self.error_event {
+            self.held = Held::Data(d.to_vec());
+            return Some(COMMENT.to_vec());
+        }
+        Some(format!("data:{}", scrub(&String::from_utf8_lossy(d), key)).into_bytes())
+    }
+
+    /// One whole event's `data` when it is a Messages `error`: the message without the key, and an over-long prompt's
+    /// PC14 code (its PC14 message kept for `push`); `None` for any other `data`.
+    fn error_data(&mut self, d: &[u8]) -> Option<Value> {
+        let mut v = serde_json::from_slice::<Value>(d).ok()?;
         if v.get("type").and_then(Value::as_str) != Some("error") {
-            return;
+            return None;
         }
-        let Some(e) = v.get_mut("error").and_then(Value::as_object_mut) else { return };
+        let e = v.get_mut("error").and_then(Value::as_object_mut)?;
         let m = scrub(e.get("message").and_then(Value::as_str).unwrap_or_default(), self.key.as_ref().map(Secret::expose));
         if e.get("type").and_then(Value::as_str) == Some("invalid_request_error")
             && let Some(pc14) = pc14_form(&m)
@@ -1225,13 +1302,16 @@ impl Streamed {
             self.context = Some(pc14);
         }
         e.insert("message".into(), json!(m));
-        l.0 = format!("data: {v}").into_bytes();
+        Some(v)
     }
 
     /// The encoder's events for the tee's bytes (and its last ones at `end`), an over-long prompt's `response.failed`
     /// with the PC14 message.
     fn push(&mut self, out: &[u8], end: bool) -> Vec<SseEvent> {
         let mut evs = self.enc.push(out);
+        if self.too_long {
+            evs.extend(self.enc.fail("api_error", EVENT_TOO_LONG));
+        }
         if end {
             evs.extend(self.enc.finish());
         }

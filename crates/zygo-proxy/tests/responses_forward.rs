@@ -567,6 +567,65 @@ fn split_error_event_without_key() {
     assert_eq!(events(&b).last().unwrap().0, "response.failed");
 }
 
+/// A Messages `error` event whose `data` is split over two lines after its `"type"` field.
+fn split_error(error: &str) -> Vec<u8> {
+    let mut body = msg_sse(&[message_start(), text_start(0), text_delta(0, "par")]);
+    body.extend_from_slice(format!("event: error\ndata: {{\"type\":\"error\",\ndata: \"error\":{error}}}\n\n").as_bytes());
+    body
+}
+
+#[test] // review round 3 H1: a split error event whose key has its first byte JSON-escaped never carries the key
+fn split_error_event_escaped_key() {
+    let h = start(A);
+    let key = h.provider_key().to_string();
+    let esc = format!("\\u0074{}", &key[1..]);
+    h.reply_with(200, SSE, split_error(&format!("{{\"type\":\"api_error\",\"message\":\"bad {esc}\"}}")));
+    let (s, _, b) = h.post(R, &codex_request("after-custom-tool-call-output"));
+    assert_eq!(s, 200);
+    let text = String::from_utf8_lossy(&b);
+    assert!(!text.contains(&key[1..]), "{text}");
+    let evs = events(&b);
+    assert_eq!(terminals(&evs).len(), 1, "{:?}", names(&evs));
+    let (last, d) = evs.last().unwrap();
+    assert_eq!(last, "response.failed");
+    assert_eq!(d["response"]["error"], json!({"code":"api_error","message":"bad [REDACTED]"}));
+}
+
+#[test] // review round 3 H2: a split `prompt is too long` event gets the PC14 code, the cap and the cleaning
+fn split_prompt_too_long_pc14() {
+    let h = start(A);
+    let m = format!("prompt is too long: 1 tokens > 0 maximum \u{1b}[2J\u{202e}{}", "z".repeat(5000));
+    h.reply_with(200, SSE, split_error(&json!({"type":"invalid_request_error","message":m}).to_string()));
+    let (_, _, b) = h.post(R, &codex_request("after-custom-tool-call-output"));
+    let evs = events(&b);
+    assert_eq!(terminals(&evs).len(), 1, "{:?}", names(&evs));
+    let (last, d) = evs.last().unwrap();
+    assert_eq!(last, "response.failed");
+    let e = &d["response"]["error"];
+    assert_eq!(e["code"], "context_length_exceeded");
+    let msg = e["message"].as_str().unwrap();
+    assert!(msg.starts_with("prompt is too long: 1 tokens > 0 maximum"), "{msg:?}");
+    assert!(msg.chars().count() <= 512, "{} characters", msg.chars().count());
+    assert!(!msg.contains('\u{1b}') && !msg.contains('\u{202e}'), "{msg:?}");
+}
+
+#[test] // review round 3 H1: a held split error event over HOLD_MAX fails as the encoder fails an over-long event, with no echo of its text
+fn split_error_event_over_hold_max() {
+    let h = start(A);
+    let part = "q".repeat(3 << 20);
+    let mut body = msg_sse(&[message_start(), text_start(0), text_delta(0, "par")]);
+    body.extend_from_slice(format!("event: error\ndata: {{\"type\":\"error\",\"pad\":\"{part}\",\ndata: \"more\":\"{part}\"}}\n\n").as_bytes());
+    h.reply_with(200, SSE, body);
+    let (s, _, b) = h.post(R, &codex_request("after-custom-tool-call-output"));
+    assert_eq!(s, 200);
+    assert!(!b.windows(64).any(|w| w == &part.as_bytes()[..64]), "held text echoed");
+    let evs = events(&b);
+    assert_eq!(terminals(&evs).len(), 1, "{:?}", names(&evs));
+    let (last, d) = evs.last().unwrap();
+    assert_eq!(last, "response.failed");
+    assert_eq!(d["response"]["error"], json!({"code":"api_error","message":"upstream event too long"}));
+}
+
 #[test] // base §7.6: an injected null is removed on the way back to a Responses client
 fn injected_null_removed_for_responses_client() {
     let h = start(C);
