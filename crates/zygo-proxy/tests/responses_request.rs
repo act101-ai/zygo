@@ -10,7 +10,7 @@ use zygo_proxy::translate::reasoning::{
 };
 use zygo_config::{Dialect, Effort, Facts, Reasoning};
 use zygo_proxy::translate::facts;
-use zygo_proxy::translate::responses_client::{check_fields, request, IGNORED, NO_STATE, REFUSED};
+use zygo_proxy::translate::responses_client::{check_fields, flat_name, request, IGNORED, NO_STATE, REFUSED};
 use zygo_proxy::translate::{translate_request, Target, DOC_OMITTED};
 
 fn tgt() -> Target {
@@ -169,6 +169,30 @@ fn fixtures() -> Vec<(String, Value)> {
 
 fn fixture(name: &str) -> Value {
     fixtures().into_iter().find(|(n, _)| n == name).unwrap().1
+}
+
+/// The `body` of `fixtures/codex/<rel>`.
+fn record(rel: &str) -> Value {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/codex").join(rel);
+    let rec: Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+    rec["body"].clone()
+}
+
+/// The `body` of every `fixtures/codex/agents/requests/*.json` record (PC-5), with its file name; asserts at least 13.
+fn agent_bodies() -> Vec<(String, Value)> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/codex/agents/requests");
+    let mut out: Vec<(String, Value)> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .map(|p| {
+            let n = p.file_name().unwrap().to_string_lossy().into_owned();
+            (n.clone(), record(&format!("agents/requests/{n}")))
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    assert!(out.len() >= 13, "{} agents fixtures", out.len());
+    out
 }
 
 fn body(input: Value) -> Value {
@@ -413,7 +437,7 @@ fn ob5_unmarked_or_foreign_reasoning_dropped() {
 fn ob6_tools_and_hosted_items_dropped() {
     let b = fixture("first-turn.json");
     let (m, codes) = tr(&b);
-    assert!(codes.contains(&"tools_dropped:namespace:1".to_string()), "{codes:?}");
+    assert!(!codes.iter().any(|c| c.starts_with("tools_dropped:namespace")), "{codes:?}");
     assert!(codes.contains(&"tools_dropped:web_search:1".to_string()), "{codes:?}");
     let ns = b["tools"].as_array().unwrap().iter().find(|t| t["type"] == "namespace").unwrap();
     let mut gone = vec![ns["name"].clone()];
@@ -611,7 +635,7 @@ fn f5_tool_choice_against_sent_tools() {
         b["tool_choice"] = json!("required");
         assert_400(err(rq(&b)), "tool_choice: required, but no tool is sent");
     }
-    // A named tool that is not sent, also one inside a dropped namespace.
+    // A named tool that is not sent, also a nested tool's bare name.
     let not_sent = "tool_choice: the named tool is not among the sent tools";
     let mut b = body(json!([user("go")]));
     b["tools"] = json!([{"type":"function","name":"f","parameters":{"type":"object"}}]);
@@ -781,17 +805,20 @@ fn g1_no_tools_with_history() {
 }
 
 #[test]
-fn g1_dropped_namespace_tool_called_in_history() {
+fn g1_namespace_call_without_namespace_is_history_only() {
     let mut b = body(json!([user("go"), fc("c1", "spawn_agent", "{}"), fco("c1", "r"), user("next")]));
     b["tools"] = json!([{"type":"function","name":"g","parameters":{"type":"object"}},
         {"type":"namespace","name":"multi_agent_v1","tools":[{"type":"function","name":"spawn_agent"}]}]);
     b["tool_choice"] = json!("auto");
     let (m, codes) = rq(&b).unwrap();
     assert_valid(&m);
-    assert_eq!(m["tools"], json!([{"name":"g","input_schema":{"type":"object"}}, history_tool("spawn_agent")]));
+    assert_eq!(
+        m["tools"],
+        json!([{"name":"g","input_schema":{"type":"object"}}, {"name":"multi_agent_v1__spawn_agent","input_schema":{"type":"object"}},
+            history_tool("spawn_agent")])
+    );
     assert_eq!(m["tool_choice"], json!({"type":"auto"}));
     assert!(codes.contains(&"tools_from_history:1".to_string()), "{codes:?}");
-    assert!(codes.contains(&"tools_dropped:namespace:1".to_string()), "{codes:?}");
 }
 
 #[test]
@@ -872,4 +899,252 @@ fn f9_other_hosted_items_dropped() {
     let (_, codes) = rq(&b).unwrap();
     assert!(codes.contains(&"items_dropped:local_shell_call:1".to_string()), "{codes:?}");
     assert!(codes.contains(&"items_dropped:mcp_call:1".to_string()), "{codes:?}");
+}
+
+// ---- RS-9: namespace tools flatten (K§6.4.3 request obligations 3, 6, 7) ----
+
+/// The nested tools of the `multi_agent_v1` entry of `b["tools"]`, if any.
+fn multi_agent(b: &Value) -> Option<Vec<Value>> {
+    let ns = b["tools"].as_array()?.iter().find(|t| t["type"] == "namespace" && t["name"] == "multi_agent_v1")?;
+    Some(ns["tools"].as_array().unwrap().clone())
+}
+
+#[test]
+fn namespace_tools_flatten_agents_fixture_anthropic_and_chat() {
+    let mut with_ns = 0;
+    for (name, b) in agent_bodies() {
+        let (m, codes) = tr(&b);
+        assert_valid(&m);
+        assert!(!codes.iter().any(|c| c.starts_with("tools_dropped:namespace")), "{name}: {codes:?}");
+        let tools = m["tools"].as_array().unwrap();
+        assert!(!tools.iter().any(|t| t["name"] == "spawn_agent" || t["name"] == "multi_agent_v1"), "{name}");
+        let Some(nested) = multi_agent(&b) else { continue };
+        with_ns += 1;
+        for x in &nested {
+            let flat = format!("multi_agent_v1__{}", x["name"].as_str().unwrap());
+            let hits: Vec<&Value> = tools.iter().filter(|t| t["name"] == flat.as_str()).collect();
+            assert_eq!(hits.len(), 1, "{name}: {flat}");
+            assert_eq!(hits[0]["input_schema"], x["parameters"], "{name}: {flat}");
+            assert_eq!(hits[0]["description"], x["description"], "{name}: {flat}");
+        }
+        let (c, _) = translate_request(&m, Dialect::OpenaiChat, &tgt()).unwrap();
+        let names: Vec<&Value> = c["tools"].as_array().unwrap().iter().map(|t| &t["function"]["name"]).collect();
+        assert!(names.contains(&&json!("multi_agent_v1__spawn_agent")), "{name}: {names:?}");
+    }
+    assert!(with_ns >= 10, "{with_ns} bodies with multi_agent_v1");
+}
+
+#[test]
+fn namespace_tools_flatten_history_call() {
+    let (m, codes) = tr(&record("agents/requests/pc6-a-0003.json"));
+    let call = blocks(&m).into_iter().find(|x| x["type"] == "tool_use" && x["id"] == "call_pc6_a").unwrap();
+    assert_eq!(call["name"], "multi_agent_v1__spawn_agent");
+    assert_eq!(call["input"], json!({"agent_type":"pc6-probe","message":"tracer-pc6-task-a"}));
+    assert!(!codes.iter().any(|c| c.starts_with("tools_from_history:")), "{codes:?}");
+
+    let (m, codes) = tr(&record("mcp/requests/pc9-call-0033.json"));
+    let call = blocks(&m).into_iter().find(|x| x["type"] == "tool_use" && x["id"] == "call_pc9_1").unwrap();
+    assert_eq!(call["name"], "mcp__zygo__compact");
+    let t = m["tools"].as_array().unwrap().iter().find(|t| t["name"] == "mcp__zygo__compact").unwrap();
+    assert_eq!(t["input_schema"], json!({"type":"object","properties":{}}));
+    assert!(!codes.iter().any(|c| c.starts_with("tools_from_history:")), "{codes:?}");
+}
+
+#[test]
+fn namespace_tools_flatten_name_forms() {
+    assert_eq!(flat_name("multi_agent_v1", "spawn_agent"), "multi_agent_v1__spawn_agent");
+    let plain = flat_name(&"n".repeat(31), &"t".repeat(31));
+    assert_eq!(plain, format!("{}__{}", "n".repeat(31), "t".repeat(31)));
+    assert_eq!(plain.len(), 64);
+    let valid = regex::Regex::new(r"^[A-Za-z0-9_-]{1,64}$").unwrap();
+    let hashed = regex::Regex::new(r"_[0-9a-f]{16}$").unwrap();
+    let (n40, t30, t31) = ("n".repeat(40), "t".repeat(30), "t".repeat(31));
+    for (ns, n) in [(n40.as_str(), t30.as_str()), ("mcp__a.b", "x"), ("ns", "tool name"), ("", "é")] {
+        let f = flat_name(ns, n);
+        assert!(valid.is_match(&f), "{f}");
+        assert!(hashed.is_match(&f), "{f}");
+        assert_eq!(f, flat_name(ns, n));
+    }
+    assert_ne!(flat_name(&n40, &t30), flat_name(&n40, &t31));
+
+    let flat = flat_name("mcp__a.b", "x");
+    let mut b = body(json!([user("go"), {"type":"function_call","call_id":"c1","name":"x","namespace":"mcp__a.b","arguments":"{}"},
+        fco("c1", "r"), user("next")]));
+    b["tools"] = json!([{"type":"namespace","name":"mcp__a.b","tools":[{"type":"function","name":"x"}]}]);
+    let (m, codes) = tr(&b);
+    assert_eq!(m["tools"][0]["name"], flat.as_str());
+    let call = blocks(&m).into_iter().find(|x| x["type"] == "tool_use").unwrap();
+    assert_eq!(call["name"], flat.as_str());
+    assert!(!codes.iter().any(|c| c.starts_with("tools_from_history:")), "{codes:?}");
+}
+
+#[test]
+fn namespace_tools_flatten_collision_and_malformed_400() {
+    let dup = "tools: two tools have the same name";
+    let with_tools = |tools: Value| {
+        let mut b = body(json!([user("go")]));
+        b["tools"] = tools;
+        b
+    };
+    let b = with_tools(json!([{"type":"function","name":"multi_agent_v1__spawn_agent"},
+        {"type":"namespace","name":"multi_agent_v1","tools":[{"type":"function","name":"spawn_agent"}]}]));
+    assert_400(err(rq(&b)), dup);
+    let b = with_tools(json!([{"type":"namespace","name":"a__b","tools":[{"type":"function","name":"c"}]},
+        {"type":"namespace","name":"a","tools":[{"type":"function","name":"b__c"}]}]));
+    assert_400(err(rq(&b)), dup);
+    let b = with_tools(json!([{"type":"namespace","tools":[{"type":"function","name":"x"}]}]));
+    assert_400(err(rq(&b)), "namespace tool: missing name");
+    let b = with_tools(json!([{"type":"namespace","name":"ns"}]));
+    assert_400(err(rq(&b)), "namespace tool: missing tools");
+    let b = body(json!([user("go"), {"type":"function_call","call_id":"c1","name":"x","namespace":5,"arguments":"{}"},
+        fco("c1", "r"), user("next")]));
+    assert_400(err(rq(&b)), "function_call: namespace must be a string");
+    let b = with_tools(json!([{"type":"namespace","name":"ns","tools":[{"type":"custom","name":"c"}]}]));
+    let (m, codes) = rq(&b).unwrap();
+    assert!(codes.contains(&"tools_dropped:custom:1".to_string()), "{codes:?}");
+    assert!(!m["tools"].as_array().into_iter().flatten().any(|t| t["name"] == "ns__c"), "{}", m["tools"]);
+}
+
+#[test]
+fn namespace_tools_flatten_tool_choice() {
+    let base = record("agents/requests/pc6-a-0002.json");
+    assert_eq!(base["parallel_tool_calls"], true);
+    for tc in [
+        json!({"type":"function","name":"spawn_agent","namespace":"multi_agent_v1"}),
+        json!({"type":"function","name":"multi_agent_v1__spawn_agent"}),
+    ] {
+        let mut b = base.clone();
+        b["tool_choice"] = tc;
+        let (m, _) = tr(&b);
+        assert_eq!(m["tool_choice"], json!({"type":"tool","name":"multi_agent_v1__spawn_agent"}));
+    }
+}
+
+// ---- RS-9 review round 1 findings ----
+
+/// A body whose history holds a call of `ns`/`name` and its output, with `tools`.
+fn ns_history(tools: Value, calls: &[Value]) -> Value {
+    let mut input = vec![user("go")];
+    for (i, c) in calls.iter().enumerate() {
+        let mut c = c.clone();
+        c["call_id"] = json!(format!("c{i}"));
+        c["arguments"] = json!("{}");
+        c["type"] = json!("function_call");
+        input.push(c);
+        input.push(fco(&format!("c{i}"), "r"));
+    }
+    input.push(user("next"));
+    let mut b = body(Value::Array(input));
+    b["tools"] = tools;
+    b
+}
+
+#[test]
+fn namespace_tools_flatten_history_collision_400() {
+    let dup = "input: two tools have the same name";
+    let cases = [
+        // F1: a plain sent function of the flat name.
+        (json!([{"type":"function","name":"mcp__zygo__compact"}]), vec![json!({"name":"compact","namespace":"mcp__zygo"})]),
+        // F2: a sent custom tool of the flat name.
+        (json!([{"type":"custom","name":"ns__x"}]), vec![json!({"name":"x","namespace":"ns"})]),
+        // F3: a sent nested tool of another pair with the same flat name.
+        (
+            json!([{"type":"namespace","name":"a","tools":[{"type":"function","name":"b__c"}]}]),
+            vec![json!({"name":"c","namespace":"a__b"})],
+        ),
+        // Two history pairs with one flat name.
+        (json!([]), vec![json!({"name":"c","namespace":"a__b"}), json!({"name":"b__c","namespace":"a"})]),
+        // A plain history call of the flat name of a history-only pair (no sent namespaced pair), either order.
+        (json!([]), vec![json!({"name":"ns__x"}), json!({"name":"x","namespace":"ns"})]),
+        (json!([]), vec![json!({"name":"x","namespace":"ns"}), json!({"name":"ns__x"})]),
+        // ... also when a plain or custom tool of another name is sent.
+        (json!([{"type":"function","name":"f"}]), vec![json!({"name":"x","namespace":"ns"}), json!({"name":"ns__x"})]),
+    ];
+    for (tools, calls) in cases {
+        let b = ns_history(tools, &calls);
+        assert_400(err(rq(&b)), dup);
+    }
+    // The same pair sent and called is no collision.
+    let b = ns_history(
+        json!([{"type":"namespace","name":"a","tools":[{"type":"function","name":"b__c"}]}]),
+        &[json!({"name":"b__c","namespace":"a"}), json!({"name":"b__c","namespace":"a"})],
+    );
+    let (m, _) = rq(&b).unwrap();
+    assert_eq!(m["tools"], json!([{"name":"a__b__c","input_schema":{"type":"object"}}]));
+}
+
+#[test]
+fn namespace_tools_flatten_hash_input_unambiguous() {
+    // F4: the hash input is length-prefixed, so a NUL in a part cannot move the boundary.
+    assert_ne!(flat_name("a\0", "_b"), flat_name("a", "\0_b"));
+    assert_ne!(flat_name("a\0b", "c"), flat_name("a", "b\0c"));
+}
+
+#[test]
+fn namespace_tools_flatten_tool_choice_namespace_type_400() {
+    // F5: a `namespace` that is not a string (or null) is refused, as in a `function_call` item.
+    let base = record("agents/requests/pc6-a-0002.json");
+    for ns in [json!(5), json!(["multi_agent_v1"]), json!({})] {
+        let mut b = base.clone();
+        b["tool_choice"] = json!({"type":"function","name":"spawn_agent","namespace":ns});
+        assert_400(err(rq(&b)), "tool_choice: namespace must be a string");
+    }
+    let mut b = base.clone();
+    b["tool_choice"] = json!({"type":"function","name":"multi_agent_v1__spawn_agent","namespace":null});
+    assert_eq!(tr(&b).0["tool_choice"], json!({"type":"tool","name":"multi_agent_v1__spawn_agent"}));
+}
+
+#[test]
+fn namespace_tools_flatten_resumed_plain_history_call() {
+    // Codex before 0.172 named MCP tools `mcp__<server>__<tool>`: a session resumed across an upgrade holds a plain
+    // call of the flat name of a pair the request now sends. It is the same tool: accepted, bound to that definition.
+    let tools = json!([{"type":"namespace","name":"mcp__zygo","tools":[{"type":"function","name":"compact"}]}]);
+    for calls in [
+        vec![json!({"name":"mcp__zygo__compact"})],
+        vec![json!({"name":"mcp__zygo__compact"}), json!({"name":"compact","namespace":"mcp__zygo"})],
+        vec![json!({"name":"compact","namespace":"mcp__zygo"}), json!({"name":"mcp__zygo__compact"})],
+    ] {
+        let (m, codes) = rq(&ns_history(tools.clone(), &calls)).unwrap();
+        assert_eq!(m["tools"], json!([{"name":"mcp__zygo__compact","input_schema":{"type":"object"}}]));
+        assert!(blocks(&m).iter().filter(|b| b["type"] == "tool_use").all(|b| b["name"] == "mcp__zygo__compact"));
+        assert!(!codes.iter().any(|c| c.starts_with("tools_from_history:")), "{codes:?}");
+    }
+}
+
+// ---- RS-9 review round 2 findings ----
+
+#[test]
+fn namespace_tools_flatten_tool_choice_selects_only_a_sent_pair() {
+    let not_sent = "tool_choice: the named tool is not among the sent tools";
+    let choose = |tools: Value, tc: Value| {
+        let mut b = body(json!([user("go")]));
+        b["tools"] = tools;
+        b["tool_choice"] = tc;
+        b
+    };
+    let named = json!({"type":"function","name":"compact","namespace":"mcp__zygo"});
+    // G1: the flat name belongs to a plain or custom tool, not to the pair.
+    for tools in [json!([{"type":"function","name":"mcp__zygo__compact"}]), json!([{"type":"custom","name":"mcp__zygo__compact"}])] {
+        assert_400(err(rq(&choose(tools, named.clone()))), not_sent);
+    }
+    // The pair is only in the history: not sent.
+    let mut b = choose(json!([{"type":"function","name":"f"}]), named.clone());
+    b["input"] = json!([user("go"), {"type":"function_call","call_id":"c1","name":"compact","namespace":"mcp__zygo","arguments":"{}"},
+        fco("c1", "r"), user("next")]);
+    assert_400(err(rq(&b)), not_sent);
+    // The sent pair.
+    let sent = json!([{"type":"namespace","name":"mcp__zygo","tools":[{"type":"function","name":"compact"}]}]);
+    let (m, _) = rq(&choose(sent.clone(), named)).unwrap();
+    assert_eq!(m["tool_choice"], json!({"type":"tool","name":"mcp__zygo__compact"}));
+
+    // G2: a custom choice with a namespace (namespaces hold only function tools), whatever is sent.
+    let custom_ns = "tool_choice: a custom tool has no namespace";
+    let tc = json!({"type":"custom","name":"compact","namespace":"mcp__zygo"});
+    for tools in [sent.clone(), json!([{"type":"custom","name":"mcp__zygo__compact"}])] {
+        assert_400(err(rq(&choose(tools, tc.clone()))), custom_ns);
+    }
+    // A null namespace is absent.
+    let tc = json!({"type":"custom","name":"c","namespace":null});
+    let (m, _) = rq(&choose(json!([{"type":"custom","name":"c"}]), tc)).unwrap();
+    assert_eq!(m["tool_choice"], json!({"type":"tool","name":"c"}));
 }
