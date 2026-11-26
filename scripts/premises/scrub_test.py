@@ -138,6 +138,38 @@ CASES += [
      "<timezone>utc</timezone> <timezone>Etc/GMT</timezone> <timezone>GMT</timezone> "
      "<timezone>UTC+0</timezone> <timezone>UTC+00:00</timezone>", []),
 ]
+# PC-11: Codex OS keys, login shell, macOS writable roots, item ids, sandbox, marketplace and macOS env names.
+I1 = "da690f77-7707-5fdf-97a5-850943e7a34c"
+I2 = "8e32dd58-d565-50b3-83f4-72b17fc59ae7"
+PC11 = [
+    ("codex platformOs", '{"platformFamily":"unix","platformOs":"macos"}',
+     '{"platformFamily":"(os omitted)","platformOs":"(os omitted)"}', ["macos", "unix"]),
+    ("codex platformOs escaped", '{\\"platformOs\\":\\"linux\\"}', '{\\"platformOs\\":\\"(os omitted)\\"}', ["linux"]),
+    ("login shell tag", "<cwd>/repo</cwd>\n  <shell>zsh</shell>", "<cwd>/repo</cwd>\n  <shell>(omitted)</shell>", ["zsh"]),
+    ("login shell tag, unicode escapes", "\\u003cshell\\u003efish\\u003c/shell\\u003e",
+     "\\u003cshell\\u003e(omitted)\\u003c/shell\\u003e", ["fish"]),
+    ("login shell tag, entities", "&lt;shell&gt;bash&lt;/shell&gt;", "&lt;shell&gt;(omitted)&lt;/shell&gt;", ["bash"]),
+    ("macos writable root", "The writable roots are `/private/tmp`, `/repo`.", "The writable roots are `/tmp`, `/repo`.",
+     ["/private"]),
+    ("macos temp writable root", "roots `/private/var/folders/ab/cd_ef/T`, `/repo`", "roots `/tmp/x`, `/repo`",
+     ["/private", "cd_ef"]),
+    ("codex item ids", '{"a":"msg_' + I1 + '","b":"fco_' + I2 + '","c":"msg_' + I1 + '","d":"ctco_' + I2 + '"}',
+     '{"a":"msg_placeholder0001","b":"fco_placeholder0001","c":"msg_placeholder0001","d":"ctco_placeholder0001"}',
+     [I1, I2]),
+    ("codex item id after an escape", "a\\nmsg_" + I1, "a\\nmsg_placeholder0001", [I1]),
+    ("macos sandbox name", '{\\"sandbox\\":\\"seatbelt\\",\\"sandbox_mode\\":\\"workspace-write\\"}',
+     '{\\"sandbox\\":\\"(os omitted)\\",\\"sandbox_mode\\":\\"workspace-write\\"}', ["seatbelt"]),
+    ("linux sandbox name", '"sandbox":"linux_seccomp"', '"sandbox":"(os omitted)"', ["seccomp"]),
+    ("no sandbox kept", '"sandbox":"none"', '"sandbox":"none"', []),
+    ("marketplace os name", ".tmp/marketplace-macos-1a2b3c/x", ".tmp/marketplace-os-omitted/x", ["macos", "1a2b3c"]),
+    ("login shell in a command", "/bin/zsh -lc 'echo hi'", "(shell omitted) -lc 'echo hi'", ["zsh"]),
+    ("login shell in exec json", '{"command":"/opt/homebrew/bin/fish -lc \'ls\'"}',
+     '{"command":"(shell omitted) -lc \'ls\'"}', ["fish", "homebrew"]),
+    ("macos env line", "__CF_USER_TEXT_ENCODING=0x1F5:0x0:0x0\nPATH=/bin", "(os env omitted)\nPATH=/bin",
+     ["0x1F5", "__CF"]),
+    ("macos env name in a list", '["HOME","__CF_USER_TEXT_ENCODING"]', '["HOME","(os env omitted)"]', ["__CF"]),
+]
+CASES += PC11
 # T8: the macOS LocalHostName and ComputerName, when scutil gives them (4 characters or more).
 for k in ("LocalHostName", "ComputerName"):
     try:
@@ -250,11 +282,53 @@ def main():
                                  capture_output=True, text=True).stdout
         if got != "-repo -home-user -tmp-run-x\n":
             bad.append("dashed run paths with --: got %r" % (got,))
+        # PC-11: descriptions of tools inside a namespace tool; parameter descriptions kept.
+        t = os.path.join(d, "ns.json")
+        with open(t, "w") as f:
+            json.dump({"body": {"tools": [{"type": "namespace", "name": "multi_agent_v1", "description": "d", "tools": [
+                {"type": "function", "name": "spawn_agent", "description": "spawn-desc", "parameters": {
+                    "type": "object", "properties": {"agent_type": {"type": "string", "description": "role list"}}}}]}]}}, f)
+        got = json.loads(scrub(t))
+        ns = got["body"]["tools"][0]
+        inner = ns["tools"][0]
+        if (ns["description"] != "[omitted]" or inner["description"] != "[omitted]"
+                or inner["parameters"]["properties"]["agent_type"]["description"] != "role list"):
+            bad.append("namespace tool descriptions: got %r" % (got,))
+        # PC-11: a harness tool listing (a top-level list of tools) gets its descriptions omitted.
+        listing = [{"type": "function", "name": "a", "description": "x", "parameters": {}},
+                   {"type": "namespace", "name": "n", "description": "y",
+                    "tools": [{"type": "function", "name": "b", "description": "z", "parameters": {}}]},
+                   {"type": "web_search"}]
+        t = os.path.join(d, "tools.json")
+        with open(t, "w") as f:
+            json.dump(listing, f)
+        got = json.loads(scrub(t))
+        want = json.loads(json.dumps(listing).replace('"x"', '"[omitted]"').replace('"y"', '"[omitted]"')
+                          .replace('"z"', '"[omitted]"'))
+        if got != want:
+            bad.append("tool listing descriptions: got %r" % (got,))
+        # PC-11: a list that is not a tool listing keeps its descriptions.
+        t = os.path.join(d, "events.json")
+        with open(t, "w") as f:
+            json.dump([{"event": "x", "description": "kept"}], f)
+        got = json.loads(scrub(t))
+        if got != [{"event": "x", "description": "kept"}]:
+            bad.append("non-listing list kept: got %r" % (got,))
+        # PC-11: a second scrub of the PC-11 inputs changes nothing.
+        t = os.path.join(d, "idem.txt")
+        with open(t, "w") as f:
+            f.write("\n".join(c[1] for c in PC11) + "\n")
+        a = scrub(t)
+        t2 = os.path.join(d, "idem2.txt")
+        with open(t2, "w") as f:
+            f.write(a)
+        if scrub(t2) != a:
+            bad.append("pc-11 rules idempotent: a second scrub changes the text")
     for b in bad:
         print("scrub test fail: " + b)
     if bad:
         sys.exit(1)
-    print("scrub tests: ok (%d)" % (len(CASES) + 6))
+    print("scrub tests: ok (%d)" % (len(CASES) + 10))
 
 
 main()
