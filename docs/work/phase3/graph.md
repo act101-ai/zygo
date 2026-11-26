@@ -229,7 +229,7 @@ Session text (T, SX nodes):
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | TODO | judgment | — |
 | FX-14 | `zygo up` team read: CLI test of `with_team`, team-layer warnings only, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code | WD-11, WD-12, ML-12 | DONE | implementation | 64d9685c, 3dc62442, 34467d50 · up_definition, workspace_restore, serve_cli, cmd::up all pass ; floor green · PR #162 |
 | FX-15 | `zygo doctor` pool lines skip the members `zygo up` skips | WD-12 | DONE | implementation | 0b4ee021, f046b2b7 · definition_doctor 17/0 ; floor green · PR #129 |
-| FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | BLOCKED(operator ratification, O§15 item 2) | implementation | — |
+| FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | TODO | implementation | — |
 | FX-17 | `zygo up` refuses a `[limits] max_members` outside 1-32 from the team or user layer (`config check` rule, `check_jobs` path) | FX-14, WD-11 | DONE | implementation | plan 7a124777 · node da3062c7, e437fde9 · acceptance pass (workspace_restore 7 passed, cmd::up 16 passed) · PR #169 |
 | FX-18 | live-mail.sh fixture head line doubles the word zygo | ML-19 | DONE | mechanical | plan 02a12d2d · node fad4e150 · acceptance pass (sh scripts/premises/live-selftest.sh: live selftest: ok (77)) · PR #187 |
 | FX-19 | PO2 row states what its run observed | OS-34 | DONE | mechanical | plan b2c8ca97 · node b5fa4c27, efbcccae · acceptance pass (check-premises ok; po2_ 3 passed) · PR #188 |
@@ -422,3 +422,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-16 BLOCKED: its fix makes clean remove more; O§15 item 2 needs the operator's ratification of the O§7.4 text and a decision record first |
 | 2026-11-26 | OS-44 DROPPED: kept_bytes modelled each agent's cut, but OpenCode keeps whole lines under user-config limits and Claude Code cuts by an API token count and keeps characters; no premise states what is kept; O§6.4 Size limit stated as permanent · PR #207 |
 | 2026-11-26 | OS-43 DROPPED: O§8.2 floors are per shaper, so the clean-shaped log case has no 8 KiB floor; the log view under the threshold dropped failure and ERROR lines (O-C9, O§8.1); spec re-plan withdrawn · PR #195 |
+| 2026-11-26 | FX-16 unblocked: the "ratification first" gate in its contract was written by an agent without operator approval; deleted |
