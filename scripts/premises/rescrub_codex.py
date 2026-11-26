@@ -11,11 +11,13 @@ Usage:
 
 The folder argument (PC-13) selects fixtures/<folder>; the default is codex. Paths are printed
 relative to fixtures/<folder>. Every regular file under that folder is read, sorted. VERBATIM files
-(per folder: codex config.schema.json, claude-code settings-schema.json, opencode config-schema.json;
-upstream schemas, never captures) are never scrubbed or written, but are still scanned for leaks.
-The leak classes are LEAKS for codex and ENV_LEAKS (the Claude Code environment block lines) for
-claude-code and opencode. A scrub.py output that differs from the text only in JSON layout (both
-parse, the values are equal) is no change: no finding and no write (PC-13). Each capture folder (the
+(per folder: codex config.schema.json, claude-code settings-schema.json; the pinned upstream schemas,
+never captures; opencode has none) are never scrubbed or written, but are still scanned for leaks.
+The leak classes are LEAKS for codex and ENV_LEAKS (the Claude Code environment block lines and the
+Stainless arch and runtime version headers) for claude-code and opencode; a JSON file whose object
+repeats a key is the class "duplicate keys". A scrub.py output that differs from the text only in
+JSON layout (both parse with no repeated key, same canonical form) is no change: no finding and no
+write (PC-13, review round 1 F1). Each capture folder (the
 first folder under fixtures/<folder>, or the root's own files) has one id map (scrub.py SCRUB_IDMAP):
 an id gets the same placeholder in all its files.
 --check runs scrub.py with SCRUB_FIXED=1, no user name rule (SCRUB_USER=user) and no host names, so
@@ -34,8 +36,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCRUB = os.path.join(HERE, "scrub.py")
 FIXTURES = os.path.join(os.path.dirname(os.path.dirname(HERE)), "fixtures")
 FOLDERS = ("codex", "claude-code", "opencode")
-VERBATIM = {"codex": ("config.schema.json",), "claude-code": ("settings-schema.json",),
-            "opencode": ("config-schema.json",)}
+# Review round 1 F2: OpenCode's config-schema.json is not pinned; it is scrubbed like any capture.
+VERBATIM = {"codex": ("config.schema.json",), "claude-code": ("settings-schema.json",), "opencode": ()}
 # Left edge of an id or name (scrub.py B): no word character before it, or a JSON backslash escape.
 B = r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrtbf])|(?<=\\u[0-9A-Fa-f]{4}))"
 ECX_OPEN = r"(?:<|\\u003[cC]|&lt;)environment_context(?:>|\\u003[eE]|&gt;)"
@@ -56,11 +58,21 @@ LEAKS = {
     "macos env": re.compile(r"__CF"),
     "time-bearing id": re.compile(B + r"[a-z]{1,8}_(?!0{10})[0-7][0-9A-HJKMNP-TV-Z]{25}(?![0-9A-Za-z])"),
 }
-# PC-13: the shell name and OS version lines of a Claude Code environment block (scrub.py ENV_SHELL,
-# ENV_OS), at a line start or after a JSON "\n" escape; the leak classes of claude-code and opencode.
+# PC-13: the leak classes of claude-code and opencode. The shell name and OS version lines of a Claude
+# Code environment block (the forms of scrub.py ENV_SHELL, ENV_OS; review round 1 F5, F8: any case,
+# with or without "- ", blanks or escaped tabs after the colon, at a line start or after a JSON "\n"
+# escape that is not an escaped backslash then "n"); only the exact placeholder, at the value's end,
+# passes (F6). The Stainless arch and runtime version headers (scrub.py STAINLESS_RE; F3).
+ENV_PFX = r"(?:^|(?<!\\)(?:\\\\)*\\n)[ \t]*(?:-[ \t]*)?"
+ENV_WS = r"(?:[ \t]|\\t)*"
+ENV_END = r"(?:[\n\r\\\"]|$)"
 ENV_LEAKS = {
-    "shell name": re.compile(r"(?m)(?:^|\\n)[ \t]*- Shell: (?!\(omitted\))"),
-    "os version": re.compile(r"(?m)(?:^|\\n)[ \t]*- OS Version: (?!\(os omitted\))"),
+    "shell name": re.compile(r"(?m)" + ENV_PFX + r"(?i:shell):" + ENV_WS + r"(?!\(omitted\)" + ENV_END + r")[^\s\\\"]"),
+    "os version": re.compile(r"(?m)" + ENV_PFX + r"(?i:os version):" + ENV_WS + r"(?!\(os omitted\)" + ENV_END +
+                             r")[^\s\\\"]"),
+    "arch": re.compile(r"(?i)x-stainless-arch\\?[\"']?\s*[:=]\s*\\?[\"']?(?!\(arch omitted\))[^\s\"',\\]"),
+    "runtime version": re.compile(r"(?i)x-stainless-runtime-version\\?[\"']?\s*[:=]\s*\\?[\"']?"
+                                  r"(?!\(version omitted\))[^\s\"',\\]"),
 }
 
 
@@ -96,12 +108,44 @@ def leaks(text: str, rules: list = (), classes: dict = LEAKS) -> list:
     return found
 
 
+class DuplicateKey(ValueError):
+    pass
+
+
+def _pairs(pairs: list) -> dict:
+    keys = [k for k, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise DuplicateKey("duplicate key")
+    return dict(pairs)
+
+
+def canon(text: str) -> str:
+    """The canonical form of a JSON text: sorted keys, true, 1 and 1.0 kept apart (json.dumps writes
+    them differently). ValueError when it does not parse; DuplicateKey when an object repeats a key."""
+    return json.dumps(json.loads(text, object_pairs_hook=_pairs), sort_keys=True, ensure_ascii=False)
+
+
+def dup_keys(text: str) -> bool:
+    """True when the text is JSON with an object that repeats a key (review round 1 F1)."""
+    try:
+        canon(text)
+    except DuplicateKey:
+        return True
+    except ValueError:
+        return False
+    return False
+
+
 def same(text: str, new: str) -> bool:
-    """True when new equals text, or differs only in JSON layout (both parse, equal values; PC-13)."""
+    """True when new equals text byte for byte, or both parse with no repeated key and have the same
+    canonical form (a JSON layout change only; review round 1 F1). A text with a repeated key is never
+    the same: a parse keeps only the last value, so a leak in an earlier one would pass."""
+    if dup_keys(text) or dup_keys(new):
+        return False
     if new == text:
         return True
     try:
-        return json.loads(text) == json.loads(new)
+        return canon(text) == canon(new)
     except ValueError:
         return False
 
@@ -149,6 +193,8 @@ def main(argv: list) -> int:
             with open(p, encoding="utf-8", errors="replace") as f:
                 text = f.read()
             found = leaks(text, rules, classes)
+            if dup_keys(text):
+                found.append("duplicate keys")
             if rel not in verbatim:
                 env["SCRUB_IDMAP"] = os.path.join(run, "ids-%d.json" % groups.index(group(rel)))
                 new = scrubbed(p, run, env)

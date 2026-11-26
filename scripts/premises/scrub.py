@@ -62,6 +62,11 @@ r"""Fixture hygiene for N2: scrub.py <run dir> <file> -> scrubbed copy on stdout
 - PC-13: the shell name in a Claude Code environment block line (" - Shell: <name>", at a line start
   or after a JSON \n escape) -> "(omitted)"; the " - OS Version: <os> <version>" line ->
   "(os omitted)"; a "shell" JSON key and prose are kept.
+- PC-13 review round 1: those lines in any case, with or without the leading "- ", with blanks or
+  escaped tabs after the colon, at a line start or after a JSON \n escape (not after an escaped
+  backslash then "n"); x-stainless-arch -> "(arch omitted)" and x-stainless-runtime-version ->
+  "(version omitted)" (keys of a parsed object, JSON text and header lines; any case; x-stainless-os,
+  the OS family, is kept, as is "Platform: darwin"); /cc-socks/<n>.sock -> /cc-socks/<pid>.sock.
 """
 import getpass
 import json
@@ -203,9 +208,21 @@ ULID = re.compile(B + r"([a-z]{1,8}_)(?!0{10})([0-7][0-9A-HJKMNP-TV-Z]{25})(?![0
 # PC-11: macOS __CF* env names (__CF_USER_TEXT_ENCODING=0x<uid>:... holds the user id).
 CF_ENV = re.compile(B + r"__CF[A-Za-z_]*(?:=[^\s\"'\\]*)?")
 # PC-13: the shell name and OS version lines of a Claude Code environment block (" - Shell: zsh",
-# " - OS Version: Darwin 25.6.0"), at a line start or after a JSON "\n" escape.
-ENV_SHELL = re.compile(r"(?m)((?:^|(?<=\\n))[ \t]*- Shell: )[^\n\r\\\"]+")
-ENV_OS = re.compile(r"(?m)((?:^|(?<=\\n))[ \t]*- OS Version: )[^\n\r\\\"]+")
+# " - OS Version: Darwin 25.6.0"). Review round 1 F5, F8: the name in any case, with or without the
+# leading "- ", any blanks or escaped tabs after the colon, at a line start or after a JSON "\n" escape
+# (an odd run of backslashes before the "n": an escaped backslash then "n" is not a newline). The same
+# forms as rescrub_codex.py ENV_LEAKS and check-premises.sh env_scan.
+ENV_PFX = r"(?:^|(?<!\\)(?:\\\\)*\\n)[ \t]*(?:-[ \t]*)?"
+ENV_WS = r"(?:[ \t]|\\t)*"
+ENV_SHELL = re.compile(r"(?m)(" + ENV_PFX + r"(?i:shell):" + ENV_WS + r")[^\s\\\"][^\n\r\\\"]*")
+ENV_OS = re.compile(r"(?m)(" + ENV_PFX + r"(?i:os version):" + ENV_WS + r")[^\s\\\"][^\n\r\\\"]*")
+# PC-13 review round 1 F3: the Stainless SDK's architecture and runtime version request headers (a
+# JSON key, plain or \"-escaped, or a header line; any case); x-stainless-os (the OS family) is kept.
+STAINLESS = {"x-stainless-arch": "(arch omitted)", "x-stainless-runtime-version": "(version omitted)"}
+STAINLESS_RE = re.compile(r"(?i)(\\?[\"']?(x-stainless-(?:arch|runtime-version))\\?[\"']?\s*[:=]\s*\\?[\"']?)"
+                          r"(?!\((?:arch|version) omitted\))[^\s\"',\\]+")
+# PC-13 review round 1 F7: the process id in a Claude Code messaging socket path.
+CC_SOCK = re.compile(r"(/cc-socks/)[0-9]+(\.sock)")
 
 
 def s(text):
@@ -217,6 +234,8 @@ def s(text):
     text = UNAME.sub("(os omitted)", text)
     text = ENV_SHELL.sub(lambda m: m.group(1) + "(omitted)", text)
     text = ENV_OS.sub(lambda m: m.group(1) + "(os omitted)", text)
+    text = STAINLESS_RE.sub(lambda m: m.group(1) + STAINLESS[m.group(2).lower()], text)
+    text = CC_SOCK.sub(lambda m: m.group(1) + "<pid>" + m.group(2), text)
     text = SANDBOX.sub(lambda m: m.group(1) + "(os omitted)", text)
     text = MARKETPLACE.sub("marketplace-os-omitted", text)
     text = CMD_SHELL.sub(lambda m: m.group(1) + "(shell omitted) -lc", text)
@@ -255,6 +274,7 @@ def s(text):
 def walk(o):
     if isinstance(o, dict):
         return {s(k): "(os omitted)" if k in OS_KEYS and isinstance(v, str) else
+                STAINLESS[k.lower()] if k.lower() in STAINLESS and isinstance(v, str) else
                 LEAD_SHELL.sub("(shell omitted) -lc", s(v)) if k in CMD_KEYS and isinstance(v, str) else walk(v)
                 for k, v in o.items()}
     if isinstance(o, list):
