@@ -192,7 +192,7 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | TODO | judgment | — |
-| OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4 | TODO | judgment | — |
+| OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4, OS-46 | TODO | judgment | — |
 | MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | TODO | judgment | — |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | TODO | implementation | — |
 | SX-4 | `hook trim` takes the flag and adds `additionalContext` = mechanics text, once (T§9.2 item 2) | SX-1, SX-3, OS-34 | DONE | judgment | plan 5441dd4c · node d37419f1, 927b1246, 86db8ba5 · acceptance pass (trim 17 listed; reinject trim 17 passed; zygo-hooks 344 passed) · PR #191 |
@@ -215,6 +215,7 @@ Session text (T, SX nodes):
 | WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | TODO | mechanical | — |
 | SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | TODO | implementation | — |
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
+| OS-46 | Bound the hook's usage-store wait per Bash call | — | PLANNED | judgment | — |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
 | FX-1 | Process-group kill tests: anonymous pipe in place of a FIFO (Darwin FIFO lost wakeup) | — | DONE | implementation | 38ca329 · git_runner 17 + decision_git 34 pass; floor green · PR #40 |
 | FX-2 | Decision writer lock: unlock before the close (a forked child keeps a closed flock) | — | DONE | implementation | 8a6191d c4584c2 · decisions::edit 4 pass; floor green · PR #42 |
@@ -417,3 +418,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | OS-37 DONE: 4 O§8.5 budget tests and the child process, ignored in CI; sized inputs keep each case's shaping path; shape-on and shape-off rows asserted; review F1-F3, F5 fixed, F4 wording, F5 timeout refuted · PR #200 |
 | 2026-11-26 | OS-45 added: OS-38 run failed O§8.5 budget 4 (lock held p95 159.27 ms > 150 ms); SQLite busy_timeout counts requested sleep, macOS sleeps ~1.5x, breaking O-C10; OS-38 now depends on OS-45 |
 | 2026-11-26 | OS-45 DONE: bounded open uses its own elapsed-time busy handler; lock-held hook p95 159.27 → 128.05 ms (release, macOS); review F1, F2, F4 fixed; F3 (O-C10 per call on a non-WAL db) open for a new row · PR #203 |
+| 2026-11-26 | OS-46 added: OS-45 review F3; O-C10 bounds each Bash call but O§7.11 bounds each statement, so on a rollback-journal db the hook's read and write can each wait HOOK_DB_BOUND |
