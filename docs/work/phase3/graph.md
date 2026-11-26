@@ -191,7 +191,7 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | DONE | judgment | PR #190 |
+| MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | DONE | judgment | e8f19e67..5bc5249b · acceptance pass (operator 22 passed) · PR #190 |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | TODO | implementation | — |
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | TODO | implementation | — |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
@@ -423,4 +423,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | OS-43 DROPPED: O§8.2 floors are per shaper, so the clean-shaped log case has no 8 KiB floor; the log view under the threshold dropped failure and ERROR lines (O-C9, O§8.1); spec re-plan withdrawn · PR #195 |
 | 2026-11-26 | FX-16 unblocked: the "ratification first" gate in its contract was written by an agent without operator approval; deleted |
 | 2026-11-26 | Operator: unsupervised run of 24-48 h; authorized to install build tools and to coordinate with the other zygo agent; make and record decisions so the work completes autonomously; decisions are reviewed after the fact. gh-stack v0.3.0 installed for workflow (2) |
-| 2026-11-26 | MS-15 DONE: take-host, new-identity, rename, drop-host; review round 1 F1-F6 fixed; round 2 F1 (rename over the member limit kept the old registry but dropped the old ack) F2 (operator write recorded a twin's blobs) F3 (git rm not chunked) fixed; round 3 R2-1 fixed (take-host and drop-host stop with the twin line in a twin state and write nothing; S§7.6), R2-2 path_chunks unit tests, the single-call regression is not observable on unix (recorded); author's call: drop_host runs only the twin check, not the collision check, because it changes another host's files and the collision concerns this machine's own host · PR #190 |
+| 2026-11-26 | MS-15 DONE: review R1 F1-F6, R2 F1-F3, R3 R2-1 fixed (operator commands stop in a twin state, S§7.6); R2-2 recorded (single-call rm not observable on unix); author's call: drop_host runs only the twin check · PR #190 |
