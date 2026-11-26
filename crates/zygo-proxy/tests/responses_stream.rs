@@ -876,8 +876,24 @@ fn assert_rfd(evs: &[SseEvent]) {
     assert!(!items_done(evs).iter().any(|i| i.to_string().contains(REFUSAL_TEXT)), "{:?}", items_done(evs));
 }
 
-/// The `function_call_arguments.done`, then `output_item.done`, of the call at `oi`, just before the terminal event.
-fn assert_call_closed(evs: &[SseEvent], oi: u64, args: &str) {
+/// A call open at the refusal (at `oi`) is dropped as on every other failure path (PC18 `xt`): no done event of it
+/// (no `function_call_arguments.done`, no `custom_tool_call_input.*`, no `output_item.done`), and the event just after
+/// its last added or delta event is the one terminal event.
+fn assert_open_call_dropped(evs: &[SseEvent], oi: u64) {
+    let done = ["response.function_call_arguments.done", "response.custom_tool_call_input.delta",
+        "response.custom_tool_call_input.done", "response.output_item.done"];
+    let of_call: Vec<&SseEvent> = evs.iter().filter(|e| e.data["output_index"] == oi).collect();
+    assert!(!of_call.is_empty(), "{:?}", types(evs));
+    assert!(!of_call.iter().any(|e| done.contains(&e.event.as_str())), "{:?}", types(evs));
+    assert!(!items_done(evs).iter().any(|i| i["id"] == of_call[0].data["item"]["id"]), "{:?}", items_done(evs));
+    let n = evs.len();
+    assert_eq!(evs[n - 2].data["output_index"], oi, "{:?}", types(evs));
+    assert_eq!(terminals(evs).len(), 1, "{:?}", types(evs));
+}
+
+/// A call closed before the refusal keeps its done events: `function_call_arguments.done`, then `output_item.done`,
+/// of the call at `oi`, just before the terminal event.
+fn assert_closed_call_kept(evs: &[SseEvent], oi: u64, args: &str) {
     let n = evs.len();
     assert_eq!(evs[n - 3].event, "response.function_call_arguments.done", "{:?}", types(evs));
     assert_eq!(evs[n - 3].data["arguments"], args);
@@ -905,27 +921,44 @@ fn rfd_refusal_after_complete_tool_use() {
 }
 
 #[test]
-fn rfd_refusal_mid_tool_use_closes_the_call() {
+fn rfd_refusal_mid_tool_use_drops_the_open_call() {
     let mut ev = vec![message_start(), start(0, json!({"type":"tool_use","id":"toolu_1","name":"exec_command","input":{}}))];
     ev.push(delta(0, json!({"type":"input_json_delta","partial_json":"{\"cmd\":"})));
     ev.extend(end("refusal"));
-    let evs = run(&mut enc(), &ev);
+    let mut e = enc();
+    let evs = run(&mut e, &ev);
     assert_rfd(&evs);
-    assert_call_closed(&evs, 0, "{\"cmd\":");
-    // A custom tool call open at the refusal: closed, then the same ending.
+    assert_open_call_dropped(&evs, 0);
+    assert_eq!(evs[evs.len() - 2].event, "response.function_call_arguments.delta");
+    assert!(items_done(&evs).is_empty(), "{:?}", items_done(&evs));
+    assert_eq!(e.held(), 0);
+    // A custom tool call open at the refusal: dropped, then the same ending.
     let calls = Calls::of(&json!({"tools":[{"type":"custom","name":"apply_patch"}]}));
     let mut ev = vec![message_start(), start(0, json!({"type":"tool_use","id":"toolu_p","name":"apply_patch","input":{}}))];
     ev.push(delta(0, json!({"type":"input_json_delta","partial_json":"{\"input\":\"*** Be"})));
     ev.extend(end("refusal"));
     let evs = run(&mut Encoder::new("role-x", &tgt(), calls), &ev);
     assert_rfd(&evs);
-    let n = evs.len();
-    assert_eq!(evs[n - 2].event, "response.output_item.done");
-    assert_eq!(evs[n - 2].data["item"]["type"], "custom_tool_call");
+    assert_open_call_dropped(&evs, 0);
+    assert_eq!(evs[evs.len() - 2].event, "response.output_item.added");
+    // A call closed before the refusal stays as sent; the call open at the refusal is dropped.
+    let mut ev = vec![message_start()];
+    ev.extend(tool_block(0, "toolu_1", "exec_command", &["{\"cmd\":\"ls\"}"]));
+    ev.push(start(1, json!({"type":"tool_use","id":"toolu_2","name":"exec_command","input":{}})));
+    ev.push(delta(1, json!({"type":"input_json_delta","partial_json":"{\"cmd\":"})));
+    ev.extend(end("refusal"));
+    let evs = run(&mut enc(), &ev);
+    assert_rfd(&evs);
+    assert_open_call_dropped(&evs, 1);
+    let items = items_done(&evs);
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!((&items[0]["call_id"], &items[0]["arguments"]), (&json!("toolu_1"), &json!("{\"cmd\":\"ls\"}")));
 }
 
 #[test]
-fn rfd_refusal_after_tool_call_chat_upstream() {
+fn rfd_refusal_after_tool_call_chat_upstream_keeps_the_closed_call() {
+    // The chat mapper emits each held call whole (with its content_block_stop) before message_delta, so on the chat
+    // path every call is closed before the refusal: its done events stay, then exactly one terminal event.
     let chunk = |delta: Value, finish: Value| {
         json!({"id":"c1","object":"chat.completion.chunk","model":"up","choices":[{"index":0,"delta":delta,"finish_reason":finish}]})
     };
@@ -944,7 +977,7 @@ fn rfd_refusal_after_tool_call_chat_upstream() {
     let bytes: Vec<u8> = msgs.iter().flat_map(SseEvent::to_bytes).collect();
     let evs = enc().push(&bytes);
     assert_rfd(&evs);
-    assert_call_closed(&evs, 1, "{\"cmd\":");
+    assert_closed_call_kept(&evs, 1, "{\"cmd\":");
 }
 
 #[test]
@@ -955,8 +988,9 @@ fn rfd_refusal_after_tool_call_json_body() {
     let bytes: Vec<u8> = message_events(&msg).iter().flat_map(SseEvent::to_bytes).collect();
     let evs = enc().push(&bytes);
     assert_rfd(&evs);
-    assert_call_closed(&evs, 1, "{\"cmd\":\"ls\"}");
-    // Non-streamed: status failed, the call kept, no refusal text item.
+    // A JSON body holds whole blocks only: message_events closes each call before message_delta, so it is kept.
+    assert_closed_call_kept(&evs, 1, "{\"cmd\":\"ls\"}");
+    // Non-streamed: status failed, the closed call kept, no refusal text item.
     let (r, _) = response(&msg, "role-x", &tgt(), &Calls::default());
     assert_eq!(r["status"], "failed");
     assert_eq!(r["error"], json!({"code":"invalid_prompt","message":REFUSAL_TEXT}));
@@ -964,6 +998,53 @@ fn rfd_refusal_after_tool_call_json_body() {
     let types: Vec<&str> = r["output"].as_array().unwrap().iter().map(|i| i["type"].as_str().unwrap()).collect();
     assert_eq!(types, ["message", "function_call"]);
     assert_eq!(r["usage"]["output_tokens"], 7);
+}
+
+// ---- RS-12 round 2 review G7 ----
+
+#[test]
+fn refusal_after_dropped_server_tool_stays_rfc() {
+    let srv = json!({"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"q"}});
+    let mut ev = vec![message_start(), start(0, srv.clone()), stop(0)];
+    ev.extend(text_block(1, &["pc"]));
+    ev.extend(end("refusal"));
+    let mut e = enc();
+    let evs = run(&mut e, &ev);
+    assert_sequence(&evs);
+    assert_eq!(terminals(&evs).len(), 1);
+    assert_eq!(evs.last().unwrap().event, "response.completed");
+    let items = items_done(&evs);
+    assert_eq!(items.iter().map(|i| i["type"].as_str().unwrap()).collect::<Vec<_>>(), ["message", "message"]);
+    assert_eq!(items[1]["content"][0]["text"], REFUSAL_TEXT);
+    assert_eq!(e.adjustments(), vec![adj("server_tool_dropped")]);
+    // Non-streamed: the same items, completed.
+    let msg = json!({"content":[srv,{"type":"text","text":"pc"}],"stop_reason":"refusal","usage":{"output_tokens":7}});
+    let (r, codes) = response(&msg, "role-x", &tgt(), &Calls::default());
+    assert_eq!(r["status"], "completed");
+    assert!(r.get("error").is_none());
+    assert_eq!(norm(&r["output"]), norm(&Value::Array(items)));
+    assert_eq!(codes, vec![adj("server_tool_dropped")]);
+}
+
+#[test]
+fn rfd_usage_equals_other_endings_usage() {
+    let usage_of = |reason: &str| {
+        let mut ev = vec![message_start()];
+        ev.extend(tool_block(0, "toolu_1", "exec_command", &["{}"]));
+        ev.extend(end(reason));
+        evs_usage(&run(&mut enc(), &ev))
+    };
+    let rfd = usage_of("refusal");
+    assert_eq!(rfd, json!({"input_tokens":17,"input_tokens_details":{"cached_tokens":5},"output_tokens":7,
+        "total_tokens":24}));
+    for reason in ["tool_use", "end_turn", "max_tokens"] {
+        assert_eq!(usage_of(reason), rfd, "{reason}");
+    }
+}
+
+fn evs_usage(evs: &[SseEvent]) -> Value {
+    assert_eq!(terminals(evs).len(), 1);
+    evs.last().unwrap().data["response"]["usage"].clone()
 }
 
 // ---- RS-12 round 1 review F4, F5 ----

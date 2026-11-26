@@ -720,8 +720,11 @@ fn assert_rfd(evs: &[(String, Value)]) {
     assert!(!names(evs).contains(&"response.completed"), "{:?}", names(evs));
 }
 
-#[test] // RS-12 round 1 review F1: chat content_filter after a tool call → response.failed invalid_prompt, call closed
-fn chat_refusal_after_tool_call_fails() {
+// RS-12 round 2 review G1: chat content_filter after a tool call → the call's done events, then exactly one terminal
+// event, response.failed invalid_prompt. The chat mapper emits each held call whole before message_delta, so on the
+// chat path every call is closed before the refusal and none is open to drop.
+#[test]
+fn chat_refusal_keeps_closed_call_then_fails() {
     let h = start(C);
     let mut chunks = CHAT_CHUNKS("{\"cmd\":");
     chunks[3] = chunk(json!({}), json!("content_filter"));
@@ -749,6 +752,11 @@ fn json_refusal_after_tool_call_fails() {
     assert_rfd(&evs);
     let types: Vec<String> = done_items(&evs).iter().map(|i| i["type"].as_str().unwrap().to_owned()).collect();
     assert_eq!(types, ["message", "function_call", "custom_tool_call"]);
+    // G7: the rfd terminal event carries the usage the other endings carry for the same counts, and the row has them.
+    assert_eq!(terminals(&evs)[0].1["response"]["usage"], msg_usage());
+    let rows = h.usage_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(counts(&rows[0]), (100, 30, 5, 42));
 
     h.reply_with(200, JSON, serde_json::to_vec(&m).unwrap());
     let (s, _, b) = h.post(R, &with_stream(req, false));

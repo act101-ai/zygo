@@ -879,7 +879,9 @@ const _: () = assert!(REFUSAL_TEXT.len() * 1024 < HOLD_MAX);
 
 /// The terminal form of R for `stop_reason` (stream obligation 5): `max_tokens` and
 /// `model_context_window_exceeded` → incomplete with `max_output_tokens`; `refusal` after a call item (`call`) →
-/// failed with code `invalid_prompt` and `REFUSAL_TEXT`, so Codex runs no tool of it; any other (a text-only
+/// failed with code `invalid_prompt` and `REFUSAL_TEXT` (inferred, not measured: Codex runs no tool of a failed
+/// response, as PC18 `xt` measured for another failure; calls closed before the refusal already reached the client
+/// in their done events); any other (a text-only
 /// `refusal`, after its `REFUSAL_TEXT` item; `pause_turn` too: its server tools are dropped) → completed.
 fn finished(mut r: Value, stop_reason: Option<&str>, call: bool, u: Usage) -> Value {
     if matches!(stop_reason, Some("max_tokens" | "model_context_window_exceeded")) {
@@ -932,7 +934,8 @@ const EVENTS: [&str; 7] = [
 ];
 
 /// A Messages body as one Response object (stream obligation 8), with its adjustment codes; the items are those of
-/// the stream's `output_item.done` events.
+/// the stream's `output_item.done` events. A body holds whole blocks only, so each call in it is closed and kept,
+/// also at a refusal; no open or cut call can reach `output`.
 pub fn response(msg: &Value, model: &str, t: &Target, calls: &Calls) -> (Value, Vec<Adjustment>) {
     let ulid = ulid();
     let mut output = Vec::new();
@@ -1032,10 +1035,13 @@ impl Block {
 ///    `max_output_tokens` for `stop_reason` `max_tokens` or `model_context_window_exceeded` (`refusal`, `pause_turn`
 ///    and the rest complete). For `refusal`, after the done events of an open block, one more `message` item carries
 ///    `REFUSAL_TEXT` as one `output_text` part, with the events of a text block (item 2); Codex 0.172.0 shows it once
-///    and does not send the request again (PC19). A `refusal` after a `function_call` or `custom_tool_call` item (its
-///    arguments may be cut) instead ends, after the done events of an open block, in `response.failed {response: R,
-///    status failed, error: {code: invalid_prompt, message: REFUSAL_TEXT}, usage}`: Codex runs no tool of a failed
-///    response. On an upstream `error` event (its message cut as a 400 echo),
+///    and does not send the request again (PC19). A `refusal` after a `function_call` or `custom_tool_call` item
+///    instead ends in `response.failed {response: R, status failed, error: {code: invalid_prompt, message:
+///    REFUSAL_TEXT}, usage}`. A call item still open at the refusal (its arguments may be cut) gets no done events:
+///    it is dropped as on every other failure path (PC18 `xt` measured no tool run); another open block gets its
+///    done events first. Calls closed before the refusal stay as sent: their done events already reached the
+///    client. That Codex runs no tool of the failed response is inferred, not measured (obligation 5). On an
+///    upstream `error` event (its message cut as a 400 echo),
 ///    unparsable `data`, held bytes over `HOLD_MAX` (the message names the largest held part: stream line, event,
 ///    content block, tool call), `fail` or an early end: `response.failed {response: R, status failed, error: {code,
 ///    message}}`.
@@ -1286,6 +1292,13 @@ impl Encoder {
                 }
             }
             "message_stop" => {
+                // A call still open at a refusal gets no done events: dropped as on every other failure path (PC18
+                // `xt`, obligation 5). A call closed before it already reached the client.
+                if self.stop_reason.as_deref() == Some("refusal")
+                    && self.open.as_ref().is_some_and(|b| matches!(b.kind, Kind::Call { .. }))
+                {
+                    self.open = None;
+                }
                 self.close(out);
                 if self.stop_reason.as_deref() == Some("refusal") && !self.call {
                     self.refusal(out);
