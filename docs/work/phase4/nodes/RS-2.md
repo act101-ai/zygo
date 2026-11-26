@@ -139,6 +139,25 @@ pub fn response(msg: &Value, model: &str, t: &Target, calls: &Calls) -> (Value, 
 - `cargo test --workspace --locked --no-fail-fast`: 2374 passed, 2 failed, both the known `zygo --test guard_hook` environment failures under `/private/tmp`: `binary_guard_not_a_repository_writes_no_line`, `binary_guard_slow_rev_parse_says_unread_once`.
 - `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings`: clean.
 
+### Review round 1 findings (head `33a24f70`; fixed in round 2)
+
+Tests were written first (`6d5673e1`; 7 failed before the fix: F1, F2 ×2, F3 partial line, F4, F5, note). The K§6.4.3 text of stream obligations 2, 5, 6 and 9 and one change-log line record each rule change (author's call).
+
+- **F5 (fixed).** `Calls::of` read only `tools[]`. RS-1 declares a custom tool from its history (`tools_from_history`), so a model call to it went back as `function_call`, the kind Codex refuses. `Calls::of` now also takes the `name` of each `custom_tool_call` item of `input`. Test `f5_custom_tool_from_history_returns_as_custom_tool_call` loads `tests/data/compaction-request.json` (`tools: []`). That file holds only a `function_call` (`exec_command`) in its history, not an `apply_patch` custom call, so the test adds an `apply_patch` `custom_tool_call` and its output to the body in memory; the data file is unchanged. The test then asserts the stream item and the JSON item are `custom_tool_call`, and that a history `function_call` name stays a function call.
+- **F1 (fixed).** A mark over `MARK_MAX` would not decode (K§6.7). `reasoning_item` (stream and `response`) now sends such an item with no `encrypted_content` and counts it: adjustment `reasoning_unmarked:<n>` (no existing code fits). Test `f1_reasoning_mark_over_mark_max_is_not_sent` (53 × 64 KiB thinking deltas, about 3.3 MiB).
+- **F2 (fixed in code).** `push` no longer copies the whole chunk. It reads complete lines from the chunk and copies only a partial line. Before it holds a byte (partial line, `data` line, delta), it checks the held total against `HOLD_MAX`, so the bound holds inside one push. `Encoder::pos` is removed. Tests `f2_data_lines_with_no_blank_line_fail_inside_one_push` (six 1 MiB data lines with no blank line in one chunk → `upstream event too long`; three of them with the blank line → dropped, nothing held) and `f2_one_line_over_hold_max_in_one_chunk_fails`.
+- **F3 (fixed).** The `response.failed` message names the largest held part: `upstream stream line too long`, `upstream event too long` (new), `upstream content block too long`, `upstream tool call too long`. Tests `f3_partial_line_during_tool_call_names_the_line` and the three F6 bound tests.
+- **F4 (fixed).** `finished` (stream and `response`): `max_tokens` and `model_context_window_exceeded` → `response.incomplete` `max_output_tokens`; `refusal` → `response.incomplete` `content_filter`; `pause_turn` and every other reason → `response.completed`. Test `f4_stop_reasons`.
+- **F6 (tests added; they passed before the fix, so no code defect).** `f3_f6_text_past_hold_max_fails`, `f3_f6_thinking_past_hold_max_fails`, `f3_f6_custom_tool_input_past_hold_max_fails`, `f6_utf8_one_byte_chunks_equal_whole`, `f6_signature_only_thinking`. Refusal and `pause_turn` are covered in `f4_stop_reasons`.
+- **Note (fixed).** An upstream `error.message` goes through `cut` (the request obligation 9 echo rule: 64 characters; Cc, Cf, Zl and Zp characters → `?`). The rule is stated in obligation 6. Test `note_error_message_cut_as_echo`.
+
+### Round 2 output (2026-11-25)
+
+- Acceptance alone: `--list` count 29 (≥ 12); `responses_stream` 29 passed, 0 failed; exit 0.
+- `cargo test -p zygo-proxy --locked`: 453 passed, 0 failed (12 suites).
+- `cargo test --workspace --locked --no-fail-fast`: 2386 passed, 2 failed, both the known `zygo --test guard_hook` environment failures under `/private/tmp`: `binary_guard_not_a_repository_writes_no_line`, `binary_guard_slow_rev_parse_says_unread_once`.
+- `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings`: clean.
+
 ### Author's checks (2026-11-25)
 
 1. Spec coverage: stream obligation 1 → step 2 sequence test (created, in_progress, id, model, status); 2 → sequence, custom, JSON tests; 3 → server-tool test; 4 → `sequence_number`/`output_index`/`item_id` asserts in the sequence, unparsable and error tests; 5 → sequence (completed, usage) and max-tokens tests; 6 (after start) → error-after-text, error-before-start, fail tests (before the first byte is RS-3/RS-4); 7 → ping/unknown and unparsable tests; 8 → JSON test (the error status half is RS-4); 9 → two `HOLD_MAX` tests; K§6.7 upstream streams → same; K§11 13-16 → named tests.

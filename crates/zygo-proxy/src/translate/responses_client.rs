@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 use zygo_config::Facts;
 use zygo_core::ids::ulid;
 
-use super::reasoning::{decode_thinking, encode_thinking};
+use super::reasoning::{decode_thinking, encode_thinking, MARK_MAX};
 use super::sse::SseEvent;
 use super::{input_of, s, Target, DOC_OMITTED};
 use crate::errors::ZygoError;
@@ -576,11 +576,15 @@ pub struct Calls {
 }
 
 impl Calls {
-    /// The `name` of each `tools[]` entry of type `custom` with a string name; anything else is ignored.
+    /// The string `name` of each `tools[]` entry of type `custom` and of each `input[]` item of type
+    /// `custom_tool_call` (a custom tool the request declares only from its history, K§6.4.3 request obligation 6);
+    /// anything else is ignored.
     pub fn of(req: &Value) -> Calls {
-        let tools = req.get("tools").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
-        let custom = tools.iter().filter(|t| s(t, "type") == Some("custom")).filter_map(|t| s(t, "name"));
-        Calls { custom: custom.map(str::to_owned).collect() }
+        let list = |k: &str| req.get(k).and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
+        let of_type = |ty: &'static str| move |v: &&Value| s(v, "type") == Some(ty);
+        let tools = list("tools").iter().filter(of_type("custom"));
+        let history = list("input").iter().filter(of_type("custom_tool_call"));
+        Calls { custom: tools.chain(history).filter_map(|t| s(t, "name")).map(str::to_owned).collect() }
     }
 
     fn is_custom(&self, name: &str) -> bool {
@@ -624,12 +628,24 @@ fn text_item(id: &str, text: Option<&str>) -> Value {
     }
 }
 
+/// The `output_item.added` form of a `reasoning` item.
+fn reasoning_added(id: &str) -> Value {
+    json!({"type":"reasoning","id":id,"summary":[]})
+}
+
 /// A `reasoning` item that carries `block` (a `thinking` or `redacted_thinking` block) zygo-marked for `t`, with
-/// `summary` as its summary text (none when empty); `None` gives the `output_item.added` form.
-fn reasoning_item(id: &str, summary: &str, block: Option<&Value>, t: &Target) -> Value {
-    let Some(block) = block else { return json!({"type":"reasoning","id":id,"summary":[]}) };
+/// `summary` as its summary text (none when empty). A mark over `MARK_MAX` would not decode (K§6.7): the item then has
+/// no `encrypted_content` and `unmarked` counts it (stream obligation 2).
+fn reasoning_item(id: &str, summary: &str, block: &Value, t: &Target, unmarked: &mut usize) -> Value {
     let summary = if summary.is_empty() { json!([]) } else { json!([{"type":"summary_text","text":summary}]) };
-    json!({"type":"reasoning","id":id,"summary":summary,"encrypted_content":encode_thinking(t, block)})
+    let mut item = json!({"type":"reasoning","id":id,"summary":summary});
+    let mark = encode_thinking(t, block);
+    if mark.len() > MARK_MAX {
+        *unmarked += 1;
+    } else {
+        item["encrypted_content"] = json!(mark);
+    }
+    item
 }
 
 fn thinking_block(thinking: &str, signature: &str) -> Value {
@@ -660,11 +676,18 @@ fn response_object(ulid: &str, model: &str, status: &str) -> Value {
     json!({"id":format!("resp_{ulid}"),"object":"response","model":model,"status":status,"output":[]})
 }
 
-/// The terminal form of R for `stop_reason` (stream obligation 5): `max_tokens` → incomplete, else completed.
+/// The terminal form of R for `stop_reason` (stream obligation 5): `max_tokens` and
+/// `model_context_window_exceeded` → incomplete with `max_output_tokens`, `refusal` → incomplete with
+/// `content_filter`, any other (`pause_turn` too: its server tools are dropped) → completed.
 fn finished(mut r: Value, stop_reason: Option<&str>, u: Usage) -> Value {
-    if stop_reason == Some("max_tokens") {
+    let reason = match stop_reason {
+        Some("max_tokens" | "model_context_window_exceeded") => Some("max_output_tokens"),
+        Some("refusal") => Some("content_filter"),
+        _ => None,
+    };
+    if let Some(reason) = reason {
         r["status"] = json!("incomplete");
-        r["incomplete_details"] = json!({"reason":"max_output_tokens"});
+        r["incomplete_details"] = json!({"reason":reason});
     } else {
         r["status"] = json!("completed");
     }
@@ -677,7 +700,25 @@ fn is_server_tool(ty: &str) -> bool {
     ty == "server_tool_use" || ty.ends_with("_tool_result")
 }
 
-const SERVER_TOOL_DROPPED: &str = "server_tool_dropped";
+/// The adjustment codes of one response: `server_tool_dropped` (obligation 3), `reasoning_unmarked:<n>` (obligation
+/// 2).
+fn codes(dropped: bool, unmarked: usize) -> Vec<Adjustment> {
+    let mut out = Vec::new();
+    if dropped {
+        out.push(Adjustment("server_tool_dropped".into()));
+    }
+    if unmarked > 0 {
+        out.push(Adjustment(format!("reasoning_unmarked:{unmarked}")));
+    }
+    out
+}
+
+/// The `response.failed` messages of obligation 9, by the held bytes that would pass `HOLD_MAX`: a partial line, the
+/// current event's `data` lines, a text or thinking block's text, a tool call's arguments.
+const LINE_TOO_LONG: &str = "upstream stream line too long";
+const EVENT_TOO_LONG: &str = "upstream event too long";
+const BLOCK_TOO_LONG: &str = "upstream content block too long";
+const CALL_TOO_LONG: &str = "upstream tool call too long";
 
 /// The Messages event types the encoder reads; any other (`ping` too) is dropped (stream obligation 7).
 const EVENTS: [&str; 7] = [
@@ -695,7 +736,7 @@ const EVENTS: [&str; 7] = [
 pub fn response(msg: &Value, model: &str, t: &Target, calls: &Calls) -> (Value, Vec<Adjustment>) {
     let ulid = ulid();
     let mut output = Vec::new();
-    let mut dropped = false;
+    let (mut dropped, mut unmarked) = (false, 0);
     for b in msg.get("content").and_then(Value::as_array).into_iter().flatten() {
         let oi = output.len();
         let str_of = |k: &str| s(b, k).unwrap_or("");
@@ -703,11 +744,11 @@ pub fn response(msg: &Value, model: &str, t: &Target, calls: &Calls) -> (Value, 
             "text" => output.push(text_item(&item_id("msg", &ulid, oi), Some(str_of("text")))),
             "thinking" => {
                 let block = thinking_block(str_of("thinking"), str_of("signature"));
-                output.push(reasoning_item(&item_id("rs", &ulid, oi), str_of("thinking"), Some(&block), t));
+                output.push(reasoning_item(&item_id("rs", &ulid, oi), str_of("thinking"), &block, t, &mut unmarked));
             }
             "redacted_thinking" => {
                 let block = redacted_block(str_of("data"));
-                output.push(reasoning_item(&item_id("rs", &ulid, oi), "", Some(&block), t));
+                output.push(reasoning_item(&item_id("rs", &ulid, oi), "", &block, t, &mut unmarked));
             }
             "tool_use" => {
                 let args = b.get("input").map_or_else(|| "{}".to_owned(), Value::to_string);
@@ -719,8 +760,7 @@ pub fn response(msg: &Value, model: &str, t: &Target, calls: &Calls) -> (Value, 
     let u = usage_fields(msg.get("usage"));
     let mut r = finished(response_object(&ulid, model, "completed"), s(msg, "stop_reason"), u);
     r["output"] = Value::Array(output);
-    let codes = if dropped { vec![Adjustment(SERVER_TOOL_DROPPED.into())] } else { vec![] };
-    (r, codes)
+    (r, codes(dropped, unmarked))
 }
 
 enum Kind {
@@ -771,18 +811,24 @@ impl Block {
 ///      `response.reasoning_summary_text.done {…, text}`, `response.reasoning_summary_part.done {…, part}`; then
 ///      `response.output_item.done`.
 ///    - `redacted_thinking`: `response.output_item.added`, `response.output_item.done`.
+///    - A reasoning item whose mark would pass `MARK_MAX` has no `encrypted_content`; adjustment
+///      `reasoning_unmarked:<n>`.
 ///    - `tool_use`: `response.output_item.added`; per non-empty `input_json_delta`
 ///      `response.function_call_arguments.delta {iid, oi, delta}`; at stop `response.function_call_arguments.done
 ///      {iid, oi, arguments}`, `response.output_item.done`.
-///    - `tool_use` of a client `custom` tool: `response.output_item.added`; at stop
+///    - `tool_use` of a client `custom` tool (in `tools` or a `custom_tool_call` of `input`):
+///      `response.output_item.added`; at stop
 ///      `response.custom_tool_call_input.delta {iid, oi, delta: input}`, `response.custom_tool_call_input.done
 ///      {iid, oi, input}`, `response.output_item.done`.
 ///    - `server_tool_use`, `*_tool_result`: no event, adjustment `server_tool_dropped` (obligation 3). Another block
 ///      type: no event.
 /// 3. Exactly one terminal event. At `message_stop`: `response.completed {response: R, status completed, usage}`, or
-///    for `stop_reason` `max_tokens` `response.incomplete {response: R, status incomplete, incomplete_details:
-///    {reason: max_output_tokens}, usage}`. On an upstream `error` event, unparsable `data`, held bytes over
-///    `HOLD_MAX`, `fail` or an early end: `response.failed {response: R, status failed, error: {code, message}}`.
+///    `response.incomplete {response: R, status incomplete, incomplete_details: {reason}, usage}` with reason
+///    `max_output_tokens` for `stop_reason` `max_tokens` or `model_context_window_exceeded` and `content_filter` for
+///    `refusal` (`pause_turn` and the rest complete). On an upstream `error` event (its message cut as a 400 echo),
+///    unparsable `data`, held bytes over `HOLD_MAX` (the message names the largest held part: stream line, event,
+///    content block, tool call), `fail` or an early end: `response.failed {response: R, status failed, error: {code,
+///    message}}`.
 ///    R's `output` stays `[]`: each item reached the client in its `response.output_item.done` (obligation 5).
 pub struct Encoder {
     model: String,
@@ -792,9 +838,8 @@ pub struct Encoder {
     seq: u64,
     started: bool,
     ended: bool,
-    /// The bytes after the last newline, and where the next newline search starts.
+    /// The bytes after the last newline: a partial line.
     buf: Vec<u8>,
-    pos: usize,
     /// The current event's `data` lines, joined with `\n`.
     data: Option<Vec<u8>>,
     open: Option<Block>,
@@ -802,6 +847,7 @@ pub struct Encoder {
     usage: Usage,
     stop_reason: Option<String>,
     dropped: bool,
+    unmarked: usize,
 }
 
 impl Encoder {
@@ -815,40 +861,39 @@ impl Encoder {
             started: false,
             ended: false,
             buf: Vec::new(),
-            pos: 0,
             data: None,
             open: None,
             next_oi: 0,
             usage: [0; 4],
             stop_reason: None,
             dropped: false,
+            unmarked: 0,
         }
     }
 
-    /// Messages SSE bytes in, Responses events out. Each byte is scanned once; the held bytes stay within `HOLD_MAX`
+    /// Messages SSE bytes in, Responses events out. Each byte is scanned once. Only a partial line is copied whole;
+    /// a complete line is read from `chunk`. Before any byte is held, the held total is checked against `HOLD_MAX`
     /// (obligation 9).
     pub fn push(&mut self, chunk: &[u8]) -> Vec<SseEvent> {
         let mut out = Vec::new();
-        if self.ended {
-            return out;
-        }
-        self.buf.extend_from_slice(chunk);
-        let mut start = 0;
-        while let Some(i) = self.buf[self.pos..].iter().position(|&b| b == b'\n') {
-            let end = self.pos + i;
-            let line = self.buf[start..end].to_vec();
-            start = end + 1;
-            self.pos = start;
-            self.line(&line, &mut out);
-            if self.ended {
-                self.free();
-                return out;
+        let mut rest = chunk;
+        while !self.ended {
+            let Some(i) = rest.iter().position(|&b| b == b'\n') else {
+                if self.hold([rest.len(), 0, 0], &mut out) {
+                    self.buf.extend_from_slice(rest);
+                }
+                break;
+            };
+            let head = &rest[..i];
+            rest = &rest[i + 1..];
+            if self.buf.is_empty() {
+                self.line(head, &mut out);
+            } else if self.hold([head.len(), 0, 0], &mut out) {
+                self.buf.extend_from_slice(head);
+                let line = std::mem::take(&mut self.buf);
+                self.line(&line, &mut out);
             }
         }
-        self.buf.drain(..start);
-        // No newline in the rest: the next search starts after it.
-        self.pos = self.buf.len();
-        self.bound(self.buf.len(), &mut out);
         out
     }
 
@@ -870,7 +915,6 @@ impl Encoder {
             return out;
         }
         let tail = std::mem::take(&mut self.buf);
-        self.pos = 0;
         if !tail.is_empty() {
             self.line(&tail, &mut out);
         }
@@ -893,13 +937,10 @@ impl Encoder {
         self.buf.len() + self.data.as_ref().map_or(0, Vec::len) + self.open.as_ref().map_or(0, Block::held)
     }
 
-    /// `server_tool_dropped`, once, when a server tool block was dropped (obligation 3).
+    /// `server_tool_dropped`, once, when a server tool block was dropped (obligation 3); `reasoning_unmarked:<n>` for
+    /// the reasoning items sent with no mark (obligation 2).
     pub fn adjustments(&self) -> Vec<Adjustment> {
-        if self.dropped {
-            vec![Adjustment(SERVER_TOOL_DROPPED.into())]
-        } else {
-            vec![]
-        }
+        codes(self.dropped, self.unmarked)
     }
 
     /// One line, `\r` stripped: a `data` line is held, a blank line dispatches the held event, others are ignored.
@@ -911,6 +952,9 @@ impl Encoder {
             }
         } else if let Some(d) = line.strip_prefix(b"data:") {
             let d = d.strip_prefix(b" ").unwrap_or(d);
+            if !self.hold([0, d.len() + usize::from(self.data.is_some()), 0], out) {
+                return;
+            }
             match &mut self.data {
                 Some(held) => {
                     held.push(b'\n');
@@ -921,24 +965,31 @@ impl Encoder {
         }
     }
 
-    /// Over `HOLD_MAX` with `partial` bytes of a line held: everything held is freed, then `response.failed`
-    /// (obligation 9). Within a push, the lines of the chunk already read are not held.
-    fn bound(&mut self, partial: usize, out: &mut Vec<SseEvent>) {
-        let held = partial + self.data.as_ref().map_or(0, Vec::len) + self.open.as_ref().map_or(0, Block::held);
-        if self.ended || held <= HOLD_MAX {
-            return;
+    /// Whether `extra` more bytes of the partial line, the current event's `data` and the open block can be held
+    /// within `HOLD_MAX` (obligation 9). If not, everything held is freed and `response.failed` names the largest held
+    /// part.
+    fn hold(&mut self, extra: [usize; 3], out: &mut Vec<SseEvent>) -> bool {
+        let block = self.open.as_ref();
+        let [line, data, held] = [
+            self.buf.len() + extra[0],
+            self.data.as_ref().map_or(0, Vec::len) + extra[1],
+            block.map_or(0, Block::held) + extra[2],
+        ];
+        if line.saturating_add(data).saturating_add(held) <= HOLD_MAX {
+            return true;
         }
-        let m = match &self.open {
-            Some(b) if b.held() > 0 && matches!(b.kind, Kind::Call { .. }) => "upstream tool call too long",
-            Some(b) if b.held() > 0 => "upstream content block too long",
-            _ => "upstream stream line too long",
+        let m = match block {
+            Some(b) if held >= line.max(data) && matches!(b.kind, Kind::Call { .. }) => CALL_TOO_LONG,
+            Some(_) if held >= line.max(data) => BLOCK_TOO_LONG,
+            _ if data >= line => EVENT_TOO_LONG,
+            _ => LINE_TOO_LONG,
         };
         self.failed("api_error", m, out);
+        false
     }
 
     fn free(&mut self) {
         self.buf = Vec::new();
-        self.pos = 0;
         self.data = None;
         self.open = None;
     }
@@ -1022,8 +1073,8 @@ impl Encoder {
             _ => {
                 let e = v.get("error");
                 let code = e.and_then(|e| s(e, "type")).filter(|c| is_code(c)).unwrap_or("api_error");
-                let message = e.and_then(|e| s(e, "message")).unwrap_or("");
-                self.failed(code, message, out);
+                let message = cut(e.and_then(|e| s(e, "message")).unwrap_or(""));
+                self.failed(code, &message, out);
             }
         }
     }
@@ -1031,7 +1082,7 @@ impl Encoder {
     fn open_block(&mut self, index: u64, cb: &Value, out: &mut Vec<SseEvent>) {
         let str_of = |k: &str| s(cb, k).unwrap_or("");
         let oi = self.next_oi;
-        let rs = || reasoning_item(&item_id("rs", &self.ulid, oi), "", None, &self.t);
+        let rs = || reasoning_added(&item_id("rs", &self.ulid, oi));
         let (kind, text, item) = match str_of("type") {
             "text" => (Kind::Text, String::new(), text_item(&item_id("msg", &self.ulid, oi), None)),
             "thinking" => (Kind::Thinking, String::new(), rs()),
@@ -1057,54 +1108,57 @@ impl Encoder {
             let ev = json!({"item_id":iid,"output_index":oi,"content_index":0,"part":part});
             self.emit("response.content_part.added", ev, out);
         }
-        self.bound(0, out);
     }
 
-    /// A delta of the open block; another index, or a delta type that is not the block's, is dropped.
+    /// A delta of the open block; another index, a delta type that is not the block's, or an empty value is dropped.
+    /// A value that would take the held bytes past `HOLD_MAX` ends the stream (obligation 9).
     fn delta(&mut self, index: u64, d: &Value, out: &mut Vec<SseEvent>) {
+        let Some(b) = self.open.as_ref().filter(|b| b.index == index) else { return };
+        let key = match (&b.kind, s(d, "type")) {
+            (Kind::Text, Some("text_delta")) => "text",
+            (Kind::Thinking, Some("thinking_delta")) => "thinking",
+            (Kind::Thinking, Some("signature_delta")) => "signature",
+            (Kind::Call { .. }, Some("input_json_delta")) => "partial_json",
+            _ => return,
+        };
+        let Some(x) = s(d, key).filter(|x| !x.is_empty()) else { return };
+        if !self.hold([0, 0, x.len()], out) {
+            return;
+        }
         let Some(mut b) = self.open.take() else { return };
-        if b.index == index {
-            let (iid, oi) = (b.iid.clone(), b.oi);
-            match (&mut b.kind, s(d, "type")) {
-                (Kind::Text, Some("text_delta")) => {
-                    if let Some(x) = s(d, "text").filter(|x| !x.is_empty()) {
-                        b.text.push_str(x);
-                        let ev = json!({"item_id":iid,"output_index":oi,"content_index":0,"delta":x});
-                        self.emit("response.output_text.delta", ev, out);
-                    }
-                }
-                (Kind::Thinking, Some("thinking_delta")) => {
-                    if let Some(x) = s(d, "thinking").filter(|x| !x.is_empty()) {
-                        if !b.part {
-                            b.part = true;
-                            let part = json!({"type":"summary_text","text":""});
-                            let ev = json!({"item_id":iid,"output_index":oi,"summary_index":0,"part":part});
-                            self.emit("response.reasoning_summary_part.added", ev, out);
-                        }
-                        b.text.push_str(x);
-                        let ev = json!({"item_id":iid,"output_index":oi,"summary_index":0,"delta":x});
-                        self.emit("response.reasoning_summary_text.delta", ev, out);
-                    }
-                }
-                (Kind::Thinking, Some("signature_delta")) => b.sig.push_str(s(d, "signature").unwrap_or("")),
-                (Kind::Call { custom, delta, .. }, Some("input_json_delta")) => {
-                    if let Some(x) = s(d, "partial_json").filter(|x| !x.is_empty()) {
-                        if !*delta {
-                            *delta = true;
-                            b.text.clear();
-                        }
-                        b.text.push_str(x);
-                        if !*custom {
-                            let ev = json!({"item_id":iid,"output_index":oi,"delta":x});
-                            self.emit("response.function_call_arguments.delta", ev, out);
-                        }
-                    }
-                }
-                _ => {}
+        let (iid, oi) = (b.iid.clone(), b.oi);
+        match (key, &mut b.kind) {
+            ("text", _) => {
+                b.text.push_str(x);
+                let ev = json!({"item_id":iid,"output_index":oi,"content_index":0,"delta":x});
+                self.emit("response.output_text.delta", ev, out);
             }
+            ("thinking", _) => {
+                if !b.part {
+                    b.part = true;
+                    let part = json!({"type":"summary_text","text":""});
+                    let ev = json!({"item_id":iid,"output_index":oi,"summary_index":0,"part":part});
+                    self.emit("response.reasoning_summary_part.added", ev, out);
+                }
+                b.text.push_str(x);
+                let ev = json!({"item_id":iid,"output_index":oi,"summary_index":0,"delta":x});
+                self.emit("response.reasoning_summary_text.delta", ev, out);
+            }
+            ("signature", _) => b.sig.push_str(x),
+            (_, Kind::Call { custom, delta, .. }) => {
+                if !*delta {
+                    *delta = true;
+                    b.text.clear();
+                }
+                b.text.push_str(x);
+                if !*custom {
+                    let ev = json!({"item_id":iid,"output_index":oi,"delta":x});
+                    self.emit("response.function_call_arguments.delta", ev, out);
+                }
+            }
+            _ => {}
         }
         self.open = Some(b);
-        self.bound(0, out);
     }
 
     /// The open block's done events, if one is open.
@@ -1128,9 +1182,9 @@ impl Encoder {
                     let ev = json!({"item_id":iid,"output_index":oi,"summary_index":0,"part":part});
                     self.emit("response.reasoning_summary_part.done", ev, out);
                 }
-                reasoning_item(iid, &b.text, Some(&thinking_block(&b.text, &b.sig)), &self.t)
+                reasoning_item(iid, &b.text, &thinking_block(&b.text, &b.sig), &self.t, &mut self.unmarked)
             }
-            Kind::Redacted => reasoning_item(iid, "", Some(&redacted_block(&b.text)), &self.t),
+            Kind::Redacted => reasoning_item(iid, "", &redacted_block(&b.text), &self.t, &mut self.unmarked),
             Kind::Call { custom, call_id, name, .. } => {
                 if *custom {
                     let input = custom_input(&b.text);
