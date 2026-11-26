@@ -196,7 +196,7 @@ Session text (T, SX nodes):
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | TODO | implementation | — |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
 | OS-37 | On-demand latency test, ignored in CI | OS-35 | DONE | implementation | 98d82be5 · b5c27cbd · 77c6726f · acceptance pass (shaping_latency 5 ignored) · PR #200 |
-| WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | TODO | judgment | — |
+| WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | DONE | judgment | 1324716e^..e1276ac2 · acceptance pass (workspace_definition 23 passed with tmux) · PR #214 |
 | MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17, FX-15 | TODO | implementation | — |
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | TODO | implementation | — |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | TODO | mechanical | — |
@@ -214,7 +214,6 @@ Session text (T, SX nodes):
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
 | OS-46 | Bound the hook's usage-store wait per Bash call | — | DONE | judgment | 75339a21 · d6be5653 · c727ff0e · 68f8e48c · acceptance pass (busy_wait_total/open_bounded_total 7, rollback_journal 1, zygo-usage, zygo-hooks, readbacks) · PR #205 |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
-| FX-5 | Piped send test asserts send-then-read fails (Linux foreign-reader flake) | — | DONE | mechanical | 460b7cf · decision_git 35p, piped_epipe 1p; floor green · PR #51 |
 | FX-6 | Dead-port test helpers: a port no parallel test can take (CI run 45557591675) | — | DONE | implementation | 690ea805 · zygo lib 38/compact_cmd 5/session_verbs 11/serve_cli 4/workspace_member 2/serve_client 40 passed · PR #65 |
 | FX-7 | Exec-failure relaunch test runs in a child process (environ swap breaks parallel PATH lookups) | — | DONE | implementation | 365436c6 · zygo lib ws/work/plugins 22p, down 8p; --include-ignored 54p; floor green · PR #97 |
 | FX-8 | zygo usage reads summary and savings from one snapshot | OS-8 | DONE | implementation | 4636d2ee, 73cffb55 · report_snapshot 1/0, usage_doctor 45/0 ; floor green · PR #105 |
@@ -231,6 +230,8 @@ Session text (T, SX nodes):
 | FX-19 | PO2 row states what its run observed | OS-34 | DONE | mechanical | plan b2c8ca97 · node b5fa4c27, efbcccae · acceptance pass (check-premises ok; po2_ 3 passed) · PR #188 |
 | FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | DONE | mechanical | 96868305 · c98ea5fa · cc948a96 · acceptance pass (live selftest: ok (85)) · PR #194 |
 | FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | DONE | implementation | 569e61a9^..9ac65902 · acceptance pass (shape_clean 35 passed) · PR #211 |
+| FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | TODO | implementation | — |
+| FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | TODO | implementation | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -429,3 +430,6 @@ Session text (T, SX nodes):
 | 2026-11-26 | MS-17 DONE: zygo mail sync verb, options, hidden --background form; review R1 F1 (shared admin::named name rule) F2 (CI note) F3 (one panic line) T1 fixed, T2 recorded; R2 R1-B fixed (S§6.6), R1-A recorded · PR #210 |
 | 2026-11-26 | FX-21 DONE: clean removes an nF escape (ESC, 1-4 intermediates 0x20-0x2F, final 0x30-0x7E) whole, else only ESC; replaces FX-16's ESC ( / ESC ) arm (DDR-01M8CRQH44Y37WS3MAAV2G0DP4 depends on the FX-16 record); review R1 F1-F5 fixed · PR #211 |
 | 2026-11-26 | Author's call (lead), for operator review: O§15 item 2 "hiding" and O-C9 read as text a terminal would display; FX-21 removes bytes FX-16 kept only where a terminal consumes them as one nF escape (DDR-01M8CRQH44Y37WS3MAAV2G0DP4) |
+| 2026-11-26 | WD-14 plan: premise drift: up writes the pin into the fresh member record (callback keeps it); R§7.4 stop line text, exit 1, escaped commit/digest, launch outside a checkout stops |
+| 2026-11-26 | WD-14 DONE: ws run, restore and hand resume launch from the saved pin; review R1 F1 (tests cloned the act101 marketplace) F2 F3 F5 fixed, F4 race recorded in R§7.4; R2 R2-1 (serve-mode refusal kept the pin) fixed · PR #214 |
+| 2026-11-26 | FX-22, FX-23 added: WD-14 review: built-in act101 tag v2.9.2 moved upstream (every launch prints the tag-moved line); six binary test files launch with the built-in marketplace on and reach the network |
