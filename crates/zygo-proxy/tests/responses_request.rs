@@ -827,6 +827,13 @@ fn g2_tool_adjacency() {
 }
 
 #[test]
+fn g3_pairing_after_empty_message_dropped() {
+    let empty = json!({"type":"message","role":"user","content":[]});
+    let (m, _) = rq(&body(json!([user("u"), fc("1", "f", "{}"), empty, fco("1", "a")]))).unwrap();
+    assert_valid(&m);
+}
+
+#[test]
 fn f9_other_hosted_items_dropped() {
     let b = body(json!([user("go"), {"type":"local_shell_call","id":"l","status":"completed"},
         {"type":"mcp_call","id":"m"}, asst("a")]));
