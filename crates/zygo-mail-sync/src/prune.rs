@@ -1,11 +1,15 @@
 //! The prune (mail sync design S§9): an orphan commit of the base tree less each message file that the valid ack of
 //! its host lists, then the one force push zygo does, with the base as lease (S-C3). No clock and no keep (S-C8).
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::Instant;
 
-use zygo_work::repo::RunError;
+use ulid::Ulid;
+use zygo_work::repo::{Flow, RunError};
 
-use crate::branch::BranchError;
+use crate::address;
+use crate::branch::{self, BranchError, Change, Pushed};
+use crate::identity::TipMeta;
 
 /// S§9 When: a base whose `git rev-list --count` is this or more is due for a prune.
 pub const COMMITS_DUE: u64 = 1000;
@@ -42,4 +46,48 @@ pub fn due(wt: &Path, base: &str, own_ack_len: usize, forced: bool, deadline: In
     }
     let n: u64 = line.parse().map_err(|_| failed)?;
     Ok(n >= COMMITS_DUE)
+}
+
+/// S§9 Tree, Commit, Push, Only its own branch: a commit with no parent of the tree of `base` less each message file
+/// `<addr>/<ULID>.json` (not a tree) whose ULID the valid ack of the host of `<addr>` lists; a refused ack lists
+/// nothing (S§7.4 Validation). Just before the force push, `branch` must be a zygo branch name and `base` must have
+/// the marker (S-C3); else `Refused("branch")` or `Refused("marker")`. The push has `base` as lease: a failed lease is
+/// `LeaseLost`; any other failed push is `Git(Failed, "push")`.
+pub fn run(wt: &Path, remote: &str, branch: &str, base: &str, meta: &TipMeta, deadline: Instant)
+    -> Result<Pruned, BranchError> {
+    let acked: BTreeMap<&str, &BTreeSet<Ulid>> = meta.acks.iter()
+        .filter_map(|(h, r)| r.value.as_ref().ok().map(|a| (h.as_str(), &a.imported)))
+        .collect();
+    let mut folders = Vec::new();
+    branch::ls(wt, base, None, deadline, &mut |e| {
+        if e.kind == "tree" && let Some(a) = address::parse(&e.path) && acked.contains_key(a.host.as_str()) {
+            folders.push((e.path, a.host));
+        }
+        Flow::Go
+    })?;
+    let mut removes = Vec::new();
+    for (f, host) in &folders {
+        let set = acked[host.as_str()];
+        let prefix = format!("{f}/");
+        branch::ls(wt, base, Some(&prefix), deadline, &mut |e| {
+            let listed = e.path.strip_prefix(&prefix).and_then(address::ulid_file).is_some_and(|u| set.contains(&u));
+            if e.kind != "tree" && listed {
+                removes.push(Change::Remove { path: e.path });
+            }
+            Flow::Go
+        })?;
+    }
+    let removed = removes.len();
+    let root = branch::commit(wt, base, None, &removes, deadline)?;
+    if !zygo_config::valid_sync_branch(branch) {
+        return Err(BranchError::Refused("branch"));
+    }
+    if !branch::has_marker(wt, base, deadline)? {
+        return Err(BranchError::Refused("marker"));
+    }
+    match branch::push(wt, remote, branch, &root, Some(base), deadline)? {
+        Pushed::Accepted => Ok(Pruned::Done { removed }),
+        Pushed::Moved => Ok(Pruned::LeaseLost),
+        Pushed::Other(_) => Err(BranchError::Git(RunError::Failed, "push")),
+    }
 }
