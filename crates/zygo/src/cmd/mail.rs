@@ -4,6 +4,7 @@
 use std::ffi::OsStr;
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{anyhow, bail};
@@ -364,11 +365,7 @@ fn sync_background(paths: Paths, ws_id: &str) -> i32 {
     let real = valid_ws_id(ws_id)
         && std::fs::symlink_metadata(paths.workspaces_dir().join(ws_id)).is_ok_and(|m| m.is_dir());
     let store = real.then(|| Store::open(&paths, ws_id));
-    std::panic::set_hook(Box::new(move |_| {
-        if let Some(s) = &store {
-            s.log_error("mail sync: stopped: panic");
-        }
-    }));
+    std::panic::set_hook(Box::new(move |_| panic_line(store.as_ref(), &PANIC_LOGGED)));
     #[cfg(feature = "test-hooks")]
     if std::env::var_os("ZYGO_TEST_PANIC_SYNC").is_some() {
         panic!("test panic in mail sync --background");
@@ -376,6 +373,20 @@ fn sync_background(paths: Paths, ws_id: &str) -> i32 {
     match run_with(&sync_env(paths), ws_id, Mode::Child, &Opts::default()) {
         Ok(_) => 0,
         Err(e) => e.exit_code(Mode::Child),
+    }
+}
+
+/// D7, C6: set once the hook of the hidden form has written its line in this process.
+static PANIC_LOGGED: AtomicBool = AtomicBool::new(false);
+
+/// D7, C6: the body of the hidden form's panic hook: the one `errors.log` line `mail sync: stopped: panic` to
+/// `store`, at most once while `written` is false (a panic in a `std::thread::scope` thread panics again on the main
+/// thread, and both reach the hook). No store: nothing.
+fn panic_line(store: Option<&Store>, written: &AtomicBool) {
+    if let Some(s) = store
+        && !written.swap(true, Ordering::SeqCst)
+    {
+        s.log_error("mail sync: stopped: panic");
     }
 }
 
@@ -604,6 +615,32 @@ mod tests {
         let e = super::sync_env(p.clone());
         assert_eq!(e.paths, p);
         assert_eq!(e.secret_policy, zygo_redact::secret::DeadlinePolicy::default());
+    }
+
+    /// D7, C6 (review round 1, F3): a panic in a scoped thread panics again on the main thread; the hook body writes
+    /// one `errors.log` line for both.
+    #[test]
+    fn panic_line_is_written_at_most_once() {
+        let d = tempfile::TempDir::new().unwrap();
+        let data = d.path().join("data");
+        let cache = d.path().join("cache");
+        let paths = zygo_core::paths::Paths {
+            config_file: d.path().join("config.toml"),
+            sessions_dir: cache.join("sessions"),
+            marketplaces_dir: cache.join("marketplaces"),
+            plugin_store: data.join("plugins"),
+            approvals_file: data.join("approvals.toml"),
+            usage_db: data.join("usage.db"),
+            cache_dir: cache,
+            data_dir: data,
+        };
+        let store = zygo_workspace::state::Store::open(&paths, "0123456789abcdef");
+        let written = std::sync::atomic::AtomicBool::new(false);
+        super::panic_line(Some(&store), &written);
+        super::panic_line(Some(&store), &written);
+        let log = std::fs::read_to_string(store.dir().join("errors.log")).unwrap();
+        assert_eq!(log.lines().count(), 1, "{log}");
+        assert!(log.ends_with(" mail sync: stopped: panic\n"), "{log}");
     }
 }
 
