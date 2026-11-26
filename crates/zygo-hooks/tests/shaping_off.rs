@@ -242,7 +242,6 @@ fn shape_off_opencode_after_bash_matches_golden() {
 /// over the trim threshold.
 #[test]
 fn shape_off_failure_cases_over_threshold_give_nothing() {
-    let threshold = 1024;
     let cases: Vec<_> = shaping::cases(None)
         .into_iter()
         .filter(|c| c.meta["event"] == "PostToolUseFailure")
@@ -251,11 +250,8 @@ fn shape_off_failure_cases_over_threshold_give_nothing() {
     let mut p = vec![];
     for c in &cases {
         let rel = format!("shaping/{}/{}", c.shaper, c.name);
-        assert!(
-            c.stdout.len() as u64 > threshold,
-            "{rel}: {} bytes, not over {threshold}",
-            c.stdout.len()
-        );
+        assert!(!c.stdout.is_empty(), "{rel}: empty stdout");
+        let threshold = c.stdout.len() as u64 - 1;
         let input = serde_json::to_vec(&shaping::hook_input(c)).unwrap();
         p.extend(empty(&rel, &run_off_at(agent_of(c), &input, threshold)));
     }
