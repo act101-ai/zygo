@@ -193,11 +193,10 @@ Session text (T, SX nodes):
 |----|------|---------|-------|------------|------|
 | OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | TODO | judgment | — |
 | OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4 | TODO | judgment | — |
-| OS-33 | Failed Bash calls on Claude Code, as PO1 decided | OS-28, OS-23 | DONE | judgment | plan 911576e7 · node f632354c, 662bb328, 425bb080, 03d0f9c1 · acceptance pass (hooks 4 passed, launch 1 passed) · PR #168 |
 | OS-42 | Runner dispatch under wrappers and unseen live output | OS-31, OS-32, FX-19 | DONE | judgment | 6d559322 · 30a091c8 · d286417c · acceptance pass (dispatch 9, libtest 20, pytest 18) · PR #196 |
 | MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | TODO | judgment | — |
 | OS-34 | Set the stderr branch as PO2 decided | OS-33, OS-24 | DONE | mechanical | plan bba3b8b4 · node 9cd2b7fa, 399ed252, 7b268ebc · acceptance pass (po2_ 3 passed; shaping_hook 29 passed) · PR #184 |
-| WD-18 | Session text: each member's job and the job sentence | WD-11, ML-9, ML-10, MS-20 | TODO | implementation | — |
+| WD-18 | Session text: each member's job and the job sentence | WD-11, ML-9, ML-10, MS-20 | DONE | implementation | plan 97283bcc · node 445b4399, 875618e6, f4fcd2fd, dbff60d9 · acceptance pass (job_ 8 listed; session_text 51 passed) · PR #189 |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | TODO | implementation | — |
 | OS-35 | Fixture views through the hook: goldens, floors, recovery, bless guard | OS-34, OS-32, OS-42 | TODO | judgment | — |
 | SX-4 | `hook trim` takes the flag and adds `additionalContext` = mechanics text, once (T§9.2 item 2) | SX-1, SX-3, OS-34 | DONE | judgment | plan 5441dd4c · node d37419f1, 927b1246, 86db8ba5 · acceptance pass (trim 17 listed; reinject trim 17 passed; zygo-hooks 344 passed) · PR #191 |
@@ -414,4 +413,5 @@ Session text (T, SX nodes):
 | 2026-11-26 | SX-4 DONE: hook trim takes the subagent's re-inject flag first and adds additionalContext once (T§9.2 item 2); review F1 (run entry test), F3 (stat error) and a doc nit fixed; F2 refuted (any remove/print order has a kill window; at-most-once holds). |
 | 2026-11-26 | FX-19 DONE: PO2 row and O§7.8/O§17 restated to what the 2.1.332 run observed (stderr merged into stdout; stderr "" removal of non-empty stderr not observed); review F1, F4 fixed; author's call (lead), awaiting operator ratification. |
 | 2026-11-26 | FX-20 DONE: live-detach.sh PW15 record line and result text name zygo once (`launch ${ZV:-zygo ?}`); stub-agent selftest cases for a version and an empty version; live selftest ok (85). Review F1 refuted (clap prints "zygo <version>"), F2 fixed (empty-version case) · PR #194 |
+| 2026-11-26 | WD-18 DONE: item 8 lists each member's job and ends with the member's job sentence (R§9.3); review F1 (mail sync M-C6 restatement) and F2 part 1 (non-JOBS value) fixed in spec text; F2 part 2 refuted (one orchestrator per loadout, check.rs:241) |
 | 2026-11-26 | OS-42 DONE: no view hides another runner's failure section; a wrapper at any depth, a PYTEST_ADDOPTS word, -p no:capture or an -o addopts override turns the pytest view off; O§7.6 (lead) awaiting operator ratification · PR #196 |

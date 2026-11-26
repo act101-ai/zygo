@@ -44,7 +44,7 @@ The operator asked for a durable mailbox in zygo **(operator, 2026-11-22)**. Wor
 - **M-C3** Every write is atomic (W-C4): write and `fsync` in `tmp/`, then hard-link into `new/` (a link refuses to replace an existing name), `fsync` `new/`, then remove the `tmp/` name.
 - **M-C4** Only the OS user that owns the workspace state can read or write mail (dir `0700`, files `0600`, as AU2). This holds for `mail/`. Synced mail also exists in the repository's object store and on the remote (mail sync design S§13 limit 3, S-C7).
 - **M-C5** No mail text reaches a tmux argument (W-C8). The wake text is fixed (M§7).
-- **M-C6** A cloned repository cannot send mail or name a member (W-C5): names come from user config only. The side branch delivers mail only after the user-config opt-in (mail sync design S-G6).
+- **M-C6** A cloned repository cannot send mail. Member names come from user config, or from approved repository files (workspace definition design R§7). The side branch delivers mail only after the user-config opt-in (mail sync design S-G6).
 
 ## 5. Store
 
@@ -130,6 +130,8 @@ Slash forms: `/zygo:mail` (list) only, per O14; send and read stay tools, becaus
    A member with no name gets `you have no mail name; others reach you by pane <key>` in place of the first clause. The item is not appended to subagent prompts (unlike item 7): mail is between members, and a subagent reports to its member through its result.
 
    With mail sync on for the workspace (mail sync design S§11) and a member cache (`mail/sync/members.json`, S§7.3) that is not empty, item 8 gains one clause after the member list, before "Send with": `Other machines: <address>, <address>, …; mail them by the full address.` Each address is `<name>@<host>`, in host order, then names as stored, each address once. At most 64 addresses; when there are more, the last of the 64 is followed by `, and <n> more; mail_list lists all`, where `<n>` is the number of addresses left out. Sync off, a config that does not load, or an empty cache gives no clause. The clause holds addresses only (S§10.4).
+
+   With a job (workspace definition design R§9.3), the member list shows each member's job in brackets, and a member with no job by its name alone: ``Members: `orchestrator (orchestrator), worker-1 (worker), elena` ``. Item 8 then ends with one sentence for the member's own job. The orchestrator: `Your job: orchestrator. Give work to the workers with mail_send, collect their results with mail_read, and check each result against its brief.` A worker: `Your job: worker. Take your work from <orchestrator> by mail, do it through your zygo-<role> subagents, and send the result to <orchestrator> with mail_send.`, where `<orchestrator>` is the orchestrator's name (its pane key when it has none), or `the member that gave you the work` with no orchestrator. A value other than `orchestrator` or `worker` counts as no job, in the member list and for the sentence. No job gives no sentence. With mail off there is no item 8, so no job sentence.
 2. **Tool descriptions.** `mail_send`, `mail_read` and `mail_list` each end with the same rule: "Do not poll; zygo wakes you when mail arrives."
 3. **Delivery lines** (M§7.1-7.3) name the tool to call: `read them with mail_read`.
 
@@ -231,3 +233,4 @@ Mail sync between machines adds `[mail] host`, `[mail] sync_gap` and the per-wor
 | 2026-11-25 | M§9 | author's call (ML-10 review) | The resume-note bullet said the note adds a second unread line; SessionStart gives only the M§7.2 line, after the note. |
 | 2026-11-25 | M§3, M-C4, M-C6 | mail sync design S§16 | Mail between machines is now the mail sync design; M-C4 holds for `mail/`, and synced mail is also in the object store and on the remote; M-C6 holds: the side branch delivers only after the user-config opt-in. |
 | 2026-11-25 | M§8a | author's call (lead) | Mail sync design S§16 and S§10.4: item 8 gains the "Other machines" clause after the member list, at most 64 addresses (MS-20). |
+| 2026-11-26 | M-C6, M§8a | author's call (lead) | Workspace definition design R§14 and R§9.3: member names also come from approved repository files (R§7); item 8 lists each member's job in brackets and ends with the member's job sentence, after the mail tail, so the S§10.4 clause keeps its place (WD-18). M-C6 keeps the S-G6 side-branch sentence from the mail sync design S§16 row. |

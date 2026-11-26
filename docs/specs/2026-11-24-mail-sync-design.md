@@ -42,7 +42,7 @@ This spec covers three items:
 
 ## 4. Constraints
 
-- **S-C1** M-C1 to M-C6 apply. C6 applies to each new hook branch: a sync error never changes a hook decision.
+- **S-C1** M-C1 to M-C6 (M-C6 as amended in workspace definition design R§14) apply. C6 applies to each new hook branch: a sync error never changes a hook decision.
 - **S-C2** Mail is content (M-C2). No subject, body, address, host name, member name or path that holds one goes into a log, `workspace.json`, a usage row, a commit message or a ref name **(lead)**. A log line names ULIDs, pattern ids, check names, blob ids and counts only.
 - **S-C3** zygo writes only `refs/heads/zygo/<x>` on the remote. A force push goes only to that branch, only with the lease of S§9 **(operator)**.
 - **S-C4** Every git call is built by the hardened builder `git_command` (`crates/zygo-plugins/src/sync.rs:32-58`: no repository hooks, no fsmonitor, no LFS filter, no `ext::` transport, `GIT_TERMINAL_PROMPT=0`, `ssh -o BatchMode=yes`), plus `-c gc.auto=0 -c maintenance.auto=false -c fetch.writeCommitGraph=false` on each call **(lead)**. Each call runs under the runner of S§8.7, with a deadline.
@@ -475,7 +475,7 @@ Each row is one case, walked end to end.
 - **M§5** `from` and `to` can hold a full address (S§6.2). The file format and its version do not change.
 - **M§6** Gains the address grammar (S§7.2) and the reserved name `zygo`.
 - **M-C4** Holds for `mail/`. Synced mail also exists in the repository's object store and on the remote (S§13 limit 3, S-C7).
-- **M-C6** Holds: no file of a checkout sends mail or names a local member. The side branch delivers mail only after the user-config opt-in (S-G6).
+- **M-C6** Holds: a cloned repository cannot send mail. Member names come from user config or from approved repository files (workspace definition design R§7). The side branch delivers mail only after the user-config opt-in (S-G6).
 - **M§8, M§8a** `mail_send` takes addresses; `mail_list` returns remote addresses; item 8 gains one clause (S§10.4). `zygo mail sync` is a new verb; `zygo mail ls` shows a sync line and the outbox and refused counts; `zygo mail watch` syncs (S§8.1).
 - **M§11** Gains `host`, `sync_gap` and `[mail.workspace.<name>]` (S§11).
 - **W§7.1** Gains the cache path `$HOME/.cache/zygo/workspaces/<id>/mail-sync/` and the state paths `mail/outbox/` and `mail/sync/`.
@@ -560,3 +560,4 @@ Each check is a test or a command. A "machine" in a test is one `HOME` with its 
 - 2026-11-25 · S§8.3 · author's call (lead) · MS-13 review F2: an outbox file that cannot be read stayed in the outbox and took a place in the 1000 of each pass, so 1000 such files stopped every later message; it now moves to `mail/outbox/refused/` with one `read` line and takes no place.
 - 2026-11-25 · S§9 · author's call (lead) · a prune failure other than a lost lease skips the prune and does not fail the pass (MS-14 review F1).
 - 2026-11-25 · S§10.4, S§17 · author's call (lead) · Clause form fixed to the M§8a text of MS-20; each address once; clause code in mail.rs (ML-9 put item 8 there).
+- 2026-11-26 · S-C1, S§16 · author's call (lead) · M-C6 restated to follow workspace definition design R§14 (WD-18).
