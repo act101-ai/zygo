@@ -139,9 +139,12 @@ sigrun() {
   [ ! -f "$T/$1.sleep" ] || kill "$(cat "$T/$1.sleep")" 2>/dev/null
 }
 # piperun <case>: run $T/<case>.sh with stdout to a pipe whose reader has exited; sets rc.
+# perl resets PIPE to its default first: an ignored SIGPIPE is inherited (GitHub's Linux runner starts
+# jobs with it ignored), and dash cannot undo an ignore it started with; the child then gets EPIPE.
 piperun() {
   # shellcheck disable=SC2086
-  { env PATH="$CP" TMPDIR="$T/tmp-$1" $XENV "$SH" "$T/$1.sh" 2>"$T/$1.err"; echo $? >"$T/$1.rc"; } | true
+  { perl -e '$SIG{PIPE} = "DEFAULT"; exec @ARGV or die' \
+    env PATH="$CP" TMPDIR="$T/tmp-$1" $XENV "$SH" "$T/$1.sh" 2>"$T/$1.err"; echo $? >"$T/$1.rc"; } | true
   rc=$(cat "$T/$1.rc")
 }
 # PIPE_ACT: write to stdout until the closed pipe stops the script.
