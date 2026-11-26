@@ -414,3 +414,115 @@ fn last_line_without_newline_stays_verbatim() {
     let t = raw.strip_suffix('\n').unwrap();
     assert_eq!(gotest(t).unwrap().0, FP_VIEW.strip_suffix('\n').unwrap());
 }
+
+/// The view of `raw` keeps each of `keep`, and the lines it removes are exactly `gotest_passed_lines(raw)`.
+fn keeps_and_hides_only_passed(raw: &str, keep: &[&str]) {
+    let v = gotest(raw).expect("a view").0;
+    for k in keep { assert!(v.lines().any(|x| x == *k), "{k:?} not in view:\n{v}"); }
+    let gone: Vec<usize> = removed(raw, &v).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(gone, gotest_passed_lines(raw));
+}
+
+#[test]
+fn panic_after_a_passed_sibling_keeps_its_stack() {
+    // O-C9, review F1: the result line of the current test ends it, so the stack belongs to no test
+    let p = concat!(
+        "=== RUN   TestP\n",
+        "=== RUN   TestP/a\n",
+        "=== PAUSE TestP/a\n",
+        "=== RUN   TestP/b\n",
+        "=== PAUSE TestP/b\n",
+        "=== CONT  TestP/b\n",
+        "    x_test.go:18: b: start\n",
+        "=== CONT  TestP/a\n",
+        "    x_test.go:12: a: done\n",
+        "    --- PASS: TestP/a (0.00s)\n",
+        "panic: boom\n",
+        "\n",
+        "goroutine 21 [running]:\n",
+        "example.com/m.TestP.func2(0xc000007a00)\n",
+        "\t/repo/x_test.go:20 +0x5c\n",
+        "testing.tRunner(0xc000007a00, 0x1100f8)\n",
+        "\t/usr/local/go/src/testing/testing.go:1689 +0xec\n",
+        "FAIL\texample.com/m\t0.012s\n",
+        "FAIL\n",
+    );
+    let keep: Vec<&str> = p.lines().skip(10).collect();
+    keeps_and_hides_only_passed(p, &keep);
+    assert_eq!(gotest_passed_lines(p), vec![2, 3, 8, 9, 10]);
+}
+
+#[test]
+fn panic_after_a_passed_test_keeps_its_stack() {
+    // O-C9, review F1
+    let p = concat!(
+        "=== RUN   TestA\n",
+        "    a_test.go:3: a ok\n",
+        "--- PASS: TestA (0.00s)\n",
+        "panic: boom\n",
+        "\n",
+        "goroutine 7 [running]:\n",
+        "example.com/m.init.func1()\n",
+        "\t/repo/a.go:9 +0x2c\n",
+        "FAIL\texample.com/m\t0.01s\n",
+    );
+    let keep: Vec<&str> = p.lines().skip(3).collect();
+    keeps_and_hides_only_passed(p, &keep);
+}
+
+#[test]
+fn lines_after_pass_belong_to_no_test() {
+    // O-C9, review F1: a data race report, TestMain teardown text and the coverage line after `PASS` stay
+    let race = concat!(
+        "=== RUN   TestA\n",
+        "    a_test.go:3: a ok\n",
+        "--- PASS: TestA (0.00s)\n",
+        "PASS\n",
+        "==================\n",
+        "WARNING: DATA RACE\n",
+        "Write at 0x00c000012345 by goroutine 8:\n",
+        "  example.com/m.TestA.func1()\n",
+        "      /repo/a_test.go:9 +0x44\n",
+        "==================\n",
+        "Found 1 data race(s)\n",
+        "FAIL\texample.com/m\t0.02s\n",
+    );
+    let teardown = concat!(
+        "=== RUN   TestA\n",
+        "    a_test.go:3: a ok\n",
+        "--- PASS: TestA (0.00s)\n",
+        "PASS\n",
+        "teardown: leaked 3 db connections\n",
+        "FAIL\texample.com/m\t0.02s\n",
+    );
+    let cover = concat!(
+        "=== RUN   TestA\n",
+        "    a_test.go:3: a ok\n",
+        "--- PASS: TestA (0.00s)\n",
+        "PASS\n",
+        "coverage: 81.2% of statements\n",
+        "ok  \texample.com/m\t0.02s\n",
+    );
+    for t in [race, teardown, cover] {
+        let keep: Vec<&str> = t.lines().skip(3).collect();
+        keeps_and_hides_only_passed(t, &keep);
+        assert_eq!(gotest_passed_lines(t), vec![1, 2, 3]);
+    }
+}
+
+#[test]
+fn an_unparsed_marker_line_ends_the_current_test() {
+    // O-C9, review F2: a `=== ` line with no name (or a mark that ends in CR) gives later lines to no test
+    let u = concat!(
+        "=== RUN   TestA\n",
+        "    a.go:1: x\n",
+        "=== NAME \n",
+        "unowned line\n",
+        "--- PASS: TestA (0.00s)\n",
+        "ok  \texample.com/m\t0.001s\n",
+    );
+    keeps_and_hides_only_passed(u, &["=== NAME ", "unowned line", "ok  \texample.com/m\t0.001s"]);
+    assert_eq!(gotest_passed_lines(u), vec![1, 2, 5]);
+    let c = u.replace("=== NAME \n", "=== NAME  TestA\r\n");
+    assert_eq!(gotest_passed_lines(&c), vec![1, 2, 5]);
+}

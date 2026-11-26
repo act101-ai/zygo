@@ -254,8 +254,10 @@ type GoKey<'a> = (usize, &'a str);
 /// One `GoLine` for each `split_inclusive('\n')` line of `text` (O§7.6 go test rules 1-4). A line belongs to
 /// the test that names it (`=== ` or result line), else to the test whose open result block holds it
 /// (rule 2), else to the current test (rule 1). A package summary line and `[stderr]` end the current test, and
-/// tests are keyed by package block and name (O-C9, O§15 item 2). A line that ends in `\r` or in the dedup
-/// counted form is never `Passed`.
+/// tests are keyed by package block and name (O-C9, O§15 item 2). The current test also ends at its own result
+/// line or that of a test that contains it, at a package line (rule 4) and at a `=== `/`--- ` line that is not
+/// parsed, so a panic stack, a race report or text after `PASS` belongs to no test and stays. A line that ends
+/// in `\r` or in the dedup counted form is never `Passed`.
 fn go_lines(text: &str) -> Vec<GoLine> {
     let mut pkg = 0usize;
     let mut cur: Option<GoKey> = None;
@@ -276,7 +278,11 @@ fn go_lines(text: &str) -> Vec<GoLine> {
             cur = None;
             open.clear();
             None
-        } else if (summary && cur.is_none()) || GO_PACKAGE.is_match(bare) {
+        } else if summary && cur.is_none() {
+            None
+        } else if GO_PACKAGE.is_match(bare) {
+            cur = None;
+            open.clear();
             None
         } else if let Some(c) = GO_MARK.captures(bare).filter(|_| !cr) {
             cur = Some((pkg, c.get(2).expect("group 2").as_str()));
@@ -286,8 +292,13 @@ fn go_lines(text: &str) -> Vec<GoLine> {
             let ok = &c[1] != "FAIL";
             passed.entry(key).and_modify(|p| *p &= ok).or_insert(ok);
             open.push((key, depth));
+            let within = |n: &str| n == key.1 || n.strip_prefix(key.1).is_some_and(|r| r.starts_with('/'));
+            if cur.is_some_and(|(p, n)| p == key.0 && within(n)) {
+                cur = None;
+            }
             Some(key)
         } else if rest.starts_with("=== ") || rest.starts_with("--- ") {
+            cur = None;
             None
         } else {
             open.last().map(|&(k, _)| k).or(cur)
