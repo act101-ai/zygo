@@ -232,8 +232,18 @@ fn new_identity_that_waited_for_a_forget_writes_nothing() {
     let r = Remote::new();
     let a = machine(&r, "a", &[(ALICE, "alice")]);
     sync(&a);
-    let held = fs::OpenOptions::new().read(true).write(true).open(a.sp().lock).unwrap();
-    fs4::FileExt::try_lock(&held).unwrap();
+    // A git child that another test thread forked holds a copy of the lock's open file description from its fork to
+    // its exec (O_CLOEXEC closes it only at the exec), so the lock `sync` released can stay busy for that moment
+    // (`SPAWNS` in sync_pass.rs). Wait for it; O_CLOEXEC here, so no child keeps `held` after its exec.
+    let held = {
+        use std::os::unix::fs::OpenOptionsExt;
+        fs::OpenOptions::new().read(true).write(true).custom_flags(libc::O_CLOEXEC).open(a.sp().lock).unwrap()
+    };
+    let end = std::time::Instant::now() + Duration::from_secs(10);
+    while let Err(e) = fs4::FileExt::try_lock(&held) {
+        assert!(matches!(e, fs4::TryLockError::WouldBlock) && std::time::Instant::now() < end, "{e:?}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
     let state = a.paths.workspaces_dir().join(WS_ID);
     let (state2, cache) = (state.clone(), a.paths.workspace_cache_dir().join(WS_ID));
     let forget: Box<dyn FnOnce() + Send> = Box::new(move || {
