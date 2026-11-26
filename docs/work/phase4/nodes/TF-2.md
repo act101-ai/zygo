@@ -1,7 +1,7 @@
 # TF-2 — CI runs the premise test scripts
 
 **Spec:** none (CI defect); PC-13 round-2 review G3; Global constraints "No CI test runs a real `claude`, `opencode` or `codex` binary" and "No test … may pass or fail by wall-clock time"
-**Files:** `.github/workflows/ci.yml`, `scripts/premises/lib_test.sh` (CI-friendly waits and its "not run by CI" header line only), `scripts/premises/lib.sh` (round 1 F3: the port-file waits; CI run 1: n2_scan's /proc owner check), `scripts/premises/scrub_test.py` (CI run 1: the SCRUB_FIXED case only)
+**Files:** `.github/workflows/ci.yml`, `scripts/premises/lib_test.sh` (CI-friendly waits and its "not run by CI" header line only), `scripts/premises/lib.sh` (round 1 F3: the port-file waits; CI run 1: n2_scan's /proc owner check), `scripts/premises/scrub_test.py` (CI run 1: the SCRUB_FIXED case only), `scripts/premises/mock_upstream.py` and `scripts/premises/https_static.py` (CI run 3: server_bind only), `scripts/test-check-premises.sh` (CI run 3: the TCP_TIMES report only)
 **Consumes:** —
 **Produces:** CI job `premises` (round 1 F5; was job `test`) runs the five premise test scripts on `ubuntu-latest` and `macos-latest`
 **Acceptance:** each command run alone from the repository root: `test "$(grep -oE 'scripts/(premises/scrub_test\.py|premises/rescrub_test\.py|test-check-premises\.sh|premises/lib_test\.sh|check-premises\.sh)' .github/workflows/ci.yml | sort -u | wc -l)" -eq 5` → exit 0 (ci.yml names each of the five scripts); `python3 -I scripts/premises/scrub_test.py` → exit 0; `python3 -I scripts/premises/rescrub_test.py` → exit 0; `sh scripts/test-check-premises.sh` → exit 0; `sh scripts/premises/lib_test.sh` → exit 0; `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → exit 0; then the CI run of the node's pull request is green on ubuntu, macOS and Windows, with the five new steps run on ubuntu and macOS. No real agent runs in CI (every script uses stubs or none); no network beyond what the scripts already use (127.0.0.1 only).
@@ -161,4 +161,36 @@ held on both runners.
   `signal.pause()` (no time bound); each is still stopped by its case (sigrun's kill by pid file,
   R5's TERM to the process group, B4's kill of the server); no such process is left after a run.
 - Verification: `lib tests: ok (169)` (165 + Y3-Y6).
+
+## CI run 3 (run 45851628417, head `7db46519`)
+
+All jobs passed. `premises` took 11 min 32 s on ubuntu and 78 min 26 s on macOS, with these steps:
+`test-check-premises.sh` took 29 min 50 s (38%) and `lib_test.sh` 47 min 46 s (61%). Decision: fix
+the causes, keep the 90-minute backstop.
+
+- lib_test.sh, cause confirmed: `http.server.HTTPServer.server_bind` calls `socket.getfqdn(host)`
+  (`http/server.py:140` in the W7 traceback), a reverse lookup of 127.0.0.1 that stalls on the
+  macOS runner; every case that calls `start_mock` took about 35 s there. Fixed in `ad3f9e10`:
+  `mock_upstream.py` and `https_static.py` (start_web) use a `ThreadingHTTPServer` subclass whose
+  `server_bind` calls `socketserver.TCPServer.server_bind` and sets `server_name` to the host
+  string and `server_port` to the bound port. Nothing in `scripts/premises` reads `server_name`;
+  `srv.py` in lib_test.sh uses a plain socket. W7 and W8 run each server with a
+  `socket.getfqdn` that raises: both fail before the fix and pass after it. The live scripts
+  `live-workspace.sh` and `live-selftest.sh` start their own `HTTPServer` in live runs only; they
+  are not changed. This Mac does not stall on the lookup, so the local lib_test time does not
+  change; the CI run shows the effect.
+- test-check-premises.sh, cause found, not changed. `TCP_TIMES=1` (`bd6d50bc`) prints each step's
+  time. Local run on this Mac (173 cases, part of it beside a lib_test run): 1039 s in all; the
+  171 check-premises.sh runs take 944 s (91%, 5.5 s on average, about 10 s for a full pass); the
+  fixture copies (`mk`, 6.9 MB) take 37 s (0.2 s each). The 10 slowest runs are the PC-13 env
+  cases, H1, "real tree", two Item-cell cases and the Codex verbatim schema case; each spawns one
+  full check-premises.sh run and nothing else. In a full check-premises.sh run (scratch copy with
+  timing marks): 3.9 s in the per-row loop (about 25 short processes per row: sed, awk, grep,
+  trim), 0.07 s for the find checks and the sha256 of the verbatim files, and 5.4 s in about 35
+  recursive greps over the scan scope (0.02 to 0.55 s each). So no single helper dominates: the
+  cost is one full check-premises.sh run per case, mostly process start-up, which is about three
+  times slower on the macOS runner than on ubuntu (29.8 against 10.6 minutes). Making it cheaper
+  needs either fewer processes in check-premises.sh's row loop (`scripts/check-premises.sh` is not
+  in this node's Files) or a smaller fixture tree per case (the evidence paths include whole
+  folders, so each case would need its own list); both are left for the operator's decision.
   `scrub tests: ok (158)`; the other checks as above.
