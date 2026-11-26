@@ -14,6 +14,7 @@ use http::{HeaderMap, StatusCode};
 use serde_json::Value;
 use tempfile::TempDir;
 use zygo_config::keys::Secret;
+use zygo_config::profile::Profile;
 use zygo_config::{load, Dialect, KeyRef, LoadContext};
 use zygo_core::ids::ulid;
 use zygo_core::paths::Paths;
@@ -21,7 +22,7 @@ use zygo_core::Agent;
 use zygo_proxy::provider::KeyResolver;
 use zygo_proxy::redact_stage::RedactLimits;
 use zygo_proxy::server::StartOpts;
-use zygo_proxy::session::{ManualClock, SessionRequest};
+use zygo_proxy::session::{ManualClock, SessionRequest, TeamAuth};
 use zygo_proxy::{Proxy, ProxyHandle};
 use zygo_redact::DeadlinePolicy;
 use zygo_usage::{RequestRow, Store};
@@ -147,6 +148,17 @@ pub struct Harness {
     key: String,
     /// `post` calls: each reaches a model route and writes one usage row.
     posts: AtomicU64,
+    clock: Arc<ManualClock>,
+    /// The one team token the proxy's test team-auth accepts (built at run time).
+    team_token: String,
+}
+
+struct OneTeam(String);
+
+impl TeamAuth for OneTeam {
+    fn label_for(&self, token: &str) -> Option<String> {
+        (token == self.0).then(|| "rs-team".to_string())
+    }
 }
 
 fn paths(d: &TempDir) -> Paths {
@@ -175,6 +187,11 @@ impl Harness {
     /// A proxy on a `ManualClock` with one session of `agent` and one mock upstream of dialect `upstream`; the config
     /// is the role `code` → `MODEL` served by `PROVIDER` with the key `keychain:k-rs`, then `extra_toml`.
     pub fn start(upstream: Dialect, agent: Agent, extra_toml: &str) -> Harness {
+        Harness::start_with_profile(upstream, agent, extra_toml, None)
+    }
+
+    /// As `start`, with the session's `profile`.
+    pub fn start_with_profile(upstream: Dialect, agent: Agent, extra_toml: &str, profile: Option<Profile>) -> Harness {
         let d = TempDir::new().unwrap();
         let body = if upstream == Dialect::Anthropic {
             br#"{"type":"error","error":{"type":"invalid_request_error","message":"rs3 mock"}}"#.to_vec()
@@ -196,8 +213,11 @@ impl Harness {
         // Built at run time (no credential-shaped literal).
         let key = format!("test-key-k-rs-{}", ulid());
         let keys = Keys([("k-rs".to_string(), Secret::new(key.clone()))].into_iter().collect());
+        let clock = ManualClock::new();
+        let team_token = format!("team-{}", ulid());
         let o = StartOpts {
-            clock: ManualClock::new(),
+            clock: clock.clone(),
+            team: Some(Arc::new(OneTeam(team_token.clone()))),
             keys: Arc::new(keys),
             usage_db: Some(d.path().join("data/usage.db")),
             // A pass that must finish never hits its deadline.
@@ -213,7 +233,7 @@ impl Harness {
             .create_session(SessionRequest {
                 agent,
                 agent_version: "2.1.328".into(),
-                profile: None,
+                profile,
                 passthrough: false,
                 repo: None,
                 work: None,
@@ -221,7 +241,24 @@ impl Harness {
                 known_plugins: Default::default(),
             })
             .unwrap();
-        Harness { d, up, h, token: g.token, session: g.session, key, posts: AtomicU64::new(0) }
+        assert_eq!(g.profile_warning, None, "the profile is valid");
+        Harness { d, up, h, token: g.token, session: g.session, key, posts: AtomicU64::new(0), clock, team_token }
+    }
+
+    /// Advances the proxy's `ManualClock`.
+    pub fn advance(&self, d: Duration) {
+        self.clock.advance(d);
+    }
+
+    /// A second session, a team session created over HTTP with the team token (only a team session suspends, §7.2):
+    /// (session id, session token).
+    pub fn team_session(&self) -> (String, String) {
+        let bearer = format!("Bearer {}", self.team_token);
+        let body = serde_json::json!({"agent":"claude-code","agent_version":"2.1.328","profile":null,"passthrough":false,"repo":null,"work":null});
+        let (s, _, b) = self.send("POST", "v1/zygo/sessions", &[("authorization", &bearer)], Some(&body));
+        assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+        let v: Value = serde_json::from_slice(&b).unwrap();
+        (v["session"].as_str().unwrap().to_string(), v["token"].as_str().unwrap().to_string())
     }
 
     /// The value of the provider's key (`keychain:k-rs`).
@@ -273,6 +310,11 @@ impl Harness {
     pub fn get(&self, path: &str) -> (StatusCode, HeaderMap, Bytes) {
         let bearer = format!("Bearer {}", self.token);
         self.send("GET", path, &[("authorization", &bearer), ("x-zygo-session", &self.session)], None)
+    }
+
+    /// GET with exactly `headers`; counts nothing.
+    pub fn get_as(&self, path: &str, headers: &[(&str, &str)]) -> (StatusCode, HeaderMap, Bytes) {
+        self.send("GET", path, headers, None)
     }
 
     /// Each upstream request body as JSON; panics on a non-JSON body.
