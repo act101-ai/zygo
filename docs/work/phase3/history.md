@@ -90,6 +90,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | RT-3 | Run-time HUD segment in compact and verbose, with its place in the width-removal order | RT-2, ML-15 | DONE | implementation | fab29ce1, 72c3d03a, da38c41a · zygo-hooks 247/0 ; floor green · PR #118 |
 | ML-11 | MCP tools `mail_send`, `mail_read`, `mail_list` | ML-6, ML-7 | DONE | implementation | ec5fda7c, 590b9c00 · acc 17/17, 42/42 · PR #146 |
 | OS-29 | Kind views for diff, json and log (pipeline step 4) | OS-15, OS-18 | DONE | judgment | node commits 2438240c, 89da3536; acceptance: shape_kind_view 24/24, shape_pipeline 17/17; floor ws 3424/0 |
+| MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | DONE | judgment | e7987782, f30700e9, bec4c680 · outbox 29/0 ; floor green · PR #111 |
 
 ## Log
 
