@@ -45,8 +45,8 @@
     "skills.config": {
       "group": "pc3-main",
       "cli_only": false,
-      "project_only": true,
-      "both": "project",
+      "project_only": false,
+      "both": "none",
       "verdict": "not-shown (value not seen)"
     },
     "mcp_servers.zygo": {
@@ -59,7 +59,7 @@
     "model_providers.mock.supports_websockets": {
       "group": "pc3-main",
       "cli_only": true,
-      "project_only": true,
+      "project_only": false,
       "both": "cli",
       "verdict": "cli"
     },
@@ -85,7 +85,7 @@
     "model_auto_compact_token_limit": {
       "group": "pc3-compact",
       "cli_only": true,
-      "project_only": true,
+      "project_only": false,
       "both": "cli",
       "verdict": "cli"
     },
@@ -99,7 +99,7 @@
     "model_context_window": {
       "group": "pc3-window",
       "cli_only": true,
-      "project_only": true,
+      "project_only": false,
       "both": "cli",
       "verdict": "cli"
     },

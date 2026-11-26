@@ -1,0 +1,20 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "turn_id": "00000000-0000-4000-8000-000000000002",
+  "transcript_path": "/tmp/run/cxh-pc5-mcp/sessions/2026/11/26/rollout-2026-11-26T07-27-30-00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "hook_event_name": "PostToolUse",
+  "model": "gpt-mock",
+  "permission_mode": "bypassPermissions",
+  "tool_name": "mcp__probe__probe_tool",
+  "tool_input": {},
+  "tool_response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "tracer-mcp-probe-result"
+      }
+    ]
+  },
+  "tool_use_id": "call_pc5_mcp"
+}

@@ -15,9 +15,10 @@ mcp_servers.zygo.command = "python3": accepted
 mcp_servers.zygo.args = ["-I", "/zygo/scripts/premises/mcp_probe.py"]: accepted
 model_providers.zygo.name = "zygo": accepted
 model_providers.zygo.wire_api = "responses": accepted
-model_providers.zygo.base_url = "http://127.0.0.1:65035/v1": accepted
+model_providers.zygo.base_url = "http://127.0.0.1:64901/v1": accepted
 model_providers.zygo.auth = { command = "printf", args = [omitted] }: accepted
 model_providers.zygo.http_headers = { X-Zygo-Session = "zp-session", X-Zygo-Agent-Version = "0.0.0", X-Zygo-Repo = "zp-repo", X-Zygo-Work = "zp-work" }: accepted
 model_providers.zygo.supports_websockets = false: accepted
 model_providers.zygo.capabilities.remote_compaction = false: refused: config.toml:29:38: invalid type: unit variant, expected string only
+hooks.state = [omitted]: accepted
 capabilities.remote_compaction = "unsupported": accepted

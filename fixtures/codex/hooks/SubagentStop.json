@@ -1,0 +1,14 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "turn_id": "00000000-0000-4000-8000-000000000002",
+  "transcript_path": "/tmp/run/cxh-pc5-sub/sessions/2026/11/26/rollout-2026-11-26T07-27-33-00000000-0000-4000-8000-000000000001.jsonl",
+  "agent_transcript_path": "/tmp/run/cxh-pc5-sub/sessions/2026/11/26/rollout-2026-11-26T07-27-33-00000000-0000-4000-8000-000000000003.jsonl",
+  "cwd": "/repo",
+  "hook_event_name": "SubagentStop",
+  "model": "gpt-mock",
+  "permission_mode": "bypassPermissions",
+  "stop_hook_active": false,
+  "agent_id": "00000000-0000-4000-8000-000000000003",
+  "agent_type": "default",
+  "last_assistant_message": "ok"
+}

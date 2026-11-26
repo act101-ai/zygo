@@ -5,7 +5,8 @@
       "exit": "0",
       "request": true,
       "sources_run": [],
-      "hooks_state_keys": []
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-none.txt"
     },
     "pc4-bypass": {
       "ran": true,
@@ -17,7 +18,8 @@
         "project-inline",
         "project-json"
       ],
-      "hooks_state_keys": []
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-bypass.txt"
     },
     "pc4-untrusted": {
       "ran": true,
@@ -27,21 +29,32 @@
         "home-inline",
         "home-json"
       ],
-      "hooks_state_keys": []
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-untrusted.txt"
     },
     "pc4-trust": {
       "ran": true,
       "exit": "0",
       "request": true,
       "sources_run": [],
-      "hooks_state_keys": []
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-trust.txt"
+    },
+    "pc4-trust-new": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [],
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-trust-new.txt"
     },
     "pc4-log": {
       "ran": true,
       "exit": "0",
       "request": true,
       "sources_run": [],
-      "hooks_state_keys": []
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-log.txt"
     },
     "pc4-feature-default": {
       "ran": true,
@@ -53,7 +66,8 @@
         "project-inline",
         "project-json"
       ],
-      "hooks_state_keys": []
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-feature-default.txt"
     },
     "pc4-feature-legacy": {
       "ran": true,
@@ -65,14 +79,70 @@
         "project-inline",
         "project-json"
       ],
-      "hooks_state_keys": []
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-feature-legacy.txt"
+    },
+    "pc4-tui": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [
+        "home-inline",
+        "home-json",
+        "project-inline",
+        "project-json"
+      ],
+      "hooks_state_keys": [
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:0:0",
+        "/tmp/run/cxh-pc4-tui/config.toml:session_start:0:0",
+        "/repo/.codex/hooks.json:session_start:0:0",
+        "/repo/.codex/config.toml:session_start:0:0"
+      ],
+      "evidence": "evidence-pc4-tui.txt"
+    },
+    "pc4-tui-after": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [
+        "home-inline",
+        "home-json",
+        "project-inline",
+        "project-json"
+      ],
+      "hooks_state_keys": [
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:0:0",
+        "/tmp/run/cxh-pc4-tui/config.toml:session_start:0:0",
+        "/repo/.codex/hooks.json:session_start:0:0",
+        "/repo/.codex/config.toml:session_start:0:0"
+      ],
+      "evidence": "evidence-pc4-tui-after.txt"
     },
     "pc4-prewritten": {
-      "ran": false,
-      "why": "not-run: no record form"
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [
+        "home-inline",
+        "home-json",
+        "project-inline",
+        "project-json"
+      ],
+      "hooks_state_keys": [
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:0:0",
+        "/tmp/run/cxh-pc4-tui/config.toml:session_start:0:0",
+        "/repo/.codex/hooks.json:session_start:0:0",
+        "/repo/.codex/config.toml:session_start:0:0"
+      ],
+      "evidence": "evidence-pc4-prewritten.txt",
+      "form_from": "pc4-tui"
     }
   },
-  "where_kept": "none written",
+  "where_kept": [
+    "pc4-tui: CODEX_HOME/config.toml [hooks.state.\"<key>\"]",
+    "pc4-tui-after: CODEX_HOME/config.toml [hooks.state.\"<key>\"]",
+    "pc4-prewritten: CODEX_HOME/config.toml [hooks.state.\"<key>\"]"
+  ],
   "bypass_effect": [
     "home-inline",
     "home-json",
@@ -103,7 +173,32 @@
     ],
     "note": "each run: --dangerously-bypass-hook-trust; every other scenario sets [features] hooks = true"
   },
-  "prewritten_honored": "not-run",
-  "result": "failed",
-  "why": "no record form found (K-D13 takes branch 2 or 3)"
+  "trust_flag_on_untrusted_project": [],
+  "tui": {
+    "keys_sent": [
+      "prompt 1: key 2, then Enter"
+    ],
+    "sources_run_in_tui": [
+      "home-inline",
+      "home-json",
+      "project-inline",
+      "project-json"
+    ],
+    "sources_run_in_exec_after": [
+      "home-inline",
+      "home-json",
+      "project-inline",
+      "project-json"
+    ],
+    "captures": [
+      "tui-after-key-1.txt",
+      "tui-hooks-command.txt",
+      "tui-prompt-1.txt",
+      "tui-start.txt",
+      "tui-turn.txt"
+    ]
+  },
+  "prewritten_honored": true,
+  "result": "verified",
+  "why": "hook trust records written before launch are honored"
 }

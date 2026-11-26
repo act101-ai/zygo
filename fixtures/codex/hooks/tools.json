@@ -36,6 +36,7 @@
       "mcp__probe__probe_tool"
     ],
     "spawn": [
+      "Bash",
       "spawn_agent"
     ]
   },

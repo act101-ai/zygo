@@ -1,0 +1,50 @@
+
+  >_ OpenAI Codex (v0.172.0)
+     /repo
+
+
+› zp-pc4-tui
+
+
+• zp-tui-reply
+
+  Worked for <1s • 7:26 AM
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› Ask Codex to do anything
+
+  gpt-mock default · /repo · zp-pc4-tui
+  ← for agents · ? for shortcuts                                                                                                                                                                  ⚠ 4 warnings · f2 to view

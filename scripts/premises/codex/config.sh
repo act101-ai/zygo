@@ -242,7 +242,10 @@ def cmd_pc5toml():
                 c = "python3 -I %s/hook_log.py %s/hk/%s/%s-m-%s" % (prem, RUN, s, e, label)
                 L += ["[[hooks.%s]]" % e, "matcher = %s" % q(m), "[[hooks.%s.hooks]]" % e, 'type = "command"',
                       "command = %s" % q(c), ""]
-    L += ["[mcp_servers.probe]", 'command = "python3"', "args = %s" % q(["-I", prem + "/mcp_probe.py"]), ""]
+    # default_tools_approval_mode: under approval_policy "never" Codex refuses an MCP call that needs
+    # approval ("MCP tool call requires approval, but approval policy is never"; real run 2026-11-26).
+    L += ["[mcp_servers.probe]", 'command = "python3"', "args = %s" % q(["-I", prem + "/mcp_probe.py"]),
+          'default_tools_approval_mode = "approve"', ""]
     with open(out, "w") as f:
         f.write("\n".join(L))
 
@@ -1290,8 +1293,10 @@ tui_hooks() {
     _key=$(cxpy tui-choice "$RUN/pane.txt")
     [ -n "$_key" ] || break
     keep "prompt-$_k"
-    echo "prompt $_k: key $_key" >>"$RUN/out/$TS.keys"
+    # A digit only moves the selection ("enter confirm" on the prompt): Enter confirms it.
+    case "$_key" in Enter) echo "prompt $_k: key Enter" ;; *) echo "prompt $_k: key $_key, then Enter" ;; esac >>"$RUN/out/$TS.keys"
     key "$_key"
+    [ "$_key" = Enter ] || key Enter
     pane_wait 'gpt-mock' 6 || true
     keep "after-key-$_k"
     _k=$((_k + 1))

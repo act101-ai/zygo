@@ -5,89 +5,132 @@
       "pc5-shell",
       "pc5-mcp",
       "pc5-sub",
+      "pc5-match",
       "pc5-ctx-start",
       "pc5-ctx-prompt",
       "pc5-deny",
       "pc5-deny-block",
       "pc5-stop-block",
-      "pc5-post-replace",
-      "pc5-post-block"
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
     ],
     "UserPromptSubmit": [
       "pc5-probe",
       "pc5-shell",
       "pc5-mcp",
       "pc5-sub",
+      "pc5-match",
       "pc5-ctx-start",
       "pc5-ctx-prompt",
       "pc5-deny",
       "pc5-deny-block",
       "pc5-stop-block",
-      "pc5-post-replace",
-      "pc5-post-block"
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
     ],
     "PreToolUse": [
       "pc5-shell",
       "pc5-mcp",
       "pc5-sub",
+      "pc5-match",
       "pc5-deny",
       "pc5-deny-block",
-      "pc5-post-replace",
-      "pc5-post-block"
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
     ],
-    "PermissionRequest": [
-      "pc5-mcp"
-    ],
+    "PermissionRequest": "not seen",
     "PostToolUse": [
       "pc5-shell",
+      "pc5-mcp",
       "pc5-sub",
-      "pc5-post-replace",
-      "pc5-post-block"
+      "pc5-match",
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
     ],
     "PreModelRequest": [
       "pc5-probe",
       "pc5-shell",
       "pc5-mcp",
       "pc5-sub",
+      "pc5-match",
       "pc5-ctx-start",
       "pc5-ctx-prompt",
       "pc5-deny",
       "pc5-deny-block",
       "pc5-stop-block",
-      "pc5-post-replace",
-      "pc5-post-block"
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
     ],
     "PostModelRequest": [
       "pc5-probe",
       "pc5-shell",
       "pc5-mcp",
       "pc5-sub",
+      "pc5-match",
       "pc5-ctx-start",
       "pc5-ctx-prompt",
       "pc5-deny",
       "pc5-deny-block",
       "pc5-stop-block",
-      "pc5-post-replace",
-      "pc5-post-block"
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
     ],
     "PreCompact": "not seen",
     "PostCompact": "not seen",
     "SubagentStart": [
       "pc5-sub"
     ],
-    "SubagentStop": "not seen",
+    "SubagentStop": [
+      "pc5-sub"
+    ],
     "Stop": [
       "pc5-probe",
       "pc5-shell",
       "pc5-mcp",
       "pc5-sub",
+      "pc5-match",
       "pc5-ctx-start",
       "pc5-ctx-prompt",
       "pc5-deny",
       "pc5-deny-block",
       "pc5-stop-block",
-      "pc5-post-replace",
-      "pc5-post-block"
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
     ],
     "Interrupt": "not triggered (exec has no interrupt)",
     "SessionEnd": [
@@ -95,13 +138,19 @@
       "pc5-shell",
       "pc5-mcp",
       "pc5-sub",
+      "pc5-match",
       "pc5-ctx-start",
       "pc5-ctx-prompt",
       "pc5-deny",
       "pc5-deny-block",
       "pc5-stop-block",
-      "pc5-post-replace",
-      "pc5-post-block"
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
     ]
   },
   "shapes": {
@@ -172,20 +221,6 @@
       "accepted": true,
       "evidence": "zp-block in request(s) [2]"
     },
-    "pc5-post-replace": {
-      "kind": "replacement",
-      "event": "PostToolUse",
-      "output": {
-        "hookSpecificOutput": {
-          "hookEventName": "PostToolUse",
-          "updatedToolOutput": "zp-replaced"
-        }
-      },
-      "hook_output_sent": true,
-      "requests": 2,
-      "accepted": false,
-      "evidence": "request 2 tool output holds zp-replaced: False, zp-orig: True"
-    },
     "pc5-post-block": {
       "kind": "block",
       "event": "PostToolUse",
@@ -197,8 +232,179 @@
       "requests": 2,
       "accepted": true,
       "evidence": "zp-post in request 2: True"
+    },
+    "pc5-rep-shell-str": {
+      "kind": "replacement",
+      "event": "PostToolUse",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "PostToolUse",
+          "updatedToolOutput": "zp-replaced"
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": false,
+      "codex_status": [
+        "Failed"
+      ],
+      "evidence": "request 2 tool output holds zp-replaced: False, zp-orig: True; hook status ['Failed']"
+    },
+    "pc5-rep-shell-obj": {
+      "kind": "replacement",
+      "event": "PostToolUse",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "PostToolUse",
+          "updatedToolOutput": {
+            "content": [
+              {
+                "type": "text",
+                "text": "zp-replaced"
+              }
+            ]
+          }
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": false,
+      "codex_status": [
+        "Failed"
+      ],
+      "evidence": "request 2 tool output holds zp-replaced: False, zp-orig: True; hook status ['Failed']"
+    },
+    "pc5-rep-shell-mcp": {
+      "kind": "replacement",
+      "event": "PostToolUse",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "PostToolUse",
+          "updatedMCPToolOutput": {
+            "content": [
+              {
+                "type": "text",
+                "text": "zp-replaced"
+              }
+            ]
+          }
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": false,
+      "codex_status": [
+        "Failed"
+      ],
+      "evidence": "request 2 tool output holds zp-replaced: False, zp-orig: True; hook status ['Failed']"
+    },
+    "pc5-rep-mcp-str": {
+      "kind": "replacement",
+      "event": "PostToolUse",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "PostToolUse",
+          "updatedToolOutput": "zp-replaced"
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": false,
+      "codex_status": [
+        "Failed"
+      ],
+      "evidence": "request 2 tool output holds zp-replaced: False, tracer-mcp-probe-result: True; hook status ['Failed']"
+    },
+    "pc5-rep-mcp-obj": {
+      "kind": "replacement",
+      "event": "PostToolUse",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "PostToolUse",
+          "updatedToolOutput": {
+            "content": [
+              {
+                "type": "text",
+                "text": "zp-replaced"
+              }
+            ]
+          }
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": false,
+      "codex_status": [
+        "Failed"
+      ],
+      "evidence": "request 2 tool output holds zp-replaced: False, tracer-mcp-probe-result: True; hook status ['Failed']"
+    },
+    "pc5-rep-mcp-mcp": {
+      "kind": "replacement",
+      "event": "PostToolUse",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "PostToolUse",
+          "updatedMCPToolOutput": {
+            "content": [
+              {
+                "type": "text",
+                "text": "zp-replaced"
+              }
+            ]
+          }
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": false,
+      "codex_status": [
+        "Failed"
+      ],
+      "evidence": "request 2 tool output holds zp-replaced: False, tracer-mcp-probe-result: True; hook status ['Failed']"
     }
   },
+  "replacement": {
+    "shell": {
+      "str": false,
+      "obj": false,
+      "mcp": false
+    },
+    "mcp": {
+      "str": false,
+      "obj": false,
+      "mcp": false
+    }
+  },
+  "matchers": {
+    "PreToolUse": {
+      "exact (Bash)": true,
+      "model (exec_command)": false,
+      "alt (Bash|Write)": true,
+      "regex (^Ba.*)": true,
+      "none (NoSuchTool)": false,
+      "star (*)": true,
+      "no matcher": true
+    },
+    "PostToolUse": {
+      "exact (Bash)": true,
+      "model (exec_command)": false,
+      "alt (Bash|Write)": true,
+      "regex (^Ba.*)": true,
+      "none (NoSuchTool)": false,
+      "star (*)": true,
+      "no matcher": true
+    }
+  },
+  "subagent": {
+    "attempts": [
+      "pc5-sub"
+    ],
+    "parent_kept_alive": "a exec_command call of sleep 15 after the spawn (rule pc5-sub-wait)",
+    "parent_requests": 4,
+    "SubagentStart": true,
+    "SubagentStop": true
+  },
   "result": "failed",
-  "why": "missing: SubagentStop, replacement shape"
+  "why": "missing: replacement shape"
 }
