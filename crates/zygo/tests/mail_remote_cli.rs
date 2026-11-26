@@ -463,3 +463,21 @@ fn watch_with_runs_the_sync_step_before_each_look() {
     assert_eq!(watch_with(&dir, ELENA, Duration::from_secs(3), Duration::ZERO, &now, &mut o, &mut || steps += 1), 0);
     assert_eq!(steps, 1);
 }
+
+#[test] // D1: S§7.5 (rewritten)
+fn doctor_prints_the_twin_line_only_while_last_error_is_twin() {
+    let x = setup();
+    let twins = |ws: &str| {
+        let o = x.h.zygo(&["doctor"], &[("ZYGO_WORKSPACE", OsStr::new(ws))]).output().unwrap();
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        out(&o).lines().filter(|l| *l == TWIN).count()
+    };
+    assert_eq!(twins(WS_ID), 0); // no state.json
+    save(&x.sp, &State { last_error: Some("twin".into()), ..Default::default() }).unwrap();
+    assert_eq!(twins(WS_ID), 1);
+    assert_eq!(twins("nothex"), 0); // no workspace: no line, exit 0
+    save(&x.sp, &State { last_error: Some("collision".into()), ..Default::default() }).unwrap();
+    assert_eq!(twins(WS_ID), 0);
+    save(&x.sp, &State { last_ok: Some(T0), ..Default::default() }).unwrap();
+    assert_eq!(twins(WS_ID), 0);
+}

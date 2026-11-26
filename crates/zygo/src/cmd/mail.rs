@@ -579,7 +579,12 @@ fn print_error(e: &SyncError, ws_name: &str, err: &mut dyn Write) {
 
 /// The workspace of `ZYGO_WORKSPACE`, else of the checkout of `cwd`, with the error texts of `zygo workspace`
 /// (`admin::status`). A state folder that is a link reads as none.
-fn workspace_of(paths: &Paths, cwd: &Path, zygo_workspace: Option<&OsStr>, git_bound: Duration) -> anyhow::Result<Workspace> {
+pub(crate) fn workspace_of(
+    paths: &Paths,
+    cwd: &Path,
+    zygo_workspace: Option<&OsStr>,
+    git_bound: Duration,
+) -> anyhow::Result<Workspace> {
     let (id, by_env) = match zygo_workspace {
         Some(v) => {
             let id = v
