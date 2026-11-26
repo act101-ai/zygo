@@ -338,10 +338,6 @@ async fn run(
     // The Responses field lists before any stage (K§11 item 12).
     if route == ModelRoute::Responses {
         responses_client::check_fields(&body)?;
-        // Before candidate selection: one answer whichever candidate serves (K§6.4.3 Responses → Responses).
-        if body.get("include").is_some_and(|i| !i.is_null() && !i.is_array()) {
-            return Err(ZygoError::bad_request("include must be an array"));
-        }
     }
     // The client's tools as received, for the call items of the answer (K§6.4.3 stream obligation 2).
     let calls = (route == ModelRoute::Responses).then(|| responses_client::Calls::of(&body));
@@ -393,6 +389,14 @@ async fn run(
         p.row.role_requested = requested;
     }
     r?;
+    // With an `openai` candidate, before any candidate is tried: one answer whichever candidate serves (K§6.4.3
+    // Responses → Responses). With none, `include` is safe to ignore.
+    if route == ModelRoute::Responses
+        && ctx.candidates.iter().any(|c| c.dialect == Dialect::Openai)
+        && ctx.body.get("include").is_some_and(|i| !i.is_null() && !i.is_array())
+    {
+        return Err(ZygoError::bad_request("include must be an array"));
+    }
     app.sessions.accept(s)?;
     pending(slot).in_flight = Some(InFlight::begin(s, &app.clock));
     let resolved = ctx.resolved.clone().expect("stage 2 resolved the request");
@@ -947,15 +951,15 @@ fn responses_same(
     c: &Candidate,
 ) -> Result<(Bytes, Vec<Adjustment>, NullMap), ZygoError> {
     let store_ok = body.get("store") == Some(&Value::Bool(false));
-    let include = match body.get("include") {
-        None | Some(Value::Null) => Some(json!([ENCRYPTED_REASONING])),
-        Some(Value::Array(a)) if a.iter().any(|v| v.as_str() == Some(ENCRYPTED_REASONING)) => None,
-        Some(Value::Array(a)) => {
+    // `run` refused any other JSON type before the first candidate.
+    let include = match body.get("include").and_then(Value::as_array) {
+        None => Some(json!([ENCRYPTED_REASONING])),
+        Some(a) if a.iter().any(|v| v.as_str() == Some(ENCRYPTED_REASONING)) => None,
+        Some(a) => {
             let mut a = a.clone();
             a.push(json!(ENCRYPTED_REASONING));
             Some(Value::Array(a))
         }
-        Some(_) => return Err(ZygoError::bad_request("include must be an array")),
     };
     if store_ok && include.is_none() {
         let (b, adj) = model_body(body, raw, changed, c)?;

@@ -1,6 +1,6 @@
 //! RS-5: a Responses client toward an `openai` upstream (K§6.4.3 Responses → Responses): the body passes except
 //! `model`, `store` and `include`, the stream passes byte for byte, and the usage row has the counts of
-//! `response.completed`, `response.incomplete` or the JSON body's `usage` (K§6.4.2 C3, K§11 items 17 and 19). Mock
+//! `response.completed`, `response.incomplete` or `response.failed`, or the JSON body's `usage` (K§6.4.2 C3, K§11 items 17 and 19). Mock
 //! upstream on 127.0.0.1; no agent binary, no network.
 
 #[path = "support/responses.rs"]
@@ -336,6 +336,40 @@ fn fallback_after_5xx_or_429_translates_the_client_body() {
         let rows = h.usage_rows();
         assert_eq!((rows[0].status, rows[0].provider.as_str()), (200, SECOND), "{status}");
     }
+}
+
+/// A second provider of `MODEL` on the same mock, speaking `openai`, whose `upstream_model` is the catalog id: toward
+/// it an unchanged body would go as the received bytes.
+const SECOND_OAI: &str = "p-rs-o";
+
+fn second_openai_provider() -> String {
+    format!(
+        "[[model.provider]]\nname = \"{SECOND_OAI}\"\nbase_url = \"{{UPSTREAM}}\"\ndialects = [\"openai\"]\n\
+         upstream_model = \"{MODEL}\"\nkey = \"keychain:k-rs\"\n"
+    )
+}
+
+/// RS-5 round 2 review G2, §7.3, K§6.4.3: after an `openai` candidate answers 5xx, a second `openai` candidate gets
+/// its body from the client's body (forced `store`, `reasoning.encrypted_content` appended once), not from the first
+/// attempt's edited copy.
+#[test]
+fn fallback_to_second_openai_builds_from_the_client_body() {
+    let h = Harness::start(Dialect::Openai, Agent::ClaudeCode, &second_openai_provider());
+    let mut req = with_include(json!(["file_search_call.results"]));
+    req["store"] = json!(true);
+    req["stream"] = json!(false);
+    let err = br#"{"error":{"type":"server_error","message":"busy"}}"#.to_vec();
+    h.reply_seq(vec![(500, JSON, err)]);
+    h.reply_with(200, JSON, serde_json::to_vec(&resp_json()).unwrap());
+    let (s, _, b) = h.post(R, &req);
+    assert_eq!(s.as_u16(), 200, "{}", String::from_utf8_lossy(&b));
+    assert_eq!(h.upstream_paths(), ["/v1/responses", "/v1/responses"]);
+    let ups = h.upstream_bodies();
+    let want = json!(["file_search_call.results", "reasoning.encrypted_content"]);
+    assert_eq!((&ups[0]["model"], &ups[0]["store"], &ups[0]["include"]), (&json!(UPSTREAM_MODEL), &json!(false), &want));
+    assert_eq!((&ups[1]["model"], &ups[1]["store"], &ups[1]["include"]), (&json!(MODEL), &json!(false), &want));
+    let rows = h.usage_rows();
+    assert_eq!((rows[0].status, rows[0].provider.as_str()), (200, SECOND_OAI));
 }
 
 /// RS-5 review F2 (b), K§6.4.4: a streamed non-2xx on the same-dialect path passes with its status and body.

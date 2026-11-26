@@ -327,3 +327,26 @@ fn anthropic_route_errors_keep_anthropic_shape() {
     let v: Value = serde_json::from_slice(&b).unwrap();
     assert_eq!((s.as_u16(), v["type"].clone(), v["error"]["type"].clone()), (400, json!("error"), json!("zygo_unknown_model")));
 }
+
+/// RS-5 round 2 review G1, K§6.4.3: with no `openai` candidate, `include` is in the safe-to-ignore list; an `include`
+/// of another JSON type does not refuse the request. Toward `anthropic` and toward `openai-chat`.
+#[test]
+fn include_not_array_ignored_without_openai_candidate() {
+    let message = json!({"id":"msg_up","type":"message","role":"assistant","model":UPSTREAM_MODEL,"content":[{"type":"text","text":"hi"}],
+        "stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":7,"output_tokens":3}});
+    let chat = json!({"id":"chatcmpl-1","object":"chat.completion","model":UPSTREAM_MODEL,
+        "choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],
+        "usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}});
+    for (d, reply, path) in [(A, message, "/v1/messages"), (C, chat, "/v1/chat/completions")] {
+        let h = start(d);
+        h.reply_with(200, "application/json", serde_json::to_vec(&reply).unwrap());
+        let mut body = codex_request("first-turn");
+        body["include"] = json!("x");
+        body["stream"] = json!(false);
+        let (s, _, b) = h.post(R, &body);
+        assert_eq!(s.as_u16(), 200, "{d:?}: {}", String::from_utf8_lossy(&b));
+        assert_eq!(serde_json::from_slice::<Value>(&b).unwrap()["object"], "response", "{d:?}");
+        assert_eq!(h.upstream_paths(), [path], "{d:?}");
+        assert!(h.upstream_bodies()[0].get("include").is_none(), "{d:?}");
+    }
+}
