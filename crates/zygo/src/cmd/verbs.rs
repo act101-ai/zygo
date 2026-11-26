@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::anyhow;
-use zygo_config::keys::default_store;
+use zygo_config::keys::{default_store, SecretStore};
 use zygo_config::{load, Level, LoadContext, Merged};
 use zygo_core::overrides::Overrides;
 use zygo_core::paths::Paths;
@@ -115,9 +115,14 @@ pub(crate) fn team(ctx: &VerbCtx, verb: &str) -> anyhow::Result<Option<toml::Tab
     if let Some(sd) = &ctx.session_dir {
         return read_team(&sd.root).map_err(|e| anyhow!("zygo {verb}: cannot read team.toml: {}", esc(&e.to_string())));
     }
+    team_with(ctx, verb, &default_store(&ctx.paths))
+}
+
+/// The server branch of [`team`] with the secret store `store`; tests pass a file-only store.
+pub(crate) fn team_with(ctx: &VerbCtx, verb: &str, store: &dyn SecretStore) -> anyhow::Result<Option<toml::Table>> {
     let m = base(ctx, verb, None, None)?;
     let env = |n: &str| std::env::var_os(n);
-    let Some(c) = from_config(None, &m.config, &default_store(&ctx.paths), &env).map_err(|r| anyhow!("zygo {verb}: {r}"))? else {
+    let Some(c) = from_config(None, &m.config, store, &env).map_err(|r| anyhow!("zygo {verb}: {r}"))? else {
         return Ok(None);
     };
     match c.team_table() {
