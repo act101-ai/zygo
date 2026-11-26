@@ -168,6 +168,13 @@ pub fn check(meta: &TipMeta, host: &str, identity: &str, st: &State, paths: &Pat
     if let Some(other) = at_host.into_iter().flatten().find(|i| i.as_str() != identity) {
         return Err(Stop::Collision { moved_from: moved(paths, self_ws, other) });
     }
+    twin(meta, identity, st)
+}
+
+/// S§7.5 Twin, the part of [`check`] after the collision: a valid file of `identity`, at any host, whose blob is
+/// neither the pushed nor the pending one in `st`, is [`Stop::Twin`]. The S§7.6 operator commands run it before any
+/// write.
+pub fn twin(meta: &TipMeta, identity: &str, st: &State) -> Result<(), Stop> {
     let regs = meta.registries.iter()
         .filter(|(_, r)| matches!(&r.value, Ok(v) if v.identity == identity))
         .map(|(k, r)| (format!("registry/{k}.json"), &r.blob));

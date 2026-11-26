@@ -570,18 +570,24 @@ fn drop_host_removes_folders_past_one_command_line() {
     assert!(file(&r, "registry/b.json").is_none() && file(&r, "ack/b.json").is_none());
 }
 
-#[test] // S§7.5 Twin, S§19 #11 (review round 2 F2): a drop does not record the twin's blobs as its own
+#[test] // S§7.6, S§7.5 Twin, S§8.3 step 7, S§19 #11 (review round 3 R2-1): a drop in a twin state stops and writes nothing
 fn drop_host_does_not_mask_a_twin() {
-    let (_r, a, _b, _c) = twin();
-    assert_eq!(drop_host(&env(&a), WS_ID, "b", &mut |_| true), Ok(Some(0)));
+    let (r, a, _b, _c) = twin();
+    let before = r.tip(BRANCH).unwrap();
+    assert_eq!(stopped(drop_host(&env(&a), WS_ID, "b", &mut |_| true).unwrap_err()), (TWIN.to_string(), "twin"));
+    assert_eq!(r.tip(BRANCH).unwrap(), before);
     assert_eq!(stopped(run(&env(&a), WS_ID, Mode::Cli).unwrap_err()), (TWIN.to_string(), "twin"));
 }
 
-#[test] // S§7.5 Twin, S§19 #11 (review round 2 F2): a take-host that writes does not record the twin's blobs as its own
+#[test] // S§7.6, S§7.5 Twin, S§8.3 step 7, S§19 #11 (review round 3 R2-1): a take-host in a twin state stops and writes nothing
 fn take_host_does_not_mask_a_twin() {
-    let (r, a, _b, _c) = twin();
+    let (r, a, _b, c) = twin();
     a.config(Some("a3"), "");
     assert_eq!(stopped(take_host(&env(&a), WS_ID).unwrap_err()), (TWIN.to_string(), "twin"));
-    assert_eq!(json(&r, "registry/a3.json")["identity"], ident(&a)); // it wrote its own files
-    assert_eq!(stopped(run(&env(&a), WS_ID, Mode::Cli).unwrap_err()), (TWIN.to_string(), "twin"));
+    assert!(file(&r, "registry/a3.json").is_none());
+    assert!(file(&r, "ack/a3.json").is_none());
+    assert!(run(&env(&c), WS_ID, Mode::Cli).is_ok());
+    a.config(Some("a4"), "");
+    assert_eq!(new_identity(&env(&a), WS_ID).unwrap().passes, 1);
+    assert_eq!(json(&r, "registry/a4.json")["identity"], ident(&a));
 }

@@ -10,7 +10,7 @@ use zygo_work::repo::{Flow, RunError};
 use crate::address;
 use crate::branch::{self, BranchError, Change, Fetched, Pushed};
 use crate::env::Env;
-use crate::identity::{read_meta, TipMeta};
+use crate::identity::{self, read_meta, TipMeta};
 use crate::registry::{Ack, Registry, MEMBERS_MAX};
 use crate::state;
 use crate::sync::{self, own_blobs, own_names, promote, stop, Ctx, Fail, Mode, Opts, Report, SyncError, MARKER_LINE,
@@ -32,7 +32,9 @@ fn fetch_tip(c: &Ctx, deadline: Instant) -> Result<Option<(String, TipMeta)>, Fa
     Ok(Some((tip, meta)))
 }
 
-/// S§8.3 steps 13-15 (D2): one commit on the fetched tip, pushed without force. `build` gives the tree-ish to
+/// S§8.3 steps 13-15 (D2): one commit on the fetched tip, pushed without force. Before `build`, the S§7.5 twin check
+/// ([`identity::twin`], S§8.3 step 7) stops a twin state with the twin line, so nothing is written (S§7.6); the
+/// collision part does not apply, as `--take-host` exists to clear it. `build` gives the tree-ish to
 /// start from (the tip, or a tree made from it) and the changes on it, or `None` for no write. Only the own blobs
 /// that the changes add are `pending` before the push and `pushed` after it: a blob that another workspace with this
 /// identity wrote is never recorded, so the next pass still stops with the twin line (S§7.5, S§19 #11). A pending blob
@@ -43,12 +45,13 @@ fn write(c: &Ctx, identity: &str, deadline: Instant,
     let wt = &c.sp.worktree;
     for _ in 0..MAX_ATTEMPTS {
         let Some((tip, meta)) = fetch_tip(c, deadline)? else { return Ok(()) };
+        let mut st = state::load(&c.sp).map_err(|_| stop("state"))?;
+        identity::twin(&meta, identity, &st).map_err(|s| Fail::Stop { line: s.line(), check: s.check_name() })?;
         let Some((base, changes)) = build(&tip, &meta)? else { return Ok(()) };
         let commit = branch::commit(wt, &base, Some(&tip), &changes, deadline)?;
         let added: BTreeSet<&str> = changes.iter()
             .filter_map(|ch| if let Change::Add { path, .. } = ch { Some(path.as_str()) } else { None })
             .collect();
-        let mut st = state::load(&c.sp).map_err(|_| stop("state"))?;
         promote(&mut st, &meta, identity);
         st.pending = own_blobs(&read_meta(wt, &commit, deadline, &mut |_| {})?, identity).into_iter()
             .filter(|(path, _)| added.contains(path.as_str()))
