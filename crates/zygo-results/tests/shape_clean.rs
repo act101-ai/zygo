@@ -235,43 +235,78 @@ fn esc_before_esc_is_removed_alone() {
 
 #[test]
 fn charset_designation_never_takes_a_line_end_or_an_esc() {
-    color("a\x1b(\nb", "a\nb");
-    assert_eq!(got("a\x1b(\r\nb", true), ("a\r\nb".into(), vec![ColorCodesRemoved]));
-    color("a\x1b(\x1b[31mb", "ab");
-    color("a\x1b(", "a");
+    // FX-21: with no final byte only `ESC` goes and `(` stays (O-C9)
+    color("a\x1b(\nb", "a(\nb");
+    assert_eq!(got("a\x1b(\r\nb", true), ("a(\r\nb".into(), vec![ColorCodesRemoved]));
+    color("a\x1b(\x1b[31mb", "a(b");
+    color("a\x1b(", "a(");
 }
 
 #[test]
 fn charset_designation_takes_only_a_final_byte() {
-    // FX-16 review 2 F1/F5: only a final byte 0x30-0x7E goes with `ESC (` or `ESC )`;
-    // anything else stays (O-C9: when a shaper is unsure, it keeps)
-    color("a\x1b(éb", "aéb");
-    color("a\x1b(😀b", "a😀b");
-    color("a\x1b)éb", "aéb");
+    // FX-16 review 2 F1/F5: only a final byte 0x30-0x7E ends the designation;
+    // anything else stays (O-C9: when a shaper is unsure, it keeps); FX-21: so does the `(` / `)`
+    color("a\x1b(éb", "a(éb");
+    color("a\x1b(😀b", "a(😀b");
+    color("a\x1b)éb", "a)éb");
     // U+009B then starts its own 8-bit CSI
-    color("a\x1b(\u{9b}31mb", "ab");
-    // ECMA-35 allows intermediate bytes 0x20-0x2F between `(`/`)` and the final byte; clean does not take
-    // them: only `ESC (` goes, and the intermediate and the final byte stay as text, which keeps more text
-    // (O-C9); node FX-21 tracks this
-    color("a\x1b( b", "a b");
+    color("a\x1b(\u{9b}31mb", "a(b");
+    // FX-21: ECMA-35 intermediate bytes 0x20-0x2F before the final byte are taken: `ESC ( SP b` goes whole
+    color("a\x1b( b", "a");
 }
 
 #[test]
 fn charset_designation_final_byte_range_ends() {
     // FX-16 review 3 F3: 0x7E is the last final byte, so `ESC ( ~` goes whole (3 bytes)
     color("a\x1b(~b", "ab");
-    // 0x7F is above the final-byte range: only `ESC (` goes
-    color("\x1b(\x7fx", "\u{7f}x");
-    // 0x2F is an intermediate byte, not a final byte: only `ESC (` goes (node FX-21)
-    color("\x1b(/", "/");
+    // 0x7F is above the final-byte range: only `ESC` goes (FX-21)
+    color("\x1b(\x7fx", "(\u{7f}x");
+    // 0x2F is an intermediate byte, not a final byte, and the text ends: only `ESC` goes (FX-21)
+    color("\x1b(/", "(/");
 }
 
 #[test]
 fn charset_designation_before_a_line_end_esc_or_text_end() {
-    // FX-16 review F3: before `\n`, `\r`, `ESC` or the text end only `ESC )` goes
-    color("a\x1b)\nb", "a\nb");
-    assert_eq!(got("a\x1b)\r\nb", true), ("a\r\nb".into(), vec![ColorCodesRemoved]));
-    assert_eq!(got("a\x1b)\r\nb", false), ("a\nb".into(), vec![ColorCodesRemoved, ProgressLinesRemoved]));
-    color("a\x1b)\x1b[31mb", "ab");
-    color("a\x1b)", "a");
+    // FX-16 review F3: before `\n`, `\r`, `ESC` or the text end no final byte follows; FX-21: only `ESC` goes
+    color("a\x1b)\nb", "a)\nb");
+    assert_eq!(got("a\x1b)\r\nb", true), ("a)\r\nb".into(), vec![ColorCodesRemoved]));
+    assert_eq!(got("a\x1b)\r\nb", false), ("a)\nb".into(), vec![ColorCodesRemoved, ProgressLinesRemoved]));
+    color("a\x1b)\x1b[31mb", "a)b");
+    color("a\x1b)", "a)");
+}
+
+#[test]
+fn nf_escape_is_removed_whole() {
+    // FX-21: ECMA-35 nF form `ESC`, 1 to 4 intermediate bytes 0x20-0x2F, one final byte 0x30-0x7E
+    color("a\x1b*Bb", "ab");
+    color("a\x1b+Bb", "ab");
+    color("a\x1b$(Bb", "ab");
+    color("\x1b( @x", "x");
+    color("a\x1b$Bb", "ab");
+    color("a\x1b-Ab", "ab");
+    color("a\x1b%Gb", "ab");
+    // 3 intermediates: multi-byte dynamically redefinable set
+    color("a\x1b$( @b", "ab");
+    // 4 intermediates: the bound
+    color("a\x1b$( !Bb", "ab");
+    color("\x1b*B1\n\x1b+B2\n", "1\n2\n");
+}
+
+#[test]
+fn nf_intermediates_with_no_final_byte_lose_only_esc() {
+    // FX-21: the intermediates and what follows stay as text (O-C9); a line end is never taken
+    color("a\x1b*\nb", "a*\nb");
+    assert_eq!(got("a\x1b$(\r\nb", true), ("a$(\r\nb".into(), vec![ColorCodesRemoved]));
+    // a following `ESC` or U+009B starts its own sequence
+    color("a\x1b+\x1b[31mb", "a+b");
+    color("a\x1b$(\u{9b}31mb", "a$(b");
+    color("a\x1b*éb", "a*éb");
+    color("a\x1b$", "a$");
+}
+
+#[test]
+fn nf_run_over_the_bound_loses_only_esc() {
+    // FX-21: more than 4 intermediate bytes is not taken as an escape
+    color("a\x1b$((((Bb", "a$((((Bb");
+    color("a\x1b     xb", "a     xb");
 }
