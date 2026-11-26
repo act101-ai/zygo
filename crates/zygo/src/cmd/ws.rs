@@ -198,37 +198,62 @@ pub(crate) fn forget_mail(
 /// worktree that the link names. A real `mail-sync` folder gets `git worktree remove --force` when `main_root` is a
 /// folder. What git does not remove (no `main_root` folder, git fails or times out, a regular file at `mail-sync`) goes
 /// by the filesystem, as the sync's own recovery (`ensure_worktree`, review F4): `remove_dir_all` (it follows no link)
-/// or `remove_file`, on that path inside `<cache>/<id>/` only. Only a failed filesystem removal is an `Err`, which
-/// names the folder.
+/// or `remove_file`, on that path inside `<cache>/<id>/` only. `<cache>/<id>` and `mail-sync` are read again with
+/// `symlink_metadata` right before that removal (review R2-4): git ran for up to 10 s, and a link put at either
+/// meanwhile is removed as a link. Only a failed filesystem removal is an `Err`, which names the folder.
 fn remove_sync_worktree(sp: &SyncPaths, main_root: &Path) -> Result<(), String> {
+    remove_sync_worktree_with(sp, &mut || {
+        main_root.is_dir() && remove_worktree(main_root, &sp.worktree, Instant::now() + WORKTREE_REMOVE_BOUND).is_ok()
+    })
+}
+
+/// [`remove_sync_worktree`] with the git step `git` (a test seam): `true` when `git worktree remove` ran and exited 0.
+fn remove_sync_worktree_with(sp: &SyncPaths, git: &mut dyn FnMut() -> bool) -> Result<(), String> {
     let not_removed =
         |reason: &str| format!("the mail sync worktree {} was not removed: {}", shown(&sp.worktree), esc(reason));
     let id_dir = sp.worktree.parent().unwrap_or(&sp.worktree);
-    match std::fs::symlink_metadata(id_dir) {
-        Ok(m) if m.file_type().is_symlink() => return std::fs::remove_file(id_dir).map_err(|e| not_removed(&e.to_string())),
-        Ok(m) if m.is_dir() => {}
-        // No `<cache>/<id>` folder: no worktree folder in it (W§12 removes a file there with the cache).
-        _ => return Ok(()),
-    }
-    let is_dir = match std::fs::symlink_metadata(&sp.worktree) {
-        Ok(m) if m.file_type().is_symlink() => {
-            return std::fs::remove_file(&sp.worktree).map_err(|e| not_removed(&e.to_string()));
-        }
-        Ok(m) => m.is_dir(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(not_removed(&e.to_string())),
-    };
-    if is_dir
-        && main_root.is_dir()
-        && remove_worktree(main_root, &sp.worktree, Instant::now() + WORKTREE_REMOVE_BOUND).is_ok()
-        && std::fs::symlink_metadata(&sp.worktree).is_err()
-    {
+    let look = || worktree_at(id_dir, &sp.worktree).map_err(|e| not_removed(&e.to_string()));
+    if matches!(look()?, At::Folder) && git() && std::fs::symlink_metadata(&sp.worktree).is_err() {
         return Ok(());
     }
-    let gone = if is_dir { std::fs::remove_dir_all(&sp.worktree) } else { std::fs::remove_file(&sp.worktree) };
+    // Review R2-4: look again right before the removal; a link made while git ran is removed as a link.
+    let gone = match look()? {
+        At::Nothing => Ok(()),
+        At::Link(p) => std::fs::remove_file(p),
+        At::Folder => std::fs::remove_dir_all(&sp.worktree),
+        At::File => std::fs::remove_file(&sp.worktree),
+    };
     match gone {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(not_removed(&e.to_string())),
         _ => Ok(()),
+    }
+}
+
+/// What is at the sync worktree path, read with `symlink_metadata` (no link followed).
+enum At<'a> {
+    /// No `<cache>/<id>` folder (W§12 removes a file there with the cache), or no `mail-sync`.
+    Nothing,
+    /// A link at `<cache>/<id>` or at `mail-sync`: this path.
+    Link(&'a Path),
+    /// A real `mail-sync` folder.
+    Folder,
+    /// Anything else at `mail-sync` (a regular file).
+    File,
+}
+
+/// [`At`] for `<cache>/<id>` = `id_dir` and its `mail-sync` = `wt`; an error other than `NotFound` on `wt` is `Err`.
+fn worktree_at<'a>(id_dir: &'a Path, wt: &'a Path) -> std::io::Result<At<'a>> {
+    match std::fs::symlink_metadata(id_dir) {
+        Ok(m) if m.file_type().is_symlink() => return Ok(At::Link(id_dir)),
+        Ok(m) if m.is_dir() => {}
+        _ => return Ok(At::Nothing),
+    }
+    match std::fs::symlink_metadata(wt) {
+        Ok(m) if m.file_type().is_symlink() => Ok(At::Link(wt)),
+        Ok(m) if m.is_dir() => Ok(At::Folder),
+        Ok(_) => Ok(At::File),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(At::Nothing),
+        Err(e) => Err(e),
     }
 }
 
@@ -913,5 +938,31 @@ mod tests {
         std::fs::write(&sp.outbox, b"").unwrap();
         let unreadable = format!("the outbox cannot be read: {} is not a folder", sp.outbox.display());
         assert_eq!(ask(&p, &ws, true, "").0, Err(unreadable));
+    }
+
+    #[cfg(unix)]
+    #[test] // S§6.3 Remove (MS-21 review R2-4): `<cache>/<id>` or `mail-sync` made a link while git ran: the filesystem
+            // removal removes the link only, never what it names
+    fn remove_after_git_removes_a_link_made_during_git_and_not_its_target() {
+        let td = tempfile::tempdir().unwrap();
+        let p = temp_paths(td.path());
+        let sp = zygo_mail_sync::state::SyncPaths::new(&p, WS).unwrap();
+        let id_dir = sp.worktree.parent().unwrap().to_path_buf();
+        let other = td.path().join("other");
+        for swap_id_dir in [true, false] {
+            std::fs::create_dir_all(sp.worktree.join("sub")).unwrap();
+            std::fs::create_dir_all(other.join("mail-sync/keep")).unwrap();
+            let (at, to) = if swap_id_dir { (id_dir.clone(), other.clone()) } else { (sp.worktree.clone(), other.join("mail-sync")) };
+            // The git step fails, and while it runs a same-user process puts a link at `at`.
+            let mut git = || {
+                std::fs::remove_dir_all(&at).unwrap();
+                std::os::unix::fs::symlink(&to, &at).unwrap();
+                false
+            };
+            assert_eq!(remove_sync_worktree_with(&sp, &mut git), Ok(()), "swap <cache>/<id>: {swap_id_dir}");
+            assert!(std::fs::symlink_metadata(&at).is_err(), "swap <cache>/<id>: {swap_id_dir}: the link stays");
+            assert!(other.join("mail-sync/keep").is_dir(), "swap <cache>/<id>: {swap_id_dir}: the target was removed");
+            std::fs::create_dir_all(&id_dir).unwrap();
+        }
     }
 }
