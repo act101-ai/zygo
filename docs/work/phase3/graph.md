@@ -193,8 +193,6 @@ Session text (T, SX nodes):
 |----|------|---------|-------|------------|------|
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
-| WD-13 | Launcher: repository profile by a default-branch read (not pinned) | WD-7, DR-13, OS-9 | DONE | judgment | b00e2819, ffe10789, 777c51d6, d5c92329, 93add253 · repo_profile 15/0 ; floor green · PR #121 |
-| WD-17 | `zygo doctor` lines: workspace files, pool, member maximum | WD-7, WD-9 | DONE | implementation | d31d6c56, 8a15ab61, 2ec94a9a, 3a944a2d · definition_doctor 15/0 ; floor green · PR #119 |
 | ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | DONE | implementation | plan 8ca46aed · node 133f55bc, 37bd93c8 · acceptance pass (workspace_mail 7 passed, --include-ignored) · PR #171 |
 | MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | DONE | judgment | node commits 717f910e, ab5fc14b, 91b95bcb, dba2a089, 5dd04b76; acceptance: sync_pass 39/39; floor ws 3422/0; PR #150 |
 | OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | DONE | judgment | node commits 81332899, b442555c, 095ee7bb, 63e6f26a, fe154009, 725e2609; acceptance: shaping_hook 21/21, shaping_off 5/5, hooks_basic 60/60, hook_trim 6/6; floor ws 3432/0; PR #154 |
@@ -202,7 +200,7 @@ Session text (T, SX nodes):
 | OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4 | TODO | judgment | — |
 | OS-31 | pytest runner view | OS-30, OS-20 | DONE | judgment | 86aaac5a, 1b22b0ca, f6759d10, 7544ce89 · acceptance 18 passed · PR #166 |
 | WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | DONE | judgment | bae5b7af, 11d71492 · up_definition 35/0 ; floor green · PR #125 |
-| ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | TODO | mechanical | — |
+| ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | DONE | mechanical | plan 0cbac05c · node b16ce79f, f13fe09b · acceptance LIVE M12 verified (agent 2.1.332): 3 of 3 ; check-premises ok · PR #178 |
 | MS-14 | Prune: orphan rewrite of acknowledged files, lease push | MS-13 | TODO | judgment | — |
 | MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | TODO | mechanical | — |
 | OS-32 | go test runner view with interleaved parallel output | OS-31, OS-21 | TODO | judgment | — |
@@ -250,6 +248,7 @@ Session text (T, SX nodes):
 | FX-15 | `zygo doctor` pool lines skip the members `zygo up` skips | WD-12 | DONE | implementation | 0b4ee021, f046b2b7 · definition_doctor 17/0 ; floor green · PR #129 |
 | FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | TODO | implementation | — |
 | FX-17 | `zygo up` refuses a `[limits] max_members` outside 1-32 from the team or user layer (`config check` rule, `check_jobs` path) | FX-14, WD-11 | DONE | implementation | plan 7a124777 · node da3062c7, e437fde9 · acceptance pass (workspace_restore 7 passed, cmd::up 16 passed) · PR #169 |
+| FX-18 | live-mail.sh fixture head line doubles the word zygo | ML-19 | TODO | mechanical | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -411,3 +410,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | OS-42 added: wrapper dispatch and unseen pytest live output (OS-31 review F2, R2 report); OS-35 now depends on it |
 | 2026-11-25 | FX-17 DONE (kept, round 1). Review 4: F1 and F2 (test gaps: other check errors; team warnings before the range line) fixed; F3 and F4 refuted (spec R§9.4 :271 fallback; existing exit 11 load error) · PR #169 |
 | 2026-11-25 | ML-18 DONE: end-to-end mail on tmux with stub agents. Review findings 6: 4 confirmed and fixed, 2 refuted · PR #171 |
+| 2026-11-25 | ML-19 DONE (live run by the lead, override "YOU BUILD YOU TEST"). R1: 9 findings; 6 confirmed (F1 Method bullets, F2 line 3 M§14, F4 plan deviations, F6 beta's turn stopped by cleanup, F8 bounds, F9 exit-1 list); F3 → FX-18; 2 refuted (F5 operator override, F7 new checks) · PR #178 |
