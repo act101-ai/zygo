@@ -576,7 +576,7 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 - **PO1** Claude Code 2.1.328: run `printf 'out-line\n'; printf 'err-line\n' >&2; exit 3` through the Bash tool, and capture the `PostToolUseFailure` hook input as `fixtures/claude-code/hooks/PostToolUseFailure-Bash-output-main.json`. Check (a) which field holds `out-line` and `err-line`, and in which order; (b) which hook output field, if any, replaces the text that the model sees after a failed call: try `updatedToolOutput` as a string and as a Bash-shaped object, and record the request body that follows. Result decides O§7.13.
 - **PO2** Claude Code 2.1.328: a Bash `updatedToolOutput` with `stderr` set to `""` removes the original stderr from what the model sees (Q4, `docs/premises.md:35`, verified `stdout` only). Result decides O§7.8. Result (2.1.332): verified; see the PO2 row.
 - **PO3** OpenCode 1.18.16 (the version of Q7, `docs/premises.md:38`): `tool.execute.after` for `bash` gives stdout and stderr together in `output.output`. Result (1.18.16): verified; see the PO3 row.
-- **PO4** On both agents, the text that the model sees for a `result_view` reply is the reply text plus at most a fixed wrapper, so the reply's byte count is the read-back size within that wrapper.
+- **PO4** On both agents, the text that the model sees for a `result_view` reply is the reply text plus at most a fixed wrapper, so the reply's byte count is the read-back size within that wrapper. Result (2.1.332 + 1.18.16): verified; see the PO4 row.
 
 ## Change log
 
@@ -598,3 +598,4 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | 2026-11-25 | O§7.6 | author's call (lead) | OS-30 review F4: Unicode and CR whitespace matched the hidden forms; ASCII only hides less (O§15 item 2 decision record) |
 | 2026-11-25 | O§7.6 | author's call (lead) | OS-30 review F2: a crashed test binary's count absorbed the next binary's test lines; a cargo binary line now ends the group |
 | 2026-11-25 | O§17 PO3, O§7.2 | author's call (lead) | record PO3 result (OS-25) |
+| 2026-11-25 | O§17 PO4 | author's call (lead) | record PO4 result (OS-26) |
