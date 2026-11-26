@@ -535,6 +535,32 @@ fn work_units_off_keeps_only_the_redaction_guard() {
 }
 
 #[test]
+fn po1_failed_bash_has_no_trim_entry() {
+    // O§7.13 "If PO1 fails", O§16 item 18 (fail): no `trim` under `PostToolUseFailure`, for every launch kind
+    assert!(!zygo_hooks::trim::PO1_HOLDS);
+    for (units, member) in [(false, false), (true, false), (false, true), (true, true)] {
+        let fx = fx();
+        let cc = cc(&fx);
+        let c = if member {
+            member_ctx(&fx, units)
+        } else {
+            let mut c = ctx(&fx, "");
+            c.view.work_units = units;
+            c
+        };
+        cc.build(&c).unwrap();
+        let s = settings(&fx);
+        let failure = hook_commands(&s, "PostToolUseFailure");
+        assert!(!failure.iter().any(|(_, cmd)| cmd.ends_with(" hook trim")), "units {units} member {member}: {failure:?}");
+        if !units && !member {
+            assert!(s["hooks"].get("PostToolUseFailure").is_none());
+        }
+        let trim = (Some("Bash|Read|Grep|Glob|WebFetch".to_string()), format!("{} hook trim", shell_quote(&cc.zygo)));
+        assert!(hook_commands(&s, "PostToolUse").contains(&trim));
+    }
+}
+
+#[test]
 fn turn_cap_sets_max_turns() {
     let fx = fx();
     let c = ctx(&fx, "[limits]\nsubagent_max_turns = 7\n");
