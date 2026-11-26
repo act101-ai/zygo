@@ -13,7 +13,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use bytes::{Bytes, BytesMut};
 use futures_util::{Stream, StreamExt};
-use http::header::{HeaderName, HeaderValue, AUTHORIZATION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE};
+use http::header::{HeaderName, HeaderValue, AUTHORIZATION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, RETRY_AFTER};
 use http::{HeaderMap, StatusCode};
 use serde::de::{self, Deserialize, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{json, Value};
@@ -541,7 +541,16 @@ async fn run(
             adjustments.push(Adjustment("key_header_dropped".into()));
         }
         if resp.headers().get_all(CONTENT_ENCODING).iter().any(|v| !v.as_bytes().trim_ascii().eq_ignore_ascii_case(b"identity")) {
-            return Err(read_failed(slot, c, &adjustments, upstream_encoded(status)));
+            // The upstream `retry-after` (a 429 or 5xx) is kept on the reply.
+            let e = read_failed(slot, c, &adjustments, upstream_encoded(status));
+            let p = pending(slot);
+            p.row.status = e.status.as_u16();
+            p.row.latency_ms = ms(app, start);
+            let mut out = e.response(route.dialect());
+            if let Some(v) = headers.get(RETRY_AFTER) {
+                out.headers_mut().insert(RETRY_AFTER, v.clone());
+            }
+            return Ok(out);
         }
     }
     let mut mapper = None;
@@ -640,7 +649,7 @@ async fn run(
         let t = Target::of(c);
         let calls = calls.unwrap_or_default();
         if streamed {
-            Some(Encode::Stream(Box::new(Streamed::new(&client_model, &t, calls, c.key.clone()))))
+            Some(Encode::Stream(Box::new(Streamed::new(&client_model, &t, calls, key.map(Secret::new)))))
         } else {
             let (r, codes) = responses_client::response(msg.as_ref().unwrap_or(&Value::Null), &client_model, &t, &calls);
             adjustments.extend(codes);

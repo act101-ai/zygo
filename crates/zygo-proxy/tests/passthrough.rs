@@ -995,6 +995,28 @@ fn trimmed_key_echo_is_replaced() {
     assert!(r.1.get("x-echo").is_none(), "{:?}", r.1);
 }
 
+#[test] // RS-14 round 3 H3, K§6.4.4: a translated stream (Responses client → anthropic upstream) with a key configured with a trailing space: an error event that echoes the trimmed key with a `\u` escape reaches the client without the key
+fn trimmed_key_escaped_in_translated_error_event_is_replaced() {
+    let facts = "[model.facts]\nreasoning = \"none\"\nmax_output_tokens = 1024\ncontext_window = 200000\n";
+    let m = format!("[[model]]\nid = \"test-space-r\"\n{facts}\n{}", prov("p-space-r", "{UP}/space-r", "test-space-r", "key = \"keychain:k-space\"\n"));
+    let t = setup(&m);
+    let g = grant(&t, Agent::OpenCode, false);
+    let echo = SPACE_KEY.trim_ascii();
+    let escaped = format!("\\u{:04x}{}", echo.as_bytes()[0], &echo[1..]);
+    let start = json!({"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[],"usage":{"input_tokens":1,"output_tokens":1}}});
+    let err = format!(r#"{{"type":"error","error":{{"type":"overloaded_error","message":"key {escaped}."}}}}"#);
+    let sse = format!("event: message_start\ndata: {start}\n\nevent: error\ndata: {err}\n\n");
+    assert!(!has(sse.as_bytes(), echo.as_bytes()));
+    t.up.answer_raw(200, "text/event-stream", &sse);
+    let body = json!({"model":"test-space-r","stream":true,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]});
+    let bearer = format!("Bearer {}", g.token);
+    let r = send(&t, "POST", "openai/v1/responses", &[("authorization", bearer.as_str()), ("x-zygo-session", g.session.as_str())], Some(body.to_string().into_bytes()));
+    assert_eq!(r.0, 200, "{}", String::from_utf8_lossy(&r.2));
+    assert!(has(&r.2, b"response.failed"), "{}", String::from_utf8_lossy(&r.2));
+    assert!(!has(&r.2, echo.as_bytes()), "{}", String::from_utf8_lossy(&r.2));
+    assert!(has(&r.2, b"key [REDACTED]."), "{}", String::from_utf8_lossy(&r.2));
+}
+
 #[test] // RS-14 round 2 G7: a client that leaves a keyed stream gets a usage row with the exact counts read
 fn keyed_stream_client_disconnect_exact_counts() {
     let t = setup("");

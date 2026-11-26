@@ -532,6 +532,22 @@ fn encoded_non_2xx_keeps_status() {
     }
 }
 
+/// Round 3 H4: an encoded 429 or 503 keeps the upstream `retry-after` on the `zygo_upstream_encoded` reply.
+#[test]
+fn encoded_non_2xx_keeps_retry_after() {
+    for (d, path, status) in [(Dialect::Anthropic, M, 429u16), (Dialect::Openai, R, 503), (Dialect::Openai, M, 429)] {
+        let h = Harness::start(d, Agent::OpenCode, "");
+        let k = h.provider_key().to_string();
+        let ctype = with_headers(JSON, &[("content-encoding", "gzip"), ("retry-after", "7")]);
+        h.reply_with(status, &ctype, format!("{{\"error\":\"{k}\"}}").into_bytes());
+        let (s, hd, b) = h.post(path, &client_body(path, true));
+        let tag = format!("{d:?} {path} {status}");
+        assert_eq!(s.as_u16(), status, "{tag}: {}", String::from_utf8_lossy(&b));
+        assert!(contains(&b, b"zygo_upstream_encoded"), "{tag}");
+        assert_eq!(hd.get("retry-after").map(|v| v.to_str().unwrap()), Some("7"), "{tag}: {hd:?}");
+    }
+}
+
 /// A tool with 26 optional properties: strict schemas inject a null for the last one on an anthropic upstream.
 fn wide_tool() -> Value {
     let mut p = serde_json::Map::new();
@@ -543,7 +559,8 @@ fn wide_tool() -> Value {
 }
 
 /// Round 2 G4, K§6.4.4 (4): with injected nulls and the key, whole and streamed, the client gets no key and the
-/// nulls are removed.
+/// nulls are removed. Round 3 H1: in the whole body the key is written with a `\u` escape, so only a replacement
+/// after the restore (which decodes it) finds it.
 #[test]
 fn injected_nulls_restored_and_key_replaced() {
     for stream in [false, true] {
@@ -552,6 +569,14 @@ fn injected_nulls_restored_and_key_replaced() {
         let text = format!("echo {k}");
         let input = json!({"p24":null,"p0":text,"n":2}).to_string();
         let up = if stream { messages_tool_stream(&text, "get", &input) } else { messages_tool_json(&text, "get", &input) };
+        let up = if stream {
+            up
+        } else {
+            let escaped = format!("\\u{:04x}{}", k.as_bytes()[0], &k[1..]);
+            let up = String::from_utf8(up).unwrap().replace(&k, &escaped).into_bytes();
+            assert!(!contains(&up, k.as_bytes()) && contains(&up, escaped.as_bytes()));
+            up
+        };
         h.reply_with(200, if stream { SSE } else { JSON }, up);
         let body = json!({"model":MODEL,"max_tokens":64,"stream":stream,"tools":[wide_tool()],"messages":[{"role":"user","content":"hi"}]});
         let (s, hd, b) = h.post(M, &body);
@@ -586,12 +611,14 @@ fn header_name_with_key_is_dropped() {
 }
 
 /// Round 2 G7, K§6.4.4 (4): a 2xx JSON body over COPY_MAX whose key straddles byte COPY_MAX: no key; every other
-/// byte unchanged.
+/// byte unchanged. Round 3 H1: a body over COPY_MAX raw but not after the replacement is sent whole, with the
+/// `content-length` of the sent body: COPY_MAX counts the bytes after the replacement.
 #[test]
 fn success_json_over_copy_max_key_across_the_boundary() {
     let (h, path, mut body) = pair(Dialect::Anthropic, Agent::OpenCode);
     body["stream"] = json!(false);
     let k = h.provider_key().to_string();
+    assert!(k.len() > RED.len() + 1);
     let head: &[u8] = br#"{"id":"msg_up","type":"message","role":"assistant","model":"up-rs","content":[{"type":"text","text":""#;
     let tail: &[u8] = br#" end"}],"stop_reason":"end_turn","usage":{"input_tokens":7,"output_tokens":3}}"#;
     let fill = "x".repeat(COPY_MAX - head.len() - k.len() / 2);
@@ -602,6 +629,16 @@ fn success_json_over_copy_max_key_across_the_boundary() {
     assert_eq!(s.as_u16(), 200);
     assert!(!contains(&b, k.as_bytes()));
     assert!(b[..] == redacted(&up, &k)[..]);
+    // Raw COPY_MAX + 1 bytes; COPY_MAX + 1 − (key length − 10) after the replacement.
+    let fill = "x".repeat(COPY_MAX + 1 - head.len() - k.len() - tail.len());
+    let up = [head, fill.as_bytes(), k.as_bytes(), tail].concat();
+    let want = redacted(&up, &k);
+    assert!(up.len() > COPY_MAX && want.len() <= COPY_MAX);
+    h.reply_with(200, JSON, up);
+    let (s, hd, b) = h.post(path, &body);
+    assert_eq!(s.as_u16(), 200);
+    assert!(b[..] == want[..]);
+    assert_eq!(hd.get("content-length").map(|v| v.to_str().unwrap().to_string()), Some(want.len().to_string()), "{hd:?}");
 }
 
 /// Round 2 G7: a keyed stream with the key in a text delta writes its usage row with the exact upstream counts
