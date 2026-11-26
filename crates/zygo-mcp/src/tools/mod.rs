@@ -1,4 +1,5 @@
 pub mod compact;
+pub mod mail;
 pub mod results;
 pub mod work;
 pub mod workspace_down;
@@ -28,6 +29,7 @@ pub fn build_with(
         v.extend(work(ctx));
     }
     v.extend(workspace_down::tools(ctx));
+    v.extend(mail::tools(ctx));
     let mut seen = std::collections::BTreeSet::new();
     for t in &v {
         let name = t.def().name;
