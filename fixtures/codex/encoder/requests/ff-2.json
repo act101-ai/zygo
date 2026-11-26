@@ -5,7 +5,7 @@
   "headers": {
     "x-codex-beta-features": "remote_compaction_v2",
     "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
-    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"028c900420ac057c157fcdb767048a0adb3f3194\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795661401243,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
+    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"7df067045f42b3f712a0349f6561193ff69ac6b7\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795662468446,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
     "x-client-request-id": "00000000-0000-4000-8000-000000000001",
     "session-id": "00000000-0000-4000-8000-000000000001",
     "thread-id": "00000000-0000-4000-8000-000000000001",
@@ -15,7 +15,7 @@
     "originator": "codex_exec",
     "user-agent": "codex_exec/0.172.0 (os omitted) xterm-256color (codex_exec; 0.172.0)",
     "accept-encoding": "zstd,gzip",
-    "host": "127.0.0.1:56458",
+    "host": "127.0.0.1:53803",
     "content-length": "42030"
   },
   "credential_headers": [
@@ -28,7 +28,7 @@
     "input": [
       {
         "type": "message",
-        "id": "msg_b2c89c8d-ffcc-5abf-b6d3-7055cd7af0ee",
+        "id": "msg_b3937c79-fd91-5269-bd99-22dde1342d28",
         "role": "developer",
         "content": [
           {
@@ -39,7 +39,7 @@
       },
       {
         "type": "message",
-        "id": "msg_01a215c2-8cd2-7021-95e8-6dcc1ef1fe68",
+        "id": "msg_01a215d2-d596-7f90-86c0-479eba13127b",
         "role": "developer",
         "content": [
           {
@@ -54,7 +54,7 @@
       },
       {
         "type": "message",
-        "id": "msg_01a215c2-8cd2-7021-95e8-6dd8969b15ae",
+        "id": "msg_01a215d2-d596-7f90-86c0-47a54f754ee4",
         "role": "user",
         "content": [
           {
@@ -65,7 +65,7 @@
       },
       {
         "type": "message",
-        "id": "msg_01a215c2-8cd9-7fd0-bcdb-5534eb06a429",
+        "id": "msg_01a215d2-d59c-7770-a5bb-f0e868a77afd",
         "role": "user",
         "content": [
           {
@@ -77,7 +77,7 @@
       {
         "type": "function_call",
         "status": "completed",
-        "id": "fc_01M8AW4JB5HG05ZZ2YXZAJBK1M_0",
+        "id": "fc_01M8AX52T59G89S10NB2NE746M_0",
         "name": "exec_command",
         "arguments": "{\"cmd\": \"echo pc12-tracer-ff1\"}",
         "call_id": "toolu_pc12_ff1"
@@ -85,22 +85,22 @@
       {
         "type": "function_call",
         "status": "completed",
-        "id": "fc_01M8AW4JB5HG05ZZ2YXZAJBK1M_1",
+        "id": "fc_01M8AX52T59G89S10NB2NE746M_1",
         "name": "exec_command",
         "arguments": "{\"cmd\": \"echo pc12-tracer-ff2\"}",
         "call_id": "toolu_pc12_ff2"
       },
       {
         "type": "function_call_output",
-        "id": "fco_01a215c2-8d11-7820-b549-d5e1a0579c6f",
+        "id": "fco_01a215d2-d5d4-7b60-a259-e70ca131aefe",
         "call_id": "toolu_pc12_ff1",
-        "output": "Chunk ID: a4fea7\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 4\nOutput:\npc12-tracer-ff1\n"
+        "output": "Chunk ID: 5db922\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 4\nOutput:\npc12-tracer-ff1\n"
       },
       {
         "type": "function_call_output",
-        "id": "fco_01a215c2-8d11-7820-b549-d5fb7bc7a0c1",
+        "id": "fco_01a215d2-d5d4-7b60-a259-e71f33f09e44",
         "call_id": "toolu_pc12_ff2",
-        "output": "Chunk ID: 5446b8\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 4\nOutput:\npc12-tracer-ff2\n"
+        "output": "Chunk ID: 0063e7\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 4\nOutput:\npc12-tracer-ff2\n"
       }
     ],
     "tools": [
@@ -560,13 +560,13 @@
     ],
     "prompt_cache_key": "00000000-0000-4000-8000-000000000001",
     "client_metadata": {
-      "session_id": "00000000-0000-4000-8000-000000000001",
-      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"028c900420ac057c157fcdb767048a0adb3f3194\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795661401243,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
+      "x-codex-installation-id": "00000000-0000-4000-8000-000000000002",
       "thread_id": "00000000-0000-4000-8000-000000000001",
+      "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
       "turn_id": "00000000-0000-4000-8000-000000000003",
       "root_turn_id": "00000000-0000-4000-8000-000000000003",
-      "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
-      "x-codex-installation-id": "00000000-0000-4000-8000-000000000002"
+      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"7df067045f42b3f712a0349f6561193ff69ac6b7\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795662468446,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
+      "session_id": "00000000-0000-4000-8000-000000000001"
     }
   },
   "reply": "ff-2"
