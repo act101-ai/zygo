@@ -103,7 +103,7 @@ fn usage_down() -> Value {
 
 `Value::to_string` and `sse` serialize the same way, so the compact text of `usage_up()` occurs once in a stream, inside the terminal event. Each streaming post sends `codex_request("turn-with-reasoning")` (`"stream": true`).
 
-- [ ] **1. Write the unit test of the rewrite** (`rewrite_responses_usage_sets_three_numbers_only`):
+- [x] **1. Write the unit test of the rewrite** (`rewrite_responses_usage_sets_three_numbers_only`):
 
 ```rust
 use zygo_proxy::tee::Usage;
@@ -133,7 +133,7 @@ assert_eq!(usage_of(rewrite_responses_usage(line("response.completed", "{}").as_
     json!({"input_tokens":1000000,"input_tokens_details":{"cached_tokens":810000},"total_tokens":1000030}));
 ```
 
-- [ ] **2. Write the armed Messages-form test** (`armed_anthropic_and_chat_upstreams_rewrite_before_the_encoder`). For `d` in `[Dialect::Anthropic, Dialect::OpenaiChat]`, use `Harness::start(d, Agent::ClaudeCode, "")`.
+- [x] **2. Write the armed Messages-form test** (`armed_anthropic_and_chat_upstreams_rewrite_before_the_encoder`). For `d` in `[Dialect::Anthropic, Dialect::OpenaiChat]`, use `Harness::start(d, Agent::ClaudeCode, "")`.
   - Anthropic reply: `anthropic_stream(json!({"input_tokens":40000,"cache_read_input_tokens":150000,"cache_creation_input_tokens":0,"output_tokens":1}), None, "end_turn")`.
   - Chat reply: `chat_sse(&[chunk(json!({"role":"assistant","content":"hi"}), Value::Null), chunk(json!({}), json!("stop")), json!({"id":"chatcmpl-1","object":"chat.completion.chunk","model":"up-rs","choices":[],"usage":{"prompt_tokens":190000,"completion_tokens":30,"total_tokens":190030,"prompt_tokens_details":{"cached_tokens":150000}}})])`.
 
@@ -150,7 +150,7 @@ assert_eq!(counts(&rows[0]), (40000, 150000, 0, 30), "{d:?}"); // upstream count
 assert_eq!(codes(&rows[0]), ["context_safety"], "{d:?}");
 ```
 
-- [ ] **3. Write the armed Responses-form test** (`armed_responses_upstream_rewrites_completed_usage`). Use `Harness::start(Dialect::Openai, Agent::ClaudeCode, "")` and reply `up = responses_stream("response.completed", "completed", vec![], usage_up())`. The client bytes are `up` with only the usage text changed:
+- [x] **3. Write the armed Responses-form test** (`armed_responses_upstream_rewrites_completed_usage`). Use `Harness::start(Dialect::Openai, Agent::ClaudeCode, "")` and reply `up = responses_stream("response.completed", "completed", vec![], usage_up())`. The client bytes are `up` with only the usage text changed:
 
 ```rust
 let (s, _, b) = h.post(R, &codex_request("turn-with-reasoning"));
@@ -162,17 +162,17 @@ assert_eq!(counts(&rows[0]), (40000, 150000, 0, 30));
 assert_eq!(codes(&rows[0]), ["context_safety"]);
 ```
 
-- [ ] **4. Write the unarmed test** (`unarmed_bytes_pass_unchanged`). It uses the upstream usage of steps 2 and 3, which fires trigger 0 when armed.
+- [x] **4. Write the unarmed test** (`unarmed_bytes_pass_unchanged`). It uses the upstream usage of steps 2 and 3, which fires trigger 0 when armed.
   - (a) `Agent::OpenCode` with an `Openai` upstream: `assert_eq!(&b[..], &up[..])` and `codes(&rows[0])` is empty.
   - (b) `Agent::OpenCode` with an `Anthropic` upstream: the terminal `response.usage` is `json!({"input_tokens":190000,"input_tokens_details":{"cached_tokens":150000},"output_tokens":30,"total_tokens":190030})`, and `codes(&rows[0])` is empty.
   - (c) `Agent::ClaudeCode` with an `Openai` upstream, sent by `h.post_as(R, &auth(&h, &bearer, &[("x-claude-code-compaction", "1")]), &body)`: `assert_eq!(&b[..], &up[..])`. Read no rows here, because `post_as` counts no post.
 
-- [ ] **5. Write the trigger 2 test** (`compact_call_rewrites_on_both_forms`). The upstream prompt is 1000, with nothing cached and output 30, so trigger 0 does not fire. Let `compact_usage` be `json!({"input_tokens":1000000,"input_tokens_details":{"cached_tokens":999000},"output_tokens":30,"total_tokens":1000030})`.
+- [x] **5. Write the trigger 2 test** (`compact_call_rewrites_on_both_forms`). The upstream prompt is 1000, with nothing cached and output 30, so trigger 0 does not fire. Let `compact_usage` be `json!({"input_tokens":1000000,"input_tokens_details":{"cached_tokens":999000},"output_tokens":30,"total_tokens":1000030})`.
   - (a) Anthropic upstream, reply `anthropic_stream(json!({"input_tokens":1000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":1}), Some("mcp__zygo__compact"), "tool_use")`: the terminal `response.usage` equals `compact_usage`, and `codes(&rows[0]) == ["context_compact"]`.
   - (b) Openai upstream, `calls = vec![json!({"type":"function_call","id":"fc_1","call_id":"call_1","name":"compact","namespace":"mcp__zygo","arguments":"{}","status":"completed"})]` and usage `{"input_tokens":1000,"input_tokens_details":{"cached_tokens":0},"output_tokens":30,"total_tokens":1030}`: the terminal `response.usage` equals `compact_usage`, and `codes(&rows[0]) == ["context_compact"]`.
   - (c) The same stream as (b) with `"namespace":"mcp__zygox"`: the bytes pass unchanged, and `codes(&rows[0])` is empty.
 
-- [ ] **6. Write the trigger 1 test on the Responses form** (`soft_window_fires_at_end_of_turn_on_responses_form`).
+- [x] **6. Write the trigger 1 test on the Responses form** (`soft_window_fires_at_end_of_turn_on_responses_form`).
   - Use `Harness::start(Dialect::Openai, Agent::ClaudeCode, "")`. Set `let bearer = format!("Bearer {}", h.token());`.
   - Set the override: `h.post_as(&format!("v1/zygo/sessions/{}/compact", h.session_id()), &auth(&h, &bearer, &[]), &json!({"window":100000}))`. It returns status 200.
   - Use the usage `{"input_tokens":120000,"input_tokens_details":{"cached_tokens":100000},"output_tokens":30,"total_tokens":120030}`. The prompt is 120000: over the threshold 100000 and under the safety 180000.
@@ -181,9 +181,9 @@ assert_eq!(codes(&rows[0]), ["context_safety"]);
     - (b) The same header, with `calls = vec![json!({"type":"function_call","id":"fc_1","call_id":"call_1","name":"exec_command","arguments":"{}","status":"completed"})]`: the bytes pass unchanged.
     - (c) No header and no call item: the bytes pass unchanged.
 
-- [ ] **7. Run** `cargo test -p zygo-proxy --test responses_window`. Expected: a compile error, because `rewrite_responses_usage` does not exist. Comment out step 1 and run again. Expected: steps 2, 3, 5(a), 5(b) and 6(a) fail on their usage assertions; step 4 passes. Then restore step 1.
+- [x] **7. Run** `cargo test -p zygo-proxy --test responses_window`. Expected: a compile error, because `rewrite_responses_usage` does not exist. Comment out step 1 and run again. Expected: steps 2, 3, 5(a), 5(b) and 6(a) fail on their usage assertions; step 4 passes. Then restore step 1.
 
-- [ ] **8. Implement in `crates/zygo-proxy/src/window.rs`:**
+- [x] **8. Implement in `crates/zygo-proxy/src/window.rs`:**
   - `WindowStage::on_request`: change `ctx.route == ModelRoute::Messages` to `matches!(ctx.route, ModelRoute::Messages | ModelRoute::Responses)`. In the doc comment, change "Messages" to "Messages or Responses (K§6.4.5)".
   - `edit_obj`: change `vals: &[(&str, u64); 3]` to `vals: &[(&str, u64)]`. Make no other change to `rewrite_usage`.
   - Add `pub fn rewrite_responses_usage` as in Produced. Build it on `Obj`, `Key` and `edit_obj`, the same way `rewrite_usage` is built. The edits never overlap: `usage` gets `input_tokens` and `total_tokens` (and `input_tokens_details` when it is missing), and `input_tokens_details` gets `cached_tokens`.
@@ -194,13 +194,13 @@ assert_eq!(codes(&rows[0]), ["context_safety"]);
     - `response.output_item.added` with `item.type == "function_call"`: set `ctx.compact_call` when `compact_tool(&name)`, where `name` is `flat_name(ns, item.name)` when `item.namespace` is a string, else `item.name`.
     - `response.completed` or `response.incomplete`: `end_turn` is true when the type is `response.completed` and no `response.output[*].type` is `function_call` or `custom_tool_call`. Call `triggers`. When a trigger fired and `rewrite_responses_usage(&line.0, ctx.usage, window)` returns `Some`, replace the line and `record` the codes.
 
-- [ ] **9. Implement in `crates/zygo-proxy/src/forward.rs`:**
+- [x] **9. Implement in `crates/zygo-proxy/src/forward.rs`:**
   - `struct Flow` (`forward.rs:1418-1433`): add `/// The window stage armed line mode at request time (§10.2.6): a Responses stream's lines also reach the line stages (K§6.4.5).` `window: bool,`. Set it to `window: ctx.line_mode` in the `Flow { … }` literal (`forward.rs:637`).
   - `Flow::step` (`forward.rs:1507-1516`): destructure `window` too. Change the `Some(Encode::Stream(s))` arm to `{ s.line(l); if *window { pipeline.on_response_line(rctx, l) } }`. Replace the comment at `forward.rs:1512-1513` with: "A Responses stream: its error lines (K§6.4.4), then the line stages when the window stage armed them (K§6.4.5)."
 
-- [ ] **10. Run** `cargo test -p zygo-proxy --test responses_window`. Expected: 6 passed, 0 failed.
+- [x] **10. Run** `cargo test -p zygo-proxy --test responses_window`. Expected: 6 passed, 0 failed.
 
-- [ ] **11. Run the Acceptance check:**
+- [x] **11. Run the Acceptance check:**
 
 ```sh
 test "$(cargo test -q -p zygo-proxy --test responses_window -- --list 2>/dev/null | grep -c ': test$')" -ge 4 && cargo test -p zygo-proxy --locked
@@ -208,4 +208,18 @@ test "$(cargo test -q -p zygo-proxy --test responses_window -- --list 2>/dev/nul
 
   Expected: exit 0, with 6 tests listed in `responses_window` and every `zygo-proxy` target passing (`window`, `responses_passthrough`, `responses_forward` and `responses_route` unchanged). Then run `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings`. Expected: no warnings.
 
-- [ ] **12. Commit** `feat(proxy): RS-7 window rewrite for a Responses client`. End the message with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:RS-7`.
+- [x] **12. Commit** `feat(proxy): RS-7 window rewrite for a Responses client`. End the message with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:RS-7`.
+
+## Implementation notes
+
+- RS-6 moved the forward.rs lines: `struct Flow` is at `forward.rs:1427`, the `Flow { … }` literal at `:639`, `Flow::step` at `:1513`. The change is as in step 9.
+- Step 7, red run with step 1 commented out: steps 2, 3, 5 and 6 failed on their usage assertions, and step 4 passed. Step 5(b) did not run, because 5(a) fails first in the same test.
+- `rewrite_responses_usage`, when `input_tokens_details` is missing: the insertion is pushed after the `edit_obj` edits of `usage`, so at the same offset it lands first. No spec change.
+
+## Round 1 review
+
+- **F1** (end of turn read only the terminal `response.output`). Fixed in `d07d7ab9`: `ResponseCtx.call_item` (`pipeline.rs`) records a call item from a streamed `response.output_item.added` or `.done`. End of turn is a `response.completed` with no call item in the stream and none in the terminal output. The call items are `function_call`, `custom_tool_call`, `local_shell_call`, `computer_call`, `mcp_call` and `mcp_approval_request` (`window.rs` `CALL_ITEMS`). K§6.4.5 end-of-turn sentence rewritten as final text. Test: `end_of_turn_uses_streamed_call_items`. It failed first: the `function_call` case, with an empty terminal output, was rewritten.
+- **F2** (`total_tokens` used the tee's output count, 0 for a non-integer `output_tokens`). Fixed in `d07d7ab9`: `rewrite_responses_usage` returns `None` when a present `input_tokens`, `cached_tokens` or `output_tokens` is not a u64 integer. K§6.4.5 gets the clause. Test: `non_integer_usage_leaves_the_line_unchanged` (`3e1`, `1.9e5`, `150000.0`). It failed first: the `3e1` line was rewritten.
+- **F3** (test gaps). Fixed in `d07d7ab9`. `custom_tool_call` end of turn: covered by F1's test. `incomplete_usage_rewritten_on_both_forms`: a `max_tokens` stop through the encoder and a Responses `response.incomplete`, each with the rewritten usage. `soft_window_fires_at_end_of_turn_on_responses_form` asserts `context_signal` in the usage row. `soft_window_on_anthropic_upstream_fires_at_end_turn_only`: trigger 1 with `x-claude-code-request-class: main`. These tests passed on first run because the behavior was already present; they add coverage only.
+- Spec change-log line: 2026-11-25, K§6.4.5, author's call.
+- Outside the listed files: `crates/zygo-proxy/src/pipeline.rs` holds `ResponseCtx`, so the new field is declared there.

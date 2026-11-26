@@ -769,6 +769,66 @@ fn streamed_json_answer_near_copy_max_keeps_tool_input() {
     assert_eq!(got["arguments"], want);
 }
 
+#[test] // RS-15, K§6.4.3 stream obligation 8: a restored JSON text block of a chat upstream goes out in 64 KiB pieces
+fn streamed_chat_restore_keeps_large_text() {
+    let h = start(C);
+    // 3 MiB of `\"` in `b`: the held text is within HOLD_MAX; one rebuilt delta of it would escape to about 6 MiB.
+    let b = "\"".repeat(3 << 19);
+    let text = json!({"a":null,"b":b}).to_string();
+    let want = json!({"b":b}).to_string();
+    let mut chunks: Vec<Value> = text.as_bytes().chunks(60_000).map(|p| chunk(json!({"content":std::str::from_utf8(p).unwrap()}), Value::Null)).collect();
+    chunks.push(chunk(json!({}), json!("stop")));
+    h.reply_with(200, SSE, chat_sse(&chunks));
+    let mut req = codex_request("first-turn");
+    req["text"]["format"] = json!({"type":"json_schema","name":"out","schema":{"type":"object",
+        "properties":{"a":{"type":"string"},"b":{"type":"string"}},"required":["b"],"additionalProperties":false}});
+    let (s, _, body) = h.post(R, &req);
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&body[..body.len().min(512)]));
+    // The null filter is armed on the output schema: `a` was made required (and nullable) upstream.
+    let up = h.upstream_bodies().pop().unwrap();
+    assert_eq!(up["response_format"]["json_schema"]["schema"]["required"], json!(["b", "a"]), "{}", up["response_format"]);
+    let evs = events(&body);
+    assert_eq!(terminals(&evs).len(), 1, "{:?}", names(&evs));
+    assert_eq!(evs.last().unwrap().0, "response.completed", "{:?}", terminals(&evs));
+    let items = done_items(&evs);
+    let msg = items.iter().find(|i| i["type"] == "message").expect("a message item");
+    assert_eq!(msg["content"][0]["text"], json!(want));
+}
+
+#[test] // RS-15, K§6.4.3 stream obligation 8: a JSON 2xx whose text is `"` as close to COPY_MAX as fits reaches a streamed request whole
+fn streamed_json_answer_keeps_large_text() {
+    let h = start(A);
+    let body = |n: usize| {
+        let mut m = MSG_JSON(false);
+        m["content"] = json!([{"type":"text","text":"\"".repeat(n)}]);
+        m["stop_reason"] = json!("end_turn");
+        serde_json::to_vec(&m).unwrap()
+    };
+    let base = body(0).len();
+    let n = (COPY_MAX - base) / 2;
+    let up = body(n);
+    assert!(up.len() <= COPY_MAX && up.len() + 2 > COPY_MAX, "{}", up.len());
+    let req = codex_request("after-custom-tool-call-output");
+
+    h.reply_with(200, JSON, up.clone());
+    let (s, _, b) = h.post(R, &with_stream(req.clone(), false));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b[..b.len().min(512)]));
+    let r: Value = serde_json::from_slice(&b).unwrap();
+    let msg = r["output"].as_array().unwrap().iter().find(|i| i["type"] == "message").expect("a message item");
+    let want = msg["content"][0]["text"].clone();
+    assert_eq!(want.as_str().map(str::len), Some(n));
+
+    h.reply_with(200, JSON, up);
+    let (s, _, b) = h.post(R, &with_stream(req, true));
+    assert_eq!(s, 200);
+    let evs = events(&b);
+    assert_eq!(terminals(&evs).len(), 1, "{:?}", names(&evs));
+    assert_eq!(evs.last().unwrap().0, "response.completed", "{:?}", terminals(&evs));
+    let items = done_items(&evs);
+    let got = items.iter().find(|i| i["type"] == "message").expect("a message item");
+    assert_eq!(got["content"][0]["text"], want);
+}
+
 #[test] // base §7.6: an injected null is removed on the way back to a Responses client
 fn injected_null_removed_for_responses_client() {
     let h = start(C);

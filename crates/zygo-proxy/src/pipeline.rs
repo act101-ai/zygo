@@ -99,6 +99,8 @@ pub struct ResponseCtx {
     pub usage: Usage,
     /// A zygo compact tool_use was seen (§10.2.3 trigger 2).
     pub compact_call: bool,
+    /// A Responses call item was seen in a streamed `response.output_item.added` or `.done` (K§6.4.5 end of turn).
+    pub call_item: bool,
 }
 
 /// C3: no header.
@@ -113,6 +115,7 @@ impl fmt::Debug for ResponseCtx {
             .field("adjustments", &self.adjustments)
             .field("usage", &self.usage)
             .field("compact_call", &self.compact_call)
+            .field("call_item", &self.call_item)
             .finish()
     }
 }
