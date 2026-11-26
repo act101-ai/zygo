@@ -30,6 +30,31 @@ static BINARY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[ \t]+(Running|D
 /// The dedup counted form `<line> [repeated <n> times]` (O§7.5).
 static COUNTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" \[repeated [0-9]+ times\]$").unwrap());
 
+/// The pytest "Summary that confirms" `^=+ .*\b(passed|failed|error|errors|skipped)\b.* in [\d.]+s.* =+$` (O§7.6),
+/// tested on the last line of the text.
+static PY_SUMMARY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^=+ .*\b(passed|failed|error|errors|skipped)\b.* in [\d.]+s.* =+$").unwrap()
+});
+
+/// The pytest progress form (O§7.6): a file and only `.`, `s`, `x`, `X` (no `F`, no `E`), with an optional
+/// percent tail; `\s` as ASCII space or tab, `\d` as ASCII digit.
+static PY_PROGRESS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\S+\.py [.sxX]+[ \t]*(\[[ \t]*[0-9]+%\])?$").unwrap());
+
+/// The pytest `-v` form (O§7.6): a passed, skipped, xfailed or xpassed test. The word is followed by an ASCII
+/// space, a tab or the line end, so `XPASS(strict)` (a failed test) does not match.
+static PY_VERBOSE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\S+::\S+ (PASSED|SKIPPED|XFAIL|XPASS)([ \t].*)?$").unwrap());
+
+/// The header that opens a pytest failure section (O§7.6).
+static PY_FAILURE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^=+ (FAILURES|ERRORS|short test summary info) =+$").unwrap());
+
+/// The last line of `text`, without the `\n` characters at its end (O§7.6 "a last line").
+fn last_line(text: &str) -> &str {
+    text.trim_end_matches('\n').rsplit('\n').next().unwrap_or("")
+}
+
 /// Whether `line` matches a whole-line hidden form of the row of `r` (O§7.6). `line` is one line of the text
 /// that step 3 sees (after clean, O§7.4, and dedup, O§7.5), without its `\n`. A line that ends in `\r` or
 /// in the dedup counted form matches no form.
@@ -39,7 +64,8 @@ pub fn hidden_by(r: Runner, line: &str) -> bool {
     }
     match r {
         Runner::Libtest => TEST_HIDDEN.is_match(line) || PROGRESS.is_match(line),
-        Runner::Pytest | Runner::Gotest => false,
+        Runner::Pytest => PY_PROGRESS.is_match(line) || PY_VERBOSE.is_match(line),
+        Runner::Gotest => false,
     }
 }
 
@@ -47,7 +73,8 @@ pub fn hidden_by(r: Runner, line: &str) -> bool {
 fn has_summary(r: Runner, text: &str) -> bool {
     match r {
         Runner::Libtest => SUMMARY.is_match(text),
-        Runner::Pytest | Runner::Gotest => false,
+        Runner::Pytest => PY_SUMMARY.is_match(last_line(text)),
+        Runner::Gotest => false,
     }
 }
 
@@ -57,7 +84,8 @@ pub fn view(text: &str, runners: &[Runner]) -> Option<(String, Vec<Step>, Shaper
     let r = runners.iter().copied().find(|&r| has_summary(r, text))?;
     match r {
         Runner::Libtest => libtest(text).map(|(v, s)| (v, s, Shaper::Libtest)),
-        Runner::Pytest | Runner::Gotest => None,
+        Runner::Pytest => pytest(text).map(|(v, s)| (v, s, Shaper::Pytest)),
+        Runner::Gotest => None,
     }
 }
 
@@ -140,4 +168,47 @@ pub fn libtest(text: &str) -> Option<(String, Vec<Step>)> {
         steps.push(Step::BuildProgressHidden);
     }
     Some((out, steps))
+}
+
+/// The pytest view of `text` (O§7.6): hides the progress lines with no `F` and no `E` and the `-v` lines of
+/// passed, skipped, xfailed and xpassed tests, keeps every other line verbatim and in order, and writes
+/// `[zygo: <n> passed or skipped progress lines hidden]` at the place of the first hidden line. The failure
+/// section is sticky: from the first `FAILURES`, `ERRORS` or `short test summary info` header to the end of
+/// the text no line is hidden (O-C9). `None` when the last line is not the summary, nothing is hidden, or the
+/// view is not shorter than `text` (O§7.3 "No step adds content").
+pub fn pytest(text: &str) -> Option<(String, Vec<Step>)> {
+    if !has_summary(Runner::Pytest, text) {
+        return None;
+    }
+    let mut pieces: Vec<Option<&str>> = Vec::new();
+    let mut hidden = 0usize;
+    let mut failure = false;
+    for line in text.split_inclusive('\n') {
+        let bare = line.strip_suffix('\n').unwrap_or(line);
+        if PY_FAILURE.is_match(bare) {
+            failure = true;
+        }
+        if failure || !hidden_by(Runner::Pytest, bare) {
+            pieces.push(Some(line));
+        } else {
+            if hidden == 0 {
+                pieces.push(None);
+            }
+            hidden += 1;
+        }
+    }
+    if hidden == 0 {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    for p in pieces {
+        match p {
+            Some(l) => out.push_str(l),
+            None => out.push_str(&format!("[zygo: {hidden} passed or skipped progress lines hidden]\n")),
+        }
+    }
+    if out.len() >= text.len() {
+        return None;
+    }
+    Some((out, vec![Step::PassedTestsHidden]))
 }
