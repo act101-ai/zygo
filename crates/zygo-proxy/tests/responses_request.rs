@@ -622,3 +622,31 @@ fn f5_tool_choice_against_sent_tools() {
     b["tool_choice"] = json!({"type":"function","name":ns["tools"][0]["name"]});
     assert_400(err(rq(&b)), not_sent);
 }
+
+#[test]
+fn f6_mapped_field_of_wrong_type_400() {
+    let cases = [
+        ("stream", json!("yes"), "stream must be a boolean"),
+        ("parallel_tool_calls", json!(0), "parallel_tool_calls must be a boolean"),
+        ("temperature", json!("hot"), "temperature must be a number"),
+        ("top_p", json!([1]), "top_p must be a number"),
+        ("reasoning", json!("high"), "reasoning must be an object"),
+        ("reasoning", json!({"effort":3}), "reasoning.effort must be a string"),
+        ("text", json!("plain"), "text must be an object"),
+        ("text", json!({"format":"text"}), "text.format must be an object"),
+    ];
+    for (k, v, message) in cases {
+        let mut b = body(json!([user("go")]));
+        b[k] = v;
+        assert_400(err(rq(&b)), message);
+    }
+    // null is absent: accepted and not sent.
+    let mut b = body(json!([user("go")]));
+    for k in ["stream", "parallel_tool_calls", "temperature", "top_p", "reasoning", "text"] {
+        b[k] = Value::Null;
+    }
+    let (m, _) = rq(&b).unwrap();
+    for k in ["stream", "temperature", "top_p", "output_config", "tool_choice"] {
+        assert!(m.get(k).is_none(), "{k}");
+    }
+}
