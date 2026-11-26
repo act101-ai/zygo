@@ -28,7 +28,7 @@ use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::{ResumeNote, SessionView};
 use zygo_core::Agent;
-use zygo_mail_sync::env::{Env, NoSeam, SystemClock};
+use zygo_mail_sync::env::{Env, NoSeam, SystemClock, TmuxWake};
 use zygo_mail_sync::public::LsRemote;
 use zygo_mail_sync::spawn::ChildSpawner;
 use zygo_workspace::activity::{self, Activity};
@@ -390,7 +390,9 @@ pub fn run_with_sync(
     Ok(None)
 }
 
-/// The production mail sync seams of the hook: the system clock and the `<zygo> mail sync` child.
+/// The production mail sync seams of the hook: the system clock and the `<zygo> mail sync` child. The wake is the
+/// real one (mail sync design S§18) with the D2 tmux program; `secret_policy` is the default deadline policy of the
+/// secret pass (S§8.6, `DeadlinePolicy::default()`).
 fn sync_env(paths: &Paths, zygo: &Path) -> Env {
     Env {
         paths: paths.clone(),
@@ -398,7 +400,29 @@ fn sync_env(paths: &Paths, zygo: &Path) -> Env {
         probe: Box::new(LsRemote),
         seam: Box::new(NoSeam),
         spawner: Box::new(ChildSpawner { zygo: zygo.to_path_buf() }),
+        wake: Box::new(TmuxWake { tmux: tmux_program() }),
+        secret_policy: Default::default(),
     }
+}
+
+/// The first `<entry>/tmux` over the absolute entries of `PATH` that is an executable file, else `/dev/null/tmux`:
+/// rule D2 (`docs/work/phase2/nodes/M1.md:39`) of `crates/zygo/src/cmd/mod.rs:109`, which is `pub(crate)` there.
+fn tmux_program() -> PathBuf {
+    let found = std::env::var_os("PATH").and_then(|v| {
+        std::env::split_paths(&v).filter(|p| p.is_absolute()).map(|p| p.join("tmux")).find(|p| executable(p))
+    });
+    found.unwrap_or_else(|| PathBuf::from("/dev/null/tmux"))
+}
+
+fn executable(p: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(p) else { return false };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.is_file() && meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    meta.is_file()
 }
 
 /// Starts the mail sync child of the member's workspace by the gap of S§8.4 (S§8.1). A config that does not load,

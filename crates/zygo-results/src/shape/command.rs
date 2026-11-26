@@ -379,7 +379,11 @@ pub fn parse(cmd: &str) -> Parsed {
             .runner_name
             .or(acc.list_name)
             .unwrap_or_else(|| "other".into()),
-        runners: acc.runners,
+        runners: acc
+            .runners
+            .into_iter()
+            .filter(|&r| !(acc.live_pytest && r == Runner::Pytest))
+            .collect(),
         reuse: acc.reuse,
     }
 }
@@ -1101,6 +1105,25 @@ fn runners_of(name: &str, rest: &[Word]) -> &'static [Runner] {
     }
 }
 
+/// Whether the words of a pytest stage ask for live test output: `-s` (also in a short-option cluster such as
+/// `-sv`, before an option that takes a value), `--capture=no`, `--capture=tee-sys`, `--capture no`,
+/// `--capture tee-sys`, or a dynamic word that may hold one of them (O§7.6, O-C9).
+fn pytest_live(rest: &[Word]) -> bool {
+    rest.iter().enumerate().any(|(i, w)| {
+        let t = w.text.as_str();
+        w.dynamic
+            || match t.strip_prefix("--capture") {
+                Some(v) if v.is_empty() => rest
+                    .get(i + 1)
+                    .is_some_and(|n| matches!(n.text.as_str(), "no" | "tee-sys")),
+                Some(v) => matches!(v, "=no" | "=tee-sys"),
+                None => t.strip_prefix('-').is_some_and(|c| {
+                    !c.starts_with('-') && c.chars().take_while(|ch| !"kmrpcoWn".contains(*ch)).any(|ch| ch == 's')
+                }),
+            }
+    })
+}
+
 #[derive(Default)]
 struct Acc {
     unsure: bool,
@@ -1109,6 +1132,8 @@ struct Acc {
     runners: Vec<Runner>,
     runner_name: Option<String>,
     list_name: Option<String>,
+    /// A pytest stage prints test output live, so the pytest view does not apply (O§7.6, O-C9).
+    live_pytest: bool,
 }
 
 /// Where a script or stage is met.
@@ -1277,6 +1302,9 @@ fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, pos: usize, 
         return;
     }
     let runners = runners_of(name, rest);
+    if runners == [Runner::Pytest] && pytest_live(rest) {
+        acc.live_pytest = true;
+    }
     if !runners.is_empty() {
         for r in runners {
             if !acc.runners.contains(r) {
