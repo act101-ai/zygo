@@ -718,6 +718,45 @@ fn e2_a_hand_start_with_a_repository_profile_gets_the_pin_and_keeps_it() { // R�
 
 #[test]
 #[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn e4_a_hand_resume_of_a_kept_record_launches_from_its_pin() { // R§7.4 bullet 2 (a hand resume), bullet 3; review F3
+    let Some(h) = Harness::new() else { return };
+    user_config(&h, "[loadout.l14]\n[[loadout.l14.window]]\n[[loadout.l14.window.pane]]\nkind = \"shell\"\n");
+    git_repo_at(&h, &h.repo());
+    per_pane_claude(&h, "");
+    let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
+    let pin0 = approve(&app, &h.paths.approvals_file);
+    let o = run_in(&h, &app, &["up", "--loadout", "l14", "--no-attach"], &[], true);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let (id, ws) = only_state(&h);
+    commit_default(&app, NEWER);
+    approve(&app, &h.paths.approvals_file);
+    // The kept record: a stopped member of key KEY with agent session `abc` and the pin of the `RUST` read.
+    h.store(&id)
+        .update(Duration::from_secs(5), &mut |w| {
+            w.members.insert(KEY.into(), pinned(Some(&pin0)));
+            Ok(())
+        })
+        .unwrap();
+    let script =
+        hand_script(&h, "hand", &["claude", "--profile", "rust", "--", "--resume", "abc"], &[("ZYGO_WORKSPACE", OsStr::new(&id))]);
+    let at = app.display().to_string();
+    let pane = h.tmux(&["split-window", "-P", "-F", "#{pane_id}", "-c", &at, "-t", &format!("={}:", ws.tmux_session), &script]);
+    h.tmux(&["set-option", "-p", "-t", pane.trim(), "@zygo-pane", KEY]);
+    fake_git(&h, false);
+    std::fs::write(h.root().join("hand.go"), "").unwrap();
+    let hand_err = || std::fs::read_to_string(h.root().join("hand.err")).unwrap_or_default();
+    assert!(wait_starts(&h, KEY, 1), "{}", hand_err());
+    let v = view_of(&h, KEY);
+    assert_eq!((v["profile"].clone(), v["disabled_roles"].clone()), (json!("rust"), json!(["design"])), "{}", hand_err());
+    let log = git_log(&h);
+    assert!(!log.contains(DEFAULT_LOOKUP), "{log}");
+    assert!(log.lines().any(|l| l.contains("ls-tree") && l.contains(&pin0.commit)), "{log}");
+    assert_eq!(state(&h, &id).members[KEY].launch.definition.as_ref(), Some(&pin0));
+    down(&h, &ws.name);
+}
+
+#[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn e3_item_15_a_pool_member_with_a_profile() { // R§18 item 15 (stub launch part); R§9.5 "Launch"; R§14 row §12
     let Some(h) = Harness::new() else { return };
     user_config(&h, "");
