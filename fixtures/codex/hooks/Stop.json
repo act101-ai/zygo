@@ -1,0 +1,11 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "turn_id": "00000000-0000-4000-8000-000000000002",
+  "transcript_path": "/tmp/run/cxh-pc5-probe/sessions/2026/11/26/rollout-2026-11-26T01-11-40-00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "hook_event_name": "Stop",
+  "model": "gpt-mock",
+  "permission_mode": "bypassPermissions",
+  "stop_hook_active": false,
+  "last_assistant_message": "ok"
+}

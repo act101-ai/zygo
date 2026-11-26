@@ -64,6 +64,9 @@ def recs(s):
     out = []
     for i in range(int(t[1]), int(t[2]) + 1):
         p = os.path.join(RUN, t[0], "%04d.json" % i)
+        if not os.path.exists(p) and t[0] == "rec-a":
+            # Phase A, before the restart: the records are still in rec/.
+            p = os.path.join(RUN, "rec", "%04d.json" % i)
         if os.path.exists(p):
             out.append(json.load(open(p)))
     return out
@@ -176,6 +179,8 @@ def cmd_sse():
     elif kind == "call":
         item = {"type": "function_call", "id": "fc_zp", "status": "completed", "call_id": A[3],
                 "name": A[2], "arguments": A[4]}
+        if len(A) > 5 and A[5]:
+            item["namespace"] = A[5]
         added = dict(item, status="in_progress")
     elif kind == "custom":
         item = {"type": "custom_tool_call", "id": "ctc_zp", "status": "completed", "call_id": A[3],
@@ -227,19 +232,21 @@ def cmd_pc5toml():
 
 
 def tool_names(body):
+    """Every tool (not a namespace) in body.tools, each with "_ns": its namespace name or ""."""
     found = []
 
-    def walk(o):
+    def walk(o, ns):
         if isinstance(o, dict):
+            if o.get("type") == "namespace":
+                for v in o.get("tools") or []:
+                    walk(v, o.get("name", ""))
+                return
             if isinstance(o.get("name"), str):
-                found.append(o)
-            for v in o.values():
-                if isinstance(v, (dict, list)):
-                    walk(v)
+                found.append(dict(o, _ns=ns))
         elif isinstance(o, list):
             for v in o:
-                walk(v)
-    walk(body.get("tools") or [])
+                walk(v, ns)
+    walk(body.get("tools") or [], "")
     return found
 
 
@@ -252,7 +259,7 @@ def cmd_tools():
             first = r
             break
     v = dict(SHELL_TOOL="", SHELL_ARG="", SHELL_ARRAY="", PATCH_TOOL="", PATCH_KIND="", SPAWN_TOOL="",
-             SPAWN_ARG="", MCP_TOOL="")
+             SPAWN_ARG="", SPAWN_NS="", MCP_TOOL="", MCP_NS="")
     tools = tool_names(first["body"]) if first else []
     by = {}
     for t in tools:
@@ -272,12 +279,14 @@ def cmd_tools():
         if "spawn" in n:
             v["SPAWN_TOOL"] = n
             v["SPAWN_ARG"] = next((a for a in ("message", "prompt", "task", "input") if a in props(t)), "")
+            v["SPAWN_NS"] = t["_ns"]
             break
     v["MCP_TOOL"] = next((n for n in by if "probe_tool" in n), "")
-    v["ALL_TOOLS"] = ",".join(sorted(by))
+    v["MCP_NS"] = by[v["MCP_TOOL"]]["_ns"] if v["MCP_TOOL"] else ""
+    v["ALL_TOOLS"] = ",".join(sorted(("%s/%s" % (t["_ns"], n)) if t["_ns"] else n for n, t in by.items()))
     with open(out, "w") as f:
         for k, x in v.items():
-            if not re.fullmatch(r"[A-Za-z0-9_.,:-]*", x):
+            if not re.fullmatch(r"[A-Za-z0-9_.,:/-]*", x):
                 x = ""
             f.write("%s='%s'\n" % (k, x))
 
@@ -375,13 +384,42 @@ def cmd_strict_gen():
         f.write("\n".join(L) + "\n")
 
 
+LOC = re.compile(r"config\.toml:(\d+):(\d+): (.*)$")
+
+
 def first_err(s):
+    """The first stderr line that locates a config error (from "config.toml:"), else the first line."""
     ls = lines(os.path.join(RUN, "out", s + ".err"))
+    for l in ls:
+        m = LOC.search(l)
+        if m:
+            return l[m.start():]
     return ls[0] if ls else "no stderr (exit %s)" % rc(s)
 
 
+def key_at(s, keys):
+    """The key on the config.toml line a stderr location names (out/<s>.toml is the file)."""
+    for l in lines(os.path.join(RUN, "out", s + ".err")):
+        m = LOC.search(l)
+        if not m:
+            continue
+        fl = rd(os.path.join(RUN, "out", s + ".toml")).splitlines()
+        n = int(m.group(1))
+        if not 0 < n <= len(fl):
+            return None
+        text = fl[n - 1].strip()
+        k = next((k for k in keys if k[3] and k[3].strip() == text), None)
+        if k is None and any(x.strip().startswith("[hooks.state") for x in fl[:n]):
+            k = next((k for k in keys if k[0] == "hooks_state"), None)
+        return k
+    return None
+
+
 def key_hit(line, keys):
-    """The key a stderr line names: a whole dotted key (longest first), else a quoted alias."""
+    """The key an error line names: a whole dotted key (longest first), else a quoted alias. Only a
+    line that says error, unknown or invalid counts (not the banner's "model: <name>")."""
+    if not re.search(r"error|unknown|invalid", line, re.I):
+        return None
     for k in sorted(keys, key=lambda k: -len(k[1])):
         if re.search(r"(?<![A-Za-z0-9_.])%s(?![A-Za-z0-9_])" % re.escape(k[1]), line):
             return k
@@ -403,11 +441,12 @@ def cmd_strict_judge():
         v["verdict"] = "accepted"
     else:
         errs = lines(os.path.join(RUN, "out", s + ".err"))
-        hit = next(((l, key_hit(l, keys)) for l in errs if key_hit(l, keys)), None)
+        k = key_at(s, keys)
+        hit = (first_err(s), k) if k else next(((l, key_hit(l, keys)) for l in errs if key_hit(l, keys)), None)
         if hit:
             v.update(verdict="key", key=hit[1][0], line=hit[0])
         else:
-            v.update(verdict="other", line=errs[0] if errs else "no request recorded (exit %s)" % rc(s))
+            v.update(verdict="other", line=first_err(s) if errs else "no request recorded (exit %s)" % rc(s))
     with open(os.path.join(RUN, "sum", "strict.jsonl"), "a") as f:
         f.write(json.dumps(v) + "\n")
     print(v["verdict"] + (" " + v["key"] if v["verdict"] == "key" else ""))
@@ -503,10 +542,14 @@ def shown_fns():
         return {"cli": "cli", "project": "project"}.get(rs[0]["headers"].get("x-zp-who") if rs else None, "none")
 
     def ws(s):
+        # Codex tunnels the WebSocket through HTTPS_PROXY (a refused CONNECT to the mock's port) and
+        # logs "responses_websocket" on stderr; a GET with upgrade: websocket would be recorded.
         if not recs(s):
             return "none"
-        return "cli" if any(r.get("method") == "GET" and "websocket" in (r.get("headers") or {}).get("upgrade", "").lower()
-                            for r in recs(s)) else "project"
+        err = rd(os.path.join(RUN, "out", s + ".err"))
+        get = any(r.get("method") == "GET" and "websocket" in (r.get("headers") or {}).get("upgrade", "").lower()
+                  for r in recs(s))
+        return "cli" if get or "responses_websocket" in err else "project"
 
     def env(s):
         rs = resp(s)
@@ -732,7 +775,8 @@ def pc5(tools_env, r_dir):
              "shell_array": env.get("SHELL_ARRAY") == "1",
              "patch": nf(env.get("PATCH_TOOL"), "patch"), "patch_kind": env.get("PATCH_KIND", ""),
              "spawn": nf(env.get("SPAWN_TOOL"), "spawn"), "spawn_arg": env.get("SPAWN_ARG", ""),
-             "mcp": nf(env.get("MCP_TOOL"), "mcp"), "all_tools": [t for t in env.get("ALL_TOOLS", "").split(",") if t],
+             "spawn_namespace": env.get("SPAWN_NS", ""), "mcp": nf(env.get("MCP_TOOL"), "mcp"),
+             "mcp_namespace": env.get("MCP_NS", ""), "all_tools": [t for t in env.get("ALL_TOOLS", "").split(",") if t],
              "hook_tool_names": seen_names}
     tools["result"] = "verified" if env.get("SHELL_TOOL") else "failed"
     tools["why"] = "tool names read from pc5-probe's first request" if env.get("SHELL_TOOL") else \
@@ -869,7 +913,7 @@ cx_reqs() {
   read -r _d _a _z <"$RUN/out/$1.seq"
   while [ "$_a" -le "$_z" ]; do printf '%s/%s/%04d.json\n' "$RUN" "$_d" "$_a"; _a=$((_a + 1)); done
 }
-# cx_sse <file> text <text> | call <name> <call_id> <arguments json> | custom <name> <call_id> <input>
+# cx_sse <file> text <text> | call <name> <call_id> <arguments json> [<namespace>] | custom <name> <call_id> <input>
 cx_sse() { _o=$1 _k=$2; shift 2; cxpy sse "$_o" "$_k" "$@"; }
 # cx_tools: tools.env from pc5-probe's first request (SHELL_TOOL, SHELL_ARG, SHELL_ARRAY, PATCH_TOOL,
 # PATCH_KIND, SPAWN_TOOL, SPAWN_ARG, MCP_TOOL; empty when not offered).
@@ -941,7 +985,11 @@ pc5_home() {
 }
 # hook_rule <scenario> <event> <output json>: hook_log.py rules file, one use.
 hook_rule() { printf '[{"event": "%s", "times": 1, "output": %s}]\n' "$2" "$3" >"$RUN/hk-rules/$1.json"; }
-pc5_run() { cx_run "$1" --dangerously-bypass-hook-trust; }
+# features.apply_patch_freeform: the pinned schema's apply_patch feature. Real runs (2026-11-26):
+# for gpt-mock (no model metadata) Codex offers no apply_patch with or without it; with Codex's
+# own default model (gpt-6.2-sol) the request carries no tools field at all, so the probe stays
+# on gpt-mock.
+pc5_run() { cx_run "$1" --dangerously-bypass-hook-trust -c features.apply_patch_freeform=true; }
 
 # ================================ phase A: no tool calls ================================
 printf '[]\n' >"$RUN/rules.json"
@@ -1115,11 +1163,11 @@ if b_need "$PATCH_TOOL" patch pc5-patch; then
   cxpy rule "$RUN/rules.json" pc5-patch "$RUN/sse/pc5-patch.sse"
 fi
 if b_need "$MCP_TOOL" mcp pc5-mcp; then
-  cx_sse "$RUN/sse/pc5-mcp.sse" call "$MCP_TOOL" call_pc5_mcp '{}'
+  cx_sse "$RUN/sse/pc5-mcp.sse" call "$MCP_TOOL" call_pc5_mcp '{}' "$MCP_NS"
   cxpy rule "$RUN/rules.json" pc5-mcp "$RUN/sse/pc5-mcp.sse"
 fi
 if b_need "$SPAWN_TOOL" spawn pc5-sub && b_need "$SPAWN_ARG" spawn-argument pc5-sub; then
-  cx_sse "$RUN/sse/pc5-sub.sse" call "$SPAWN_TOOL" call_pc5_sub "{\"$SPAWN_ARG\": \"zp-pc5-sub-child\"}"
+  cx_sse "$RUN/sse/pc5-sub.sse" call "$SPAWN_TOOL" call_pc5_sub "{\"$SPAWN_ARG\": \"zp-pc5-sub-child\"}" "$SPAWN_NS"
   cxpy rule "$RUN/rules.json" pc5-sub "$RUN/sse/pc5-sub.sse"
 fi
 start_mock "$RUN/rules.json"

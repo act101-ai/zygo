@@ -1,0 +1,23 @@
+{
+  "kind": "sampling",
+  "request_id": "00000000-0000-4000-8000-000000000001",
+  "attempt_number": 1,
+  "session_id": "00000000-0000-4000-8000-000000000002",
+  "thread_id": "00000000-0000-4000-8000-000000000002",
+  "turn_id": "00000000-0000-4000-8000-000000000003",
+  "cwd": "/repo",
+  "transcript_path": "/tmp/run/cxh-pc5-probe/sessions/2026/11/26/rollout-2026-11-26T01-11-40-00000000-0000-4000-8000-000000000002.jsonl",
+  "model": "gpt-mock",
+  "hook_event_name": "PostModelRequest",
+  "status": "completed",
+  "error": null,
+  "token_usage": {
+    "input_tokens": 10,
+    "cached_input_tokens": 0,
+    "cache_write_input_tokens": 0,
+    "output_tokens": 1,
+    "reasoning_output_tokens": 0,
+    "total_tokens": 11
+  },
+  "response_id": "resp_mock_default"
+}

@@ -1,0 +1,119 @@
+{
+  "keys": {
+    "model_providers.mock.base_url": {
+      "group": "pc3-url",
+      "cli_only": true,
+      "project_only": false,
+      "both": "cli",
+      "verdict": "cli"
+    },
+    "model_provider": {
+      "group": "pc3-prov",
+      "cli_only": true,
+      "project_only": false,
+      "both": "cli",
+      "verdict": "cli"
+    },
+    "model_providers.mock.auth": {
+      "group": "pc3-auth",
+      "cli_only": true,
+      "project_only": false,
+      "both": "cli",
+      "verdict": "cli"
+    },
+    "model": {
+      "group": "pc3-main",
+      "cli_only": true,
+      "project_only": true,
+      "both": "cli",
+      "verdict": "cli"
+    },
+    "model_providers.mock.http_headers": {
+      "group": "pc3-main",
+      "cli_only": true,
+      "project_only": false,
+      "both": "cli",
+      "verdict": "cli"
+    },
+    "developer_instructions": {
+      "group": "pc3-main",
+      "cli_only": true,
+      "project_only": true,
+      "both": "cli",
+      "verdict": "cli"
+    },
+    "skills.config": {
+      "group": "pc3-main",
+      "cli_only": false,
+      "project_only": true,
+      "both": "project",
+      "verdict": "not-shown (value not seen)"
+    },
+    "mcp_servers.zygo": {
+      "group": "pc3-main",
+      "cli_only": true,
+      "project_only": true,
+      "both": "cli",
+      "verdict": "cli"
+    },
+    "model_providers.mock.supports_websockets": {
+      "group": "pc3-main",
+      "cli_only": true,
+      "project_only": true,
+      "both": "cli",
+      "verdict": "cli"
+    },
+    "model_providers.mock.wire_api": {
+      "cli_only": false,
+      "project_only": false,
+      "both": "none",
+      "verdict": "not-shown (one valid value, WireApi)"
+    },
+    "tui.status_line": {
+      "cli_only": false,
+      "project_only": false,
+      "both": "none",
+      "verdict": "not-shown (exec renders no status line; PC11 is PC-5's)"
+    },
+    "shell_environment_policy.set": {
+      "group": "pc3-env",
+      "cli_only": true,
+      "project_only": true,
+      "both": "cli",
+      "verdict": "cli"
+    },
+    "model_auto_compact_token_limit": {
+      "group": "pc3-compact",
+      "cli_only": true,
+      "project_only": true,
+      "both": "cli",
+      "verdict": "cli"
+    },
+    "compact_prompt": {
+      "group": "pc3-compact",
+      "cli_only": true,
+      "project_only": false,
+      "both": "cli",
+      "verdict": "cli"
+    },
+    "model_context_window": {
+      "group": "pc3-window",
+      "cli_only": true,
+      "project_only": true,
+      "both": "cli",
+      "verdict": "cli"
+    },
+    "model_providers.mock.capabilities.remote_compaction": {
+      "group": "pc3-window",
+      "cli_only": true,
+      "project_only": false,
+      "both": "cli",
+      "verdict": "cli",
+      "v2_run": "trigger"
+    }
+  },
+  "result": "verified",
+  "why": "the -c value wins for every key whose cli value shows",
+  "pc3_result": "verified",
+  "pc3_why": "codex-home.json, cd.json and precedence.json are verified"
+}

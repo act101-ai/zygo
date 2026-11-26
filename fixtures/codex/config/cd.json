@@ -1,0 +1,6 @@
+{
+  "other_marker": true,
+  "cwd_marker": false,
+  "result": "verified",
+  "why": "-C/--cd selects the project config of its folder"
+}

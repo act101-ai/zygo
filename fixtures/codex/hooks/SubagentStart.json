@@ -1,0 +1,11 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "turn_id": "00000000-0000-4000-8000-000000000002",
+  "transcript_path": "/tmp/run/cxh-pc5-sub/sessions/2026/11/26/rollout-2026-11-26T01-12-15-00000000-0000-4000-8000-000000000003.jsonl",
+  "cwd": "/repo",
+  "hook_event_name": "SubagentStart",
+  "model": "gpt-mock",
+  "permission_mode": "bypassPermissions",
+  "agent_id": "00000000-0000-4000-8000-000000000003",
+  "agent_type": "default"
+}

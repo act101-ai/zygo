@@ -1,0 +1,204 @@
+{
+  "events": {
+    "SessionStart": [
+      "pc5-probe",
+      "pc5-shell",
+      "pc5-mcp",
+      "pc5-sub",
+      "pc5-ctx-start",
+      "pc5-ctx-prompt",
+      "pc5-deny",
+      "pc5-deny-block",
+      "pc5-stop-block",
+      "pc5-post-replace",
+      "pc5-post-block"
+    ],
+    "UserPromptSubmit": [
+      "pc5-probe",
+      "pc5-shell",
+      "pc5-mcp",
+      "pc5-sub",
+      "pc5-ctx-start",
+      "pc5-ctx-prompt",
+      "pc5-deny",
+      "pc5-deny-block",
+      "pc5-stop-block",
+      "pc5-post-replace",
+      "pc5-post-block"
+    ],
+    "PreToolUse": [
+      "pc5-shell",
+      "pc5-mcp",
+      "pc5-sub",
+      "pc5-deny",
+      "pc5-deny-block",
+      "pc5-post-replace",
+      "pc5-post-block"
+    ],
+    "PermissionRequest": [
+      "pc5-mcp"
+    ],
+    "PostToolUse": [
+      "pc5-shell",
+      "pc5-sub",
+      "pc5-post-replace",
+      "pc5-post-block"
+    ],
+    "PreModelRequest": [
+      "pc5-probe",
+      "pc5-shell",
+      "pc5-mcp",
+      "pc5-sub",
+      "pc5-ctx-start",
+      "pc5-ctx-prompt",
+      "pc5-deny",
+      "pc5-deny-block",
+      "pc5-stop-block",
+      "pc5-post-replace",
+      "pc5-post-block"
+    ],
+    "PostModelRequest": [
+      "pc5-probe",
+      "pc5-shell",
+      "pc5-mcp",
+      "pc5-sub",
+      "pc5-ctx-start",
+      "pc5-ctx-prompt",
+      "pc5-deny",
+      "pc5-deny-block",
+      "pc5-stop-block",
+      "pc5-post-replace",
+      "pc5-post-block"
+    ],
+    "PreCompact": "not seen",
+    "PostCompact": "not seen",
+    "SubagentStart": [
+      "pc5-sub"
+    ],
+    "SubagentStop": "not seen",
+    "Stop": [
+      "pc5-probe",
+      "pc5-shell",
+      "pc5-mcp",
+      "pc5-sub",
+      "pc5-ctx-start",
+      "pc5-ctx-prompt",
+      "pc5-deny",
+      "pc5-deny-block",
+      "pc5-stop-block",
+      "pc5-post-replace",
+      "pc5-post-block"
+    ],
+    "Interrupt": "not triggered (exec has no interrupt)",
+    "SessionEnd": [
+      "pc5-probe",
+      "pc5-shell",
+      "pc5-mcp",
+      "pc5-sub",
+      "pc5-ctx-start",
+      "pc5-ctx-prompt",
+      "pc5-deny",
+      "pc5-deny-block",
+      "pc5-stop-block",
+      "pc5-post-replace",
+      "pc5-post-block"
+    ]
+  },
+  "shapes": {
+    "pc5-ctx-start": {
+      "kind": "context",
+      "event": "SessionStart",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "SessionStart",
+          "additionalContext": "zp-ctx-start"
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 1,
+      "accepted": true,
+      "evidence": "zp-ctx-start in request 1: True"
+    },
+    "pc5-ctx-prompt": {
+      "kind": "context",
+      "event": "UserPromptSubmit",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "UserPromptSubmit",
+          "additionalContext": "zp-ctx-prompt"
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 1,
+      "accepted": true,
+      "evidence": "zp-ctx-prompt in request 1: True"
+    },
+    "pc5-deny": {
+      "kind": "deny",
+      "event": "PreToolUse",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "PreToolUse",
+          "permissionDecision": "deny",
+          "permissionDecisionReason": "zp-deny"
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": true,
+      "evidence": "command ran: False; zp-deny in request 2: True"
+    },
+    "pc5-deny-block": {
+      "kind": "deny",
+      "event": "PreToolUse",
+      "output": {
+        "decision": "block",
+        "reason": "zp-deny2"
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": true,
+      "evidence": "command ran: False; zp-deny2 in request 2: True"
+    },
+    "pc5-stop-block": {
+      "kind": "block",
+      "event": "Stop",
+      "output": {
+        "decision": "block",
+        "reason": "zp-block"
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": true,
+      "evidence": "zp-block in request(s) [2]"
+    },
+    "pc5-post-replace": {
+      "kind": "replacement",
+      "event": "PostToolUse",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "PostToolUse",
+          "updatedToolOutput": "zp-replaced"
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": false,
+      "evidence": "request 2 tool output holds zp-replaced: False, zp-orig: True"
+    },
+    "pc5-post-block": {
+      "kind": "block",
+      "event": "PostToolUse",
+      "output": {
+        "decision": "block",
+        "reason": "zp-post"
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": true,
+      "evidence": "zp-post in request 2: True"
+    }
+  },
+  "result": "failed",
+  "why": "missing: SubagentStop, replacement shape"
+}

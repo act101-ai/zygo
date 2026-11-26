@@ -1,0 +1,109 @@
+{
+  "scenarios": {
+    "pc4-none": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [],
+      "hooks_state_keys": []
+    },
+    "pc4-bypass": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [
+        "home-inline",
+        "home-json",
+        "project-inline",
+        "project-json"
+      ],
+      "hooks_state_keys": []
+    },
+    "pc4-untrusted": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [
+        "home-inline",
+        "home-json"
+      ],
+      "hooks_state_keys": []
+    },
+    "pc4-trust": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [],
+      "hooks_state_keys": []
+    },
+    "pc4-log": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [],
+      "hooks_state_keys": []
+    },
+    "pc4-feature-default": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [
+        "home-inline",
+        "home-json",
+        "project-inline",
+        "project-json"
+      ],
+      "hooks_state_keys": []
+    },
+    "pc4-feature-legacy": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [
+        "home-inline",
+        "home-json",
+        "project-inline",
+        "project-json"
+      ],
+      "hooks_state_keys": []
+    },
+    "pc4-prewritten": {
+      "ran": false,
+      "why": "not-run: no record form"
+    }
+  },
+  "where_kept": "none written",
+  "bypass_effect": [
+    "home-inline",
+    "home-json",
+    "project-inline",
+    "project-json"
+  ],
+  "feature_flag": {
+    "none": [
+      "home-inline",
+      "home-json",
+      "project-inline",
+      "project-json"
+    ],
+    "codex_hooks": [
+      "home-inline",
+      "home-json",
+      "project-inline",
+      "project-json"
+    ],
+    "hooks": [
+      "home-inline",
+      "home-json",
+      "project-inline",
+      "project-json"
+    ],
+    "warnings": [
+      "deprecated: `[features].codex_hooks` is deprecated. Use `[features].hooks` instead."
+    ],
+    "note": "each run: --dangerously-bypass-hook-trust; every other scenario sets [features] hooks = true"
+  },
+  "prewritten_honored": "not-run",
+  "result": "failed",
+  "why": "no record form found (K-D13 takes branch 2 or 3)"
+}
