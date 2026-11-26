@@ -196,3 +196,13 @@ Produces:
 4. Review focus: line 11 (reasoning byte-equal, `include` kept, `store` false, `response.completed` counts, a mapped chat stream not read as Responses lines) → tests 1, 2, 5, 9; line 12 (RS-5 half: no `cache_control` toward a Responses upstream) → tests 1, 4.
 5. Proportion: about 60 lines of code across four source files; the plan gives signatures and assertions, not bodies.
 6. Live code: every cited path and line was opened at da0c0387; `usage_of` already holds the count rule and is reused.
+
+### Round 1 review (2026-11-25)
+
+- F1 (important), a non-array `include` gave 400 only when `openai` was the only candidate: fixed in f340b620. `run` checks the type once after `check_fields`, before any stage or candidate (`forward.rs`). Test `include_not_array_400_with_second_candidate` failed before the fix (200, served by the `anthropic` candidate).
+- F2 (important), no candidate fallback test: fixed in f340b620. New tests: `fallback_after_5xx_or_429_translates_the_client_body` (500, 503 and 429 from `openai`, then `anthropic` serves; its body equals the body of an `anthropic`-only config for the same client body, which has `store: true` and no `include`), `streamed_non_2xx_passes_status_and_body`, `redaction_reaches_passthrough_body`. They passed on the first run: they cover behaviour the code already had. The harness gains `reply_seq` and an `{UPSTREAM}` placeholder in `extra_toml`.
+- F3 (nit), usage silently zero when the terminal line is over HOLD_MAX: fixed in f340b620. `Tee::usage_unread` is true for a stream in the Responses form that read no usage object; `Flow::drop` adds `usage_unread` to the row of a 2xx. Test `unread_terminal_line_marks_usage_unread` failed before the fix. K§6.4.2 C3 names the code.
+- F4 (nit), `response.failed` usage not read: fixed in f340b620. Tests `failed_usage_recorded` and the new line in `responses_usage_reads_terminal_lines_only` failed before the fix. K§6.4.2 C3 names the three events.
+- F5 (nit), a same-dialect non-2xx body or in-stream error with the provider key reaches the client: recorded. The controller makes a new node for every untranslated passthrough.
+- F6 (nit), style: fixed in f340b620 (`let key = c.key`, `responses_same` signature wrapped).
+- F7 (nit), `mapped_streams_parse_as_messages` passes without the change: rejected. It is a regression guard by design (plan step 3).
