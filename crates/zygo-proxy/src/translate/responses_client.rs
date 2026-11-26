@@ -121,7 +121,7 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
         return Err(bad("input: the conversation must start with a user message"));
     }
     let tools = tools(req, &mut d)?;
-    let choice = tool_choice(req)?;
+    let choice = tool_choice(req, &tools)?;
 
     let mut out = Map::new();
     out.insert("model".into(), model.clone());
@@ -368,18 +368,30 @@ fn tools(req: &Value, d: &mut Drops) -> Result<Vec<Value>, ZygoError> {
     Ok(out)
 }
 
-/// `tool_choice` with `parallel_tool_calls` (obligation 7).
-fn tool_choice(req: &Value) -> Result<Option<Value>, ZygoError> {
+/// `tool_choice` with `parallel_tool_calls` (obligation 7), against the `tools` sent: with none, both are omitted and
+/// `required` is a 400; a named tool must be one of them.
+fn tool_choice(req: &Value, tools: &[Value]) -> Result<Option<Value>, ZygoError> {
     let mut tc = match req.get("tool_choice") {
         None | Some(Value::Null) => None,
         Some(v) => Some(match (v.as_str(), s(v, "type"), s(v, "name")) {
             (Some("auto"), _, _) => json!({"type":"auto"}),
             (Some("none"), _, _) => json!({"type":"none"}),
             (Some("required"), _, _) => json!({"type":"any"}),
-            (None, Some("function" | "custom"), Some(name)) => json!({"type":"tool","name":name}),
+            (None, Some("function" | "custom"), Some(name)) => {
+                if !tools.iter().any(|t| s(t, "name") == Some(name)) {
+                    return Err(bad("tool_choice: the named tool is not among the sent tools"));
+                }
+                json!({"type":"tool","name":name})
+            }
             _ => return Err(bad("tool_choice: unknown form")),
         }),
     };
+    if tools.is_empty() {
+        if tc.as_ref().is_some_and(|tc| s(tc, "type") == Some("any")) {
+            return Err(bad("tool_choice: required, but no tool is sent"));
+        }
+        return Ok(None);
+    }
     if req.get("parallel_tool_calls").and_then(Value::as_bool) == Some(false) {
         let tc = tc.get_or_insert_with(|| json!({"type":"auto"}));
         if s(tc, "type") != Some("none") {
