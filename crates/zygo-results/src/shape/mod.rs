@@ -176,6 +176,25 @@ mod tests {
     }
 
     #[test]
+    fn all_has_every_step() {
+        // `SHAPED_MARKER_ROOM` is measured on `Step::ALL`. No wildcard arm: a new variant does not compile until it has
+        // an arm here, and its arm `Step::ALL[8]` does not compile (index out of bounds) until `ALL` has it.
+        let at = |s: Step| match s {
+            Step::ColorCodesRemoved => Step::ALL[0],
+            Step::ProgressLinesRemoved => Step::ALL[1],
+            Step::RepeatedLinesCounted => Step::ALL[2],
+            Step::PassedTestsHidden => Step::ALL[3],
+            Step::BuildProgressHidden => Step::ALL[4],
+            Step::DiffFilesListed => Step::ALL[5],
+            Step::JsonOutlined => Step::ALL[6],
+            Step::LogErrorsKept => Step::ALL[7],
+        };
+        for s in Step::ALL {
+            assert_eq!(at(s), s);
+        }
+    }
+
+    #[test]
     fn shaper_names_are_the_spec_strings() {
         // O§7.9 `shaper` values
         let all = [
