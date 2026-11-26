@@ -158,12 +158,15 @@ fn git_ok(wt: &Path, args: &[&str], step: &'static str, deadline: Instant) -> Re
 }
 
 /// The tree of `tip` without `paths` and everything under them, at any depth and whatever the bytes of the names
-/// (`git rm -r --cached` on the worktree's index, literal pathspecs).
+/// (`git rm -r --cached` on the worktree's index, literal pathspecs; one call per [`branch::path_chunks`] run).
 fn tree_without(wt: &Path, tip: &str, paths: &[String], deadline: Instant) -> Result<String, BranchError> {
     git_ok(wt, &["read-tree", tip], "read-tree", deadline)?;
-    let mut args = vec!["--literal-pathspecs", "rm", "-r", "-f", "-q", "--cached", "--ignore-unmatch", "--"];
-    args.extend(paths.iter().map(String::as_str));
-    git_ok(wt, &args, "rm", deadline)?;
+    let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+    for chunk in branch::path_chunks(&paths) {
+        let mut args = vec!["--literal-pathspecs", "rm", "-r", "-f", "-q", "--cached", "--ignore-unmatch", "--"];
+        args.extend(chunk);
+        git_ok(wt, &args, "rm", deadline)?;
+    }
     let out = git_ok(wt, &["write-tree"], "write-tree", deadline)?;
     let tree = String::from_utf8_lossy(&out).trim_end().to_string();
     if tree.is_empty() || !tree.bytes().all(|b| b.is_ascii_hexdigit()) {

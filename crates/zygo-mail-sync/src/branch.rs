@@ -158,6 +158,11 @@ fn chunks<T>(items: &[T], len: impl Fn(&T) -> usize, bytes: impl Fn(&T) -> usize
     out
 }
 
+/// `paths` cut by [`chunks`], one plain argument each: the path runs of one git call within [`ARGV_BUDGET`].
+pub(crate) fn path_chunks<'a, 'p>(paths: &'a [&'p str]) -> Vec<&'a [&'p str]> {
+    chunks(paths, |p| arg_len(p), |_| 0)
+}
+
 /// Writes each of `bodies` as a git blob through its own `0600` temp file in `tmp` and `git hash-object -t blob -w
 /// --no-filters` in `cwd`, one call per [`chunks`] run of the temp paths; returns the ids in order. A wrong count or
 /// id is `Git(Failed, "hash-object")`. The temp files are deleted on every path.
@@ -343,7 +348,7 @@ pub fn commit(wt: &Path, base: &str, parent: Option<&str>, changes: &[Change], d
             Change::Remove { path } => removes.push(path.as_str()),
         }
     }
-    for chunk in chunks(&removes, |p| arg_len(p), |_| 0) {
+    for chunk in path_chunks(&removes) {
         let mut args = vec!["update-index", "--force-remove", "--"];
         args.extend(chunk);
         run_git(wt, &args, "update-index", deadline)?;

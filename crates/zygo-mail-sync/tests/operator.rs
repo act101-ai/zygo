@@ -549,6 +549,27 @@ fn rename_over_member_limit_keeps_old_ack_and_delivers() {
     assert!(new_ids(&b, BOB).contains(&format!("{id}.json")));
 }
 
+#[test] // S§7.6 --drop-host (review round 2 F3): folder paths past one command line's budget all go, in one commit
+fn drop_host_removes_folders_past_one_command_line() {
+    let (r, a, _b) = pair();
+    let s = a.dir.path().join("scratch");
+    git(a.dir.path(), &["clone", "-q", "--no-checkout", "--branch", BRANCH, &r.url, "scratch"]);
+    git(&s, &["read-tree", "HEAD"]);
+    let y = blob(&s, b"y");
+    // 2500 folder arguments of at least 10 command-line characters each: past the 16 000 of one call.
+    let info: String = (0..2500).map(|i| format!("100644 {y}\tm{i}@b/y\n")).collect();
+    git_in(&s, &["update-index", "--add", "--index-info"], info.as_bytes());
+    git(&s, &["commit", "-q", "-m", "t"]);
+    git(&s, &["push", "-q", "origin", &format!("HEAD:refs/heads/{BRANCH}")]);
+    let before = r.tip(BRANCH).unwrap();
+    assert_eq!(tip_paths(&r).iter().filter(|p| p.contains("@b/")).count(), 2500);
+    assert_eq!(drop_host(&env(&a), WS_ID, "b", &mut |_| true), Ok(Some(0)));
+    let after = r.tip(BRANCH).unwrap();
+    assert_eq!(git(&r.bare, &["rev-parse", &format!("{after}^")]), before);
+    assert!(!tip_paths(&r).iter().any(|p| p.contains("@b/")));
+    assert!(file(&r, "registry/b.json").is_none() && file(&r, "ack/b.json").is_none());
+}
+
 #[test] // S§7.5 Twin, S§19 #11 (review round 2 F2): a drop does not record the twin's blobs as its own
 fn drop_host_does_not_mask_a_twin() {
     let (_r, a, _b, _c) = twin();
