@@ -4,7 +4,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use super::{BODY_MAX, MailError, Message, SUBJECT_MAX};
+use super::{BODY_MAX, MAIL_LOCK_WAIT, MailError, Message, SUBJECT_MAX};
 use crate::identity::valid_pane_key;
 
 /// A file in `tmp/` older than this is a failed write; the sweep deletes it (M§10 "Write fails partway").
@@ -267,15 +267,32 @@ pub fn deliver(mail_dir: &Path, key: &str, label: &str, msg: &Message, max_unrea
 /// read or parsed stays in `cur/` for the sweep. An error before the first move is returned; after it, `read` stops
 /// and returns what it has. `mail/`, `mail/<key>/`, `new/` and `cur/` are never followed as links: a link or an
 /// entry that is not a folder at any of them is an `Io` error; a missing `mail/`, `mail/<key>/` or `new/` has no
-/// messages and nothing is made; only `cur/` is made, when `new/` has a message.
+/// messages and nothing is made; only `cur/` is made, when `new/` has a message. The list and the moves run under
+/// `mail/lock` held shared (M§5 P1), so no removal of `mail/<key>/` runs between them; [`read_within`] with
+/// [`MAIL_LOCK_WAIT`].
 pub fn read(mail_dir: &Path, key: &str, max: usize) -> Result<Vec<Message>, MailError> {
+    read_within(mail_dir, key, max, MAIL_LOCK_WAIT)
+}
+
+/// [`read`], waiting at most `bound` for `mail/lock`: a lock held for the whole bound is `Busy`. A missing `mail/`
+/// takes no lock and is not made.
+pub fn read_within(mail_dir: &Path, key: &str, max: usize, bound: Duration) -> Result<Vec<Message>, MailError> {
     let md = maildir(mail_dir, key)?;
     let (new, cur) = (md.join("new"), md.join("cur"));
     let mut out = Vec::new();
     let mut moved = false;
     // No link is followed (M-C4): `mail/`, `mail/<key>/` and `new/` are checked without a follow; a missing one has
     // no messages and nothing is made.
-    for dir in [mail_dir, md.as_path(), new.as_path()] {
+    if !real_dir(mail_dir)? {
+        return Ok(Vec::new());
+    }
+    let _lock = match crate::state::lock_file_as(&mail_dir.join("lock"), bound, true) {
+        Ok(Some(f)) => f,
+        Ok(None) => return Err(MailError::Busy),
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    for dir in [md.as_path(), new.as_path()] {
         if !real_dir(dir)? {
             return Ok(Vec::new());
         }

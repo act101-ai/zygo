@@ -383,6 +383,48 @@ fn lifecycle_read_refuses_a_link_at_new() {
     assert!(gone(&mail.join("kaaaaaaaa/cur")));
 }
 
+#[test] // F2: a read takes mail/lock shared: a removal that holds it exclusive makes the read Busy, and a removal
+// cannot run while a read lists and moves
+fn lifecycle_read_and_removal_exclude_each_other() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let p = paths(td.path());
+    let id = THIRD;
+    let store = stored(&p, id, &[("kaaaaaaaa", None)]);
+    put(&p, id, "kaaaaaaaa", 1);
+    let mail = mail_dir(&p, id);
+
+    let held = fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(mail.join("lock")).unwrap();
+    fs4::FileExt::try_lock(&held).unwrap();
+    let r = mail_store::read_within(&mail, "kaaaaaaaa", 10, Duration::ZERO);
+    assert!(matches!(r, Err(MailError::Busy)), "{r:?}");
+    assert_eq!(MailError::Busy.to_string(), "zygo: mail is busy; try again");
+    assert_eq!(unread(&p, id, "kaaaaaaaa"), 1);
+    assert_eq!(fs::read_dir(mail.join("kaaaaaaaa/cur")).unwrap().count(), 0);
+    drop(held);
+
+    // Under the read's lock, a removal cannot take mail/lock.
+    let kept = Arc::new(Mutex::new(None));
+    let (hk, hs) = (kept.clone(), Store::open(&p, id));
+    up::testing::hook(
+        store.dir(),
+        "mail_read_before_dirs",
+        Some(Box::new(move || {
+            *hk.lock().unwrap() = Some(prune(&hs, Duration::ZERO).map_err(|e| e.kind()));
+            Ok(())
+        })),
+    );
+    let got = mail_store::read_within(&mail, "kaaaaaaaa", 10, Duration::ZERO);
+    up::testing::hook(store.dir(), "mail_read_before_dirs", None);
+    assert_eq!(got.unwrap().len(), 1);
+    assert_eq!(*kept.lock().unwrap(), Some(Err(std::io::ErrorKind::WouldBlock)));
+
+    // A read of a workspace with no mail/ takes no lock and makes nothing.
+    let mail2 = mail_dir(&p, OTHER);
+    assert_eq!(mail_store::read(&mail2, "kaaaaaaaa", 10).unwrap(), Vec::<Message>::new());
+    assert!(gone(&mail2));
+}
+
 #[test] // F1: a read of a missing maildir or a missing new/ returns nothing and makes no folder
 fn lifecycle_read_of_a_missing_maildir_makes_nothing() {
     let _s = serial();
