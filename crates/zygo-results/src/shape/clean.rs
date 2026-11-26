@@ -53,6 +53,10 @@ fn strip_escapes(text: &str) -> Option<String> {
     Some(out)
 }
 
+/// The most intermediate bytes an nF escape takes (O§7.4). The longest ECMA-35 designation
+/// (`ESC $ ( SP F`) has 3; a longer run of spaces and punctuation is more likely text.
+const NF_MAX_INTERMEDIATES: usize = 4;
+
 /// Bytes to remove for the `ESC` at `i`: at least the `ESC`.
 /// A lone `ESC` (at the text end, or before `\n`, `\r` or another `ESC`) is 1 byte;
 /// the next `ESC` then starts its own sequence.
@@ -60,12 +64,21 @@ fn esc_len(text: &str, i: usize, osc_stop_cache: &mut Option<usize>) -> usize {
     let b = text.as_bytes();
     match b.get(i + 1) {
         None | Some(b'\n' | b'\r' | &ESC) => 1,
-        // Charset designation (ECMA-35): `ESC (` or `ESC )` plus one final byte 0x30-0x7E.
-        // Any other next byte stays (O-C9), so a line end, an `ESC` or real text is never taken.
-        Some(b'(' | b')') => match b.get(i + 2) {
-            Some(0x30..=0x7E) => 3,
-            _ => 2,
-        },
+        // nF escape (ECMA-35), designations included: `ESC`, 1 to 4 intermediate bytes 0x20-0x2F,
+        // one final byte 0x30-0x7E. With no final byte only `ESC` goes and the rest stays (O-C9),
+        // so a line end, an `ESC`, U+009B or real text is never taken.
+        Some(0x20..=0x2F) => {
+            // Counted to one past the bound: a longer run is not taken, whatever follows it.
+            let run = b[i + 1..]
+                .iter()
+                .take(NF_MAX_INTERMEDIATES + 1)
+                .take_while(|c| (0x20..=0x2F).contains(*c))
+                .count();
+            match b.get(i + 1 + run) {
+                Some(0x30..=0x7E) if run <= NF_MAX_INTERMEDIATES => run + 2,
+                _ => 1,
+            }
+        }
         Some(b'[') => csi_end(b, i + 2).map_or(2, |end| end - i),
         Some(b']') => {
             let body = i + 2;
