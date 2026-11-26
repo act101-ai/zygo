@@ -230,9 +230,8 @@ Session text (T, SX nodes):
 | FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | DONE | mechanical | 96868305 · c98ea5fa · cc948a96 · acceptance pass (live selftest: ok (85)) · PR #194 |
 | FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | DONE | implementation | 569e61a9^..9ac65902 · acceptance pass (shape_clean 35 passed) · PR #211 |
 | FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | TODO | implementation | — |
-| FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | TODO | implementation | — |
+| FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | DONE | implementation | bb21eadf^..c99eeb95 · acceptance pass (offline: 7 test files, 0 failed) · PR #220 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
-| MS-26 | `state::load` refuses a state.json value that `save` refuses (S§8.3) | MS-5 | DONE | implementation | 2c17b835 · acc 20/0; floor green · PR #83 |
 
 ## Log
 
@@ -436,3 +435,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | MS-18 DONE: CLI send/read/ls/watch with addresses, ls sync line, doctor twin line; review R1 F1/F3 (watch synced in process, a hang blocked it) → watch starts the child; R2 F1 per-workspace rate limit, F2 F3 fixed, F4 F5 recorded · PR #215 |
 | 2026-11-26 | WD-19 plan: premise held: hooks, MCP and status line read nothing from .zygo/; node adds tests only; R§8 and R§18 item 20 restated against the code |
 | 2026-11-26 | WD-19 DONE: scans, repo_def tripwire (test-hooks feature, test builds only), inotify watch and git output canary prove no .zygo/ read on hook, MCP and status-line paths; R1 F1-F7, R2 F1 F2 fixed, F3 recorded · PR #218 |
+| 2026-11-26 | FX-23 DONE: shared harness turns the built-in marketplace off by default (NO_MARKETPLACE) and fails any run that syncs; 90 tests in 6 files had synced; R1 F1 F2 F4 F5 fixed, F3 DNS leak of the offline form recorded · PR #220 |
