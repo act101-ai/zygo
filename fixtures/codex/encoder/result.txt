@@ -5,7 +5,7 @@ p: ok=yes rc=0 requests=2 last=turn.completed msgs=["pc12 done p"] echo=yes extr
 r: ok=yes rc=0 requests=2 last=turn.completed msgs=["pc12 done r"] echo=yes extra=content reason=-
 m: ok=yes rc=0 requests=2 last=turn.completed msgs=["pc12 before call", "pc12 done m"] echo=yes extra=- reason=-
 rt: ok=yes rc=0 requests=2 last=turn.completed msgs=["pc12 done rt"] echo=yes extra=content reason=-
-ru: ok=no rc=0 requests=2 last=turn.completed msgs=["pc12 done ru"] echo=no extra=content,encrypted_content reason=-
+ru: ok=yes rc=0 requests=2 last=turn.completed msgs=["pc12 done ru"] echo=yes extra=content,encrypted_content reason=-
 ff: ok=yes rc=0 requests=2 last=turn.completed msgs=["pc12 done ff"] echo=yes extra=- reason=-
 i: ok=yes rc=1 requests=1 last=turn.failed msgs=["pc12 cut"] echo=- extra=- reason="Incomplete response returned, reason: max_output_tokens"
 x: ok=yes rc=1 requests=1 last=turn.failed msgs=[] echo=- extra=- reason="stream disconnected before completion: pc12 upstream failure"
@@ -13,9 +13,9 @@ ic: ok=yes rc=1 requests=1 last=turn.failed msgs=["pc12 refused"] echo=- extra=-
 xt: ok=yes rc=1 requests=1 last=turn.failed msgs=[] echo=- extra=- reason="stream disconnected before completion: pc12 upstream failure"
 i-def: ok=yes rc=1 requests=1 last=turn.failed msgs=["pc12 cut"] echo=- extra=- reason="Incomplete response returned, reason: max_output_tokens"
 x-def: ok=yes rc=1 requests=6 last=turn.failed msgs=[] echo=- extra=- reason="stream disconnected before completion: pc12 upstream failure"
-PC17=failed
+PC17=verified
 PC18=verified
 codex_version=0.172.0
-encoder_commit=f82fa71e4585c0bc47e2b5ebf278ae9ed881acb6
+encoder_commit=5783745512b9ffcc79673bfcf7367a3f5f082409
 encoder_tree=clean
 unmarked_input_bytes=3208082 sha256=27e2f713cb47f3706ab2163e504cb7c6b94d2fd8c2e23d14f67f6af0ed46d9c3
