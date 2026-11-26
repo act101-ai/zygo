@@ -554,3 +554,20 @@ fn f2_dropped_type_in_code_is_safe() {
         assert_eq!(c.matches(':').count(), 2, "{c}");
     }
 }
+
+#[test]
+fn f3_echoed_names_have_no_control_characters() {
+    let evil = "\u{1b}[31m\r\nX-Injected: 1";
+    let shown = "?[31m??X-Injected: 1";
+    let mut b = body(json!([user("go")]));
+    b[evil] = json!(1);
+    assert_400(err(rq(&b)), &format!("unknown field: {shown}"));
+    let cases = [
+        (json!({"type":evil}), format!("unknown input item type: {shown}")),
+        (json!({"type":"message","role":evil,"content":[]}), format!("message: unknown role: {shown}")),
+        (json!({"type":"message","role":"user","content":[{"type":evil}]}), format!("unknown content part type: {shown}")),
+    ];
+    for (item, message) in cases {
+        assert_400(err(rq(&body(json!([user("go"), item])))), &message);
+    }
+}
