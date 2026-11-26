@@ -50,13 +50,13 @@ Produces:
 
 ### Steps
 
-- [ ] 1. **Harness.** In `crates/zygo-proxy/tests/support/responses.rs`:
+- [x] 1. **Harness.** In `crates/zygo-proxy/tests/support/responses.rs`:
   - Move the body of `start_with_profile` into `fn start_inner(dialects: &[Dialect], agent: Agent, extra_toml: &str, profile: Option<Profile>) -> Harness`. The TOML line is `dialects = [<each name quoted, joined with ", ">]`; the mock's first error body is the Anthropic form when `dialects[0] == Dialect::Anthropic`, else the OpenAI form (as now). `start_with_profile(upstream, …)` calls `start_inner(&[upstream], …)`.
   - `pub fn start_dialects(dialects: &[Dialect], agent: Agent, extra_toml: &str) -> Harness` calls `start_inner(dialects, agent, extra_toml, None)`.
   - `pub fn upstream_raw(&self) -> Vec<Vec<u8>>`: each recorded request body as received (`got[i].2`).
   - Check: `cargo test -p zygo-proxy --test responses_route --test responses_forward --locked` passes (no behaviour change).
 
-- [ ] 2. **Failing tests.** Write `crates/zygo-proxy/tests/responses_passthrough.rs`: `#[path = "support/responses.rs"] mod support;`, `const R: &str = "openai/v1/responses";`, `const M: &str = "anthropic/v1/messages";`, `SSE = "text/event-stream"`, `JSON = "application/json"`. Each harness is `Harness::start(Dialect::Openai, Agent::ClaudeCode, "")` unless named otherwise.
+- [x] 2. **Failing tests.** Write `crates/zygo-proxy/tests/responses_passthrough.rs`: `#[path = "support/responses.rs"] mod support;`, `const R: &str = "openai/v1/responses";`, `const M: &str = "anthropic/v1/messages";`, `SSE = "text/event-stream"`, `JSON = "application/json"`. Each harness is `Harness::start(Dialect::Openai, Agent::ClaudeCode, "")` unless named otherwise.
 
   Helpers (no logic under test): `counts(r: &RequestRow) -> (u64, u64, u64, u64)` = `(input_tokens, cache_read_tokens, cache_write_tokens, output_tokens)`; `oai_err(b) -> Value` copied from `tests/responses_route.rs:24-30`; `sse(evs: &[Value]) -> Vec<u8>` = `event: <type>\ndata: <compact json>\n\n` per event; `contains(hay: &[u8], needle: &[u8]) -> bool` by `windows`.
 
@@ -154,33 +154,39 @@ Produces:
       ```
   `hv(h, n) -> String` is the header value as a string (as in `tests/responses_forward.rs:84-86`).
 
-- [ ] 3. **See them fail.** `cargo test -p zygo-proxy --test responses_passthrough --locked` fails to compile (`tee::responses_usage` does not exist). With step 4 alone (the function in place), tests 1-9 and 11 fail: `openai` is no candidate (`400 zygo_no_provider`).
+- [x] 3. **See them fail.** `cargo test -p zygo-proxy --test responses_passthrough --locked` fails to compile (`tee::responses_usage` does not exist). With step 4 alone (the function in place), tests 1-9 and 11 fail: `openai` is no candidate (`400 zygo_no_provider`).
 
-- [ ] 4. **Tee.** In `crates/zygo-proxy/src/tee.rs` (`use zygo_config::Dialect;`, `use crate::translate::usage_of;`):
+- [x] 4. **Tee.** In `crates/zygo-proxy/src/tee.rs` (`use zygo_config::Dialect;`, `use crate::translate::usage_of;`):
   - `pub fn responses_usage(line: &[u8]) -> Option<Value>` as in Produces: strip `data:`, skip a line with no `usage` bytes (as `line_usage` does), parse the trimmed rest, `type` is `response.completed` or `response.incomplete`, take `response.usage` when it is an object.
   - `fn usage_line(lines: Dialect, line: &[u8]) -> Option<(bool, Value)>`: `Dialect::Openai` → `responses_usage(line).map(|u| (true, usage_of(Some(&u), Dialect::Openai)))` (a terminal event holds the final counts: `set`); any other dialect → `line_usage(line)`.
   - Field `lines: Dialect` on `Tee`, `Dialect::Anthropic` in `new`; `pub fn with_lines(mut self, lines: Dialect) -> Tee`.
   - `Usage::observe(&mut self, lines: Dialect, line: &[u8])` and `Tee::read` call `usage_line(lines, line)` in place of `line_usage(line)`; the rest of each body is unchanged.
   - `finish`, non-streamed: when `self.lines == Dialect::Openai`, the object `v["usage"]` (only when it is an object) goes through `usage_of(Some(u), Dialect::Openai)` before `self.usage.set` and `CacheSplit::read`; the Messages form is unchanged.
 
-- [ ] 5. **Response context.** In `crates/zygo-proxy/src/pipeline.rs`, add `pub lines: Dialect` to `ResponseCtx` after `dialect`, doc `/// The form of the body the tee and the response stages read: Openai only for a Responses upstream answering a Responses client (K§6.4.2 C3), else Anthropic.`, and `.field("lines", &self.lines)` in its `Debug`.
+- [x] 5. **Response context.** In `crates/zygo-proxy/src/pipeline.rs`, add `pub lines: Dialect` to `ResponseCtx` after `dialect`, doc `/// The form of the body the tee and the response stages read: Openai only for a Responses upstream answering a Responses client (K§6.4.2 C3), else Anthropic.`, and `.field("lines", &self.lines)` in its `Debug`.
 
-- [ ] 6. **Forward.** In `crates/zygo-proxy/src/forward.rs`:
+- [x] 6. **Forward.** In `crates/zygo-proxy/src/forward.rs`:
   - `fn responses_same(body: &mut Value, raw: &Bytes, changed: bool, c: &Candidate) -> Result<(Bytes, Vec<Adjustment>, NullMap), ZygoError>`, doc `/// A Responses body toward an openai candidate (K§6.4.3 Responses → Responses): store := false, include gains reasoning.encrypted_content, then model_body. body is left as it was.` Rules: `store` is set to `false` (inserted when absent); `include` absent or `null` → `["reasoning.encrypted_content"]`; an array without that string → it is appended; an array with it → unchanged; another JSON type → `Err(ZygoError::bad_request("include must be an array"))`. When neither field changes, `model_body(body, raw, changed, c)`; else the edits go on a clone and `model_body(&mut clone, raw, true, c)`. The `NullMap` is `NullMap::default()`.
   - In `attempt_body`, before `if client == Dialect::Openai && c.dialect != client` (`:882`): `if client == Dialect::Openai && c.dialect == Dialect::Openai { return responses_same(body, raw, changed, c); }`.
   - After `let translated = …` (`:509`): `let form = if translated { Dialect::Anthropic } else { c.dialect };` (a translated body reaches the tee as Messages events or a Messages body: the mapper output, an Anthropic upstream, or `translate_response`).
   - `let mut tee = Tee::new(streamed).with_lines(form);` (`:591`); `lines: form,` in the `ResponseCtx` literal (`:613-624`).
   - `rctx.usage.observe(rctx.lines, &l.0);` (`:1455`).
 
-- [ ] 7. **Candidate order.** In `crates/zygo-proxy/src/resolve.rs:85`: `Dialect::Openai => &[Dialect::Openai, Dialect::Anthropic, Dialect::OpenaiChat],`. Doc of `upstream_dialect` (`:78-81`): `` `openai` client → `openai`, else `anthropic`, else `openai-chat` (same dialect first; then Messages is the pivot: one pass before two, K-C2) ``; drop the RS-5 sentence.
+- [x] 7. **Candidate order.** In `crates/zygo-proxy/src/resolve.rs:85`: `Dialect::Openai => &[Dialect::Openai, Dialect::Anthropic, Dialect::OpenaiChat],`. Doc of `upstream_dialect` (`:78-81`): `` `openai` client → `openai`, else `anthropic`, else `openai-chat` (same dialect first; then Messages is the pivot: one pass before two, K-C2) ``; drop the RS-5 sentence.
 
-- [ ] 8. **RS-3 interim test.** Delete `openai_only_provider_is_no_candidate` and its doc line from `crates/zygo-proxy/tests/responses_route.rs:274-280`; drop `Openai as O` from the import at `:12` (its only user).
+- [x] 8. **RS-3 interim test.** Delete `openai_only_provider_is_no_candidate` and its doc line from `crates/zygo-proxy/tests/responses_route.rs:274-280`; drop `Openai as O` from the import at `:12` (its only user).
 
-- [ ] 9. **See them pass.** The Check command exits 0: `responses_passthrough` lists 11 tests (≥ 6), and every `zygo-proxy` target passes (`session_api` and `request_path` keep `Tee::new(bool)`).
+- [x] 9. **See them pass.** The Check command exits 0: `responses_passthrough` lists 11 tests (≥ 6), and every `zygo-proxy` target passes (`session_api` and `request_path` keep `Tee::new(bool)`).
 
-- [ ] 10. **Floor.** `cargo test --workspace --locked --no-fail-fast` passes (CI `test` job, `.github/workflows/ci.yml:53`). No test uses a sleep, a deadline or a wall-clock assertion; `usage_rows` waits with no total limit (`tests/support/responses.rs:370-375`).
+- [x] 10. **Floor.** `cargo test --workspace --locked --no-fail-fast` passes (CI `test` job, `.github/workflows/ci.yml:53`). No test uses a sleep, a deadline or a wall-clock assertion; `usage_rows` waits with no total limit (`tests/support/responses.rs:370-375`).
 
-- [ ] 11. **Commit.** One commit `feat(proxy): RS-5 Responses passthrough and Responses usage in the tee`, trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:RS-5`.
+- [x] 11. **Commit.** One commit `feat(proxy): RS-5 Responses passthrough and Responses usage in the tee`, trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:RS-5`.
+
+### Implementation notes (2026-11-25)
+
+- Step 3: with step 4 alone, 9 of 11 tests fail (`400 zygo_no_provider`), not tests 1-9 and 11. Test 9 (`mapped_streams_parse_as_messages`) passes before step 7 because it posts a Messages body, and an `openai` upstream was already a candidate for a Messages client; it guards the Messages parse of mapped streams against the new form split. Test 10 passes once step 4 is in place.
+- Step 6: `responses_same` also returns `zygo_bad_request` when the body is not a JSON object. The route accepts only an object, so this branch is not reached; it replaces a panic.
+- Step 4: `Tee::new` is written over several lines; the added `lines` field made the one-line literal too long.
 
 ### Author's checks (2026-11-25)
 

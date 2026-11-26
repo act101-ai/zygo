@@ -201,8 +201,17 @@ impl Harness {
 
     /// As `start`, with the session's `profile`.
     pub fn start_with_profile(upstream: Dialect, agent: Agent, extra_toml: &str, profile: Option<Profile>) -> Harness {
+        Harness::start_inner(&[upstream], agent, extra_toml, profile)
+    }
+
+    /// As `start`, with a provider that lists `dialects` in this order.
+    pub fn start_dialects(dialects: &[Dialect], agent: Agent, extra_toml: &str) -> Harness {
+        Harness::start_inner(dialects, agent, extra_toml, None)
+    }
+
+    fn start_inner(dialects: &[Dialect], agent: Agent, extra_toml: &str, profile: Option<Profile>) -> Harness {
         let d = TempDir::new().unwrap();
-        let body = if upstream == Dialect::Anthropic {
+        let body = if dialects[0] == Dialect::Anthropic {
             br#"{"type":"error","error":{"type":"invalid_request_error","message":"rs3 mock"}}"#.to_vec()
         } else {
             br#"{"error":{"type":"invalid_request_error","message":"rs3 mock"}}"#.to_vec()
@@ -212,10 +221,10 @@ impl Harness {
             "[role.code]\nmodel = \"{MODEL}\"\n\n[[model]]\nid = \"{MODEL}\"\n[model.facts]\nreasoning = \"always\"\n\
              effort_levels = [\"low\", \"medium\", \"high\"]\nmax_output_tokens = {MAX_OUTPUT}\ncontext_window = 200000\n\
              sampling = true\nvision = true\nstructured_output = \"native\"\nforced_tool_choice = true\n\n\
-             [[model.provider]]\nname = \"{PROVIDER}\"\nbase_url = \"http://127.0.0.1:{}\"\ndialects = [\"{}\"]\n\
+             [[model.provider]]\nname = \"{PROVIDER}\"\nbase_url = \"http://127.0.0.1:{}\"\ndialects = [{}]\n\
              upstream_model = \"{UPSTREAM_MODEL}\"\nkey = \"keychain:k-rs\"\n\n{extra_toml}",
             up.addr.port(),
-            dialect_name(upstream),
+            dialects.iter().map(|d| format!("\"{}\"", dialect_name(*d))).collect::<Vec<_>>().join(", "),
         );
         std::fs::write(d.path().join("config.toml"), toml).unwrap();
         let cfg = load(&LoadContext { paths: paths(&d), repo: None, team: None }).unwrap();
@@ -329,6 +338,11 @@ impl Harness {
     /// Each upstream request body as JSON; panics on a non-JSON body.
     pub fn upstream_bodies(&self) -> Vec<Value> {
         self.up.got.lock().unwrap().iter().map(|g| serde_json::from_slice(&g.2).expect("upstream body is JSON")).collect()
+    }
+
+    /// Each upstream request body as received.
+    pub fn upstream_raw(&self) -> Vec<Vec<u8>> {
+        self.up.got.lock().unwrap().iter().map(|g| g.2.clone()).collect()
     }
 
     pub fn upstream_paths(&self) -> Vec<String> {

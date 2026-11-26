@@ -12,12 +12,13 @@ use std::time::Duration;
 use bytes::Bytes;
 use serde_json::Value;
 use zygo_config::keys::Secret;
+use zygo_config::Dialect;
 use zygo_redact::DeadlinePolicy;
 use zygo_usage::{RequestRow, Store, UpstreamErrorRow};
 
 use crate::redact_stage::secret_pass_bounded;
 use crate::session::SessionState;
-use crate::translate::{error_message, error_object, scrub};
+use crate::translate::{error_message, error_object, scrub, usage_of};
 
 pub const HOLD_MAX: usize = 4 << 20; // §10.2.6
 pub const COPY_MAX: usize = 4 << 20; // §14
@@ -51,6 +52,8 @@ type Armed<'a> = (&'a mut Vec<u8>, &'a mut dyn FnMut(&mut SseLine));
 
 pub struct Tee {
     streamed: bool,
+    /// The form of the body read for usage (K§6.4.2 C3).
+    lines: Dialect,
     line_mode: bool,
     /// The partial line: held (armed) or scanned (unarmed).
     held: Vec<u8>,
@@ -80,6 +83,30 @@ fn line_usage(line: &[u8]) -> Option<(bool, Value)> {
         _ => return None,
     };
     u.map(|u| (start, u.take()))
+}
+
+/// The `response.usage` object of one SSE `data:` line whose `type` is `response.completed` or `response.incomplete`
+/// (K§6.4.2 C3); `None` for every other line and when `usage` is not an object.
+pub fn responses_usage(line: &[u8]) -> Option<Value> {
+    let d = line.strip_prefix(b"data:")?;
+    if !d.windows(5).any(|w| w == b"usage") {
+        return None;
+    }
+    let mut v = serde_json::from_slice::<Value>(d.trim_ascii()).ok()?;
+    if !matches!(v.get("type").and_then(Value::as_str), Some("response.completed" | "response.incomplete")) {
+        return None;
+    }
+    let u = v.get_mut("response")?.get_mut("usage")?.take();
+    u.is_object().then_some(u)
+}
+
+/// The usage object of one line in the form `lines`, as Messages usage, and whether it starts the numbers. A Responses
+/// terminal event holds the final counts (`set`).
+fn usage_line(lines: Dialect, line: &[u8]) -> Option<(bool, Value)> {
+    match lines {
+        Dialect::Openai => responses_usage(line).map(|u| (true, usage_of(Some(&u), Dialect::Openai))),
+        _ => line_usage(line),
+    }
 }
 
 impl CacheSplit {
@@ -124,9 +151,10 @@ impl Usage {
         };
     }
 
-    /// One SSE line: Anthropic `message_start` `message.usage`, then per-field maxima of `message_delta` `usage` (§14).
-    pub(crate) fn observe(&mut self, line: &[u8]) {
-        if let Some((start, u)) = line_usage(line) {
+    /// One SSE line in the form `lines`: Anthropic `message_start` `message.usage`, then per-field maxima of
+    /// `message_delta` `usage` (§14); or the usage of a Responses terminal event (K§6.4.2 C3).
+    pub(crate) fn observe(&mut self, lines: Dialect, line: &[u8]) {
+        if let Some((start, u)) = usage_line(lines, line) {
             self.apply(start, &u);
         }
     }
@@ -143,7 +171,25 @@ impl Usage {
 
 impl Tee {
     pub fn new(streamed: bool) -> Tee {
-        Tee { streamed, line_mode: false, held: Vec::new(), over: false, copy: Vec::new(), copy_over: false, keep: false, usage: Usage::default(), split: None }
+        Tee {
+            streamed,
+            lines: Dialect::Anthropic,
+            line_mode: false,
+            held: Vec::new(),
+            over: false,
+            copy: Vec::new(),
+            copy_over: false,
+            keep: false,
+            usage: Usage::default(),
+            split: None,
+        }
+    }
+
+    /// The form of the body the tee reads (SSE lines, or the whole non-streamed JSON): `Openai` for a Responses body,
+    /// else Messages (K§6.4.2 C3).
+    pub fn with_lines(mut self, lines: Dialect) -> Tee {
+        self.lines = lines;
+        self
     }
 
     /// `body` returns the non-streamed copy after `finish` (FIX-10). No effect on a streamed response.
@@ -196,8 +242,16 @@ impl Tee {
                 && let Ok(v) = serde_json::from_slice::<Value>(&self.copy)
                 && let Some(u) = v.get("usage")
             {
-                self.usage.set(u);
-                CacheSplit::read(&mut self.split, u, false);
+                if self.lines == Dialect::Openai {
+                    if u.is_object() {
+                        let u = usage_of(Some(u), Dialect::Openai);
+                        self.usage.set(&u);
+                        CacheSplit::read(&mut self.split, &u, false);
+                    }
+                } else {
+                    self.usage.set(u);
+                    CacheSplit::read(&mut self.split, u, false);
+                }
             }
             if !self.keep {
                 self.copy = Vec::new();
@@ -259,7 +313,7 @@ impl Tee {
     }
 
     fn read(&mut self, line: &[u8]) {
-        if let Some((start, u)) = line_usage(line) {
+        if let Some((start, u)) = usage_line(self.lines, line) {
             self.usage.apply(start, &u);
             CacheSplit::read(&mut self.split, &u, !start);
         }

@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{json, Value};
 use support::{codex_request, Harness, MAX_OUTPUT, MODEL, PROVIDER, UPSTREAM_MODEL};
-use zygo_config::Dialect::{Anthropic as A, Openai as O, OpenaiChat as C};
+use zygo_config::Dialect::{Anthropic as A, OpenaiChat as C};
 use zygo_core::Agent;
 use zygo_proxy::translate::responses_client::{IGNORED, NO_STATE, REFUSED};
 
@@ -268,15 +268,6 @@ fn bare_limit_phrase_is_ordinary_error() {
     let (s, _, b) = h.post(R, &codex_request("first-turn"));
     assert_eq!(s, 400);
     assert_eq!(oai_err(&b), json!({"type":"invalid_request_error","message":"the tool said: we exceed context limit sometimes"}));
-}
-
-/// Until RS-5 builds the same-dialect path (`store` := false, Responses usage), `openai` is no candidate.
-#[test]
-fn openai_only_provider_is_no_candidate() {
-    let h = start(O);
-    let (s, _, b) = h.post(R, &codex_request("first-turn"));
-    assert_eq!((s.as_u16(), oai_err(&b)["type"].clone()), (400, json!("zygo_no_provider")));
-    assert!(h.upstream_bodies().is_empty());
 }
 
 fn identity<'a>(h: &'a Harness, bearer: &'a str) -> Vec<(&'a str, &'a str)> {
