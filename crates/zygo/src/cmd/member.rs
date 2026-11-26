@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use zygo_config::repo_def::Pin;
 use zygo_core::ids::valid_member_name;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::{write_atomic, SessionDir};
@@ -115,6 +116,8 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
     // The record as the callback's write left it (review round 3, findings 7 and 12).
     let written: Arc<Mutex<Option<MemberRecord>>> = Arc::new(Mutex::new(None));
     let paths = opts.paths.clone();
+    let pin_out: Arc<Mutex<Option<Pin>>> = Arc::new(Mutex::new(None));
+    opts.definition_out = Some(pin_out.clone());
     let cb = Callback {
         paths: opts.paths.clone(),
         ws_id: m.ws_id.clone(),
@@ -127,6 +130,7 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
         seen: seen.clone(),
         previous: previous.clone(),
         written: written.clone(),
+        pin_out,
     };
     opts.on_session = Some(Box::new(move |sd, session, program, _member, env| cb.run(sd, session, program, env)));
     gate("launch");
@@ -203,6 +207,8 @@ struct Callback {
     seen: Arc<Mutex<Option<String>>>,
     previous: Arc<Mutex<Option<MemberRecord>>>,
     written: Arc<Mutex<Option<MemberRecord>>>,
+    /// R§7.4: the pin of this launch's default-branch read (`LaunchOpts.definition_out`).
+    pin_out: Arc<Mutex<Option<Pin>>>,
 }
 
 impl Callback {
@@ -231,6 +237,7 @@ impl Callback {
         let pane = self.pane.clone();
         let launch = self.launch.clone();
         let sessions = self.paths.sessions_dir.clone();
+        let pin = self.pin_out.lock().unwrap_or_else(|e| e.into_inner()).clone();
         // W-C9 (FIX-32 B3): the line of a live launcher on the key, when the locked write below found one.
         let mut refused: Option<String> = None;
         let written = match &self.hand {
@@ -243,9 +250,10 @@ impl Callback {
                     anyhow::bail!(line);
                 }
                 record_start(rec, &launch, &start);
+                first_pin(rec, pin.as_ref());
                 Ok(())
             }),
-            Some(h) => match self.hand_write(&start, h) {
+            Some(h) => match self.hand_write(&start, h, pin.as_ref()) {
                 Ok(ws) => Ok(Some(ws)),
                 Err(HandErr::Stop(line)) => {
                     print_err(&format!("{line}\n"));
@@ -316,8 +324,9 @@ impl Callback {
     /// The start write of a hand start (W§8.4, M3 D2): [`join`] under `lock` with the 5 s bound of launchers, so the
     /// phase, AU94 and W-C9 are checked again in the same lock. `Err` holds the reason of the not-saved line: the
     /// refusal of `join`, `no workspace state for <id>`, or `could not write the member record: <error>`. The write is
-    /// [`hand_join`]: a marker name that another key holds under `lock` is `HandErr::Stop` with its line (M§6).
-    fn hand_write(&self, start: &Start, h: &HandJoin) -> Result<Workspace, HandErr> {
+    /// [`hand_join`]: a marker name that another key holds under `lock` is `HandErr::Stop` with its line (M§6); then
+    /// [`first_pin`] on the written record (R§7.4).
+    fn hand_write(&self, start: &Start, h: &HandJoin, pin: Option<&Pin>) -> Result<Workspace, HandErr> {
         let sessions = self.paths.sessions_dir.clone();
         let live = |r: &MemberRecord| live_session(&sessions, r);
         let mut refused: Option<HandErr> = None;
@@ -329,7 +338,11 @@ impl Callback {
                 let err = anyhow::anyhow!(line.clone());
                 refused = Some(e);
                 err
-            })
+            })?;
+            if let Some(r) = ws.members.get_mut(&self.pane) {
+                first_pin(r, pin);
+            }
+            Ok(())
         });
         if written.as_ref().is_ok_and(Option::is_some) {
             *self.previous.lock().unwrap_or_else(|e| e.into_inner()) = previous;
@@ -842,6 +855,19 @@ pub(crate) fn kept<'a>(ws: &'a Workspace, key: &str, kind: Agent, own: Option<&s
     ws.members.get(key).filter(|r| r.agent_session.as_deref() == Some(own) && r.launch.kind == kind)
 }
 
+/// R§7.4 bullet 2: the pin of the first start that applied a repository profile from a default-branch read; a saved
+/// pin is never replaced.
+pub(crate) fn first_pin(rec: &mut MemberRecord, pin: Option<&Pin>) {
+    if rec.launch.definition.is_none() {
+        rec.launch.definition = pin.cloned();
+    }
+}
+
+/// R§7.4 bullet 2: the pin of the record that a hand start keeps for its own resume ([`kept`]), else none.
+pub(crate) fn kept_pin(ws: &Workspace, key: &str, kind: Agent, own: Option<&str>) -> Option<Pin> {
+    kept(ws, key, kind, own).and_then(|r| r.launch.definition.clone())
+}
+
 /// The locked write of a hand start (M3 D2, M§6), in the closure of [`Callback::hand_write`]: a marker name
 /// (`h.marker`, chosen before the lock) that another key holds is `HandErr::Stop` with its line; then [`join`], whose
 /// refusal is `HandErr::NotSaved`; then the record's name is the marker name, so the record and the view agree
@@ -935,7 +961,7 @@ fn not_saved(reason: &str) {
 /// fails AU54 or is not the socket of `$TMUX`, and a socket of `$TMUX` that fails AU54 or AU62; later failures print
 /// the not-saved line (paths and ids escaped, C6) and give `HandStart::V1Said`. Nothing is written before the pane key (W§7.4 step 4, AU79); the record is written by the callback.
 pub(crate) fn hand_start(
-    launch: zygo_workspace::state::Launch, name: Option<String>, env: &dyn Fn(&str) -> Option<OsString>, paths: &Paths,
+    mut launch: zygo_workspace::state::Launch, name: Option<String>, env: &dyn Fn(&str) -> Option<OsString>, paths: &Paths,
     tmux: &dyn Fn() -> PathBuf,
 ) -> HandStart {
     if !cfg!(unix) || env("ZYGO_SESSION").is_some() {
@@ -1027,6 +1053,8 @@ pub(crate) fn hand_start(
     // M§9a: the marker name is `--name`, else the name of the record that `join` keeps.
     let marker =
         name.clone().or_else(|| kept(&ws, &key, launch.kind, own.as_deref()).and_then(|r| r.valid_name().map(String::from)));
+    // R§7.4: a hand resume of a kept record uses its pin.
+    launch.definition = kept_pin(&ws, &key, launch.kind, own.as_deref());
     HandStart::Member(Box::new(MemberCtx {
         ws_id: id.to_string(),
         pane: key,
@@ -1042,7 +1070,7 @@ pub(crate) fn hand_start(
 /// ([`zygo_binary`], M3 A1); a v1 launch gets `current_exe()` as before. The update check of these verbs runs before
 /// this and makes no check when `ZYGO_WORKSPACE` is set, so a member's binary is never replaced before the read.
 pub(crate) fn launch_hand(
-    adapter: &dyn Fn(PathBuf) -> Box<dyn AgentAdapter>, opts: LaunchOpts, launch: zygo_workspace::state::Launch,
+    adapter: &dyn Fn(PathBuf) -> Box<dyn AgentAdapter>, mut opts: LaunchOpts, launch: zygo_workspace::state::Launch,
     name: Option<String>,
 ) -> i32 {
     // M§6: the `--name` grammar first, before any tmux call or write.
@@ -1063,6 +1091,7 @@ pub(crate) fn launch_hand(
         HandStart::V1Said if named => 1,
         HandStart::V1 | HandStart::V1Said => Launcher::run(adapter(std::env::current_exe().unwrap_or_default()).as_ref(), opts).code,
         HandStart::Member(m) => {
+            opts.definition = m.launch.definition.clone();
             let zygo = zygo_binary(&std::env::current_exe().and_then(std::fs::canonicalize));
             run_wrapped(adapter(zygo).as_ref(), opts, &m).code
         }
@@ -1082,6 +1111,7 @@ mod tests {
     use zygo_launch::env::Env;
     use zygo_launch::launcher::LaunchOutcome;
     use zygo_workspace::state::{CompactOverride, Launch, MemberRecord, MemberState, Pane, Pending, Phase, Subagent};
+    use zygo_config::repo_def::Pin;
 
     fn out(code: i32, signal: Option<i32>, received: bool, ran: u64) -> LaunchOutcome {
         LaunchOutcome { code, signal, spawned: true, received, ran: Some(Duration::from_secs(ran)) }
@@ -1961,5 +1991,45 @@ mod tests {
         assert!(undo_start(&mut w, k, &written, Some(old.clone())));
         assert_eq!(w.members[k].first_started_at, Some(100));
         assert_eq!(w.members[k], old);
+    }
+
+    #[test]
+    fn first_pin_sets_only_an_absent_pin() { // R§7.4 bullet 2 (rewritten), R§12 row
+        let p1 = Pin::new("1".repeat(40), "a".repeat(64));
+        let p2 = Pin::new("2".repeat(40), "b".repeat(64));
+        let mut r = MemberRecord::new(Agent::ClaudeCode);
+        first_pin(&mut r, None);
+        assert_eq!(r.launch.definition, None);
+        first_pin(&mut r, Some(&p1));
+        assert_eq!(r.launch.definition.as_ref(), Some(&p1));
+        first_pin(&mut r, Some(&p2));
+        assert_eq!(r.launch.definition.as_ref(), Some(&p1));
+        first_pin(&mut r, None);
+        assert_eq!(r.launch.definition.as_ref(), Some(&p1));
+    }
+
+    #[test]
+    fn kept_pin_is_the_pin_of_the_kept_record_only() { // R§7.4 bullet 2 (rewritten): a hand resume, AU94
+        let p = Pin::new("1".repeat(40), "a".repeat(64));
+        let mut kept_rec = rec(MemberState::Resumable, Some("abc"));
+        kept_rec.launch.definition = Some(p.clone());
+        let w = ws_with(&[("kaaaaaaaa", kept_rec)]);
+        assert_eq!(kept_pin(&w, "kaaaaaaaa", Agent::ClaudeCode, Some("abc")), Some(p));
+        assert_eq!(kept_pin(&w, "kaaaaaaaa", Agent::ClaudeCode, None), None);
+        assert_eq!(kept_pin(&w, "kaaaaaaaa", Agent::ClaudeCode, Some("xyz")), None);
+        assert_eq!(kept_pin(&w, "kaaaaaaaa", Agent::OpenCode, Some("abc")), None);
+        assert_eq!(kept_pin(&w, "kbbbbbbbb", Agent::ClaudeCode, Some("abc")), None);
+    }
+
+    #[test]
+    fn record_start_keeps_the_job_and_pin_of_the_saved_launch() { // R§9.3 effect 2, R§7.4 bullet 2; the WD-8 note
+        let p = Pin::new("1".repeat(40), "a".repeat(64));
+        let mut r = MemberRecord::new(Agent::ClaudeCode);
+        r.launch.job = Some("worker".into());
+        r.launch.definition = Some(p.clone());
+        let saved = r.launch.clone();
+        record_start(&mut r, &saved, &start());
+        assert_eq!((r.launch.job.as_deref(), r.launch.definition.as_ref()), (Some("worker"), Some(&p)));
+        assert!(r.dropped_flags.is_empty());
     }
 }

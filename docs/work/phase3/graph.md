@@ -196,7 +196,7 @@ Session text (T, SX nodes):
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | DONE | implementation | 37139e44^..e21d5e0b · acceptance pass (mail_remote 16 passed) · PR #212 |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
 | OS-37 | On-demand latency test, ignored in CI | OS-35 | DONE | implementation | 98d82be5 · b5c27cbd · 77c6726f · acceptance pass (shaping_latency 5 ignored) · PR #200 |
-| WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | TODO | judgment | — |
+| WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | DONE | judgment | 1324716e^..e1276ac2 · acceptance pass (workspace_definition 23 passed with tmux) · PR #214 |
 | MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17, FX-15 | DONE | implementation | 5e2be987^..1de15e3e · acceptance pass (mail_remote_cli 20 passed) · PR #215 |
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | TODO | implementation | — |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | TODO | mechanical | — |
@@ -229,8 +229,9 @@ Session text (T, SX nodes):
 | FX-19 | PO2 row states what its run observed | OS-34 | DONE | mechanical | plan b2c8ca97 · node b5fa4c27, efbcccae · acceptance pass (check-premises ok; po2_ 3 passed) · PR #188 |
 | FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | DONE | mechanical | 96868305 · c98ea5fa · cc948a96 · acceptance pass (live selftest: ok (85)) · PR #194 |
 | FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | DONE | implementation | 569e61a9^..9ac65902 · acceptance pass (shape_clean 35 passed) · PR #211 |
+| FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | TODO | implementation | — |
+| FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | TODO | implementation | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
-| WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
 | MS-26 | `state::load` refuses a state.json value that `save` refuses (S§8.3) | MS-5 | DONE | implementation | 2c17b835 · acc 20/0; floor green · PR #83 |
 
@@ -429,5 +430,8 @@ Session text (T, SX nodes):
 | 2026-11-26 | Author's call (lead), for operator review: O§15 item 2 "hiding" and O-C9 read as text a terminal would display; FX-21 removes bytes FX-16 kept only where a terminal consumes them as one nF escape (DDR-01M8CRQH44Y37WS3MAAV2G0DP4) |
 | 2026-11-26 | MS-19 plan: premise drift: S§7.2 a send knows only the host in config (old own hosts are remote, refused by the member cache); two S§7.2 refusal lines fixed; S§10.4 mail_list gains remote |
 | 2026-11-26 | MS-19 DONE: mail_send addresses, send-time secret pass and sync child, mail_list remote; review R1 F1 (zygo mcp left one zombie per remote send; ChildSpawner reaps in a detached thread) F2-F4 fixed · PR #212 |
+| 2026-11-26 | WD-14 plan: premise drift: up writes the pin into the fresh member record (callback keeps it); R§7.4 stop line text, exit 1, escaped commit/digest, launch outside a checkout stops |
+| 2026-11-26 | WD-14 DONE: ws run, restore and hand resume launch from the saved pin; review R1 F1 (tests cloned the act101 marketplace) F2 F3 F5 fixed, F4 race recorded in R§7.4; R2 R2-1 (serve-mode refusal kept the pin) fixed · PR #214 |
+| 2026-11-26 | FX-22, FX-23 added: WD-14 review: built-in act101 tag v2.9.2 moved upstream (every launch prints the tag-moved line); six binary test files launch with the built-in marketplace on and reach the network |
 | 2026-11-26 | MS-18 plan: premise drift: S§7.2 not-local line for read/ls/watch; S§7.5 doctor twin line on last_error twin; S§10.3 ls sync line form; S§8.1 row 3 watch sync |
 | 2026-11-26 | MS-18 DONE: CLI send/read/ls/watch with addresses, ls sync line, doctor twin line; review R1 F1/F3 (watch synced in process, a hang blocked it) → watch starts the child; R2 F1 per-workspace rate limit, F2 F3 fixed, F4 F5 recorded · PR #215 |

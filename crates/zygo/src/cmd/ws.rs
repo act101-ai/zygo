@@ -445,8 +445,8 @@ pub(crate) fn resume_note(rec: &MemberRecord, resumed: Option<&str>) -> Option<R
     })
 }
 
-/// The `zygo claude` flags of a saved member launch (AU45): the saved fields, the AU32 compaction and, at a resume, no
-/// `--config-dir` (AU61: `ws run` sets the saved `CLAUDE_CONFIG_DIR` itself).
+/// The `zygo claude` flags of a saved member launch (AU45): the saved fields, the AU32 compaction, at a resume no
+/// `--config-dir` (AU61: `ws run` sets the saved `CLAUDE_CONFIG_DIR` itself), and the saved pin (R§7.4).
 pub(crate) fn launch_of(rec: &MemberRecord, resumed: bool) -> Launch {
     let l = &rec.launch;
     Launch {
@@ -457,11 +457,12 @@ pub(crate) fn launch_of(rec: &MemberRecord, resumed: bool) -> Launch {
         yolo: l.yolo,
         config_dir: if resumed { None } else { l.config_dir.clone() },
         name: None,
+        definition: l.definition.clone(),
         rest: l.args.clone(),
     }
 }
 
-/// The `zygo opencode` flags of a saved member launch (AU45, AU32).
+/// The `zygo opencode` flags of a saved member launch (AU45, AU32), and the saved pin (R§7.4).
 pub(crate) fn launch_open_code_of(rec: &MemberRecord) -> LaunchOpenCode {
     let l = &rec.launch;
     LaunchOpenCode {
@@ -470,6 +471,7 @@ pub(crate) fn launch_open_code_of(rec: &MemberRecord) -> LaunchOpenCode {
         compact: effective_compact(rec),
         yolo: l.yolo,
         name: None,
+        definition: l.definition.clone(),
         rest: l.args.clone(),
     }
 }
@@ -696,5 +698,21 @@ mod tests {
         else { panic!() };
         assert_eq!(workspace, None);
         assert!(Cli::try_parse_from(["zygo", "ws", "name", "kaaaaaaaa"]).is_err());
+    }
+
+    #[test]
+    fn launch_of_passes_the_saved_pin() { // R§7.4 bullet 3, R§10 `ws run`
+        use zygo_config::repo_def::Pin;
+        let mut r = MemberRecord::new(Agent::ClaudeCode);
+        assert_eq!(launch_of(&r, false).definition, None);
+        let pin = Pin::new("a".repeat(40), "b".repeat(64));
+        r.launch.definition = Some(pin.clone());
+        assert_eq!(launch_of(&r, false).definition.as_ref(), Some(&pin));
+        assert_eq!(launch_of(&r, true).definition.as_ref(), Some(&pin));
+        assert_eq!(launch_open_code_of(&r).definition.as_ref(), Some(&pin));
+        let c = super::super::claude::launch_opts(&launch_of(&r, true), Env::default(), PathBuf::from("w"), paths()).unwrap();
+        let o = super::super::opencode::launch_opts(&launch_open_code_of(&r), Env::default(), PathBuf::from("w"), paths()).unwrap();
+        assert_eq!((c.definition.as_ref(), o.definition.as_ref()), (Some(&pin), Some(&pin)));
+        assert!(c.definition_out.is_none() && o.definition_out.is_none());
     }
 }
