@@ -14,7 +14,7 @@ use zygo_config::{LoadContext, MailConfig};
 use zygo_core::paths::Paths;
 use zygo_mail_sync::address::Address;
 use zygo_mail_sync::env::{self, Env, Spawner, Verdict, Wake};
-use zygo_mail_sync::ops::{new_identity, take_host};
+use zygo_mail_sync::ops::{drop_host, drop_prompt, new_identity, take_host, waiting_for};
 use zygo_mail_sync::outbox::SendError;
 use zygo_mail_sync::state;
 use zygo_mail_sync::sync::{run, run_with, Mode, Opts, Report, SyncError};
@@ -249,4 +249,55 @@ fn new_identity_with_the_same_host_stops_at_the_collision() {
     assert_eq!(stopped(e), (COLLISION.to_string(), "collision"));
     assert_ne!(ident(&a), old);
     assert_eq!(file(&r, "registry/a.json"), reg);
+}
+
+#[test] // S§7.6 --drop-host prompt
+fn drop_prompt_text() {
+    assert_eq!(drop_prompt(3, "b"), "zygo: 3 messages wait for host b; they will be deleted. Delete them? [y/N]");
+}
+
+#[test] // S§19 #20 drop part, S§7.6 --drop-host, S-C8, S-G5
+fn drop_host_counts_asks_and_deletes_in_one_commit() {
+    let (r, a, b) = pair();
+    let u0 = send(&a, "alice", ("bob", "b"));
+    sync(&a);
+    sync(&b); // B imports and acks u0; its file stays at the tip
+    let waiting: Vec<Ulid> = (0..3).map(|_| send(&a, "alice", ("bob", "b"))).collect();
+    sync(&a);
+    let a_files = (file(&r, "registry/a.json"), file(&r, "ack/a.json"));
+    assert_eq!(waiting_for(&env(&a), WS_ID, "b"), Ok(3));
+    let mut asked = Vec::new();
+    let mut bad = |_: &str| -> bool { panic!("asked") };
+    assert_eq!(stopped(drop_host(&env(&a), WS_ID, "B/..", &mut bad).unwrap_err()).1, "host");
+    let before = r.tip(BRANCH).unwrap();
+    assert_eq!(drop_host(&env(&a), WS_ID, "b", &mut |p: &str| { asked.push(p.to_string()); false }), Ok(None));
+    assert_eq!(asked, vec![drop_prompt(3, "b")]);
+    assert_eq!(r.tip(BRANCH).unwrap(), before);
+    assert_eq!(drop_host(&env(&a), WS_ID, "b", &mut |_| true), Ok(Some(3)));
+    let after = r.tip(BRANCH).unwrap();
+    assert_eq!(git(&r.bare, &["rev-parse", &format!("{after}^")]), before);
+    let mut gone: Vec<String> = [u0].iter().chain(&waiting).map(|u| format!("bob@b/{u}.json")).collect();
+    gone.extend(["ack/b.json".into(), "registry/b.json".into()]);
+    gone.sort();
+    let diff = git(&r.bare, &["diff-tree", "-r", "--name-only", "--no-commit-id", &before, &after]);
+    assert_eq!(diff.lines().collect::<Vec<_>>(), gone);
+    assert_eq!((file(&r, "registry/a.json"), file(&r, "ack/a.json")), a_files);
+    sync(&b); // a dropped host registers again; the deleted mail is gone
+    assert!(file(&r, "registry/b.json").is_some());
+    assert_eq!(new_ids(&b, BOB), BTreeSet::from([format!("{u0}.json")]));
+}
+
+#[test] // S§8.3 step 5, S§8.2: --drop-host is a sync; a public remote stops it before any fetch and before the ask
+fn drop_host_on_a_public_remote_stops_before_any_fetch() {
+    let r = Remote::new();
+    let a = machine(&r, "a", &[(ALICE, "alice")]);
+    sync(&a);
+    git(&a.root, &["remote", "set-url", "--push", "origin", "https://example.invalid/r.git"]);
+    let (refs0, tracking0) = (git(&r.bare, &["for-each-ref"]), git(&a.root, &["for-each-ref", "refs/remotes"]));
+    let mut ask = |_: &str| -> bool { panic!("asked") };
+    let e = drop_host(&env_with(&a, Verdict::Public), WS_ID, "b", &mut ask).unwrap_err();
+    assert_eq!(e, SyncError::Stopped { line: "zygo: the remote can be read without a login; mail sync refused".into(), check: "public" });
+    assert_eq!(e.exit_code(Mode::Cli), 1);
+    assert_eq!(git(&r.bare, &["for-each-ref"]), refs0);
+    assert_eq!(git(&a.root, &["for-each-ref", "refs/remotes"]), tracking0);
 }

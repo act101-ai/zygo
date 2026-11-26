@@ -1,8 +1,14 @@
 //! The operator commands of `zygo mail sync` (mail sync design S§7.6): `--take-host`, `--new-identity` and
 //! `--drop-host`. Another host's files go only by its ack or by `--drop-host` (S-C8); a drop counts and asks (S-G5).
+use std::collections::BTreeSet;
+use std::path::Path;
 use std::time::Instant;
 
-use crate::branch::{self, Change, Fetched, Pushed};
+use ulid::Ulid;
+use zygo_work::repo::Flow;
+
+use crate::address;
+use crate::branch::{self, BranchError, Change, Fetched, Pushed};
 use crate::env::Env;
 use crate::identity::{read_meta, TipMeta};
 use crate::registry::{Ack, Registry, MEMBERS_MAX};
@@ -102,4 +108,85 @@ pub fn new_identity(env: &Env, ws_id: &str) -> Result<Report, SyncError> {
         state::save(&c.sp, &st).map_err(|_| stop("state"))
     })?;
     sync::run_with(env, ws_id, Mode::Cli, &Opts::default())
+}
+
+/// D3: the path of each entry directly under each top-level folder `<addr>` of `tip` whose address host is `host`.
+fn host_files(wt: &Path, tip: &str, host: &str, deadline: Instant) -> Result<Vec<String>, BranchError> {
+    let mut folders = Vec::new();
+    branch::ls(wt, tip, None, deadline, &mut |e| {
+        if e.kind == "tree" && address::parse(&e.path).is_some_and(|a| a.host == host) {
+            folders.push(e.path);
+        }
+        Flow::Go
+    })?;
+    let mut out = Vec::new();
+    for folder in folders {
+        branch::ls(wt, tip, Some(&format!("{folder}/")), deadline, &mut |e| {
+            out.push(e.path);
+            Flow::Go
+        })?;
+    }
+    Ok(out)
+}
+
+/// D4: `host` in the S§5 host form, else the `host` stop, before the gate and the lock, with no `errors.log` line.
+fn check_host(host: &str) -> Result<(), SyncError> {
+    if zygo_config::valid_mail_host(host) {
+        return Ok(());
+    }
+    Err(SyncError::Stopped { line: "zygo: mail sync stopped (host); the outbox is kept".into(), check: "host" })
+}
+
+/// S§7.6 `--drop-host`: the question `drop_host` asks.
+pub fn drop_prompt(n: usize, host: &str) -> String {
+    format!("zygo: {n} messages wait for host {host}; they will be deleted. Delete them? [y/N]")
+}
+
+/// S§7.6, S§7.4 (D3): after the public check (D7), the message files `<addr>/<ULID>.json` at the tip of the folders
+/// of `host` that its valid ack does not list (an invalid or missing ack lists none); 0 when there is no branch.
+pub fn waiting_for(env: &Env, ws_id: &str, host: &str) -> Result<usize, SyncError> {
+    check_host(host)?;
+    sync::locked(env, ws_id, |c| {
+        let deadline = Instant::now() + PASS_DEADLINE;
+        sync::public_check(c, &mut Report::default(), deadline)?;
+        let Some((tip, meta)) = fetch_tip(c, deadline)? else { return Ok(0) };
+        let acked: BTreeSet<Ulid> = meta.acks.get(host).and_then(|r| r.value.as_ref().ok())
+            .map(|a| a.imported.clone()).unwrap_or_default();
+        let files = host_files(&c.sp.worktree, &tip, host, deadline)?;
+        Ok(files.iter()
+            .filter_map(|p| p.rsplit('/').next().and_then(address::ulid_file))
+            .filter(|u| !acked.contains(u))
+            .count())
+    })
+}
+
+/// S§7.6 `zygo mail sync --drop-host <host>` (D5): counts with [`waiting_for`], then asks [`drop_prompt`] with the
+/// lock released; on yes, in one commit on the tip it then fetches, deletes `registry/<host>.json`,
+/// `ack/<host>.json` and each file directly under the `*@<host>/` folders. `Ok(None)`: the answer was no and nothing
+/// changed; `Ok(Some(n))`: deleted, `n` the count that was asked about.
+pub fn drop_host(env: &Env, ws_id: &str, host: &str, ask: &mut dyn FnMut(&str) -> bool)
+    -> Result<Option<usize>, SyncError> {
+    let n = waiting_for(env, ws_id, host)?;
+    if !ask(&drop_prompt(n, host)) {
+        return Ok(None);
+    }
+    sync::locked(env, ws_id, |c| {
+        let deadline = Instant::now() + PASS_DEADLINE;
+        sync::public_check(c, &mut Report::default(), deadline)?;
+        let identity = state::make_identity(&c.sp).map_err(|_| stop("identity"))?;
+        write(c, &identity, deadline, &mut |tip, meta| {
+            let mut out = Vec::new();
+            if meta.registries.contains_key(host) {
+                out.push(Change::Remove { path: format!("registry/{host}.json") });
+            }
+            if meta.acks.contains_key(host) {
+                out.push(Change::Remove { path: format!("ack/{host}.json") });
+            }
+            for path in host_files(&c.sp.worktree, tip, host, deadline)? {
+                out.push(Change::Remove { path });
+            }
+            Ok(out)
+        })
+    })?;
+    Ok(Some(n))
 }
