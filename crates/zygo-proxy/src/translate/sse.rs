@@ -30,7 +30,8 @@ const CALL_COST: usize = 64;
 /// null-restore filter send (K§6.4.3 stream obligation 8).
 pub const INPUT_DELTA_MAX: usize = 64 << 10;
 /// The count of tool calls dropped at a refusal (their arguments may be cut; K§6.4.3 stream obligation 5): chat calls
-/// at `finish_reason` `content_filter`, and a Responses `function_call` still open at a refusal. A top-level key of
+/// at `finish_reason` `content_filter`, and a Responses `function_call` still held (no `output_item.done` with status
+/// `completed`) at a refusal. A top-level key of
 /// the Messages body and of `message_delta`, absent when none. The Responses encoder reads it so that the refusal
 /// still ends in `response.failed`, with adjustment `refusal_call_dropped:<n>`. A Messages client never gets it
 /// (`StreamMapper::calls_dropped_key(false)`, `take_calls_dropped`).
@@ -86,6 +87,9 @@ pub struct StreamMapper {
     held: usize,
     /// Responses: the held `function_call` block: its id, name and arguments joined in one string.
     pending: Option<Call>,
+    /// Responses: the `output_index` of each `function_call` block already sent; a later done or delta for it is
+    /// ignored.
+    sent: Vec<u64>,
     /// The calls dropped at a refusal (`CALLS_DROPPED`).
     dropped: usize,
     /// `end` writes `CALLS_DROPPED` on `message_delta` (off for a Messages client).
@@ -116,6 +120,7 @@ impl StreamMapper {
             calls: Vec::new(),
             held: 0,
             pending: None,
+            sent: Vec::new(),
             dropped: 0,
             dropped_key: true,
             finish: None,
@@ -285,6 +290,8 @@ impl StreamMapper {
                 }
                 self.close_key((oi, ci), out);
             }
+            // A late delta for a call already sent is ignored.
+            "response.function_call_arguments.delta" if self.sent.contains(&oi) => {}
             "response.function_call_arguments.delta" => {
                 let b = json!({"type":"tool_use","id":"","name":"","input":{}});
                 self.ensure((oi, 0), b, out);
@@ -302,6 +309,10 @@ impl StreamMapper {
                     }
                     self.close(out);
                 }
+                // A late done for a call already sent is ignored.
+                Some("function_call") if self.sent.contains(&oi) => {}
+                // Sent only when `completed`; else it stays held, as an open call: dropped at a refusal, sent at any
+                // other end (as `responses::response` does).
                 Some("function_call") => {
                     let args = s(item, "arguments").unwrap_or("");
                     if !self.got((oi, 0)) && !args.is_empty() {
@@ -309,7 +320,9 @@ impl StreamMapper {
                         self.ensure((oi, 0), b, out);
                         self.delta(json!({"type":"input_json_delta","partial_json":args}), out);
                     }
-                    self.close_key((oi, 0), out);
+                    if s(item, "status") == Some("completed") {
+                        self.close_key((oi, 0), out);
+                    }
                 }
                 Some("message") => self.close(out),
                 _ => {}
@@ -475,12 +488,13 @@ impl StreamMapper {
                     out.push(ev("content_block_delta", json!({"type":"content_block_delta","index":o.index,"delta":d})));
                 }
                 self.held = 0;
+                self.sent.push(o.key.0);
             }
             out.push(ev("content_block_stop", json!({"type":"content_block_stop","index":o.index})));
         }
     }
 
-    /// A held open block (a Responses `function_call` with no `output_item.done`) is dropped, not sent with cut
+    /// A held open block (a Responses `function_call` with no `output_item.done` of status `completed`) is dropped, not sent with cut
     /// arguments, and counted in `dropped` (K§6.4.3 stream obligation 5).
     fn drop_held(&mut self) {
         if self.open.as_ref().is_some_and(|o| o.held) {

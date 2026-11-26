@@ -10,6 +10,7 @@ use support::{Harness, MODEL};
 use zygo_config::Dialect::{self, Openai as O, OpenaiChat as C};
 use zygo_core::Agent;
 use zygo_proxy::tee::HOLD_MAX;
+use zygo_proxy::translate::sse::INPUT_DELTA_MAX;
 use zygo_proxy::translate::{StreamMapper, Target};
 
 const M: &str = "anthropic/v1/messages";
@@ -364,4 +365,136 @@ fn messages_client_responses_upstream_closed_call_before_content_filter_is_sent(
     let md = evs.iter().find(|(n, _)| n == "message_delta").expect("a message_delta");
     assert_eq!(md.1["delta"]["stop_reason"], "refusal", "{text}");
     assert!(row_codes(&h).is_empty(), "{:?}", row_codes(&h));
+}
+
+/// `output_item.done` for the `function_call` item `call_1` at output index `oi`, with `args` and `status` (none when
+/// `None`).
+fn call_done(oi: u64, args: &str, status: Option<&str>) -> Value {
+    let mut item = json!({"type":"function_call","id":"fc_up","call_id":"call_1","name":"exec_command","arguments":args});
+    if let Some(st) = status {
+        item["status"] = json!(st);
+    }
+    json!({"type":"response.output_item.done","output_index":oi,"item":item})
+}
+
+fn incomplete_content_filter() -> Value {
+    json!({"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"content_filter"},
+        "usage":{"input_tokens":7,"output_tokens":3}}})
+}
+
+fn completed() -> Value {
+    json!({"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":7,"output_tokens":3}}})
+}
+
+fn names(out: &[zygo_proxy::translate::SseEvent]) -> Vec<&str> {
+    out.iter().map(|e| e.event.as_str()).collect()
+}
+
+/// The `tool_use` content_block_start blocks of `out`.
+fn tool_starts(out: &[zygo_proxy::translate::SseEvent]) -> Vec<Value> {
+    out.iter()
+        .filter(|e| e.event == "content_block_start" && e.data["content_block"]["type"] == "tool_use")
+        .map(|e| e.data["content_block"].clone())
+        .collect()
+}
+
+/// The `partial_json` pieces of `out`'s input_json_delta events.
+fn json_pieces(out: &[zygo_proxy::translate::SseEvent]) -> Vec<String> {
+    out.iter()
+        .filter(|e| e.data["delta"]["type"] == "input_json_delta")
+        .map(|e| e.data["delta"]["partial_json"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// G1: a call done with status `status` (not `completed`), then content_filter: the call stays held, then is dropped
+/// and counted; no tool_use is sent.
+fn assert_not_completed_done_dropped(status: Option<&str>) {
+    let mut m = mapper();
+    let mut out = m.push(&sse(&open_call("exec_command")));
+    out.extend(m.push(&sse(&[arg_delta(CUT)])));
+    let done = m.push(&sse(&[call_done(0, CUT, status)]));
+    assert!(done.is_empty(), "{status:?}: {done:?}");
+    assert_eq!(m.held_state().1, 1, "{status:?}");
+    out.extend(m.push(&sse(&[incomplete_content_filter()])));
+    assert_eq!(names(&out), ["message_start", "message_delta", "message_stop"], "{status:?}");
+    assert_eq!(out[1].data["delta"]["stop_reason"], "refusal");
+    assert!(tool_starts(&out).is_empty() && json_pieces(&out).is_empty(), "{status:?}");
+    assert_eq!(m.calls_dropped(), 1, "{status:?}");
+}
+
+#[test] // round 2 review G1: done with status `incomplete`, then content_filter: dropped and counted, as the JSON body does
+fn responses_call_done_incomplete_then_content_filter_is_dropped() {
+    assert_not_completed_done_dropped(Some("incomplete"));
+}
+
+#[test] // round 2 review G1: done with no status, then content_filter: dropped and counted
+fn responses_call_done_without_status_then_content_filter_is_dropped() {
+    assert_not_completed_done_dropped(None);
+}
+
+#[test] // round 2 review G1: done with status `incomplete` (arguments only in the done), then a normal end: sent, whole
+fn responses_call_done_incomplete_then_normal_end_is_sent() {
+    let mut m = mapper();
+    let mut out = m.push(&sse(&open_call("exec_command")));
+    out.extend(m.push(&sse(&[call_done(0, "{\"cmd\":\"ls\"}", Some("incomplete")), completed()])));
+    let starts = tool_starts(&out);
+    assert_eq!(starts.len(), 1, "{out:?}");
+    assert_eq!((&starts[0]["id"], &starts[0]["name"]), (&json!("call_1"), &json!("exec_command")));
+    assert_eq!(json_pieces(&out).concat(), "{\"cmd\":\"ls\"}");
+    assert_eq!(m.calls_dropped(), 0);
+    assert_eq!(names(&out).last(), Some(&"message_stop"));
+}
+
+#[test] // round 2 review G2: a done and a delta for a call already sent (another item started) emit nothing
+fn responses_late_done_and_delta_for_sent_call_are_ignored() {
+    let mut m = mapper();
+    let mut evs = open_call("exec_command");
+    evs.push(arg_delta("{\"cmd\":"));
+    evs.push(json!({"type":"response.output_item.added","output_index":1,"item":{"type":"message","id":"msg_up","role":"assistant","content":[]}}));
+    evs.push(json!({"type":"response.content_part.added","output_index":1,"content_index":0,"part":{"type":"output_text","text":""}}));
+    evs.push(json!({"type":"response.output_text.delta","output_index":1,"content_index":0,"delta":"hel"}));
+    evs.push(call_done(0, "{\"cmd\":\"ls\"}", Some("completed")));
+    evs.push(arg_delta("\"ls\"}"));
+    evs.push(completed());
+    let out = m.push(&sse(&evs));
+    let starts = tool_starts(&out);
+    assert_eq!(starts.len(), 1, "{out:?}");
+    assert_eq!((&starts[0]["id"], &starts[0]["name"]), (&json!("call_1"), &json!("exec_command")));
+    assert_eq!(json_pieces(&out).concat(), "{\"cmd\":");
+    assert_eq!(names(&out).last(), Some(&"message_stop"));
+}
+
+#[test] // round 2 review G3: empty deltas, then the arguments only in output_item.done: the block carries them
+fn responses_empty_deltas_then_done_arguments_are_sent() {
+    let mut m = mapper();
+    let mut evs = open_call("exec_command");
+    evs.extend((0..3).map(|_| arg_delta("")));
+    evs.push(call_done(0, "{\"cmd\":\"ls\"}", Some("completed")));
+    evs.push(completed());
+    let out = m.push(&sse(&evs));
+    assert_eq!(tool_starts(&out).len(), 1, "{out:?}");
+    assert_eq!(json_pieces(&out).concat(), "{\"cmd\":\"ls\"}");
+}
+
+#[test] // round 2 review G4, K§6.4.3 stream obligation 8: held arguments over 64 KiB go out in pieces cut on a char boundary
+fn responses_held_call_long_arguments_cut_on_char_boundary() {
+    // `é` (2 bytes) starts at byte INPUT_DELTA_MAX - 1, so that a byte cut at INPUT_DELTA_MAX would split it.
+    let args = format!("{}é{}", "a".repeat(INPUT_DELTA_MAX - 1), "b".repeat(INPUT_DELTA_MAX));
+    let mut m = mapper();
+    let mut evs = open_call("exec_command");
+    evs.push(arg_delta(&args));
+    evs.push(call_done(0, &args, Some("completed")));
+    evs.push(completed());
+    let out = m.push(&sse(&evs));
+    let pieces = json_pieces(&out);
+    assert!(pieces.len() > 1, "{}", pieces.len());
+    assert_eq!(pieces.concat(), args);
+    assert_eq!(pieces[0].len(), INPUT_DELTA_MAX - 1);
+    assert!(pieces.iter().all(|p| !p.is_empty() && p.len() <= INPUT_DELTA_MAX));
+    // Each piece is a whole `str` of `args` at a char boundary.
+    let mut at = 0;
+    for p in &pieces {
+        assert!(args.is_char_boundary(at) && args.is_char_boundary(at + p.len()), "{at}");
+        at += p.len();
+    }
 }
