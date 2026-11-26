@@ -38,4 +38,24 @@ Capability: `implementation` (one test case set, one pipeline change).
   Add to the comment above `name_scan` one sentence: a NUL in a hit line becomes a blank first, as in `scan`, so no shell sees a NUL in the command substitution (bash ≥4.4 warns on stderr; TF-3). Change no other line of the function. Pass: `git diff -- scripts/check-premises.sh` shows only that line and the comment.
 - [x] 4. Run each Acceptance command alone, from the repository root: `bash scripts/test-check-premises.sh`; `sh scripts/test-check-premises.sh`; `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh`. Pass: each exits 0; the two test runs print the same last line, `test-check-premises: ok (<N> cases)`, with `<N>` 3 more than TF-2's count; the last line of the check starts `check-premises: ok (`.
 - [x] 5. Verification floor. Run `bash scripts/check-premises.sh` alone on the H1 tree of the planning notes (a `mk`-style copy with `printf 'a\0b alice\n' > fixtures/codex/bin.dat`, `N2_FORBIDDEN_NAMES=alice`, `2>&1`). Pass: exit 1, exactly one line, `check-premises: forbidden name from N2_FORBIDDEN_NAMES: fixtures/codex/bin.dat:1`. Run `git diff origin/phase-4 -- scripts/` (or the stack layer below). Pass: only `scripts/check-premises.sh` (`name_scan`: the `tr` and the comment) and `scripts/test-check-premises.sh` (`run_names`, the three cases, the comments) changed.
-- [ ] 6. Commit `fix(premises): TF-3 no bash warning on a binary file in the name scan` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:TF-3`, each on its own line; no Claude attribution. Push the node branch (no force). Open the pull request as a layer of the stack, above TF-2 (`gh stack link --base phase-4 …`). Pass: CI green on ubuntu, macOS and Windows; on ubuntu and macOS the step `Premise check tests` ran and passed. Do not rerun CI without the operator's word.
+- [x] 6. Commit `fix(premises): TF-3 no bash warning on a binary file in the name scan` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:TF-3`, each on its own line; no Claude attribution. Push the node branch (no force). Open the pull request as a layer of the stack, above TF-2 (`gh stack link --base phase-4 …`). Pass: CI green on ubuntu, macOS and Windows; on ubuntu and macOS the step `Premise check tests` ran and passed. Do not rerun CI without the operator's word.
+
+### Execution notes
+
+Host: `/bin/sh` → bash, GNU bash 5.3.20, no `dash` (no password-free `sudo`, so `dash` was not installed). `name_scan`'s `hit=` line was at `:431`, as the plan says.
+
+- Step 1 (before the fix, branch at `7d9903cf`): `sh scripts/test-check-premises.sh` → exit 1 in 5 min 23 s:
+  ```
+  test-check-premises: FAIL H1: a binary file with a forbidden name: output is not 'check-premises: forbidden name from N2_FORBIDDEN_NAMES: fixtures/codex/bin.dat:1'
+  /tmp/tmp.ZBM046SH9K/h1_name/scripts/check-premises.sh: line 431: warning: command substitution: ignored null byte in input
+  check-premises: forbidden name from N2_FORBIDDEN_NAMES: fixtures/codex/bin.dat:1
+  ```
+- Step 2 (new cases, before the fix): `bash scripts/test-check-premises.sh` → exit 1; first failure H1, with the same three lines (the host has no `dash`, so H1 fails first). The TF-3 forbidden-name case's own command, on an `mk`-style copy with `printf 'a\0b alice\n' > fixtures/codex/bin.dat`: `N2_FORBIDDEN_NAMES=alice bash scripts/check-premises.sh 2>&1` → exit 1, two lines (`scripts/check-premises.sh: line 431: warning: command substitution: ignored null byte in input`, then the failure line), so its `expect_fail` fails.
+- Step 3: `git diff -- scripts/check-premises.sh` → only the `hit=` line and the comment above `name_scan`.
+- Step 5: the same copy with the fixed script → exit 1, one line, `check-premises: forbidden name from N2_FORBIDDEN_NAMES: fixtures/codex/bin.dat:1`. `git diff --stat 223dc2f0 -- scripts/` → only `scripts/check-premises.sh` (+4 −2) and `scripts/test-check-premises.sh` (+24 −2).
+- Step 6: the fix commit `3c4ff07c`; then `origin/phase-4` (TF-2 merged, `80a4f52b`, `49d7d4c2`) merged in with no conflict (`3544c726`). The pull request has base `phase-4` (TF-2 merged before the push). CI result: see the pull request.
+- Final checks, after the merge, each run alone from the repository root, `TMPDIR` not set (default `/tmp`). A run with `.worktrees/tmp` as `TMPDIR` was stopped before it ended and gave no result. An earlier run failed with `No space left on device` because `/tmp` was full (another session); it was run again.
+  - `bash scripts/test-check-premises.sh` → exit 0, `test-check-premises: ok (176 cases)` (TF-2: 173).
+  - `sh scripts/test-check-premises.sh` → exit 0, `test-check-premises: ok (176 cases)`.
+  - `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → exit 0, `check-premises: ok (P1 … PC18 PC19)`.
+  - `sh scripts/premises/lib_test.sh` → exit 0, `lib tests: ok (183)` (no other `lib_test` ran; before the merge: `lib tests: ok (176)`).
