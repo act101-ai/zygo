@@ -28,7 +28,7 @@
     "input": [
       {
         "type": "message",
-        "id": "msg_placeholder0001",
+        "id": "msg_placeholder0034",
         "role": "developer",
         "content": [
           {
@@ -39,7 +39,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0002",
+        "id": "msg_placeholder0035",
         "role": "developer",
         "content": [
           {
@@ -54,7 +54,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0003",
+        "id": "msg_placeholder0036",
         "role": "user",
         "content": [
           {
@@ -65,7 +65,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0004",
+        "id": "msg_placeholder0037",
         "role": "user",
         "content": [
           {
@@ -76,7 +76,7 @@
       },
       {
         "type": "custom_tool_call",
-        "id": "ctc_01M8AX51YQYC1X7M1V2FX6W5QV_0",
+        "id": "ctc_00000000000000000000000005_0",
         "status": "completed",
         "call_id": "toolu_pc12_p",
         "name": "apply_patch",

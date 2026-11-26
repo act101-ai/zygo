@@ -77,7 +77,7 @@
       {
         "type": "function_call",
         "status": "completed",
-        "id": "fc_01M8AX50BGHCZ4X7DVP9TZK9JJ_0",
+        "id": "fc_00000000000000000000000001_0",
         "name": "exec_command",
         "arguments": "{\"cmd\": \"echo pc12-tracer-f\"}",
         "call_id": "toolu_pc12_f"

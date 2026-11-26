@@ -28,7 +28,7 @@
     "input": [
       {
         "type": "message",
-        "id": "msg_placeholder0001",
+        "id": "msg_placeholder0019",
         "role": "developer",
         "content": [
           {
@@ -39,7 +39,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0002",
+        "id": "msg_placeholder0020",
         "role": "developer",
         "content": [
           {
@@ -54,7 +54,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0003",
+        "id": "msg_placeholder0021",
         "role": "user",
         "content": [
           {
@@ -65,7 +65,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0004",
+        "id": "msg_placeholder0022",
         "role": "user",
         "content": [
           {
@@ -85,7 +85,7 @@
       },
       {
         "type": "function_call_output",
-        "id": "fco_placeholder0001",
+        "id": "fco_placeholder0005",
         "call_id": "call_pc6_c",
         "output": "{\"agent_id\":\"00000000-0000-4000-8000-000000000005\",\"nickname\":\"Socrates\"}"
       }

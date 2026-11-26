@@ -28,7 +28,7 @@
     "input": [
       {
         "type": "message",
-        "id": "msg_placeholder0001",
+        "id": "msg_placeholder0042",
         "role": "developer",
         "content": [
           {
@@ -39,7 +39,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0002",
+        "id": "msg_placeholder0043",
         "role": "developer",
         "content": [
           {
@@ -54,7 +54,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0003",
+        "id": "msg_placeholder0044",
         "role": "user",
         "content": [
           {
@@ -65,7 +65,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0004",
+        "id": "msg_placeholder0045",
         "role": "user",
         "content": [
           {
@@ -76,7 +76,7 @@
       },
       {
         "type": "reasoning",
-        "id": "rs_01M8AX5278V12ZM9P74SHWDNSB_0",
+        "id": "rs_00000000000000000000000007_0",
         "summary": [],
         "content": null,
         "encrypted_content": "zygo1t:eyJwcm92aWRlciI6InBjMTItYW50IiwibW9kZWwiOiJwYzEyLXVwIiwiYmxvY2siOnsidHlwZSI6InJlZGFjdGVkX3RoaW5raW5nIiwiZGF0YSI6InBjMTItcmVkYWN0ZWQtZGF0YSJ9fQ=="
@@ -84,14 +84,14 @@
       {
         "type": "function_call",
         "status": "completed",
-        "id": "fc_01M8AX5278V12ZM9P74SHWDNSB_1",
+        "id": "fc_00000000000000000000000007_1",
         "name": "exec_command",
         "arguments": "{\"cmd\": \"echo pc12-tracer-rt\"}",
         "call_id": "toolu_pc12_rt"
       },
       {
         "type": "function_call_output",
-        "id": "fco_placeholder0001",
+        "id": "fco_placeholder0006",
         "call_id": "toolu_pc12_rt",
         "output": "Chunk ID: 7e4e28\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 4\nOutput:\npc12-tracer-rt\n"
       }

@@ -28,7 +28,7 @@
     "input": [
       {
         "type": "message",
-        "id": "msg_placeholder0001",
+        "id": "msg_placeholder0005",
         "role": "developer",
         "content": [
           {
@@ -39,7 +39,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0002",
+        "id": "msg_placeholder0006",
         "role": "developer",
         "content": [
           {
@@ -54,7 +54,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0003",
+        "id": "msg_placeholder0007",
         "role": "user",
         "content": [
           {
@@ -65,7 +65,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0004",
+        "id": "msg_placeholder0008",
         "role": "user",
         "content": [
           {
@@ -77,7 +77,7 @@
       {
         "type": "function_call",
         "status": "completed",
-        "id": "fc_01M8AX52T59G89S10NB2NE746M_0",
+        "id": "fc_00000000000000000000000002_0",
         "name": "exec_command",
         "arguments": "{\"cmd\": \"echo pc12-tracer-ff1\"}",
         "call_id": "toolu_pc12_ff1"
@@ -85,20 +85,20 @@
       {
         "type": "function_call",
         "status": "completed",
-        "id": "fc_01M8AX52T59G89S10NB2NE746M_1",
+        "id": "fc_00000000000000000000000002_1",
         "name": "exec_command",
         "arguments": "{\"cmd\": \"echo pc12-tracer-ff2\"}",
         "call_id": "toolu_pc12_ff2"
       },
       {
         "type": "function_call_output",
-        "id": "fco_placeholder0001",
+        "id": "fco_placeholder0002",
         "call_id": "toolu_pc12_ff1",
         "output": "Chunk ID: 5db922\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 4\nOutput:\npc12-tracer-ff1\n"
       },
       {
         "type": "function_call_output",
-        "id": "fco_placeholder0002",
+        "id": "fco_placeholder0003",
         "call_id": "toolu_pc12_ff2",
         "output": "Chunk ID: 0063e7\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 4\nOutput:\npc12-tracer-ff2\n"
       }

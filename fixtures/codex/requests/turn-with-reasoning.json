@@ -31,7 +31,7 @@
     "input": [
       {
         "type": "message",
-        "id": "msg_placeholder0001",
+        "id": "msg_placeholder0005",
         "role": "developer",
         "content": [
           {
@@ -42,7 +42,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0002",
+        "id": "msg_placeholder0006",
         "role": "developer",
         "content": [
           {
@@ -57,7 +57,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0003",
+        "id": "msg_placeholder0007",
         "role": "user",
         "content": [
           {
@@ -72,7 +72,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0004",
+        "id": "msg_placeholder0008",
         "role": "user",
         "content": [
           {
@@ -117,7 +117,7 @@
       },
       {
         "type": "custom_tool_call_output",
-        "id": "ctco_placeholder0001",
+        "id": "ctco_placeholder0002",
         "call_id": "call_pc3_2",
         "output": "unsupported custom tool call: apply_patch"
       },
@@ -148,7 +148,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0005",
+        "id": "msg_placeholder0009",
         "role": "user",
         "content": [
           {
