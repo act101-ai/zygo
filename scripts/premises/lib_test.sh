@@ -102,8 +102,9 @@ run() {
   env PATH="$CP" TMPDIR="$T/tmp-$1" $XENV "$SH" "$T/$1.sh" >"$T/$1.out" 2>"$T/$1.err"
   rc=$?
 }
-# sigact <case>: the action of a signal case.
-sigact() { printf '%s' "echo \$\$ >'$T/$1.pid'; sleep 30 & echo \$! >'$T/$1.sleep'; : >'$T/$1.ready'; wait"; }
+# sigact <case>: the action of a signal case. The child waits on a process that runs until it is
+# signalled (no time bound); sigrun stops it after the case.
+sigact() { printf '%s' "echo \$\$ >'$T/$1.pid'; python3 -I -c 'import signal; signal.pause()' & echo \$! >'$T/$1.sleep'; : >'$T/$1.ready'; wait"; }
 # waitready <file> <pid>: poll 0.1 s apart until the file exists or the producer <pid> is dead, with
 # no count limit (TF-2: no case passes or fails by wall-clock time). When the pid is dead, the file
 # is checked once more: 0 if it exists, else 1.
@@ -385,7 +386,7 @@ r4() {
 res "R4 a child that sources lib.sh keeps run-all's dir" 0 r4
 
 c=R5; prep $c own; ERR=$T/$c.err; rall $c
-printf '%s\n' ": >'$T/R5.ready'; sleep 30" >"$T/$c-pd/run-smoke.sh"
+printf '%s\n' ": >'$T/R5.ready'; exec python3 -I -c 'import signal; signal.pause()'" >"$T/$c-pd/run-smoke.sh"
 perl -e 'setpgrp(0, 0); exec @ARGV or die' env PATH="$CP" TMPDIR="$T/tmp-$c" "$SH" "$T/$c-pd/run-all.sh" >"$T/$c.out" 2>"$T/$c.err" &
 bp=$!
 if waitready "$T/R5.ready" "$bp"; then
@@ -894,7 +895,7 @@ res "B3 a source file with another sha256 fails" 1 out_has B3 "premises: config.
 # B4, B5 (G7): the schema fetch goes to a temporary file in the run folder, removed on a signal or a
 # failed check; the fixture folder never holds a partial file. A local server stands in for the URL.
 cat >"$T/srv.py" <<'PY'
-import os, socket, sys, time
+import os, signal, socket, sys
 mode, port_file, ready = sys.argv[1:4]
 s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(5)
 with open(port_file + ".tmp", "w") as f:
@@ -904,7 +905,7 @@ c, _ = s.accept(); c.recv(4096)
 if mode == "hang":
     c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n{\"partial\": ")
     open(ready, "w").close()
-    time.sleep(30)
+    signal.pause()  # until lib_test kills it after the case (no time bound)
 else:
     c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
     c.close()
