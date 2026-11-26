@@ -1236,6 +1236,30 @@ res "W5 start_web: a server that dies says web did not start, exit 1" 1 w5
 # W6: sigrun's not-ready branch: a child that exits 0 without the ready file sets NR=1, signals nothing.
 c=W6; prep $c own; ERR=$T/$c.err; child $c 0 'exit 0'; sigrun $c TERM
 if [ "$NR" = 1 ] && [ "$rc" = 0 ]; then ok "W6 sigrun: a child that exits before it is ready sets NR=1"; else no "W6 sigrun: a child that exits before it is ready sets NR=1" "NR=$NR rc=$rc"; fi
+# W7, W8 (TF-2): the mock and the web server start with no host name lookup: they run with a
+# socket.getfqdn that raises (http.server's server_bind calls it, and it can stall on a runner).
+cat >"$T/nofqdn.py" <<'PY'
+import runpy, socket, sys
+def no(*a, **k):
+    raise RuntimeError("socket.getfqdn was called")
+socket.getfqdn = no
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+PY
+MOCK_KEY=x python3 -I "$T/nofqdn.py" "$HERE/mock_upstream.py" --dir "$T/W7rec" --port-file "$T/W7.port" 2>"$T/W7.err" &
+wp=$!
+if waitready "$T/W7.port" "$wp"; then ok "W7 the mock starts with no host name lookup"; else no "W7 the mock starts with no host name lookup" "stderr: $(tr '\n' '|' <"$T/W7.err")"; fi
+kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null
+if command -v openssl >/dev/null; then
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout "$T/W8-key.pem" -out "$T/W8-cert.pem" -days 2 -subj "/CN=127.0.0.1" >/dev/null 2>&1
+  mkdir -p "$T/W8web"
+  python3 -I "$T/nofqdn.py" "$HERE/https_static.py" "$T/W8web" "$T/W8-cert.pem" "$T/W8-key.pem" "$T/W8.port" 2>"$T/W8.err" &
+  wp=$!
+  if waitready "$T/W8.port" "$wp"; then ok "W8 the web server starts with no host name lookup"; else no "W8 the web server starts with no host name lookup" "stderr: $(tr '\n' '|' <"$T/W8.err")"; fi
+  kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null
+else
+  ok "W8 skipped: no openssl"
+fi
 # Y1, Y2 (TF-2 CI): n2_scan on a stub proc tree (N2_PROC=$T/fp-<case>). A stub daemon of this user is
 # a candidate; its stub cwd entry cannot be read (a plain file: readlink fails). The child links its
 # own cwd entry. Y1: its status says another uid (as for a root process on a Linux runner): skipped,
