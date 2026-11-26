@@ -14,4 +14,154 @@
 
 ## Plan
 
-Written when the node starts.
+Base: `origin/phase-4` at ac96e1fa (RS-2 merged 1ad733f0, RS-3 merged f37bba43). Every path, line and signature below was opened at that commit.
+
+### Premise check (2026-11-26)
+
+- RS-3 left a placeholder: `forward.rs:512-515` answers every translated 2xx on the Responses route with `502 zygo_upstream_bad_response`. RS-4 removes it.
+- The translated stream branch (`forward.rs:527-530`) builds `StreamMapper::new(c.dialect, …)`; with `c.dialect = Anthropic` the mapper emits nothing (`translate/sse.rs:111-114`, `:149-152`). So toward an Anthropic upstream a Responses client must get no mapper: upstream Messages SSE goes straight into the tee.
+- The non-streamed branch (`forward.rs:534-540`) checks `is_response(v, c.dialect)` and calls `translate_response(&v, c.dialect, …)` (`translate/mod.rs:52-63`). Both read an Anthropic body as a Responses body (`output`). Toward an Anthropic upstream the body is already the Messages form: RS-4 checks it with its own `is_message` and uses it as is.
+- The tee reads Messages `message_start` / `message_delta` usage on streamed bodies (`tee.rs:71-83`, `:223-266`) and the `usage` of a whole JSON copy at `finish` (`tee.rs:193-206`). It returns each chunk unchanged when it is not in line mode (`tee.rs:171-191`). Line mode is armed only on the Messages route (`window.rs:130`). So the encoder placed after the tee gets the Messages bytes as the tee saw them, and the usage row keeps the Messages counts (K§6.4.2 C3) with no tee change.
+- `next_chunk` (`forward.rs:1184-1236`) runs upstream → mapper → restore filter → tee. The K§6.4.2 citation `forward.rs:1098-1110` has drifted to `:1184-1236`. Only the line numbers changed.
+- Injected nulls: `armed = route == ModelRoute::Messages && …` (`forward.rs:517`, from da682dd8, before the Responses route existed). `responses_attempt` runs `schema::rewrite` on the Messages pivot (`forward.rs:906`). The built-in rule `optional_property` (family `openai`, `crates/zygo-config/data/schema_rules.toml:63-66`) makes each optional property required and nullable. Codex's `exec_command` has 9 optional properties (`fixtures/codex/requests/first-turn.json`, `required: ["cmd"]`). Toward a chat upstream, a model's `"workdir": null` would therefore reach Codex. Base spec §7.6 (`docs/specs/2026-11-18-zygo-design.md:314`) says that an injected null is removed on the way back, so that the client sees its own shape. This is a defect that the RS-4 path would expose, and it is in scope (§5.4). Step 5c fixes it.
+- Encoder API (RS-2, `translate/responses_client.rs`): `Calls::of(req: &Value) -> Calls` (`:582`), `Encoder::new(model: &str, t: &Target, calls: Calls) -> Encoder` (`:854`), `push(&mut self, chunk: &[u8]) -> Vec<SseEvent>` (`:877`), `fail(&mut self, code: &str, message: &str) -> Vec<SseEvent>` (`:902`, emits nothing before the start), `finish(&mut self) -> Vec<SseEvent>` (`:912`, gives `response.failed` `upstream stream ended early` when no terminal event came, and starts the stream when it was not started), `ended(&self) -> bool` (`:931`), `adjustments(&self) -> Vec<Adjustment>` (`:942`), `response(msg: &Value, model: &str, t: &Target, calls: &Calls) -> (Value, Vec<Adjustment>)` (`:736`). RS-9 (PR #161, open) changes only the inside of `Calls` (a `namespaced` table) and keeps these signatures.
+- PC-12: `origin/phase-4--PC-12` `nodes/PC-12.md` "Observed": PC17 and PC18 are `verified` on Codex 0.172.0 for this exact event sequence. The PC-12 row is still `TODO` in `graph.md:87` on `origin/phase-4`. RS-4 reads no file of PC-12.
+- The harness (`tests/support/responses.rs`) has one fixed reply per mock (`reply_with`, `:251`). It cannot fail a body partway through. Step 1 adds `reply_cut`.
+
+### Interfaces
+
+Consumes (as in the code now):
+
+- `responses_client::Calls::of(req: &Value) -> Calls`; `Encoder::new(model: &str, t: &Target, calls: Calls) -> Encoder`; `Encoder::{push, fail, finish, ended, adjustments}`; `responses_client::response(msg: &Value, model: &str, t: &Target, calls: &Calls) -> (Value, Vec<Adjustment>)`. All of these are listed above.
+- `ModelRoute::Responses` (`pipeline.rs:33`); `ModelRoute::dialect` → `Dialect::Openai` (`pipeline.rs:38-43`).
+- `Harness::start(upstream: Dialect, agent: Agent, extra_toml: &str) -> Harness`, `post`, `reply_with(&self, status: u16, content_type: &str, body: Vec<u8>)`, `usage_rows`, `upstream_paths`, `codex_request(name: &str) -> Value`, `MODEL`, `PROVIDER` (`tests/support/responses.rs`).
+- `fixtures/codex/requests/{first-turn,after-custom-tool-call-output}.json` (read only). `first-turn` has `stream: true`, `model: "gpt-mock"` and `exec_command` with `required: ["cmd"]`. `after-custom-tool-call-output` has the `custom` tool `apply_patch`.
+- `RestoreFilter::push_raw` / `finish_raw` (`translate/schema.rs:632`, `:674`), `NullMap::restore_message` (`schema.rs:53`), `message_events` (`translate/sse.rs:436`).
+
+Produces: nothing for later nodes. RS-5 builds on the `Encode` field of `Flow` (step 5e) and on `reply_cut`.
+
+### Steps
+
+- [ ] 1. **Harness.** In `tests/support/responses.rs`, add to `Upstream` the field `cut: Arc<AtomicBool>`. When the field is set, the mock sends the reply body as `Body::from_stream(futures_util::stream::iter([Ok::<Bytes, std::io::Error>(body), Err(std::io::Error::other("cut"))]))`, so that the proxy sees a read error after the first bytes. Add `pub fn reply_cut(&self, status: u16, content_type: &str, body: Vec<u8>)`, which sets the reply and `cut = true`. `reply_with` sets `cut = false`. Pass: `cargo test -p zygo-proxy --test responses_route --locked` passes unchanged.
+
+- [ ] 2. **Failing tests.** Write `crates/zygo-proxy/tests/responses_forward.rs`. Its header is `#[path = "support/responses.rs"] mod support;`, `const R: &str = "openai/v1/responses";`, and each harness is `Harness::start(<A|C>, Agent::ClaudeCode, "")`. Helpers, which hold no logic under test:
+  - `msg_sse(evs: &[Value]) -> Vec<u8>`: `event: <type>\ndata: <compact json>\n\n` for each event.
+  - `chat_sse(chunks: &[Value]) -> Vec<u8>`: `data: <json>\n\n` for each chunk, then `data: [DONE]\n\n`.
+  - `events(b: &[u8]) -> Vec<(String, Value)>`: splits on blank lines and takes `event:` and `data:`.
+  - `terminals(evs)`: the events named `response.completed|incomplete|failed`.
+  - `done_items(evs)`: the `item` of each `response.output_item.done`.
+  - `norm(v: Value) -> Value`: each match of `\b(resp|msg|rs|fc|ctc)_[0-9A-HJKMNP-TV-Z]{26}` replaced with `$1_X`.
+  - `oai_err(b) -> Value`, copied from `tests/responses_route.rs:24-30`.
+
+  Fixtures in the file:
+  - `MSG_EVENTS`, a fn that returns `Vec<Value>`: `message_start` (message `{id:"msg_up", type:"message", role:"assistant", model:"up-rs", content:[], usage:{input_tokens:100, cache_read_input_tokens:30, cache_creation_input_tokens:5, output_tokens:1}}`); `ping`; text block 0 with deltas `"hel"`, `"lo"`; `tool_use` block 1 `{id:"toolu_1", name:"exec_command", input:{}}` with `input_json_delta` `{"cmd":"ls"}`; `tool_use` block 2 `{id:"toolu_2", name:"apply_patch"}` with `input_json_delta` `{"input":"*** Begin Patch\n*** End Patch\n"}`; `server_tool_use` block 3; `message_delta` `{stop_reason:"tool_use"}` usage `{output_tokens:42}`; `message_stop`.
+  - `MSG_JSON`, the same content as one Messages body: `type:"message"`, content `[text "hello", tool_use toolu_1 exec_command {"cmd":"ls"}, tool_use toolu_2 apply_patch {"input":"*** Begin Patch\n*** End Patch\n"}, server_tool_use]`, `stop_reason:"tool_use"`, usage `{input_tokens:100, cache_read_input_tokens:30, cache_creation_input_tokens:5, output_tokens:42}`.
+  - `CHAT_CHUNKS`: content `"hel"`, `"lo"`; `tool_calls[{index:0, id:"call_1", type:"function", function:{name:"exec_command", arguments:"{\"cmd\":\"ls\"}"}}]`; `finish_reason:"tool_calls"`; `{choices:[], usage:{prompt_tokens:120, completion_tokens:7, prompt_tokens_details:{cached_tokens:20}}}`.
+  - `CHAT_JSON`: one completion with `message:{role:"assistant", content:"hello", tool_calls:[the same call]}`, `finish_reason:"tool_calls"`, and the same usage.
+
+  Tests. Each body is `codex_request("after-custom-tool-call-output")` unless named otherwise:
+  1. `anthropic_stream_returns_responses_sse_and_usage`. The reply is `msg_sse(MSG_EVENTS)`, `text/event-stream`. Assert:
+     - status 200 and `content-type` starts with `text/event-stream`;
+     - `upstream_paths() == ["/v1/messages"]`;
+     - the event names start `["response.created","response.in_progress"]`;
+     - the `sequence_number`s are `0..n` in order;
+     - `terminals.len() == 1`, the last event is named `response.completed`, its `response.output == []` and its `response.model == body["model"]`;
+     - `response.usage == {"input_tokens":135,"input_tokens_details":{"cached_tokens":30},"output_tokens":42,"total_tokens":177}`;
+     - `done_items` types are `["message","function_call","custom_tool_call"]`: the `custom_tool_call` has `name:"apply_patch"`, `call_id:"toolu_2"` and `input:"*** Begin Patch\n*** End Patch\n"`, and the `function_call` has `call_id:"toolu_1"` and `arguments` that parse to `{"cmd":"ls"}`. The `custom_tool_call` item shows that `Calls` comes from the client's body: the upstream Messages body has `apply_patch` as a plain tool;
+     - no event is named `ping` and no event `data` holds `server_tool_use`;
+     - the single usage row has `(status, provider, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens) == (200, PROVIDER, 100, 30, 5, 42)`, `route == "/openai/v1/responses"`, and `adjustments` contains `"server_tool_dropped"`.
+  2. `chat_stream_returns_responses_sse_and_usage` (K§11 item 18), with body `first-turn` and reply `chat_sse(CHAT_CHUNKS)`. Assert:
+     - `upstream_paths() == ["/v1/chat/completions"]`, status 200 and SSE;
+     - one terminal, `response.completed`, with usage `{"input_tokens":120,"input_tokens_details":{"cached_tokens":20},"output_tokens":7,"total_tokens":127}`;
+     - `done_items` types are `["message","function_call"]` and the message text is `"hello"`;
+     - the row has `(input_tokens, cache_read_tokens, cache_write_tokens, output_tokens) == (100, 20, 0, 7)`.
+  3. `anthropic_error_after_first_event_one_failed` (K§11 item 14, second half). The reply is `msg_sse` of `message_start`, then text block 0 start, then delta `"par"`, then `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`, then `content_block_stop`, `message_delta` and `message_stop`. Assert:
+     - status 200;
+     - one `response.output_text.delta` with `delta:"par"`;
+     - `terminals.len() == 1` and the terminal is the last event;
+     - its name is `response.failed` and `response.error == {"code":"overloaded_error","message":"Overloaded"}`;
+     - no event is named `response.completed`.
+  4. `chat_error_after_first_event_one_failed`. The body is `first-turn` and the reply is `chat_sse` of content `"par"`, then `{"error":{"message":"boom","type":"server_error"}}`, then a `finish_reason:"stop"` chunk. Assert one terminal, last, `response.failed` with `response.error == {"code":"api_error","message":"boom"}`.
+  5. `non_streaming_anthropic_same_content`. First post the body with the `msg_sse(MSG_EVENTS)` reply. Then post the body with `"stream": false` and the reply `MSG_JSON` (`application/json`). Assert:
+     - status 200, `content-type` starts with `application/json`;
+     - the body is one object with `object:"response"` and `status:"completed"`;
+     - `norm(output) == norm(done_items of the stream run)`;
+     - `usage` equals the stream's terminal usage;
+     - `x-zygo-adjustments` contains `server_tool_dropped`.
+     Then post the stream body (`stream: true`) with a JSON reply of `MSG_JSON` without its `server_tool_use` block, and assert that the client gets SSE whose `norm(done_items)` equal the same list. The block is left out because `message_events` (`translate/sse.rs:436-463`) turns any block type it does not know into a text block; see the lead notes. Rows 2 and 3 have `(input_tokens, cache_read_tokens, cache_write_tokens, output_tokens) == (100, 30, 5, 42)`.
+  6. `non_streaming_chat_same_content`. The body is `first-turn` with `stream:false` and the reply is `CHAT_JSON`. Assert:
+     - one Response object whose `norm(output)` equals the `norm(done_items)` of a stream run with `CHAT_CHUNKS`;
+     - `usage == {"input_tokens":120,"input_tokens_details":{"cached_tokens":20},"output_tokens":7,"total_tokens":127}`;
+     - the row has `(100, 20, 0, 7)`.
+  7. `non_2xx_non_streaming_keeps_status_openai_error`. With `stream:false`:
+     - Anthropic replies 500 `{"type":"error","error":{"type":"api_error","message":"boom"}}`. Assert status 500, JSON, `oai_err == {"type":"api_error","message":"boom"}` and no `data:` in the body.
+     - Chat (body `first-turn`) replies 429 `{"error":{"message":"slow down","type":"rate_limit"}}`. Assert status 429 and `oai_err == {"type":"rate_limit_error","message":"slow down"}`.
+  8. `read_error_mid_stream_one_failed`. Call `reply_cut(200, "text/event-stream", msg_sse([message_start, text start, delta "par"]))`. Assert status 200, one terminal event, the terminal is last, and it is named `response.failed` with `response.error.code == "api_error"`.
+  9. `injected_null_removed_for_responses_client` (base §7.6). The body is `first-turn` and the upstream is chat with the arguments `{"cmd":"ls","workdir":null}`.
+     - Stream: `x-zygo-adjustments` contains an item that starts with `schema:optional_property:`, and the `function_call` `arguments` parse to exactly `{"cmd":"ls"}`.
+     - Non-streaming (`stream:false`, `CHAT_JSON` with those arguments): the `function_call` `arguments` parse to `{"cmd":"ls"}`.
+  10. `bad_2xx_body_is_502_openai_shape`. Anthropic replies 200 `application/json` `{"output":[]}` and the body has `stream:false`. Assert status 502 and `oai_err(b) == {"type":"zygo_upstream_bad_response","message":"upstream response could not be translated"}` (`errors.rs:36-42`, `forward.rs:199-201`).
+
+- [ ] 3. Run `cargo test -p zygo-proxy --test responses_forward --locked`. Expect failure: tests 1-6 and 8-10 fail on the RS-3 placeholder 502 or on the Anthropic body check. Test 7 may already pass, because RS-3 built that path; it stays as the contract's case.
+
+- [ ] 4. Commit the tests and the harness helper: `test(proxy): RS-4 Responses response side tests`. Trailers: `Zygo-Session: <session>`, `Zygo-Work: phase4:RS-4`.
+
+- [ ] 5. **Implement in `crates/zygo-proxy/src/forward.rs`:**
+  - a. In `run`, inside the `route == ModelRoute::Responses` block (`:339-341`), build `calls` from the client's body as received, before any stage: `let calls = (route == ModelRoute::Responses).then(|| responses_client::Calls::of(&body));`. After `name` (`:342`), add `let client_model = name.clone();`, the name the client sent (stream obligation 1).
+  - b. Remove the placeholder guard at `:512-515`.
+  - c. `armed` (`:517`) becomes `status.is_success() && !nulls.is_empty() && (route == ModelRoute::Messages || (route == ModelRoute::Responses && translated))`. The same-dialect Responses path (RS-5) stays unarmed.
+  - d. In the translated stream branch (`:527-530`), use `mapper = (c.dialect != Dialect::Anthropic).then(|| StreamMapper::new(c.dialect, &Target::of(c)).errors(estimate, key));`. Toward Anthropic, the upstream Messages SSE goes to `restore.push_raw` (when armed) and to the tee, and `next_chunk` already does both (`:1196-1199`).
+  - e. In the whole-body branch (`:531-548`), a 2xx toward Anthropic is accepted when `is_message(&v)`, and `m = v` (no `translate_response`). Other dialects keep `is_response` and `translate_response`. Add `fn is_message(v: &Value) -> bool`: `type == "message"` and `content` is an array. Keep the Messages `v` in scope (call it `msg: Option<Value>`, set only on a 2xx) for the next sub-step.
+  - f. Add the post-tee stage:
+    ```rust
+    /// A translated 2xx to a Responses client, after the tee (K§6.4.2 C3): the stream encoder, or a whole answer's
+    /// Response object, sent when the upstream body ends.
+    enum Encode { Stream(Box<responses_client::Encoder>), Whole(Bytes) }
+    ```
+    In `run`, set it when `ctx.dialect == Dialect::Openai && translated && status.is_success()`, using `t = Target::of(c)` and `calls` from 5a:
+    - `streamed` (an SSE upstream, or the whole body sent as `message_events`) gives `Encode::Stream(Box::new(Encoder::new(&client_model, &t, calls)))`;
+    - otherwise `let (r, codes) = responses_client::response(&msg, &client_model, &t, &calls); adjustments.extend(codes);` gives `Encode::Whole(serde_json::to_vec(&r)…)`. This comes before `zygo_headers`, so the codes reach the header and the row.
+    For any other case the field is `None`. Add the field `encode: Option<Encode>` to `Flow`.
+  - g. In `next_chunk`, after `out` is computed (the tee's Messages bytes), pass it through `fn encoded(encode: &mut Option<Encode>, out: Bytes, end: bool) -> Bytes`:
+    - `None` gives `out`;
+    - `Stream(e)` gives the bytes of `e.push(&out)`, plus `e.finish()` when `end`;
+    - `Whole(b)` gives nothing until `end`, then `b`.
+    Here `end` is `f.done` after this chunk. When `Stream(e)` reports `e.ended()` and `f.done` is still false, call `tee.finish(&mut on_line)` and set `f.done = true`: the upstream is no longer read, the same as `m.ended()` at `:1206-1209`.
+  - h. `Some(Err(_))` (`:1212-1216`) with `Some(Encode::Stream(e))`: let `b = e.fail("api_error", "upstream response failed")`, or `e.finish()` when `!e.ended()` after that. Set `done = failed = true` and return `Ok(b)`, so that a started stream ends with one terminal event (stream obligation 6). With no encoder, the code is unchanged.
+  - i. In `Flow::drop`, before `self.pending.row.adjustments = …` (`:1180`), extend `self.rctx.adjustments` with `e.adjustments()` when `encode` is `Stream(e)`. `server_tool_dropped` and `reasoning_unmarked:<n>` then reach the row.
+
+- [ ] 6. Run `cargo test -p zygo-proxy --test responses_forward --locked`. Pass: all 10 tests pass. Then run `cargo test -p zygo-proxy --test responses_route --test responses_stream --test translate --test serve --locked`. Pass: all pass unchanged.
+
+- [ ] 7. In this file's Planning notes, add one line: "Base §7.6 null removal now covers the translated Responses route (author's call, RS-4 step 5c)." Commit `forward.rs` and this file: `feat(proxy): RS-4 Responses response side for Anthropic and chat upstreams`, with the same trailers. Push `phase-4--RS-4`.
+
+- [ ] 8. Run the Acceptance check alone as one command (it is the Check line). Pass: exit 0, and `--list` counts at least 6.
+
+- [ ] 9. Run the verification floor: `CARGO_INCREMENTAL=0 cargo test --workspace --locked --no-fail-fast`. Pass: exit 0. Then run `git diff origin/phase-4 --stat -- crates/zygo-proxy/tests/`. Pass: it lists only `responses_forward.rs` and `support/responses.rs`, which shows that the existing Messages-client stream tests are unchanged.
+
+### Author's checks (2026-11-26)
+
+1. **Spec coverage.**
+   - K§6.4.2 stream-order rows Anthropic and chat → 5d, 5f, 5g; tests 1 and 2.
+   - Usage row, measured on the Messages form → tests 1, 2, 5 and 6 (row counts).
+   - Stream obligation 6 (after the start), K§11 item 14 second half → 5g, 5h; tests 3, 4 and 8.
+   - Stream obligation 8 → 5e, 5f; tests 5, 6 and 7. Obligation 8's non-2xx half → test 7.
+   - K§11 item 18 → test 2.
+   - K§6.7 upstream streams (an unparsable event and the bounds stay in the encoder, RS-2) → test 8 for an early end.
+   - K-D48 (the tee parses Messages for these pairs) → no tee change, row asserts.
+   - K-D50 → test 7 and RS-3's tests.
+   - The lead's note 1 (`Calls` from the client's body) → 5a; the test 1 `custom_tool_call` assert.
+   - Note 3 (usage still recorded) → the row asserts.
+   - "Existing Messages-client stream tests pass unchanged" → steps 6 and 9.
+2. **Step scan.** Each code step names one site with its line and its exact condition. The only body given is the `Encode` enum, because the tests do not decide its shape.
+3. **Interface match.** All Consumes signatures were checked at `responses_client.rs:582`, `:736`, `:854`, `:877`, `:902`, `:912`, `:931` and `:942`. RS-9's diff (`origin/phase-4--RS-9`) keeps `Calls::of(&Value)` and `Encoder::new`. RS-5 consumes the `Flow` stage and the harness.
+4. **Review focus.** Item 10, second half (an error after the first event at the route) → tests 3 and 4. Item 9 stays RS-2's (encoder unit tests).
+5. **Proportion.** The plan gives sites, conditions and assertions. The code is about 60 lines in `forward.rs` and about 30 in the harness.
+6. **Live code.** Every cited line was opened at ac96e1fa. There is no existing Messages-body check for an Anthropic 2xx: `is_response` covers only `output` and `choices` (`translate/mod.rs:60-63`). Hence `is_message`.
+
+### Lead notes
+
+- **Contract drift.** None in Consumes or Acceptance. One addition, the author's call: base §7.6 injected-null removal on the translated Responses route (step 5c, test 9). It is evidenced above and stays inside `forward.rs`. The K§6.4.2 line citation `forward.rs:1098-1110` is stale (now `:1184-1236`). That is spec text outside Files, so it is left for BS-1 or the next spec edit.
+- **Found, outside Files: a new-node candidate.** `message_events` (`translate/sse.rs:436-463`) maps every block type other than `thinking` and `tool_use` to a text block. So `redacted_thinking` and `server_tool_use` in a JSON 2xx sent to a client that asked to stream come back as empty text blocks. This affects the Messages client today, and the Responses client through RS-4 step 5f. It is reached only when an upstream answers a streaming request with JSON.
+- **PC-12** is `TODO` in `graph.md:87`, although `nodes/PC-12.md` "Observed" on `origin/phase-4--PC-12` records PC17 and PC18 as verified. RS-4 depends on it in the graph.
+- **Files outside the Files line:** none.
+- **Overlap.** RS-5 shares `forward.rs` and `tests/support/responses.rs`, and runs after RS-4. RS-9 shares no file: it edits `responses_client.rs`, `responses_request.rs`, `responses_stream.rs` and the spec, and keeps the `Calls::of` and `Encoder::new` signatures. RS-8 shares no file: it edits `routes.rs`, `models.rs` and `responses_models.rs`.
