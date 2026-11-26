@@ -196,14 +196,14 @@ Session text (T, SX nodes):
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | TODO | implementation | — |
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | TODO | implementation | — |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
-| OS-36 | The never-worse check over every case and the built inputs | OS-35 | DONE | judgment | 1fb09e17 · a4501591 · 65a63246 · acceptance pass (never_worse 22, shaping 36) · PR #201 |
 | OS-37 | On-demand latency test, ignored in CI | OS-35 | DONE | implementation | 98d82be5 · b5c27cbd · 77c6726f · acceptance pass (shaping_latency 5 ignored) · PR #200 |
 | WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | TODO | judgment | — |
 | MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17, FX-15 | TODO | implementation | — |
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | TODO | implementation | — |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | TODO | mechanical | — |
 | OS-45 | Bound the usage-store wait in elapsed time | — | DONE | judgment | fb717aba · aecf74d2 · a0378951 · acceptance pass (busy_wait 7, zygo-usage, zygo-hooks, readbacks) · PR #203 |
-| OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45 | TODO | lookup | — |
+| OS-47 | Runner view cost on large inputs, output unchanged | — | DONE | judgment | f1d69ae0 · d56988df · c37c66d4 · acceptance pass (runner_fast_path 5, zygo-results, shaping 36, shaping_fixtures 22, shaping_hook 29) · PR #206 |
+| OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45, OS-47 | TODO | lookup | — |
 | WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | TODO | implementation | — |
 | WD-21 | PR1 live check (operator): two pool members send two logins | WD-14, ML-19 | TODO | mechanical | — |
 | WD-22 | PR2 live check (operator): per-session settings act the same on a pool directory | WD-14, WD-21 | TODO | mechanical | — |
@@ -230,7 +230,7 @@ Session text (T, SX nodes):
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | TODO | judgment | — |
 | FX-14 | `zygo up` team read: CLI test of `with_team`, team-layer warnings only, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code | WD-11, WD-12, ML-12 | DONE | implementation | 64d9685c, 3dc62442, 34467d50 · up_definition, workspace_restore, serve_cli, cmd::up all pass ; floor green · PR #162 |
 | FX-15 | `zygo doctor` pool lines skip the members `zygo up` skips | WD-12 | DONE | implementation | 0b4ee021, f046b2b7 · definition_doctor 17/0 ; floor green · PR #129 |
-| FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | TODO | implementation | — |
+| FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | BLOCKED(operator ratification, O§15 item 2) | implementation | — |
 | FX-17 | `zygo up` refuses a `[limits] max_members` outside 1-32 from the team or user layer (`config check` rule, `check_jobs` path) | FX-14, WD-11 | DONE | implementation | plan 7a124777 · node da3062c7, e437fde9 · acceptance pass (workspace_restore 7 passed, cmd::up 16 passed) · PR #169 |
 | FX-18 | live-mail.sh fixture head line doubles the word zygo | ML-19 | DONE | mechanical | plan 02a12d2d · node fad4e150 · acceptance pass (sh scripts/premises/live-selftest.sh: live selftest: ok (77)) · PR #187 |
 | FX-19 | PO2 row states what its run observed | OS-34 | DONE | mechanical | plan b2c8ca97 · node b5fa4c27, efbcccae · acceptance pass (check-premises ok; po2_ 3 passed) · PR #188 |
@@ -418,4 +418,7 @@ Session text (T, SX nodes):
 | 2026-11-26 | OS-45 DONE: bounded open uses its own elapsed-time busy handler; lock-held hook p95 159.27 → 128.05 ms (release, macOS); review F1, F2, F4 fixed; F3 (O-C10 per call on a non-WAL db) open for a new row · PR #203 |
 | 2026-11-26 | OS-46 added: OS-45 review F3; O-C10 bounds each Bash call but O§7.11 bounds each statement, so on a rollback-journal db the hook's read and write can each wait HOOK_DB_BOUND |
 | 2026-11-26 | OS-46 DONE: hook uses open_bounded_total (one wait budget per Bash call); MCP keeps per-statement open; OS-43 now depends on OS-46 (both change trim.rs); review F1-F6, F8 fixed, F7 recorded here · PR #205 |
+| 2026-11-26 | OS-47 added: OS-38 rerun failed O§8.5 budget 2 under load (libtest 4 MiB p95 105.87 / 106.64 ms, p50 62-73 ms); runner view is ~90% of steps 1-4; OS-38 now depends on OS-47 |
+| 2026-11-26 | OS-47 DONE: runner view pre-checks, output byte-identical (differential probe 0 diffs); 4 MiB libtest/go test p50 60-75 → 20-22 ms, p95 ≤ 22.53 ms (release, load 4-6); review F1 fixed, F2 cost only · PR #206 |
+| 2026-11-26 | FX-16 BLOCKED: its fix makes clean remove more; O§15 item 2 needs the operator's ratification of the O§7.4 text and a decision record first |
 | 2026-11-26 | OS-44 DROPPED: kept_bytes modelled each agent's cut, but OpenCode keeps whole lines under user-config limits and Claude Code cuts by an API token count and keeps characters; no premise states what is kept; O§6.4 Size limit stated as permanent · PR #207 |
