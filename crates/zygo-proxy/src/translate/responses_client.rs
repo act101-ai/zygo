@@ -1,6 +1,6 @@
 //! Responses client → Messages (K§6.4.3, K§6.7).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use serde_json::{json, Map, Value};
 use zygo_config::Facts;
@@ -133,6 +133,7 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
             for it in items {
                 item(&mut c, it, t, &mut d)?;
             }
+            c.all_answered()?;
         }
         _ => return Err(bad("input must be a string or an array")),
     }
@@ -240,9 +241,45 @@ struct Conv {
     /// No item other than a `developer`/`system` message seen yet (obligation 1).
     leading: bool,
     messages: Vec<(&'static str, Vec<Value>)>,
+    /// Every call's `call_id` so far.
+    calls: HashSet<String>,
+    /// Calls with no output yet: `call_id` and the call's item type.
+    open: Vec<(String, &'static str)>,
 }
 
+/// The fixed text of an unanswered call's 400.
+const NO_OUTPUT: &str = "no output before the next user message or the end of input";
+
 impl Conv {
+    /// A call of item type `ty` (obligation 3): its `call_id` is unique.
+    fn call(&mut self, ty: &'static str, id: &str) -> Result<(), ZygoError> {
+        if !self.calls.insert(id.to_owned()) {
+            return Err(bad(format!("{ty}: duplicate call_id")));
+        }
+        self.open.push((id.to_owned(), ty));
+        Ok(())
+    }
+
+    /// An output of item type `ty`: it answers an earlier open call of its kind with the same `call_id`.
+    fn output(&mut self, ty: &str, id: &str) -> Result<(), ZygoError> {
+        let kind = ty.strip_suffix("_output").unwrap_or(ty);
+        match self.open.iter().position(|(c, k)| c == id && *k == kind) {
+            Some(i) => {
+                self.open.remove(i);
+                Ok(())
+            }
+            None => Err(bad(format!("{ty}: no earlier matching call"))),
+        }
+    }
+
+    /// Before a user message and at the end of `input`: every call has its output.
+    fn all_answered(&self) -> Result<(), ZygoError> {
+        match self.open.first() {
+            Some((_, ty)) => Err(bad(format!("{ty}: {NO_OUTPUT}"))),
+            None => Ok(()),
+        }
+    }
+
     /// Appends `b` to the last message when it has `role`, else starts one; in a user message `tool_result` blocks
     /// come first (obligation 2).
     fn push(&mut self, role: &'static str, b: Value) {
@@ -275,15 +312,18 @@ fn item(c: &mut Conv, it: &Value, t: &Target, d: &mut Drops) -> Result<(), ZygoE
         "message" => message(c, it, d)?,
         "function_call" => {
             let (id, name, args) = (field(it, ty, "call_id")?, field(it, ty, "name")?, field(it, ty, "arguments")?);
+            c.call("function_call", id)?;
             c.push("assistant", json!({"type":"tool_use","id":id,"name":name,"input":input_of(Some(args))}));
         }
         "custom_tool_call" => {
             let (id, name, input) = (field(it, ty, "call_id")?, field(it, ty, "name")?, field(it, ty, "input")?);
+            c.call("custom_tool_call", id)?;
             c.push("assistant", json!({"type":"tool_use","id":id,"name":name,"input":{"input":input}}));
             d.custom = true;
         }
         "function_call_output" | "custom_tool_call_output" => {
             let id = field(it, ty, "call_id")?;
+            c.output(ty, id)?;
             let content = match it.get("output") {
                 Some(Value::String(x)) => Value::String(x.clone()),
                 Some(Value::Array(parts)) => Value::Array(parts.iter().map(|p| part(p, d)).collect::<Result<_, _>>()?),
@@ -309,6 +349,9 @@ fn message(c: &mut Conv, it: &Value, d: &mut Drops) -> Result<(), ZygoError> {
         Some(Value::Array(parts)) => parts.iter().map(|p| part(p, d)).collect::<Result<_, _>>()?,
         _ => return Err(bad("message: missing content")),
     };
+    if role == "user" {
+        c.all_answered()?;
+    }
     let role = match role {
         "developer" | "system" => {
             if c.leading && blocks.iter().all(|b| s(b, "type") == Some("text")) {
