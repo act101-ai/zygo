@@ -12,6 +12,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | CF-4 | Registry `capabilities.toml`, grade files for Claude Code and OpenCode, generated `docs/conformance.md` and `.json`, the tree test, CI paths, old scripts deleted (PR stops for the operator, K-D26) | CF-3, OC-1 | DONE | judgment | PR #104 merged 278f2cd4; acceptance exit 0 on merged tree (conformance 120 pass); CI run 45707423597 green (ubuntu, macos, windows) |
 | OC-1 | OpenCode: session token out of the environment and config (apiKey from the token file), providers limited to zygo | — | DONE | judgment | PR #128 merged 53eabe25; acceptance exit 0 on merged tree; CI run 45693613400 green (ubuntu, macos, windows) |
 | PC-1 | `scripts/check-premises.sh` driven by data, with `scripts/test-check-premises.sh` | — | DONE | judgment | PR #91 merged adac6bc0; acceptance exit 0 @ 54039f94 (test-check-premises 50 cases); CI run 45678686867 green (ubuntu, macos, windows) |
+| PC-2 | Codex premise harness: every mock and scrub change of PC-3 to PC-6, codex-only `lib.sh` with an isolation record, `run-codex.sh`, help and schema captures | PC-1 | DONE | judgment | PR #126 merged 1206befa; acceptance exit 0 @ 4784e06b (real codex 0.172.0 run, ~/.codex unchanged); CI run 45698780636 green (ubuntu, macos, windows) |
 
 ## Log
 
