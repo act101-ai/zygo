@@ -152,11 +152,16 @@ fn po1_failed_bash_capture_gives_no_output_and_no_row() {
     // O§7.13 "If PO1 fails", O§10 "PO1 fails", O§16 item 18 (fail)
     let (big, text) = po1_big();
     assert!(text.len() >= 20 * 1024);
+    // The capture has no `tool_response`; give it the one a passing Bash call has, so only the event filter stops it
+    let mut with_response = big.clone();
+    with_response["tool_response"] = bash(big["tool_input"]["command"].clone(), &text, "")["tool_response"].clone();
+    assert!(with_response["tool_response"].is_object());
+    assert_eq!(with_response["hook_event_name"], "PostToolUseFailure");
     for shape in [true, false] {
         let e = env(shape);
         let raw = fixture("claude-code/hooks/PostToolUseFailure-Bash-output-main.json");
         assert_eq!(raw["error"], "Exit code 3\nout-line\nerr-line");
-        for input in [&raw, &big] {
+        for input in [&raw, &big, &with_response] {
             assert_eq!(run(&e, Agent::ClaudeCode, input, &TrimOpts::default()), "");
             assert_eq!(run(&e, Agent::ClaudeCode, input, &TrimOpts { stderr_cleared: false, ..TrimOpts::default() }), "");
         }
