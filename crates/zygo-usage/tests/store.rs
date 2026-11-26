@@ -978,6 +978,20 @@ fn busy_wait_total_never_asks_a_sleep_past_the_bound() {
 }
 
 #[test]
+fn open_bounded_total_never_restarts_its_wait() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    assert!(!Store::open_bounded_total(&t.db(), store::HOOK_DB_BOUND).unwrap().busy_wait_restarts());
+}
+
+#[test]
+fn open_bounded_restarts_its_wait_per_step() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    assert!(Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).unwrap().busy_wait_restarts());
+}
+
+#[test]
 fn open_bounded_total_replaces_the_sqlite_busy_timeout() {
     let t = Tmp::new();
     drop(Store::open(&t.db()).unwrap());

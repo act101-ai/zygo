@@ -10,6 +10,8 @@ use crate::schema::*;
 
 pub struct Store {
     pub(crate) conn: Connection,
+    /// False only for [`Store::open_bounded_total`]: its busy wait has one bound for the connection ([`BusyWait::total`]).
+    pub(crate) busy_restart: bool,
 }
 
 const INSERT_REQUEST: &str = "INSERT INTO requests (ts, session, token_label, agent, agent_version, agent_id, agent_type, request_class, compaction, route, role_requested, role_served, model, provider, profile, passthrough, status, latency_ms, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, estimated_usd, adjustments, redactions, repo, work_item) VALUES (:ts, :session, :token_label, :agent, :agent_version, :agent_id, :agent_type, :request_class, :compaction, :route, :role_requested, :role_served, :model, :provider, :profile, :passthrough, :status, :latency_ms, :input_tokens, :output_tokens, :cache_read_tokens, :cache_write_tokens, :estimated_usd, :adjustments, :redactions, :repo, :work_item)";
@@ -209,7 +211,7 @@ impl Store {
             TRIM_COLUMNS_CHECKED.lock().unwrap_or_else(|e| e.into_inner()).insert(path.to_path_buf());
         }
         conn.pragma_update(None, "synchronous", "NORMAL")?;
-        Ok(Store { conn })
+        Ok(Store { conn, busy_restart: true })
     }
 
     /// For readers on a short deadline (the status line): no directory or file is created, no migration, no busy
@@ -226,7 +228,7 @@ impl Store {
                 "usage database schema version {version} is not {SCHEMA_VERSION}"
             ));
         }
-        Ok(Store { conn })
+        Ok(Store { conn, busy_restart: true })
     }
 
     /// The bounded open of the MCP server's read-back write (O§7.11): each statement waits at most
@@ -246,6 +248,7 @@ impl Store {
     }
 
     fn open_with_wait(path: &Path, mut wait: BusyWait) -> Result<Store> {
+        let busy_restart = wait.restart;
         let mut conn = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -264,7 +267,13 @@ impl Store {
             ));
         }
         conn.pragma_update(None, "synchronous", "NORMAL")?;
-        Ok(Store { conn })
+        Ok(Store { conn, busy_restart })
+    }
+
+    /// True when the busy wait's clock restarts at each step ([`BusyWait::new`]); false for one bound on the connection.
+    #[doc(hidden)]
+    pub fn busy_wait_restarts(&self) -> bool {
+        self.busy_restart
     }
 
     #[doc(hidden)]
