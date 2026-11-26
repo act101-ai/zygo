@@ -57,10 +57,8 @@ fn joined(h: Reader) -> Vec<u8> {
     h.map(|h| h.join().unwrap_or_default()).unwrap_or_default()
 }
 
-/// The head of every user config of the harness (FX-23; WD-14 review F1): it turns the built-in marketplace off. A user
-/// `act101` entry with an empty `ref` (the built-in source stays, §15.1), and sync skips a built-in entry without a
-/// `ref` (`zygo-plugins` `sync.rs` `engine`), so no launch clones `github:act101-ai/act101` or reaches the network.
-pub const NO_MARKETPLACE: &str = "[[marketplace]]\nname = \"act101\"\nref = \"\"\n";
+/// Every user config of the harness holds it (FX-23).
+pub use super::NO_MARKETPLACE;
 
 /// No line of the stderr `err` of `what` comes from a marketplace sync (FX-23): no line names a marketplace (`marketplace
 /// act101: tag … moved`, a failed fetch) and none is the sync summary `plugins: offline` or `plugins: partial` (an
