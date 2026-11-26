@@ -14,6 +14,7 @@ use zygo_config::{LoadContext, MailConfig};
 use zygo_core::paths::Paths;
 use zygo_mail_sync::address::Address;
 use zygo_mail_sync::env::{self, Env, Spawner, Verdict, Wake};
+use zygo_mail_sync::ops::take_host;
 use zygo_mail_sync::outbox::SendError;
 use zygo_mail_sync::state;
 use zygo_mail_sync::sync::{run, run_with, Mode, Opts, Report, SyncError};
@@ -150,4 +151,58 @@ fn host_rename_while_mail_waits() {
     assert_eq!(sync(&b).delivered, 1);
     assert!(new_ids(&b, BOB).contains(&format!("{u}.json")));
     assert_eq!((file(&r, "registry/a.json"), file(&r, "ack/a.json")), a_files);
+}
+
+/// The collision line of S§7.5, as `identity.rs:19` holds it.
+const COLLISION: &str = "zygo: the mail host name is taken on the side branch by another identity. If that is another machine, set another [mail] host. If it is this workspace from before (a moved repository, a ws forget, a restored backup), run zygo mail sync --take-host.";
+
+fn stopped(e: SyncError) -> (String, &'static str) {
+    let SyncError::Stopped { line, check } = e else { panic!("{e:?}") };
+    (line, check)
+}
+
+#[test] // S§19 #9, S§7.6 --take-host, S§14 "Moved repository, ws forget, restored backup", S-G5
+fn take_host_after_a_collision() {
+    let r = Remote::new();
+    let x1 = machine(&r, "x", &[(ALICE, "alice")]);
+    sync(&x1);
+    let s = machine(&r, "s", &[(BOB, "bob")]);
+    sync(&s);
+    let u1 = send(&s, "bob", ("alice", "x"));
+    sync(&s);
+    assert_eq!(sync(&x1).delivered, 1);
+    let x2 = machine(&r, "x", &[(ALICE, "alice")]);
+    let e = run(&env(&x2), WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!(e.exit_code(Mode::Cli), 1);
+    assert_eq!(stopped(e), (COLLISION.to_string(), "collision"));
+    assert!(new_ids(&x2, ALICE).is_empty());
+    let rep = take_host(&env(&x2), WS_ID).unwrap();
+    assert_eq!(rep.delivered, 0);
+    assert!(new_ids(&x2, ALICE).is_empty()); // acked by x1: not delivered again
+    assert_eq!(json(&r, "registry/x.json")["identity"], ident(&x2));
+    assert_eq!(json(&r, "ack/x.json")["identity"], ident(&x2));
+    assert_eq!(imported(&r, "ack/x.json"), BTreeSet::from([u1.to_string()]));
+    let e = run(&env(&x1), WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!((e.exit_code(Mode::Cli), stopped(e).1), (1, "collision"));
+    sync(&s);
+    let u2 = send(&s, "bob", ("alice", "x"));
+    sync(&s);
+    assert_eq!(sync(&x2).delivered, 1);
+    assert_eq!(new_ids(&x2, ALICE), BTreeSet::from([format!("{u2}.json")]));
+}
+
+#[test] // S§8.3 step 5, S§8.2: --take-host is a sync; a public remote stops it before any fetch or push
+fn take_host_on_a_public_remote_stops_before_any_fetch() {
+    let r = Remote::new();
+    let x1 = machine(&r, "x", &[(ALICE, "alice")]);
+    sync(&x1);
+    let x2 = machine(&r, "x", &[(ALICE, "alice")]);
+    git(&x2.root, &["remote", "set-url", "--push", "origin", "https://example.invalid/r.git"]);
+    let refs0 = git(&r.bare, &["for-each-ref"]);
+    let e = take_host(&env_with(&x2, Verdict::Public), WS_ID).unwrap_err();
+    assert_eq!(e, SyncError::Stopped { line: "zygo: the remote can be read without a login; mail sync refused".into(), check: "public" });
+    assert_eq!(e.exit_code(Mode::Cli), 1);
+    assert_eq!(git(&r.bare, &["for-each-ref"]), refs0);
+    assert!(!x2.root.join(".git/refs/remotes/origin/zygo").exists());
+    assert!(!x2.wt.exists());
 }
