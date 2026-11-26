@@ -8,7 +8,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tempfile::TempDir;
@@ -21,6 +22,7 @@ use zygo_workspace::mail::{
     mail_dir, prune, remove_maildir, send, store as mail_store, Delivery, MailError, Message, MAIL_LOCK_WAIT,
 };
 use zygo_workspace::state::{MemberRecord, MemberState, Pane, PaneKind, Phase, Store, Workspace};
+use zygo_workspace::up;
 
 const S5: Duration = Duration::from_secs(5);
 const OTHER: &str = "fedcba9876543210";
@@ -302,4 +304,46 @@ fn lifecycle_prune_removes_only_keys_without_a_record() {
     assert!(target.join("kbbbbbbbb/new").is_dir());
     assert!(remove_maildir(&third, "kbbbbbbbb", MAIL_LOCK_WAIT).is_err());
     assert!(target.join("kbbbbbbbb/new").is_dir());
+}
+
+// ---- step 4: path a3 (`forget-pane`) ----
+
+#[test] // a3: forget-pane waits for mail/lock while a delivery holds it, leaves the maildir, and the next run removes it
+#[ignore = "timing: forget-pane waits MAIL_LOCK_WAIT (2 s) for mail/lock"]
+fn lifecycle_removal_waits_for_a_delivery_in_flight() {
+    let _s = serial();
+    let PaneSetup { _td, p, tmux, id, store, plain } = pane_setup();
+    put(&p, &id, "kbbbbbbbb", 1);
+    let kept: Arc<Mutex<Option<(i32, String, String)>>> = Arc::new(Mutex::new(None));
+    let once = AtomicBool::new(false);
+    let (hp, ht, hc, hk) = (p.clone(), tmux.clone(), plain.clone(), Arc::clone(&kept));
+    up::testing::hook(
+        store.dir(),
+        "mail_delivery_after_read",
+        Some(Box::new(move || {
+            if !once.swap(true, Ordering::SeqCst) {
+                *hk.lock().unwrap() = Some(pane_run(&hp, &ht, Some("app"), &hc, "kbbbbbbbb"));
+            }
+            Ok(())
+        })),
+    );
+    let r = send(&p, &read(&store), None, "kbbbbbbbb", "s", "b", &MailConfig::default(), at(T0)).unwrap();
+    up::testing::hook(store.dir(), "mail_delivery_after_read", None);
+    assert_eq!(r.sent.len(), 1, "{r:?}");
+    let mail = mail_dir(&p, &id);
+    assert_eq!(
+        kept.lock().unwrap().take().unwrap(),
+        (
+            1,
+            String::new(),
+            format!("zygo: cannot forget pane kbbbbbbbb of app: {}/lock is held by another process\n", mail.display())
+        )
+    );
+    assert!(!read(&store).members.contains_key("kbbbbbbbb"));
+    assert_eq!(unread(&p, &id, "kbbbbbbbb"), 2);
+    assert_eq!(
+        pane_run(&p, &tmux, Some("app"), &plain, "kbbbbbbbb"),
+        (0, "zygo: forgot pane kbbbbbbbb of app\n".to_string(), String::new())
+    );
+    assert!(gone(&mail.join("kbbbbbbbb")));
 }
