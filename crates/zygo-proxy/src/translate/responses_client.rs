@@ -210,6 +210,7 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
 /// adjustment codes: `None` for an absent format or type `text` (no key but `type`); `{type: json_schema, schema}` for
 /// type `json_schema`, whose `name`, `strict` and `description` are checked, then not sent, with
 /// `text_format_dropped:description` and `text_format_dropped:strict` for a non-null value; any other type → 400.
+/// For either type, a key whose value is `null` counts as absent.
 fn output_format(format: Option<&Value>) -> Result<(Option<Value>, Vec<Adjustment>), ZygoError> {
     let Some(f) = format else { return Ok((None, Vec::new())) };
     let allowed: &[&str] = match s(f, "type") {
@@ -218,7 +219,7 @@ fn output_format(format: Option<&Value>) -> Result<(Option<Value>, Vec<Adjustmen
         _ => return Err(bad("text.format: only types text and json_schema are accepted toward this upstream")),
     };
     let obj = f.as_object().into_iter().flat_map(|o| o.keys());
-    if let Some(k) = obj.into_iter().find(|k| !allowed.contains(&k.as_str())) {
+    if let Some(k) = obj.into_iter().find(|k| !allowed.contains(&k.as_str()) && !f[k.as_str()].is_null()) {
         return Err(bad(format!("unknown field: text.format.{}", cut(k))));
     }
     if s(f, "type") == Some("text") {
@@ -237,7 +238,8 @@ fn output_format(format: Option<&Value>) -> Result<(Option<Value>, Vec<Adjustmen
     if f.get("strict").is_some_and(|v| !v.is_null() && !v.is_boolean()) {
         return Err(bad("text.format.strict must be a boolean"));
     }
-    // Messages has no counterpart for these: a value the client set is recorded, not sent.
+    // Messages has no counterpart for these and none is sent. `description` and a non-null `strict` are recorded
+    // because they change what the model is asked or guaranteed; `name` is a label and is not recorded.
     let codes = ["description", "strict"]
         .into_iter()
         .filter(|k| f.get(*k).is_some_and(|v| !v.is_null()))

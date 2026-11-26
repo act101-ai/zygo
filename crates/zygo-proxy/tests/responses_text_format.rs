@@ -47,6 +47,11 @@ fn adjustments(h: &HeaderMap) -> Vec<String> {
     hv(h, "x-zygo-adjustments").split(',').filter(|s| !s.is_empty()).map(str::to_string).collect()
 }
 
+/// How many times `code` is in `adj`.
+fn count(adj: &[String], code: &str) -> usize {
+    adj.iter().filter(|a| *a == code).count()
+}
+
 /// `event: <type>\ndata: <compact json>\n\n` per event.
 fn msg_sse(evs: &[Value]) -> Vec<u8> {
     evs.iter().flat_map(|e| format!("event: {}\ndata: {e}\n\n", e["type"].as_str().unwrap()).into_bytes()).collect()
@@ -204,10 +209,12 @@ fn text_format_json_schema_route_chat() {
         let body = record(rel);
         let schema = body["text"]["format"]["schema"].clone();
         for stream in [true, false] {
-            let (_, items) = post_chat(&h, &body, stream, ANSWER);
+            let (hd, items) = post_chat(&h, &body, stream, ANSWER);
             assert_eq!(h.upstream_paths().last().map(String::as_str), Some("/v1/chat/completions"), "{rel}");
             let up = h.upstream_bodies().pop().unwrap();
             assert_eq!(up["response_format"], json!({"type":"json_schema","json_schema":{"name":"output","schema":schema}}), "{rel}");
+            let adj = adjustments(&hd);
+            assert_eq!(count(&adj, "text_format_dropped:strict"), 1, "{rel} {stream}: {adj:?}");
             assert_eq!(items, [text_item(ANSWER)], "{rel} {stream}");
         }
     }
@@ -222,8 +229,24 @@ fn text_format_json_schema_route_chat() {
         assert_eq!(sent["required"], json!(["title", "note"]), "{up}");
         let adj = adjustments(&hd);
         assert!(adj.iter().any(|a| a.starts_with("schema:optional_property")), "{adj:?}");
+        assert_eq!(count(&adj, "text_format_dropped:strict"), 1, "{stream}: {adj:?}");
         assert_eq!(items, [text_item("{\"title\":\"x\"}")], "{stream}");
     }
+    // A `description`: not carried, and recorded once.
+    let mut body = record(TITLE_FIXTURES[0]);
+    body["text"]["format"]["description"] = json!("A short title for the thread.");
+    for stream in [true, false] {
+        let (hd, items) = post_chat(&h, &body, stream, ANSWER);
+        let up = h.upstream_bodies().pop().unwrap();
+        assert!(!up.to_string().contains("A short title for the thread."), "{up}");
+        let adj = adjustments(&hd);
+        assert_eq!(count(&adj, "text_format_dropped:description"), 1, "{stream}: {adj:?}");
+        assert_eq!(items, [text_item(ANSWER)], "{stream}");
+    }
+    let rows = h.usage_rows();
+    assert_eq!(rows.len(), 8);
+    assert!(rows.iter().all(|r| count(&r.adjustments, "text_format_dropped:strict") == 1), "{rows:?}");
+    assert_eq!(rows.iter().filter(|r| count(&r.adjustments, "text_format_dropped:description") == 1).count(), 2, "{rows:?}");
 }
 
 #[test] // obligation 11 and §7.6 `structured_output = none`: the schema goes into the system text
@@ -261,9 +284,13 @@ fn text_format_json_schema_route_prompted() {
             assert!(system.ends_with(&format!("{SCHEMA_PROMPT}{schema}")), "{rel}: {system}");
             let adj = adjustments(&hd);
             assert!(adj.iter().any(|a| a == "structured_output_prompted"), "{rel}: {adj:?}");
+            assert_eq!(count(&adj, "text_format_dropped:strict"), 1, "{rel} {stream}: {adj:?}");
             let items = if stream { done_items(&b) } else { json_items(&b) };
             assert_eq!(items, [text_item(ANSWER)], "{rel} {stream}");
         }
     }
     assert!(h.upstream_bodies().is_empty(), "the second harness's own upstream is unused");
+    let rows = h.usage_rows();
+    assert_eq!(rows.len(), 4);
+    assert!(rows.iter().all(|r| count(&r.adjustments, "text_format_dropped:strict") == 1), "{rows:?}");
 }

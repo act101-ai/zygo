@@ -147,7 +147,7 @@ fn body_not_object_400() {
     assert_400(err(check_fields(&json!([1]))), "request body must be a JSON object");
 }
 
-// ---- request obligations 1-10 and the captured Codex requests (K§11 item 11) ----
+// ---- request obligations 1-10 and the captured Codex requests (K§11 item 11); obligation 11 is under RS-11 below ----
 
 fn facts() -> Facts {
     Facts { max_output_tokens: 32000, ..Facts::default() }
@@ -1244,6 +1244,7 @@ fn text_format_json_schema_field_rules() {
         (json!({"type":"json_schema","schema":{},"extra":1}), "unknown field: text.format.extra"),
         (json!({"type":"text","extra":1}), "unknown field: text.format.extra"),
         (json!({"type":"text","schema":{}}), "unknown field: text.format.schema"),
+        (json!({"type":"text","strict":true}), "unknown field: text.format.strict"),
     ];
     for (f, msg) in cases {
         let mut b = body(json!([user("go")]));
@@ -1254,5 +1255,11 @@ fn text_format_json_schema_field_rules() {
     b["text"] = json!({"format":{"type":"json_schema","schema":{},"name":null,"strict":null,"description":null}});
     let (m, codes) = rq(&b).unwrap();
     assert_eq!(m["output_config"], json!({"format":{"type":"json_schema","schema":{}}}));
+    assert!(codes.is_empty(), "{codes:?}");
+    // A null key counts as absent for type text too.
+    let mut b = body(json!([user("go")]));
+    b["text"] = json!({"format":{"type":"text","strict":null}});
+    let (m, codes) = rq(&b).unwrap();
+    assert!(m.get("output_config").is_none(), "{m}");
     assert!(codes.is_empty(), "{codes:?}");
 }
