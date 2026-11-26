@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# The test tripwire of the definition read (`repo_def::trap`): enabled only by the `test-hooks` feature of package
+# `zygo`, which only zygo's own dev-dependency turns on (WD-19 review round 1).
+test-hooks = []
+
 [dependencies]
 zygo-core.workspace = true
 anyhow.workspace = true
