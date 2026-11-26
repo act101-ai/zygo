@@ -8,7 +8,7 @@ unit = "phase3:FX-16"
 round = 1
 role = "code"
 model = "unknown"
-commit = "b328900841fd66ed2de02682cc3e2b6d61459a5c"
+commit = "53af1112392a0a5d18e5b82a9435327b6c494812"
 date = "2026-11-26"
 depends_on = []
 reverse_cost = "low"
@@ -16,7 +16,7 @@ reverse_cost = "low"
 
 ## Choice
 
-A charset designation is `ESC (` or `ESC )` plus one final byte in `0x30-0x7E` (the ECMA-35 designation final bytes), 3 bytes in all. When the byte after `ESC (` or `ESC )` is not such a byte, clean removes only the 2 bytes `ESC (` or `ESC )` and keeps what follows: a non-ASCII character, `U+009B` (which then starts its own 8-bit CSI), a byte below `0x30` such as a space, a line end (`\n` or `\r`), an `ESC` (which then starts its own sequence) or the end of the text. A cut of 2 or 3 bytes ends on an ASCII byte, so it stays on a UTF-8 boundary. The code is the `Some(b'(' | b')')` arm of `esc_len` in `crates/zygo-results/src/shape/clean.rs`. A lone `ESC` is removed alone at the end of the text, before a line end and before another `ESC` (the `None | Some(b'\n' | b'\r' | &ESC) => 1` arm of the same function).
+A charset designation is `ESC (` or `ESC )` plus one final byte in `0x30-0x7E` (the ECMA-35 designation final bytes), 3 bytes in all. When the byte after `ESC (` or `ESC )` is not such a byte, clean removes only the 2 bytes `ESC (` or `ESC )` and keeps what follows: a non-ASCII character, `U+009B` (which then starts its own 8-bit CSI), a byte below `0x30` such as a space, a line end (`\n` or `\r`), an `ESC` (which then starts its own sequence) or the end of the text. ECMA-35 allows intermediate bytes `0x20-0x2F` between `(`/`)` and the final byte; clean does not take them: only `ESC (` or `ESC )` is removed, and the intermediates and the final byte stay as text, which keeps more text (O-C9). Node FX-21 tracks this. A cut of 2 or 3 bytes ends on an ASCII byte, so it stays on a UTF-8 boundary. The code is the `Some(b'(' | b')')` arm of `esc_len` in `crates/zygo-results/src/shape/clean.rs`. A lone `ESC` is removed alone at the end of the text, before a line end and before another `ESC` (the `None | Some(b'\n' | b'\r' | &ESC) => 1` arm of the same function).
 
 ## Alternatives rejected
 
@@ -27,11 +27,12 @@ A charset designation is `ESC (` or `ESC )` plus one final byte in `0x30-0x7E` (
 
 - Spec O§7.4 bullet 1, `docs/specs/2026-11-24-output-shaping-design.md:240` (the charset-designation clause and the lone `ESC` sentence, rewritten to this choice) and `:242` ("Clean removes no line").
 - O-C9, same file `:54`: "When a shaper is unsure, it keeps the line or gives \"no change\"". O§15 item 2, same file `:544`: a form is fixed only toward hiding less, and the fix is recorded as a decision record.
-- ECMA-35 (ISO/IEC 2022): a designation escape sequence ends with one final byte in `0x30-0x7E`; a byte outside that range is not part of the sequence.
-- Change log, same file: the 2026-11-25 O§7.4 row (OS-12 review F4/F5) and the 2026-11-26 O§7.4 row (FX-16 review F2, review round 2 F1/F5/F7).
+- ECMA-35 (ISO/IEC 2022): a designation escape sequence ends with one final byte in `0x30-0x7E`, and intermediate bytes `0x20-0x2F` can come between `(`/`)` and the final byte. Clean does not take the intermediates: only `ESC (` or `ESC )` is removed, and the intermediates and the final byte stay as text, which keeps more text (O-C9); node FX-21 tracks this.
+- Change log, same file: the 2026-11-25 O§7.4 row (OS-12 review F4/F5) and the 2026-11-26 O§7.4 row (FX-16 review F2, review round 2 F1/F5/F7, review round 3 F2/F5).
 - Code: `crates/zygo-results/src/shape/clean.rs:59-86` (`esc_len`; the lone `ESC` arm at `:62`, the designation arm at `:65-68`), `:42` and `:52` (the slices `&text[kept_from..i]` and `&text[kept_from..]`, which a cut inside a character would panic on).
 - Findings: OS-12 review F4 (`ESC ( B` kept `B`; 62 `okB` lines in `fixtures/shaping/clean/cargo-test-color`) and F5 (`ESC ESC [31m` kept `[31m`), recorded in `docs/work/phase3/graph.md` (the OS-12 DONE row); FX-16 review round 2 F1/F5 (the "one whole character" rule removed real text), recorded in `docs/work/phase3/nodes/FX-16.md`.
-- Tests: `crates/zygo-results/tests/shape_clean.rs` `charset_designation_is_removed`, `charset_designation_never_takes_a_line_end_or_an_esc`, `charset_designation_takes_only_a_final_byte` and `charset_designation_before_a_line_end_esc_or_text_end`.
+- Tests: `crates/zygo-results/tests/shape_clean.rs` `charset_designation_is_removed`, `charset_designation_never_takes_a_line_end_or_an_esc`, `charset_designation_takes_only_a_final_byte`, `charset_designation_before_a_line_end_esc_or_text_end` and `charset_designation_final_byte_range_ends`.
+- Commits that carry out this decision: 306106f3, 7e10c715 (code), e6995a74, 42885665 (record); e6995a74 and 7e10c715 lack the D§6.7 trailer because history on a pushed branch is not rewritten; this list stands in for the trailer search.
 
 ## Cost to reverse
 
