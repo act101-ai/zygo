@@ -77,7 +77,7 @@ impl SyncPaths {
     }
 }
 
-/// W-C4, M-C4: makes `path`'s folder (and its parents) `0700`, then writes `bytes` to a `0600` temp file in it,
+/// W-C4, M-C4: makes `path`'s folder `0700` (no parent: a missing parent is `NotFound`, MS-21 review R2-1), then writes `bytes` to a `0600` temp file in it,
 /// syncs it and renames it over `path` (`zygo_core::session_dir::write_atomic`), then syncs the folder (unix).
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path
@@ -89,7 +89,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
                 "write_atomic: the path has no folder",
             )
         })?;
-    zygo_workspace::mail::ensure_mail_root(dir)?;
+    zygo_workspace::mail::ensure_mail_dir(dir)?;
     zygo_core::session_dir::write_atomic(path, bytes).map_err(to_io)?;
     sync_dir(dir)
 }
@@ -107,7 +107,7 @@ fn sync_dir(dir: &Path) -> io::Result<()> {
 /// `write_atomic` for a file under `mail/sync/` or `mail/outbox/`: `mail/` itself is checked first (`0700`, no
 /// link, M-C4), as `write_atomic` checks only the file's own folder.
 fn write_file(sp: &SyncPaths, path: &Path, bytes: &[u8]) -> io::Result<()> {
-    zygo_workspace::mail::ensure_mail_root(&sp.mail)?;
+    zygo_workspace::mail::ensure_mail_dir(&sp.mail)?;
     write_atomic(path, bytes)
 }
 
@@ -360,8 +360,8 @@ pub fn imported_load(sp: &SyncPaths) -> std::io::Result<HashSet<Ulid>> {
 /// does not end with `\n` (a torn entry), a `\n` goes first, so the new entry is a line of its own. The log is
 /// never trimmed (S§13 limit 6). `mail/` and `mail/sync/` are checked first.
 pub fn imported_append(sp: &SyncPaths, id: Ulid) -> std::io::Result<()> {
-    zygo_workspace::mail::ensure_mail_root(&sp.mail)?;
-    zygo_workspace::mail::ensure_mail_root(&sp.sync)?;
+    zygo_workspace::mail::ensure_mail_dir(&sp.mail)?;
+    zygo_workspace::mail::ensure_mail_dir(&sp.sync)?;
     let mut o = OpenOptions::new();
     o.read(true).append(true);
     #[cfg(unix)]

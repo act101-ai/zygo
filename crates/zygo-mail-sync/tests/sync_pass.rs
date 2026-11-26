@@ -474,6 +474,7 @@ fn collision_line_goes_to_the_caller_only() {
     let _g = exclusive();
     let (r, a, _b) = pair();
     let other = SyncPaths::new(&a.paths, "fedcba9876543210").unwrap();
+    fs::create_dir_all(other.mail.parent().unwrap()).unwrap(); // the workspace exists (MS-21 review R2-1)
     let x = make_identity(&other).unwrap();
     edit_tip(&r, &[("registry/a.json", &registry_json("a", &x, &["alice"]))], &[]);
     for mode in [Mode::Child, Mode::Cli] {
@@ -761,6 +762,37 @@ fn cli_run_that_waited_for_a_forget_writes_nothing() {
     assert!(fs::symlink_metadata(&state).is_err(), "the state folder was made again");
     assert!(fs::symlink_metadata(&sp.identity).is_err() && fs::symlink_metadata(&sp.worktree).is_err());
     assert_eq!(git(&a.root, &["worktree", "list", "--porcelain"]).matches("worktree ").count(), 1);
+}
+
+/// The CLI line of a sync whose workspace was forgotten (S§8.3 step 3).
+const FORGOTTEN: &str = "zygo: the workspace was forgotten; nothing synced";
+
+/// A hook that runs `f` once at the seam point `after_gate` (between S§8.3 steps 1 and 2).
+fn after_gate(f: impl FnOnce() + Send + 'static) -> Hook {
+    let f = Mutex::new(Some(f));
+    counting(Arc::default(), move |p, _| {
+        if p == "after_gate" && let Some(f) = f.lock().unwrap().take() {
+            f();
+        }
+    })
+}
+
+#[test] // S§8.3 steps 2-3 (MS-21 review R2-1): a forget after the gate: the sync never makes the state folder again
+fn sync_whose_state_folder_went_after_the_gate_makes_no_state_folder() {
+    let _g = exclusive();
+    let (_r, a) = one();
+    let state = a.paths.workspaces_dir().join(WS_ID);
+    for mode in [Mode::Cli, Mode::Child] {
+        a.workspace(&[(ALICE, "alice")]);
+        let gone = state.clone();
+        let h = after_gate(move || fs::remove_dir_all(&gone).unwrap());
+        let r = run(&hook_env(&a, h), WS_ID, mode);
+        match mode {
+            Mode::Cli => assert_eq!(r.unwrap_err(), SyncError::Stopped { line: FORGOTTEN.into(), check: "forgotten" }),
+            Mode::Child => assert_eq!(r.unwrap().passes, 0),
+        }
+        assert!(fs::symlink_metadata(&state).is_err(), "{mode:?}: the state folder was made again");
+    }
 }
 
 #[test] // S§8.3 steps 3 and 17 (MS-21 review F1): a child whose record goes before its next pass ends silently, Ok

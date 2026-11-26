@@ -203,7 +203,7 @@ impl MemberCache {
 /// Writes the member cache `0600`, atomically; `mail/` is checked first (`0700`, no link, M-C4). The caller
 /// holds `mail/sync/lock` (S§15).
 pub fn write_cache(sp: &SyncPaths, c: &MemberCache) -> std::io::Result<()> {
-    zygo_workspace::mail::ensure_mail_root(&sp.mail)?;
+    zygo_workspace::mail::ensure_mail_dir(&sp.mail)?;
     write_atomic(
         &sp.members,
         &serde_json::to_vec(c).map_err(std::io::Error::other)?,

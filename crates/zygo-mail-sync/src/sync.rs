@@ -147,7 +147,12 @@ pub fn run(env: &Env, ws_id: &str, mode: Mode) -> Result<Report, SyncError> {
 /// [`run`] with `opts`: `prune` forces the prune of the first pass (S§9 When).
 pub fn run_with(env: &Env, ws_id: &str, mode: Mode, opts: &Opts) -> Result<Report, SyncError> {
     let c = gate(env, ws_id)?;
+    env.seam.at("after_gate").map_err(|e| c.stopped(e.into(), false))?;
     if state::mark_again(&c.sp).is_err() {
+        // MS-21 review R2-1: the mark makes no state folder; with none, a forget ran after the gate.
+        if c.state_gone() {
+            return forgotten(mode, Report::default());
+        }
         return Err(c.stopped(stop("again"), false));
     }
     let mut report = Report::default();
@@ -160,14 +165,12 @@ pub fn run_with(env: &Env, ws_id: &str, mode: Mode, opts: &Opts) -> Result<Repor
             // A pass ran: the holder of the lock owns the mark and runs the next pass (S§8.3 step 17).
             Ok(None) if report.passes > 0 => return Ok(report),
             Ok(None) => return Err(SyncError::Busy),
+            Err(_) if c.state_gone() => return forgotten(mode, report),
             Err(f) => return Err(c.stopped(f, false)),
         };
         if c.forgotten() {
             drop(lock);
-            return match mode {
-                Mode::Child => Ok(report),
-                Mode::Cli => Err(forgotten_error()),
-            };
+            return forgotten(mode, report);
         }
         let held = (|| {
             state::take_again(&c.sp).map_err(|_| stop("again"))?;
@@ -241,11 +244,27 @@ impl Ctx<'_> {
     /// S§8.3 step 3 (MS-21 review F1): under the lock, before any write: the workspace record is gone or no longer
     /// holds this id (read as the gate reads it), so `zygo ws forget` ran while this sync waited for the lock.
     fn forgotten(&self) -> bool { !matches!(self.store.read(), Ok(Some(ws)) if ws.id == self.ws_id) }
+
+    /// S§8.3 steps 2-3 (MS-21 review R2-1): the state folder `<workspaces_dir>/<id>/` is gone, so `zygo ws forget`
+    /// ran after the gate. The sync makes no mail folder in a missing state folder, so a failed mark or lock with
+    /// this true is the forget, not a stop.
+    fn state_gone(&self) -> bool {
+        matches!(std::fs::symlink_metadata(self.store.dir()), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+    }
 }
 
 /// S§8.3 step 3 (MS-21 review F1): the stop of a CLI sync whose workspace was forgotten. It writes nothing: no
 /// `errors.log` line and no `state.json` (the state folder is gone, and a write would make it again).
 fn forgotten_error() -> SyncError { SyncError::Stopped { line: FORGOTTEN_LINE.into(), check: "forgotten" } }
+
+/// S§8.3 step 3: the end of a sync whose workspace was forgotten: `report` with no line (child), or
+/// [`forgotten_error`] (CLI).
+fn forgotten(mode: Mode, report: Report) -> Result<Report, SyncError> {
+    match mode {
+        Mode::Child => Ok(report),
+        Mode::Cli => Err(forgotten_error()),
+    }
+}
 
 /// S§8.3 step 1: the workspace record, the config (layers 1-4, the main worktree as the repository) and the sync
 /// settings. A gate failure takes no action, so nothing is written, not even an `errors.log` line: sync off is
@@ -270,10 +289,12 @@ fn gate<'a>(env: &'a Env, ws_id: &'a str) -> Result<Ctx<'a>, SyncError> {
 /// in `errors.log` and `state.json` only.
 pub(crate) fn locked<T>(env: &Env, ws_id: &str, f: impl FnOnce(&Ctx) -> Result<T, Fail>) -> Result<T, SyncError> {
     let c = gate(env, ws_id)?;
+    env.seam.at("after_gate").map_err(|e| c.stopped(e.into(), false))?;
     let out = match take_lock(&c.sp, Mode::Cli, &*env.clock) {
         Ok(Some(_lock)) if c.forgotten() => return Err(forgotten_error()),
         Ok(Some(_lock)) => f(&c).map_err(|e| c.stopped(e, true)),
         Ok(None) => return Err(SyncError::Busy),
+        Err(_) if c.state_gone() => return Err(forgotten_error()),
         Err(f) => return Err(c.stopped(f, false)),
     };
     if c.sp.again.exists() {
@@ -287,7 +308,7 @@ pub(crate) fn locked<T>(env: &Env, ws_id: &str, f: impl FnOnce(&Ctx) -> Result<T
 fn take_lock(sp: &SyncPaths, mode: Mode, clock: &dyn Clock) -> Result<Option<File>, Fail> {
     let fail = || stop("lock");
     for d in [&sp.mail, &sp.sync] {
-        zygo_workspace::mail::ensure_mail_root(d).map_err(|_| fail())?;
+        zygo_workspace::mail::ensure_mail_dir(d).map_err(|_| fail())?;
     }
     let mut o = OpenOptions::new();
     o.read(true).write(true).create(true).truncate(false);
@@ -603,7 +624,7 @@ fn outbox_entries(sp: &SyncPaths) -> std::io::Result<Vec<(Ulid, PathBuf)>> {
 fn refuse_unread(c: &Ctx, id: Ulid, p: &Path) {
     c.log(&format!("mail sync: outbox {id}: read"));
     let dst = c.sp.refused.join(format!("{id}.json"));
-    if zygo_workspace::mail::ensure_mail_root(&c.sp.refused).is_err() || std::fs::symlink_metadata(&dst).is_ok() {
+    if zygo_workspace::mail::ensure_mail_dir(&c.sp.refused).is_err() || std::fs::symlink_metadata(&dst).is_ok() {
         return;
     }
     if std::fs::rename(p, &dst).is_ok() && std::fs::symlink_metadata(&dst).is_ok_and(|m| m.is_file()) {
