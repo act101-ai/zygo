@@ -263,6 +263,60 @@ fn commit_applies_adds_and_removes_on_base() {
     assert_eq!(git(&m.wt, &["rev-parse", "HEAD"]), c2);
 }
 
+/// The bytes of each `path` in `c`, read by one `git cat-file --batch`.
+fn blobs(cwd: &std::path::Path, c: &str, paths: &[String]) -> Vec<Vec<u8>> {
+    let input: String = paths.iter().map(|p| format!("{c}:{p}\n")).collect();
+    let mut o = plain(cwd).args(["cat-file", "--batch"]).stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped()).spawn().unwrap();
+    std::io::Write::write_all(&mut o.stdin.take().unwrap(), input.as_bytes()).unwrap();
+    let out = o.wait_with_output().unwrap().stdout;
+    let (mut rest, mut got) = (&out[..], Vec::new());
+    while !rest.is_empty() {
+        let nl = rest.iter().position(|&b| b == b'\n').unwrap();
+        let head = std::str::from_utf8(&rest[..nl]).unwrap();
+        let f: Vec<&str> = head.split(' ').collect();
+        assert_eq!(f.get(1), Some(&"blob"), "{head}");
+        let n: usize = f[2].parse().unwrap();
+        got.push(rest[nl + 1..nl + 1 + n].to_vec());
+        rest = &rest[nl + 2 + n..];
+    }
+    got
+}
+
+#[test]
+fn commit_of_many_changes_gives_the_same_tree_as_one_change_at_a_time() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let (_, c1) = two_commits(&m);
+    let olds: Vec<Change> = (0..5).map(|i| Change::Add { path: format!("old/{i}"), bytes: format!("old {i}\n").into_bytes() })
+        .collect();
+    let base = commit(&m.wt, &c1, Some(&c1), &olds, far()).unwrap();
+    let body = |i: usize| format!("{{\"n\":{i}}}\r\n").into_bytes();
+    let mut changes: Vec<Change> = (0..450).map(|i| Change::Add { path: format!("new/{i:03}"), bytes: body(i) }).collect();
+    changes.extend((0..3).map(|i| Change::Remove { path: format!("old/{i}") }));
+    // The last change of a path wins: `old/3` is removed then added, `new/007` added then removed.
+    changes.push(Change::Remove { path: "old/3".into() });
+    changes.push(Change::Add { path: "old/3".into(), bytes: b"again\n".to_vec() });
+    changes.push(Change::Remove { path: "new/007".into() });
+    changes.push(Change::Add { path: "new/008".into(), bytes: b"second\n".to_vec() });
+    let c = commit(&m.wt, &base, Some(&base), &changes, far()).unwrap();
+    let mut want: Vec<(String, Vec<u8>)> = vec![
+        ("ZYGO-MAIL".into(), MARKER.to_vec()),
+        (MSG_PATH.into(), b"{\"a\":1}\n".to_vec()),
+        ("registry/a.json".into(), b"r\r\n".to_vec()),
+        ("old/3".into(), b"again\n".to_vec()),
+        ("old/4".into(), b"old 4\n".to_vec()),
+    ];
+    want.extend((0..450).filter(|&i| i != 7)
+        .map(|i| (format!("new/{i:03}"), if i == 8 { b"second\n".to_vec() } else { body(i) })));
+    want.sort();
+    let got = files(&m.root, &c);
+    assert_eq!(got, want.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>());
+    assert_eq!(blobs(&m.root, &c, &got), want.into_iter().map(|(_, b)| b).collect::<Vec<_>>());
+    assert_eq!(git(&m.wt, &["rev-parse", "HEAD"]), c);
+    assert!(!names(m.wt.parent().unwrap()).iter().any(|n| n.starts_with(".zygo-object")));
+}
+
 #[test]
 fn commit_without_parent_is_a_root() {
     let r = Remote::new();

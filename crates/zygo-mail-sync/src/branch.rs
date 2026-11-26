@@ -1,6 +1,7 @@
 //! The side branch plumbing (S§6): the detached, index-only worktree, fetch, bootstrap, tree reads, commit and push.
 //! Every git call goes through [`crate::git::run`] or [`crate::git::stream`] (S-C4), with a deadline. No function
 //! runs `worktree prune`, `merge`, `rebase` or `checkout` (S§6.3, S§12), and none writes git's stdin.
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
@@ -91,11 +92,11 @@ fn path_str(p: &Path) -> Result<&str, BranchError> {
 /// A local file error as `Io`.
 fn io(e: std::io::Error) -> BranchError { BranchError::Io(e.to_string()) }
 
-/// The prefix of the temp files of [`write_object`].
+/// The prefix of the temp files of [`write_object`] and [`write_blobs`].
 const TEMP_PREFIX: &str = ".zygo-object";
 
 /// The folder of the worktree `wt` (`<workspace_cache_dir>/<id>/`), made when missing and set to `0700` (the sync
-/// folders, `state.rs`): it holds the temp files of [`write_object`]. Temp files left by a crash are removed.
+/// folders, `state.rs`): it holds the temp files of [`write_object`] and [`write_blobs`]. Temp files left by a crash are removed.
 fn tmp_dir(wt: &Path) -> Result<&Path, BranchError> {
     let p = wt.parent().ok_or_else(|| BranchError::Io(format!("no parent folder: {}", wt.display())))?;
     std::fs::create_dir_all(p).map_err(io)?;
@@ -122,6 +123,35 @@ fn write_object(cwd: &Path, tmp: &Path, kind: &str, bytes: &[u8], deadline: Inst
     let out = run_git(cwd, &["hash-object", "-t", kind, "-w", "--no-filters", "--", path_str(f.path())?],
         "hash-object", deadline)?;
     id_out(&out, "hash-object")
+}
+
+/// The most paths that one `hash-object` or `update-index` call of [`commit`] carries: it bounds the argv length.
+const BATCH: usize = 200;
+
+/// Writes each of `bodies` as a git blob through its own `0600` temp file in `tmp` and one `git hash-object -t blob
+/// -w --no-filters` in `cwd`; returns the ids in order. A wrong count or id is `Git(Failed, "hash-object")`. The
+/// temp files are deleted on every path.
+fn write_blobs<'a>(cwd: &Path, tmp: &Path, bodies: impl Iterator<Item = &'a [u8]>, deadline: Instant)
+    -> Result<Vec<String>, BranchError> {
+    let mut files = Vec::new();
+    for bytes in bodies {
+        let mut f = tempfile::Builder::new().prefix(TEMP_PREFIX).tempfile_in(tmp).map_err(io)?;
+        f.write_all(bytes).and_then(|()| f.flush()).map_err(io)?;
+        // Closed here (no fd per body); the path is still deleted on drop.
+        files.push(f.into_temp_path());
+    }
+    let mut args = vec!["hash-object", "-t", "blob", "-w", "--no-filters", "--"];
+    for f in &files {
+        args.push(path_str(f)?);
+    }
+    let out = run_git(cwd, &args, "hash-object", deadline)?;
+    let fail = || BranchError::Git(RunError::Failed, "hash-object");
+    let ids: Vec<String> = std::str::from_utf8(&out).map_err(|_| fail())?.lines()
+        .map(|l| oid(l).map(String::from).map_err(|_| fail())).collect::<Result<_, _>>()?;
+    if ids.len() != files.len() {
+        return Err(fail());
+    }
+    Ok(ids)
 }
 
 /// S§6.5: `commit-tree <tree> [-p <parent>]` in `cwd` as `zygo <zygo@zygo.invalid>`, unsigned, with
@@ -262,17 +292,36 @@ pub fn commit(wt: &Path, base: &str, parent: Option<&str>, changes: &[Change], d
     oid(base)?;
     parent.map(oid).transpose()?;
     run_git(wt, &["read-tree", base], "read-tree", deadline)?;
-    for ch in changes {
+    // The last change of a path wins, as when the changes are applied one at a time. The removes go first: then
+    // no add meets an entry that a later remove takes away, and the tree is the same as one change at a time.
+    fn path_of(ch: &Change) -> &str {
         match ch {
-            Change::Add { path, bytes } => {
-                let b = write_object(wt, tmp_dir(wt)?, "blob", bytes, deadline)?;
-                let info = format!("100644,{b},{path}");
-                run_git(wt, &["update-index", "--add", "--cacheinfo", &info], "update-index", deadline)?;
-            }
-            Change::Remove { path } => {
-                run_git(wt, &["update-index", "--force-remove", "--", path], "update-index", deadline)?;
-            }
+            Change::Add { path, .. } | Change::Remove { path } => path,
         }
+    }
+    let last: HashMap<&str, usize> = changes.iter().enumerate().map(|(i, ch)| (path_of(ch), i)).collect();
+    let (mut adds, mut removes) = (Vec::new(), Vec::new());
+    for ch in changes.iter().enumerate().filter_map(|(i, ch)| (last[path_of(ch)] == i).then_some(ch)) {
+        match ch {
+            Change::Add { path, bytes } => adds.push((path.as_str(), bytes.as_slice())),
+            Change::Remove { path } => removes.push(path.as_str()),
+        }
+    }
+    for chunk in removes.chunks(BATCH) {
+        let mut args = vec!["update-index", "--force-remove", "--"];
+        args.extend(chunk);
+        run_git(wt, &args, "update-index", deadline)?;
+    }
+    // `tmp_dir` removes left temp files: it runs once, before any temp file of this commit exists.
+    let tmp = if adds.is_empty() { wt } else { tmp_dir(wt)? };
+    for chunk in adds.chunks(BATCH) {
+        let ids = write_blobs(wt, tmp, chunk.iter().map(|&(_, b)| b), deadline)?;
+        let infos: Vec<String> = chunk.iter().zip(&ids).map(|(&(path, _), b)| format!("100644,{b},{path}")).collect();
+        let mut args = vec!["update-index", "--add"];
+        for info in &infos {
+            args.extend(["--cacheinfo", info.as_str()]);
+        }
+        run_git(wt, &args, "update-index", deadline)?;
     }
     let out = run_git(wt, &["write-tree"], "write-tree", deadline)?;
     let tree = id_out(&out, "write-tree")?;
