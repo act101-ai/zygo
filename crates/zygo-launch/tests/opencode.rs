@@ -106,10 +106,11 @@ fn normalize_after_other_tool_has_no_response() {
     assert!(n.get("tool_response").is_none());
 }
 
-/// The `after` bash fixture whose output is large.
+/// The `after` bash fixture whose output is large: distinct plain lines, so no O§7.3 step 1-4 changes it and the
+/// §10.1 size view applies.
 fn big_after() -> Value {
     let mut p = fixture("plugin-hooks/tool.execute.after-bash.json");
-    p["output"]["output"] = json!("x\n".repeat(20_000));
+    p["output"]["output"] = json!((0..20_000).map(|i| format!("x {i:05}\n")).collect::<String>());
     p
 }
 
