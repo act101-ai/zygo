@@ -9,7 +9,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use common::{advance, blob, commit_tree, git, live, plain, tip_file, tree_literally, Machine, Remote, ALICE, BOB, WS_ID};
@@ -26,6 +26,19 @@ use zygo_redact::DeadlinePolicy;
 use zygo_workspace::mail::wake::{after_send_with, Probe as IdleProbe, WAKE_TEXT};
 use zygo_workspace::mux::{HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split};
 use zygo_workspace::state::Workspace;
+
+/// Every test holds this lock: a lock-sensitive test for writing, every other test for reading. A child that another
+/// thread of this process starts holds a copy of each open file description from its fork to its exec (O_CLOEXEC
+/// closes the copy only at the exec), so an `flock` this process released can stay busy for that moment. With no
+/// other test running, nothing spawns while a lock-sensitive test takes or retakes the sync lock (MS-13 round 2).
+static SPAWNS: RwLock<()> = RwLock::new(());
+
+/// The guard of a test that takes the sync lock in child mode, retakes it after a mark, takes it itself, or steps the
+/// injected clock while it waits for it.
+fn exclusive() -> RwLockWriteGuard<'static, ()> { SPAWNS.write().unwrap_or_else(|e| e.into_inner()) }
+
+/// The guard of every other test: it may spawn while others of its kind run.
+fn shared() -> RwLockReadGuard<'static, ()> { SPAWNS.read().unwrap_or_else(|e| e.into_inner()) }
 
 /// 2023-11-14T22:13:20Z.
 const T0: u64 = 1_700_000_000;
@@ -257,6 +270,7 @@ fn edit_tip(r: &Remote, adds: &[(&str, &[u8])], removes: &[&str]) {
 
 #[test]
 fn spec_values() {
+    let _g = shared();
     assert_eq!(
         (PASS_DEADLINE, MAX_ATTEMPTS, OUTBOX_CAP, LOCK_WAIT),
         (Duration::from_secs(120), 5, 1000, Duration::from_secs(30))
@@ -269,6 +283,7 @@ fn spec_values() {
 
 #[test] // S§19 #1, S-G1, S§7.3, S§14 Normal, S-C4
 fn normal_message_arrives_with_bytes_unchanged() {
+    let _g = shared();
     let (r, a, b) = pair();
     assert_eq!(read_cache(&a.sp()).hosts, BTreeMap::from([("b".to_string(), vec!["bob".to_string()])]));
     let id = send(&a, "alice", ("bob", "b"), "hello");
@@ -315,6 +330,7 @@ fn snap(root: &Path) -> Snap {
 
 #[test] // S§19 #2, S-G2, SP6
 fn user_repository_is_untouched() {
+    let _g = shared();
     let (r, a, b) = machines();
     for m in [&a, &b] {
         git(&m.root, &["config", "gc.auto", "1"]);
@@ -344,6 +360,7 @@ fn user_repository_is_untouched() {
 
 #[test] // S§19 #8a, S§6.4
 fn bootstrap_makes_the_branch() {
+    let _g = shared();
     let (r, a) = one();
     assert_eq!(r.tip(BRANCH), None);
     sync(&a);
@@ -361,6 +378,7 @@ fn knows(m: &Machine, host: &str, name: &str) {
 
 #[test] // S§19 #8b
 fn two_bootstraps_give_one_root() {
+    let _g = exclusive();
     let (r, a, b) = machines();
     knows(&a, "b", "bob");
     knows(&b, "a", "alice");
@@ -386,6 +404,7 @@ fn two_bootstraps_give_one_root() {
 
 #[test] // S§19 #7a, S§8.3 step 7, S§14 Hostile branch
 fn branch_without_marker_stops() {
+    let _g = shared();
     let (r, a) = one();
     let readme = blob(&r.bare, b"x\n");
     let tree = tree_literally(&r.bare, &[("100644", b"README", &readme)]);
@@ -401,6 +420,7 @@ fn branch_without_marker_stops() {
 
 #[test] // S§19 #7b, S§8.3 step 1, S§7.1
 fn no_host_is_no_sync() {
+    let _g = shared();
     let (r, a) = one();
     a.config(None, "");
     let e = run(&plain_env(&a), WS_ID, Mode::Child).unwrap_err();
@@ -419,6 +439,7 @@ fn registry_json(host: &str, identity: &str, members: &[&str]) -> Vec<u8> {
 
 #[test] // S§14 Hostile branch, S§7.3
 fn bad_registry_is_not_in_the_member_cache() {
+    let _g = shared();
     let (r, a, _b) = pair();
     edit_tip(&r, &[("registry/c.json", &registry_json("d", &"0".repeat(32), &["carol"]))], &[]);
     sync(&a);
@@ -429,6 +450,7 @@ fn bad_registry_is_not_in_the_member_cache() {
 
 #[test] // review focus 47, S§7.4, S§7.5 own hosts
 fn own_ack_follows_the_tip_across_own_hosts() {
+    let _g = shared();
     let (r, a, b) = pair();
     let u1 = send(&a, "alice", ("bob", "b"), "one");
     sync(&a);
@@ -449,6 +471,7 @@ fn own_ack_follows_the_tip_across_own_hosts() {
 
 #[test] // review focus 51, S§7.5, S-C2
 fn collision_line_goes_to_the_caller_only() {
+    let _g = exclusive();
     let (r, a, _b) = pair();
     let other = SyncPaths::new(&a.paths, "fedcba9876543210").unwrap();
     let x = make_identity(&other).unwrap();
@@ -466,6 +489,7 @@ fn collision_line_goes_to_the_caller_only() {
 
 #[test] // MS-11 F9, S§7.5
 fn accepted_push_not_recorded_is_no_twin() {
+    let _g = shared();
     let (r, a, _b) = pair();
     a.workspace(&[(ALICE, "alice"), ("kcarol222", "carol")]);
     let e = run(&hook_env(&a, Hook::crash_at("after_push")), WS_ID, Mode::Cli).unwrap_err();
@@ -491,6 +515,7 @@ fn accepted_push_not_recorded_is_no_twin() {
 
 #[test] // S§14 "Crash after B's delivery, before its ack push"
 fn crash_before_ack_push_delivers_once() {
+    let _g = shared();
     let (r, a, b) = pair();
     let u1 = send(&a, "alice", ("bob", "b"), "one");
     sync(&a);
@@ -503,6 +528,7 @@ fn crash_before_ack_push_delivers_once() {
 
 #[test] // S§14 "Crash during a commit"
 fn crash_during_commit_leaves_no_trace() {
+    let _g = shared();
     let (r, a, _b) = pair();
     let x = blob(&a.wt, b"x");
     git(&a.wt, &["update-index", "--add", "--cacheinfo", &format!("100644,{x},junk.json")]);
@@ -514,6 +540,7 @@ fn crash_during_commit_leaves_no_trace() {
 
 #[test] // S§14 "No network, authentication fails", S§8.3 step 15
 fn no_network_keeps_the_outbox() {
+    let _g = shared();
     let (r, a, _b) = pair();
     git(&a.root, &["remote", "set-url", "origin", "file:///nonexistent/x.git"]);
     let id = send(&a, "alice", ("bob", "b"), "hi");
@@ -528,6 +555,7 @@ fn no_network_keeps_the_outbox() {
 
 #[test] // S§19 #4 (commit part), S§8.6 "At commit"
 fn secret_found_at_commit_is_refused_with_a_notice() {
+    let _g = shared();
     let (r, a, _b) = pair();
     let id = send(&a, "alice", ("bob", "b"), "say zz-forbidden-zz now");
     a.config(Some("a"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
@@ -548,6 +576,7 @@ fn secret_found_at_commit_is_refused_with_a_notice() {
 
 #[test] // S§19 #5
 fn secret_check_that_cannot_run_keeps_the_message() {
+    let _g = shared();
     let (r, a, _b) = pair();
     let id = send(&a, "alice", ("bob", "b"), "hi");
     let expire = DeadlinePolicy { expire_after_scans: Some(0), base: Duration::from_secs(3600), ..Default::default() };
@@ -569,6 +598,7 @@ fn secret_check_that_cannot_run_keeps_the_message() {
 
 #[test] // S§8.3 step 11 first case, S§14 "Crash after A's push, before the outbox delete"
 fn path_already_at_the_tip_leaves_the_outbox() {
+    let _g = shared();
     let (r, a, _b) = pair();
     let id = send(&a, "alice", ("bob", "b"), "hi");
     run(&hook_env(&a, Hook::crash_at("before_outbox_delete")), WS_ID, Mode::Cli).unwrap_err();
@@ -580,6 +610,7 @@ fn path_already_at_the_tip_leaves_the_outbox() {
 
 #[test] // S§8.3 step 11
 fn outbox_cap_is_1000_per_pass() {
+    let _g = shared();
     let (_r, a, _b) = pair();
     let cfg = config(&a);
     for i in 0..1001 {
@@ -607,6 +638,7 @@ fn counting(counts: Arc<Mutex<BTreeMap<&'static str, usize>>>, mut f: impl FnMut
 
 #[test] // S§19 #3a, S§14 "A and B push at the same time"
 fn push_race_retries_on_the_new_tip() {
+    let _g = exclusive();
     let (r, a, b) = pair();
     let ia = send(&a, "alice", ("bob", "b"), "from a");
     let ib = send(&b, "bob", ("alice", "a"), "from b");
@@ -627,6 +659,7 @@ fn push_race_retries_on_the_new_tip() {
 
 #[test] // S§19 #3b, S§8.3 step 15
 fn five_moves_stop_with_the_outbox_kept() {
+    let _g = shared();
     let (r, a, _b) = pair();
     let ia = send(&a, "alice", ("bob", "b"), "from a");
     let counts = Arc::new(Mutex::new(BTreeMap::new()));
@@ -647,6 +680,7 @@ fn five_moves_stop_with_the_outbox_kept() {
 
 #[test] // S§19 #6 public, S§8.2, S§8.3 step 5
 fn public_remote_stops_before_any_fetch() {
+    let _g = shared();
     let (r, a) = one();
     git(&a.root, &["remote", "set-url", "--push", "origin", "https://example.invalid/r.git"]);
     let refs0 = git(&r.bare, &["for-each-ref"]);
@@ -661,6 +695,7 @@ fn public_remote_stops_before_any_fetch() {
 
 #[test] // S§19 #6 unknown
 fn unknown_public_verdict_is_a_note() {
+    let _g = shared();
     let (_r, a, _b) = pair();
     git(&a.root, &["remote", "set-url", "--push", "origin", "https://example.invalid/r.git"]);
     let probe = Verdict::Unknown("probe says no".into());
@@ -671,6 +706,7 @@ fn unknown_public_verdict_is_a_note() {
 
 #[test] // S§11, Acceptance
 fn unlisted_remote_stops() {
+    let _g = shared();
     let (_r, a) = one();
     a.config(Some("a"), "remote = \"upstream\"\n");
     assert_eq!(run(&plain_env(&a), WS_ID, Mode::Cli).unwrap_err(), SyncError::Stopped { line: "zygo: no such remote".into(), check: "remote" });
@@ -678,6 +714,7 @@ fn unlisted_remote_stops() {
 
 #[test] // S§8.3 steps 2 and 3, S§14 "Two syncs on one machine"
 fn child_skips_and_cli_waits_for_a_held_lock() {
+    let _g = exclusive();
     let (_r, a, _b) = pair();
     let held = take(&a.sp().lock);
     assert_eq!(run(&plain_env(&a), WS_ID, Mode::Child).unwrap_err(), SyncError::Busy);
@@ -691,6 +728,7 @@ fn child_skips_and_cli_waits_for_a_held_lock() {
 
 #[test] // S§19 #16a
 fn mark_during_the_pass_runs_a_second_pass() {
+    let _g = exclusive();
     let (r, a, _b) = pair();
     let a = Arc::new(a);
     let a2 = a.clone();
@@ -713,17 +751,16 @@ fn mark_during_the_pass_runs_a_second_pass() {
 
 #[test] // S§19 #16b, review focus 9
 fn starter_between_release_and_look_is_never_lost() {
+    let _g = exclusive();
     let (r, a, _b) = pair();
     let a = Arc::new(a);
-    // A starter that runs between the release and the look takes the free lock and runs the pass itself. It is a
-    // CLI run on a fixed clock, so it waits for a lock that a forked git child of another test still holds (see
-    // [`take`]).
+    // A starter that runs between the release and the look takes the free lock and runs the pass itself.
     let (a2, inner, late) = (a.clone(), Arc::new(Mutex::new(None)), Arc::new(Mutex::new(None)));
     let (inner2, late2) = (inner.clone(), late.clone());
     let h = counting(Arc::default(), move |p, n| {
         if p == "after_release" && n == 1 {
             *late2.lock().unwrap() = Some(send(&a2, "alice", ("bob", "b"), "late"));
-            *inner2.lock().unwrap() = Some(run(&plain_env(&a2), WS_ID, Mode::Cli));
+            *inner2.lock().unwrap() = Some(run(&plain_env(&a2), WS_ID, Mode::Child));
         }
     });
     let rep = run(&hook_env(&a, h), WS_ID, Mode::Child).unwrap();
@@ -749,6 +786,7 @@ fn starter_between_release_and_look_is_never_lost() {
 
 #[test] // S§19 #23, S§10.1, M§7.3, M§7.1
 fn idle_member_is_woken_once_busy_member_is_not() {
+    let _g = shared();
     let (_r, a, b) = pair();
     let _s = live(&b.paths, "sbob");
     let typed = Typed::default();
@@ -783,6 +821,7 @@ fn ulids_in(dir: &Path) -> BTreeSet<Ulid> {
 
 #[test] // R1 (review F2), S§8.3 step 11
 fn unreadable_outbox_files_are_refused_and_take_no_cap_slot() {
+    let _g = shared();
     let (r, a, _b) = pair();
     let sp = a.sp();
     fs::create_dir_all(&sp.outbox).unwrap();
@@ -806,6 +845,7 @@ fn unreadable_outbox_files_are_refused_and_take_no_cap_slot() {
 
 #[test] // R1 (review F2): a link is moved, never followed; a FIFO is moved without a wait
 fn link_or_fifo_in_the_outbox_is_moved_not_followed() {
+    let _g = shared();
     use std::os::unix::fs::FileTypeExt;
     let (_r, a, _b) = pair();
     let sp = a.sp();
@@ -826,21 +866,16 @@ fn link_or_fifo_in_the_outbox_is_moved_not_followed() {
     assert!(log.contains(&format!("mail sync: outbox {ul}: read")) && log.contains(&format!("mail sync: outbox {uf}: read")));
 }
 
-/// Takes the lock of `path`, waiting for it: a git child that another test's thread forks while this lock is held
-/// keeps the `flock` until its `exec`, so a lock just released can be busy for that moment. No time is read.
+/// Takes the lock of `path` at once. Its caller holds [`exclusive`], so no child of another test holds the lock.
 fn take(path: &Path) -> fs::File {
     let f = fs::OpenOptions::new().read(true).write(true).open(path).unwrap();
-    loop {
-        match fs4::FileExt::try_lock(&f) {
-            Ok(()) => return f,
-            Err(fs4::TryLockError::WouldBlock) => std::thread::yield_now(),
-            Err(fs4::TryLockError::Error(e)) => panic!("{e}"),
-        }
-    }
+    fs4::FileExt::try_lock(&f).unwrap();
+    f
 }
 
 #[test] // R2 (review F3), S§8.3 step 17: the mark's owner runs the next pass
 fn busy_lock_after_a_pass_ends_the_cli_run_with_its_report() {
+    let _g = exclusive();
     let (_r, a, _b) = pair();
     let a = Arc::new(a);
     let (a2, held) = (a.clone(), Arc::new(Mutex::new(None)));
@@ -859,6 +894,7 @@ fn busy_lock_after_a_pass_ends_the_cli_run_with_its_report() {
 
 #[test] // R3 (review F4): a lock failure is a stop with its errors.log line
 fn lock_failure_is_logged_for_a_child() {
+    let _g = exclusive();
     let (_r, a, _b) = pair();
     let sp = a.sp();
     fs::remove_file(&sp.lock).unwrap();
@@ -870,6 +906,7 @@ fn lock_failure_is_logged_for_a_child() {
 
 #[test] // R4 (review F5), S§8.3 step 1
 fn missing_workspace_record_is_a_gate_failure() {
+    let _g = shared();
     let r = Remote::new();
     let a = Machine::new(&r);
     a.config(Some("a"), "");
@@ -884,6 +921,7 @@ fn missing_workspace_record_is_a_gate_failure() {
 
 #[test] // R4 (review F5), S§8.3 step 1
 fn config_that_does_not_load_is_a_gate_failure() {
+    let _g = shared();
     let (_r, a) = one();
     fs::write(&a.paths.config_file, "[mail\n").unwrap();
     let e = run(&plain_env(&a), WS_ID, Mode::Child).unwrap_err();
@@ -897,6 +935,7 @@ fn config_that_does_not_load_is_a_gate_failure() {
 
 #[test] // R5 (review F6): only this pass's outbox paths are kept from a recipient folder of the tip
 fn many_tip_entries_under_one_recipient() {
+    let _g = shared();
     let (r, a, _b) = pair();
     let tip = r.tip(BRANCH).unwrap();
     let idx = r.dir.path().join("many-index");
@@ -926,6 +965,7 @@ fn many_tip_entries_under_one_recipient() {
 
 #[test] // R5 (review F6): the pass deadline is checked before each secret check, on the injected clock
 fn deadline_mid_outbox_stops_and_keeps_the_outbox() {
+    let _g = exclusive();
     let (r, a, _b) = pair();
     let ids: BTreeSet<Ulid> = (0..3).map(|_| send(&a, "alice", ("bob", "b"), "hi")).collect();
     // Each now() adds 50 s: the lock (T0), the pass start (T0+50, end T0+170), the public check (T0+100), the first
@@ -948,6 +988,7 @@ fn many_members(n: usize) -> Vec<(String, String)> {
 
 #[test] // R7 (review F8), O3, MS-6 review note
 fn own_registry_over_the_limit_is_not_written() {
+    let _g = shared();
     let (r, a, _b) = pair();
     let before = tip_file(&r, BRANCH, "registry/a.json").unwrap();
     let m = many_members(zygo_mail_sync::registry::MEMBERS_MAX + 1);
@@ -960,6 +1001,7 @@ fn own_registry_over_the_limit_is_not_written() {
 
 #[test] // R7 (review F8): a failed state.json write is the `state` stop, and no last_error is saved
 fn failed_state_write_stops_with_check_state() {
+    let _g = shared();
     let (_r, a, _b) = pair();
     send(&a, "alice", ("bob", "b"), "hi");
     let state = a.sp().state;
@@ -980,6 +1022,7 @@ fn failed_state_write_stops_with_check_state() {
 
 #[test] // R7 (review F8), S§15: a stop with no lock held writes no state.json
 fn stop_without_the_lock_writes_no_state() {
+    let _g = shared();
     let (_r, a) = one();
     let sp = a.sp();
     fs::create_dir_all(sp.again.join("x")).unwrap();
@@ -987,4 +1030,25 @@ fn stop_without_the_lock_writes_no_state() {
     assert!(matches!(e, SyncError::Stopped { check: "again", .. }), "{e:?}");
     assert!(a.errors().contains("mail sync: stopped: again"));
     assert!(!sp.state.exists());
+}
+
+#[test] // MS-13 round 2: each test holds the spawn guard, and each lock-sensitive test holds it for writing
+fn every_test_holds_the_spawn_guard() {
+    let _g = shared();
+    // Tests that never reach the lock: a child run that ends at the gate, or exit codes only.
+    const NO_LOCK: [&str; 4] = ["spec_values", "no_host_is_no_sync", "missing_workspace_record_is_a_gate_failure",
+        "config_that_does_not_load_is_a_gate_failure"];
+    let src = include_str!("sync_pass.rs");
+    let tests: Vec<&str> = src.split("\n#[test]").skip(1).collect();
+    assert!(tests.len() > 30);
+    for t in tests {
+        let name = t.split("fn ").nth(1).unwrap().split('(').next().unwrap();
+        let body = t.split_once("() {\n").unwrap().1;
+        let guard = body.lines().next().unwrap().trim();
+        assert!(guard == "let _g = shared();" || guard == "let _g = exclusive();", "{name}: {guard}");
+        let sensitive = ["Mode::Child", "Clock::stepping", "mark_again(", "take(&"].iter().any(|k| body.split("\n#[").next().unwrap().contains(k));
+        if sensitive && !NO_LOCK.contains(&name) && name != "every_test_holds_the_spawn_guard" {
+            assert_eq!(guard, "let _g = exclusive();", "{name}");
+        }
+    }
 }
