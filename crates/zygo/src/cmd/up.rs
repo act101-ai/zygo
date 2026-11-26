@@ -30,7 +30,7 @@ pub struct UpArgs {
 }
 
 /// The CLI form: the OP5 check first, then the update check (auto-update design; `y` ends `up` before any library
-/// call), then the user config (D3) and the team `[limits] max_members` (R§9.4), the folder and the binary (D10), then `up::up` or, with `--all`, `up::up_all`
+/// call), then the user config (D3) and the team `[limits] max_members` (R§9.4) with its 1-32 range (exit 1, FX-17), the folder and the binary (D10), then `up::up` or, with `--all`, `up::up_all`
 /// (which refuses a name, `--loadout` and `--reset` itself).
 pub fn run(a: &UpArgs) -> i32 {
     if let Some(code) = op5_exit() {
@@ -54,6 +54,10 @@ pub fn run(a: &UpArgs) -> i32 {
     for l in &lines {
         print_err(&format!("{l}\n"));
     }
+    if let Some(line) = max_members_line(&config) {
+        print_err(&format!("{line}\n"));
+        return 1;
+    }
     let cwd = match cwd_or_exit() {
         Ok(d) => d,
         Err(code) => return code,
@@ -72,6 +76,16 @@ pub fn run(a: &UpArgs) -> i32 {
 /// R§10 `up` row: true when the user config file sets `[workspace] default_loadout` (as `definition_lines`,
 /// `cmd/doctor.rs`).
 fn default_loadout_set(m: &Merged) -> bool { m.source_of("workspace.default_loadout") == Layer::User }
+
+/// R§9.4 bullet 1, FX-17: the `config check` rule `limits.max_members` (`zygo-config/src/check.rs:119-120`) on the
+/// `max_members` that `up` uses (user layer, or team-merged as `with_team` gives it), as `check_jobs` applies the
+/// `job` and `pool` rules (`zygo-workspace/src/up.rs:797-808`); `Some` is the stderr line. `zygo_config::load` does
+/// not check the range.
+fn max_members_line(config: &Config) -> Option<String> {
+    let mut one = Config::default();
+    one.limits.max_members = config.limits.max_members;
+    zygo_config::check(&one).into_iter().find(|v| v.path == "limits.max_members").map(|v| format!("zygo: {v}; nothing started"))
+}
 
 /// R§9.4, R§12: the user config of `user` with the team `[limits] max_members` of the team read `team`, and the lines
 /// `run` prints on stderr: the warnings the team layer causes, as the launcher prints them
@@ -141,7 +155,7 @@ mod dead_port;
 mod tests {
     use std::ffi::OsString;
 
-    use super::{default_loadout_set, opts, with_team, with_team_max_members, UpArgs};
+    use super::{default_loadout_set, max_members_line, opts, with_team, with_team_max_members, UpArgs};
 
     /// D8 (M1 review round 3, F3): `zygo up` gives the library `ZYGO_SESSION` as it is. An empty value is `Some("")`:
     /// the library counts it as set for each "inside an agent" decision (AU64, AU95; `zygo-workspace/src/env.rs:62`,
@@ -192,6 +206,66 @@ mod tests {
         std::fs::write(&paths.config_file, "[limits]\nmax_members = 6\n").unwrap();
         let c = with_team_max_members(load(None), Some(&load(Some(team))));
         assert_eq!(c.limits.max_members, 6);
+    }
+
+    /// R§9.4 bullet 1, FX-17: the line is the `config check` rule `limits.max_members` (`zygo-config/src/check.rs:119-120`)
+    /// with `; nothing started`, for a value outside 1-32 only; the built-in default 8 gives none. Kills: an off-by-one
+    /// range and a line that differs from `config check`.
+    #[test]
+    fn max_members_line_is_the_config_check_rule() {
+        for v in [0, 33, u32::MAX] {
+            let mut c = zygo_config::Config::default();
+            c.limits.max_members = v;
+            assert_eq!(max_members_line(&c).as_deref(), Some("zygo: limits.max_members: must be 1-32; nothing started"), "{v}");
+        }
+        for v in [1, 8, 32] {
+            let mut c = zygo_config::Config::default();
+            c.limits.max_members = v;
+            assert_eq!(max_members_line(&c), None, "{v}");
+        }
+        assert_eq!(zygo_config::Config::default().limits.max_members, 8);
+        assert_eq!(max_members_line(&zygo_config::Config::default()), None);
+    }
+
+    /// R§9.4 bullet 1, FX-17 review F1: only the `limits.max_members` rule refuses; another `config check` error
+    /// (`statusline.style`, `zygo-config/src/check.rs:115-117`) with `max_members` in range gives no line. Kills: the
+    /// first Error-severity violation of any path.
+    #[test]
+    fn max_members_line_ignores_other_check_errors() {
+        let mut c = zygo_config::Config::default();
+        c.statusline.style = "bad".into();
+        assert!(zygo_config::check(&c).iter().any(|v| v.path == "statusline.style" && v.severity == zygo_config::Severity::Error));
+        for v in [1, 8, 32] {
+            c.limits.max_members = v;
+            assert_eq!(max_members_line(&c), None, "{v}");
+        }
+    }
+
+    /// R§9.4 bullet 1, FX-17: the check takes the value `with_team` gives (the user layer over the team layer,
+    /// `zygo-config/src/layers.rs:27-28`). Kills: a check on the user layer only, or on the team value instead of the
+    /// merged value.
+    #[test]
+    fn max_members_line_of_the_used_value() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = crate::cmd::verbs::tests::sd(t.path());
+        let ctx = crate::cmd::compact::tests::ctx(t.path(), Some(&dir));
+        let user = || zygo_config::load(&zygo_config::LoadContext { paths: ctx.paths.clone(), repo: None, team: None }).unwrap();
+        let used = || with_team(&ctx, &user(), crate::cmd::verbs::team(&ctx, "up")).0;
+        std::fs::write(&ctx.paths.config_file, "").unwrap();
+        assert_eq!(used().limits.max_members, 8);
+        assert!(max_members_line(&used()).is_none(), "no layer");
+        let cases: [(&str, &str, bool); 5] = [
+            ("", "[limits]\nmax_members = 0\n", true),
+            ("", "[limits]\nmax_members = 33\n", true),
+            ("", "[limits]\nmax_members = 1\n", false),
+            ("[limits]\nmax_members = 32\n", "[limits]\nmax_members = 0\n", false),
+            ("[limits]\nmax_members = 0\n", "[limits]\nmax_members = 5\n", true),
+        ];
+        for (u, team, want) in cases {
+            std::fs::write(&ctx.paths.config_file, u).unwrap();
+            std::fs::write(dir.join("team.toml"), team).unwrap();
+            assert_eq!(max_members_line(&used()).is_some(), want, "user {u:?}, team {team:?}");
+        }
     }
 
     /// R§9.4, R§12, R5: `with_team` through the session `team.toml` of `verbs::team`: a team `max_members` is taken
