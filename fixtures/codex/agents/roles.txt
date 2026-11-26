@@ -1,0 +1,5 @@
+explorer: model=gpt-mock-explorer description=tracer-pc6-explorer-desc
+pc6-disc: model=gpt-mock-disc description=tracer-pc6-disc-desc
+pc6-probe: model=gpt-mock-pc6 description=tracer-pc6-probe-desc
+default: model=inherited description=Default agent.
+worker: model=inherited description=Use for execution and production work.
