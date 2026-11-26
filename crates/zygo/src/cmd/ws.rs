@@ -1,9 +1,12 @@
-//! `zygo ws forget <name>`, `zygo ws forget-pane <key> [--name <name>]`, `zygo ws name <key> <name> [--workspace <w>]`
+//! `zygo ws forget [--yes] <name>`, `zygo ws forget-pane <key> [--name <name>]`, `zygo ws name <key> <name> [--workspace <w>]`
 //! (M§6) and the hidden `zygo ws snapshot` (W§12, AU44). `zygo ws` does not sweep (AU71).
 
 use std::ffi::{OsStr, OsString};
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
+use zygo_core::esc;
 use zygo_core::paths::Paths;
 use zygo_core::session_view::{ResumeNote, SubagentRef};
 use zygo_hooks::workspace::snapshot_child;
@@ -13,11 +16,15 @@ use zygo_launch::env::Env;
 use zygo_launch::launcher::AgentSession;
 use zygo_launch::opencode::OpenCode;
 use zygo_launch::AgentAdapter;
+use zygo_mail_sync::branch::{remove_worktree, BranchError};
+use zygo_mail_sync::outbox;
+use zygo_mail_sync::state::SyncPaths;
+use zygo_work::repo::RunError;
 use zygo_workspace::admin;
 use zygo_workspace::identity::{valid_pane_key, valid_ws_id};
 use zygo_workspace::mux::tmux::Tmux;
 use zygo_workspace::snapshot::{self, SkipReason, SnapshotOutcome, HOOK_WAIT, OP_WAIT};
-use zygo_workspace::state::{CompactOverride, MemberRecord, Store};
+use zygo_workspace::state::{CompactOverride, MemberRecord, Store, Workspace};
 
 use super::member::{self, MemberCtx};
 use super::{cwd_or_exit, op5_exit, print_err, tmux_program, Launch, LaunchOpenCode};
@@ -50,8 +57,13 @@ pub enum WsCmd {
         #[arg(long)]
         shell: bool,
     },
-    /// Delete a workspace that is not up: its state and its results
-    Forget { name: String },
+    /// Delete a workspace that is not up: its state, its results and its mail sync worktree
+    Forget {
+        name: String,
+        /// Answer yes to the question about unsent mail
+        #[arg(long)]
+        yes: bool,
+    },
     /// Delete one pane of a workspace: its record and its results
     ForgetPane {
         key: String,
@@ -76,14 +88,20 @@ pub fn dispatch(args: WsArgs) -> i32 {
     }
     let paths = Paths::from_env();
     match args.sub {
-        WsCmd::Forget { name } => admin::forget(
-            &paths,
-            &tmux_program(),
-            std::env::var_os("TMUX").as_deref(),
-            &name,
-            &mut std::io::stdout().lock(),
-            &mut std::io::stderr().lock(),
-        ),
+        WsCmd::Forget { name, yes } => {
+            let mut input = std::io::stdin().lock();
+            // S§7.6: the question goes to stderr through its own handle (the std stderr lock is reentrant).
+            let mut before = |ws: &Workspace| forget_mail(&paths, ws, yes, &mut input, &mut std::io::stderr());
+            admin::forget(
+                &paths,
+                &tmux_program(),
+                std::env::var_os("TMUX").as_deref(),
+                &name,
+                &mut before,
+                &mut std::io::stdout().lock(),
+                &mut std::io::stderr().lock(),
+            )
+        }
         WsCmd::ForgetPane { key, name } => {
             // D10: the folder names the workspace only when there is no `--name`; `forget_pane` does not read `cwd`
             // when it has a name, so a folder that cannot be read does not fail that form.
@@ -131,6 +149,61 @@ pub fn dispatch(args: WsArgs) -> i32 {
         }
         WsCmd::Run { ws_id, pane, shell } => run_cmd(&paths, &ws_id, &pane, shell),
     }
+}
+
+/// S§6.3 Remove (MS-21): the deadline of `git worktree remove`. The worktree has no checkout (S§6.3 Make), so the
+/// removal deletes its `.git` file, its index and git's entry; the same 10 s as the S§8.2 probe.
+const WORKTREE_REMOVE_BOUND: Duration = Duration::from_secs(10);
+
+/// S§7.6 step 2: the question of `zygo ws forget`.
+pub(crate) fn forget_prompt(n: usize) -> String {
+    format!("zygo: {n} unsent messages will be deleted. Forget the workspace? [y/N]")
+}
+
+/// S§7.6 step 3: the reason of a removal error; it holds no git output (S-C2).
+fn branch_reason(e: &BranchError) -> String {
+    match e {
+        BranchError::Git(RunError::NotRun, _) => "git could not run".into(),
+        BranchError::Git(RunError::TimedOut, _) => "git timed out".into(),
+        BranchError::Git(RunError::Failed | RunError::Absent, _) => "git failed".into(),
+        BranchError::Io(s) => s.clone(),
+        BranchError::Refused(what) => format!("{what} refused"),
+    }
+}
+
+/// S§7.6 steps 2-3, S§6.3 Remove (MS-21): the `before_remove` step of `zygo ws forget`, which `admin::forget` runs
+/// after its checks with `op.lock` and the sync lock held. It counts the outbox (one that cannot be read is an `Err`);
+/// when it is not empty it asks [`forget_prompt`] on `err` (`yes`: the question and ` y (--yes)`), and an answer that
+/// is not `y` or `yes`, or the end of input, is `Ok(false)`. Then, when the worktree folder exists and `main_root` is
+/// a folder, `git worktree remove --force` (`remove_worktree`); its failure is an `Err`. An `Err` is the reason that
+/// `admin::forget` prints after `zygo: cannot forget <name>: `.
+pub(crate) fn forget_mail(
+    paths: &Paths, ws: &Workspace, yes: bool, input: &mut dyn BufRead, err: &mut dyn Write,
+) -> Result<bool, String> {
+    let sp = SyncPaths::new(paths, &ws.id).map_err(|e| e.to_string())?;
+    let n = outbox::count(&sp).map_err(|e| format!("the outbox cannot be read: {}", esc(&e.to_string())))?;
+    if n > 0 {
+        let prompt = forget_prompt(n);
+        if yes {
+            let _ = writeln!(err, "{prompt} y (--yes)");
+        } else {
+            let _ = write!(err, "{prompt} ");
+            let _ = err.flush();
+            if !super::plugins::confirm(input) {
+                return Ok(false);
+            }
+        }
+    }
+    if std::fs::symlink_metadata(&sp.worktree).is_ok() && ws.main_root.is_dir() {
+        remove_worktree(&ws.main_root, &sp.worktree, Instant::now() + WORKTREE_REMOVE_BOUND).map_err(|e| {
+            format!(
+                "the mail sync worktree {} was not removed: {}",
+                esc(&sp.worktree.display().to_string()),
+                esc(&branch_reason(&e))
+            )
+        })?;
+    }
+    Ok(true)
 }
 
 /// A path for a stderr line, escaped (C6).
@@ -714,5 +787,92 @@ mod tests {
         let o = super::super::opencode::launch_opts(&launch_open_code_of(&r), Env::default(), PathBuf::from("w"), paths()).unwrap();
         assert_eq!((c.definition.as_ref(), o.definition.as_ref()), (Some(&pin), Some(&pin)));
         assert!(c.definition_out.is_none() && o.definition_out.is_none());
+    }
+
+    #[test] // S§7.6 step 2 (MS-21): the question text
+    fn forget_prompt_is_the_spec_text() {
+        assert_eq!(forget_prompt(2), "zygo: 2 unsent messages will be deleted. Forget the workspace? [y/N]");
+    }
+
+    #[test] // S§7.6 step 3 (MS-21): the reason of each removal error, with no git text
+    fn branch_reason_names_each_error() {
+        for (e, want) in [
+            (BranchError::Git(RunError::NotRun, "worktree remove"), "git could not run"),
+            (BranchError::Git(RunError::TimedOut, "worktree remove"), "git timed out"),
+            (BranchError::Git(RunError::Failed, "worktree remove"), "git failed"),
+            (BranchError::Git(RunError::Absent, "worktree remove"), "git failed"),
+            (BranchError::Io("path is not UTF-8: x".into()), "path is not UTF-8: x"),
+            (BranchError::Refused("object id"), "object id refused"),
+        ] {
+            assert_eq!(branch_reason(&e), want);
+        }
+    }
+
+    #[cfg(unix)]
+    const WS: &str = "0123456789abcdef";
+
+    /// The `Paths` of the scratch folder `t` (state under `t/d/state`, cache under `t/k`).
+    #[cfg(unix)]
+    fn temp_paths(t: &Path) -> Paths {
+        Paths {
+            config_file: t.join("c.toml"),
+            cache_dir: t.join("k"),
+            data_dir: t.join("d"),
+            sessions_dir: t.join("k/s"),
+            marketplaces_dir: t.join("k/m"),
+            plugin_store: t.join("d/p"),
+            approvals_file: t.join("d/a.toml"),
+            usage_db: t.join("d/u.db"),
+        }
+    }
+
+    /// `forget_mail` with `input`: its result, what it wrote on `err`, and how many input bytes it read.
+    #[cfg(unix)]
+    fn ask(p: &Paths, ws: &Workspace, yes: bool, input: &str) -> (Result<bool, String>, String, u64) {
+        let mut cur = std::io::Cursor::new(input.as_bytes().to_vec());
+        let mut err = Vec::new();
+        let r = forget_mail(p, ws, yes, &mut cur, &mut err);
+        (r, String::from_utf8(err).unwrap(), cur.position())
+    }
+
+    #[cfg(unix)]
+    #[test] // S§7.6 step 2 (MS-21): an empty outbox asks nothing; 2 files ask; n, end of input, y, --yes
+    fn forget_mail_asks_only_for_a_non_empty_outbox() {
+        let td = tempfile::tempdir().unwrap();
+        let p = temp_paths(td.path());
+        let ws = Workspace::new(WS); // main_root empty: no git
+        assert_eq!(ask(&p, &ws, false, "n\n"), (Ok(true), String::new(), 0));
+        let outbox = zygo_mail_sync::state::SyncPaths::new(&p, WS).unwrap().outbox;
+        std::fs::create_dir_all(&outbox).unwrap();
+        for f in ["01ARZ3NDEKTSV4RRFFQ69G5FAV.json", "01ARZ3NDEKTSV4RRFFQ69G5FAW.json"] {
+            std::fs::write(outbox.join(f), b"{}").unwrap();
+        }
+        let q = "zygo: 2 unsent messages will be deleted. Forget the workspace? [y/N]";
+        assert_eq!(ask(&p, &ws, false, "n\n"), (Ok(false), format!("{q} "), 2));
+        assert_eq!(ask(&p, &ws, false, ""), (Ok(false), format!("{q} "), 0));
+        assert_eq!(ask(&p, &ws, false, "y\n"), (Ok(true), format!("{q} "), 2));
+        assert_eq!(ask(&p, &ws, true, "n\n"), (Ok(true), format!("{q} y (--yes)\n"), 0));
+    }
+
+    #[cfg(unix)]
+    #[test] // S§6.3 Remove, S§7.6 steps 2-3 (MS-21): git runs only with both folders; its failure and an unreadable outbox refuse
+    fn forget_mail_runs_git_only_with_both_folders_and_refuses_an_unreadable_outbox() {
+        let td = tempfile::tempdir().unwrap();
+        let p = temp_paths(td.path());
+        let sp = zygo_mail_sync::state::SyncPaths::new(&p, WS).unwrap();
+        let mut ws = Workspace::new(WS);
+        ws.main_root = td.path().join("plain"); // a folder that is no repository: git fails there
+        std::fs::create_dir_all(&ws.main_root).unwrap();
+        assert_eq!(ask(&p, &ws, false, ""), (Ok(true), String::new(), 0)); // no worktree folder: no git
+        std::fs::create_dir_all(&sp.worktree).unwrap();
+        ws.main_root = td.path().join("moved"); // no such folder
+        assert_eq!(ask(&p, &ws, false, ""), (Ok(true), String::new(), 0)); // no main worktree folder: no git
+        ws.main_root = td.path().join("plain");
+        let failed = format!("the mail sync worktree {} was not removed: git failed", sp.worktree.display());
+        assert_eq!(ask(&p, &ws, false, "").0, Err(failed)); // both folders: git runs and fails
+        std::fs::create_dir_all(&sp.mail).unwrap();
+        std::fs::write(&sp.outbox, b"").unwrap();
+        let unreadable = format!("the outbox cannot be read: {} is not a folder", sp.outbox.display());
+        assert_eq!(ask(&p, &ws, true, "").0, Err(unreadable));
     }
 }
