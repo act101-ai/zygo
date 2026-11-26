@@ -139,7 +139,9 @@ fn captured_requests_reach_chat_as_chat() {
         assert!(v["messages"].as_array().is_some_and(|m| !m.is_empty()), "{f}: {v}");
         assert_eq!(v["stream"], true, "{f}");
         assert!(v.get("input").is_none() && v.get("system").is_none(), "{f}");
-        for k in IGNORED {
+        // The chat translator's own `stream_options` on a streaming request (`translate/chat.rs`); no fixture sends one.
+        assert_eq!(v["stream_options"], json!({"include_usage": true}), "{f}");
+        for k in IGNORED.into_iter().filter(|k| *k != "stream_options") {
             assert!(v.get(k).is_none(), "{f}: {k}");
         }
         let uh = h.upstream_headers().pop().unwrap();

@@ -42,6 +42,8 @@ use crate::Url;
 
 pub const BUSY_WAIT: Duration = Duration::from_secs(5); // §7.3
 pub const INFLIGHT_FACTOR: u64 = 4; // §7.3
+/// The `anthropic-version` sent for a client that sends none (K§6.4.3).
+const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// Never forwarded upstream, whatever `forward_headers` says (§7.3 and its note; RFC 9110 §7.2, §7.6.1, §8.6;
 /// RFC 9112 §6.1).
@@ -442,12 +444,17 @@ async fn run(
         attempted = true;
         // A loopback upstream never goes through a proxy (C3).
         let http = if loopback(&url, &[]) { &app.direct } else { &app.http };
+        let mut out = match pt {
+            Some(t) => t.outbound(&ctx.headers, &c.provider),
+            None => outbound_headers(&ctx.headers, &c.provider, c.dialect, c.key.as_ref()),
+        };
+        // A Responses client sends no `anthropic-version`; the Anthropic API needs it (K§6.4.3).
+        if ctx.dialect == Dialect::Openai && c.dialect == Dialect::Anthropic && !out.contains_key("anthropic-version") {
+            out.insert("anthropic-version", HeaderValue::from_static(ANTHROPIC_VERSION));
+        }
         let sent = http
             .post(url)
-            .headers(match pt {
-                Some(t) => t.outbound(&ctx.headers, &c.provider),
-                None => outbound_headers(&ctx.headers, &c.provider, c.dialect, c.key.as_ref()),
-            })
+            .headers(out)
             .body(body)
             .send()
             .await;
@@ -793,6 +800,9 @@ fn attempt_body(
 ) -> Result<(Bytes, Vec<Adjustment>, NullMap), ZygoError> {
     let family = if c.dialect == Dialect::Anthropic { Family::Anthropic } else { Family::Openai };
     let rules: Vec<SchemaRule> = rw.rules.iter().filter(|r| r.family == family).cloned().collect();
+    if client == Dialect::Openai && c.dialect != client {
+        return responses_attempt(body, raw, c, rw, &rules);
+    }
     if c.dialect != client {
         let mut a = body.clone();
         let mut codes = match rw.facts {
@@ -833,6 +843,41 @@ fn attempt_body(
     }
     let (b, adj) = model_body(body, raw, changed, c)?;
     Ok((b, adj, NullMap::default()))
+}
+
+/// A Responses body toward an `anthropic` or `openai-chat` candidate (K§6.4.3): the Messages body of
+/// `responses_client::request`, then facts and the schema rewrite as on a translated Messages request; to
+/// `openai-chat`, the Messages → chat translator after them (Messages is the pivot). Codes in the order `model_body`,
+/// `request`, facts, schema, translator.
+fn responses_attempt(
+    body: &Value,
+    raw: &Bytes,
+    c: &Candidate,
+    rw: &Rewrite,
+    rules: &[SchemaRule],
+) -> Result<(Bytes, Vec<Adjustment>, NullMap), ZygoError> {
+    let t = Target::of(c);
+    let (mut m, rc) = responses_client::request(body, &t, rw.facts)?;
+    let mut codes = match rw.facts {
+        Some(f) => facts::apply(&mut m, f),
+        None => vec![Adjustment("facts_missing".into())],
+    };
+    let (sc, nulls) = schema::rewrite(&mut m, rules);
+    codes.extend(sc);
+    let (mut v, tc) = if c.dialect == Dialect::OpenaiChat {
+        let (mut v, tc) = translate_request(&m, Dialect::OpenaiChat, &t)?;
+        if rw.facts.is_some() {
+            facts::write_effort(&m, &mut v, Dialect::OpenaiChat);
+        }
+        (v, tc)
+    } else {
+        (m, Vec::new())
+    };
+    let (b, mut adj) = model_body(&mut v, raw, true, c)?;
+    adj.extend(rc);
+    adj.extend(codes);
+    adj.extend(tc);
+    Ok((b, adj, nulls))
 }
 
 /// `model` := `upstream_model`; `provider.zdr = true` on an openrouter.ai host (§7.5), else
