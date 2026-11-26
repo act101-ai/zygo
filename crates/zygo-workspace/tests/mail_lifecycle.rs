@@ -465,6 +465,48 @@ fn lifecycle_read_refuses_a_link_at_new() {
     assert!(gone(&mail.join("kaaaaaaaa/cur")));
 }
 
+#[test] // R1-2: a read does not follow a link at mail/; the files it points to stay and no lock is made there
+fn lifecycle_read_refuses_a_link_at_mail() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let id = THIRD;
+    stored(&p, id, &[("kaaaaaaaa", None)]);
+    let mail = mail_dir(&p, id);
+    let _ = fs::remove_dir_all(&mail);
+    let target = t.join("outside");
+    let f = outside_message(&target.join("kaaaaaaaa"));
+    std::os::unix::fs::symlink(&target, &mail).unwrap();
+    let r = mail_store::read(&mail, "kaaaaaaaa", 10);
+    assert!(matches!(r, Err(MailError::Io(_))), "{r:?}");
+    assert!(f.is_file());
+    assert!(gone(&target.join("kaaaaaaaa/cur")));
+    assert!(gone(&target.join("lock")));
+}
+
+#[test] // R1-2: a read does not follow a link at mail/<key>/cur; the files it points to stay
+fn lifecycle_read_refuses_a_link_at_cur() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let id = THIRD;
+    stored(&p, id, &[("kaaaaaaaa", None)]);
+    put(&p, id, "kaaaaaaaa", 1);
+    let mail = mail_dir(&p, id);
+    let outside = t.join("outside");
+    let f = outside_message(&outside);
+    fs::create_dir_all(outside.join("cur")).unwrap();
+    fs::remove_dir(mail.join("kaaaaaaaa/cur")).unwrap();
+    std::os::unix::fs::symlink(outside.join("cur"), mail.join("kaaaaaaaa/cur")).unwrap();
+    let r = mail_store::read(&mail, "kaaaaaaaa", 10);
+    assert!(matches!(r, Err(MailError::Io(_))), "{r:?}");
+    assert!(f.is_file());
+    assert_eq!(fs::read_dir(outside.join("cur")).unwrap().count(), 0);
+    assert_eq!(unread(&p, id, "kaaaaaaaa"), 1);
+}
+
 #[test] // F2: a read takes mail/lock shared: a removal that holds it exclusive makes the read Busy, and a removal
 // cannot run while a read lists and moves
 fn lifecycle_read_and_removal_exclude_each_other() {
