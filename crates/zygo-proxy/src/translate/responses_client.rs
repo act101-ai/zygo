@@ -116,6 +116,9 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
         }
         _ => return Err(bad("input must be a string or an array")),
     }
+    if c.messages.first().is_none_or(|(role, _)| *role != "user") {
+        return Err(bad("input: the conversation must start with a user message"));
+    }
     let tools = tools(req, &mut d)?;
     let choice = tool_choice(req)?;
 
