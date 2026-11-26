@@ -174,18 +174,30 @@ fn messages_line(ctx: &mut ResponseCtx, line: &mut SseLine) {
     }
 }
 
-/// A Responses line (K§6.4.5): a compact `function_call` item start is noted, or the `response.completed` or
-/// `response.incomplete` usage is rewritten.
+/// The Responses output item types that call a tool (K§6.4.5): a response with one does not end the turn.
+const CALL_ITEMS: [&str; 6] = ["function_call", "custom_tool_call", "local_shell_call", "computer_call", "mcp_call", "mcp_approval_request"];
+
+/// `item` is a call item (`CALL_ITEMS`).
+fn call_item(item: &Value) -> bool {
+    item["type"].as_str().is_some_and(|t| CALL_ITEMS.contains(&t))
+}
+
+/// A Responses line (K§6.4.5): a call item in a streamed item event is noted, and a compact `function_call` item
+/// start; or the `response.completed` or `response.incomplete` usage is rewritten.
 fn responses_line(ctx: &mut ResponseCtx, line: &mut SseLine) {
     let Some(d) = line.0.strip_prefix(b"data:") else { return };
     let has = |p: &[u8]| d.windows(p.len()).any(|w| w == p);
-    if !has(b"response.output_item.added") && !has(b"response.completed") && !has(b"response.incomplete") {
+    if !has(b"response.output_item.") && !has(b"response.completed") && !has(b"response.incomplete") {
         return;
     }
     let Ok(v) = serde_json::from_slice::<Value>(d) else { return };
     match v.get("type").and_then(Value::as_str) {
-        Some("response.output_item.added") => {
+        Some(ty @ ("response.output_item.added" | "response.output_item.done")) => {
             let item = &v["item"];
+            ctx.call_item |= call_item(item);
+            if ty != "response.output_item.added" {
+                return;
+            }
             let Some(name) = item["name"].as_str().filter(|_| item["type"] == "function_call") else { return };
             let name = match item["namespace"].as_str() {
                 Some(ns) => Cow::Owned(flat_name(ns, name)),
@@ -196,9 +208,7 @@ fn responses_line(ctx: &mut ResponseCtx, line: &mut SseLine) {
             }
         }
         Some(ty @ ("response.completed" | "response.incomplete")) => {
-            let calls = v["response"]["output"]
-                .as_array()
-                .is_some_and(|o| o.iter().any(|i| i["type"] == "function_call" || i["type"] == "custom_tool_call"));
+            let calls = ctx.call_item || v["response"]["output"].as_array().is_some_and(|o| o.iter().any(call_item));
             let Some((window, fired)) = triggers(ctx, ty == "response.completed" && !calls) else { return };
             let Some(out) = rewrite_responses_usage(&line.0, ctx.usage, window) else { return };
             line.0 = out;
@@ -348,8 +358,10 @@ pub fn rewrite_usage(line: &[u8], u: Usage, window: u64) -> Option<Vec<u8>> {
 /// client's measure equals `window`: `input_tokens_details.cached_tokens` := max(window − input − cache_write,
 /// cache_read), `input_tokens` := input + cache_write + cached_tokens, `total_tokens` := input_tokens + u.output;
 /// a missing field inserted; every other byte kept. `None` (line unchanged): not UTF-8, no `data:` prefix, another
-/// `type`, no `response.usage` object, `input_tokens_details` not an object, or an edited object repeats a key.
+/// `type`, no `response.usage` object, `input_tokens_details` not an object, an edited object repeats a key, or a
+/// present `input_tokens`, `cached_tokens` or `output_tokens` is not a u64 integer (the tee then read 0 for it).
 pub fn rewrite_responses_usage(line: &[u8], u: Usage, window: u64) -> Option<Vec<u8>> {
+    let int = |r: Option<&RawValue>| r.is_none_or(|r| serde_json::from_str::<u64>(r.get()).is_ok()).then_some(());
     let line = std::str::from_utf8(line).ok()?;
     let top: Obj = serde_json::from_str(line.strip_prefix("data:")?).ok()?;
     let ty = serde_json::from_str::<String>(top.raw("type")?.get()).ok()?;
@@ -360,6 +372,8 @@ pub fn rewrite_responses_usage(line: &[u8], u: Usage, window: u64) -> Option<Vec
     let ro: Obj = serde_json::from_str(resp.get()).ok()?;
     let usage = ro.raw("usage").filter(|r| r.get().starts_with('{'))?;
     let uo: Obj = serde_json::from_str(usage.get()).ok()?;
+    int(uo.raw("input_tokens"))?;
+    int(uo.raw("output_tokens"))?;
     let base = line.as_ptr() as usize;
     let off = |r: &RawValue| r.get().as_ptr() as usize - base;
     let cached = window.saturating_sub(u.input).saturating_sub(u.cache_write).max(u.cache_read);
@@ -370,6 +384,7 @@ pub fn rewrite_responses_usage(line: &[u8], u: Usage, window: u64) -> Option<Vec
     if let Some(det) = details {
         let det = Some(det).filter(|r| r.get().starts_with('{'))?;
         let dobj: Obj = serde_json::from_str(det.get()).ok()?;
+        int(dobj.raw("cached_tokens"))?;
         edit_obj(&dobj, off(det), &off, &[("cached_tokens", cached)], &mut edits)?;
     }
     edit_obj(&uo, off(usage), &off, &[("input_tokens", input), ("total_tokens", total)], &mut edits)?;

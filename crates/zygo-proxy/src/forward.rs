@@ -635,6 +635,7 @@ async fn run(
         adjustments,
         usage: Usage::default(),
         compact_call: false,
+        call_item: false,
     };
     let flow = Flow { upstream, mapper, restore, tee, encode, window: ctx.line_mode, rctx, pipeline: app.pipeline.clone(), pending: p, done: false, failed: false, body_len };
     let mut out = Response::new(Body::from_stream(futures_util::stream::unfold(flow, next_chunk)));
