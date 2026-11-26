@@ -1,6 +1,6 @@
 //! N13: dialect translation (§7.6, §14).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -28,6 +28,8 @@ use zygo_proxy::session::{ManualClock, SessionGrant, SessionRequest};
 use zygo_proxy::tee::{COPY_MAX, HOLD_MAX};
 use zygo_proxy::translate::reasoning::{decode, decode_thinking, encode, without_zygo_thinking, Signature};
 use zygo_proxy::translate::responses_client::{response, Calls, Encoder};
+use zygo_proxy::translate::schema::{NullMap, RestoreFilter, Seg};
+use zygo_proxy::translate::sse::INPUT_DELTA_MAX;
 use zygo_proxy::{Proxy, ProxyHandle};
 use zygo_redact::DeadlinePolicy;
 use zygo_usage::{RequestRow, Store};
@@ -1656,4 +1658,161 @@ fn message_events_unknown_blocks_match_json_path() {
     assert_eq!(items[0]["content"][0]["text"], "hi");
     assert_eq!(codes, json_codes.into_iter().map(|a| a.0).collect::<Vec<_>>());
     assert_eq!(out.last().unwrap().event, "response.completed");
+}
+
+#[test] // RS-13, K§6.4.3 stream obligation 8: input_json_delta pieces of at most INPUT_DELTA_MAX, cut on a char boundary
+fn message_events_cuts_tool_input_on_char_boundaries() {
+    // Compact input `{"a":"` + c × n + `"}`: the first cut is the longest 6 + k·len(c) <= INPUT_DELTA_MAX.
+    for (c, n, first) in [('a', 200_000, INPUT_DELTA_MAX), ('€', 50_000, INPUT_DELTA_MAX - 1), ('😀', 40_000, INPUT_DELTA_MAX - 2)] {
+        let input = json!({"a": c.to_string().repeat(n)});
+        let m = msg_body(json!([{"type":"tool_use","id":"toolu_1","name":"exec_command","input":input}]));
+        let evs = message_events(&m);
+        assert_eq!(evs[1].data, json!({"type":"content_block_start","index":0,
+            "content_block":{"type":"tool_use","id":"toolu_1","name":"exec_command","input":{}}}));
+        let deltas: Vec<&Value> = evs.iter().filter(|e| e.event == "content_block_delta").map(|e| &e.data).collect();
+        assert!(deltas.iter().all(|d| d["index"] == 0 && d["delta"]["type"] == "input_json_delta"), "{c}");
+        let pieces: Vec<&str> = deltas.iter().map(|d| d["delta"]["partial_json"].as_str().unwrap()).collect();
+        assert!(pieces.len() > 1, "{c}");
+        assert_eq!(pieces[0].len(), first, "{c}");
+        assert!(pieces.iter().all(|p| !p.is_empty() && p.len() <= INPUT_DELTA_MAX), "{c}");
+        assert!(pieces[..pieces.len() - 1].iter().all(|p| p.len() > INPUT_DELTA_MAX - 4), "{c}");
+        assert_eq!(pieces.concat(), input.to_string(), "{c}");
+        assert_eq!(evs[evs.len() - 3].data, json!({"type":"content_block_stop","index":0}));
+    }
+}
+
+#[test] // RS-13: an empty input `{}`, and a tool_use with no input, is one input_json_delta `{}`
+fn message_events_empty_tool_input_one_piece() {
+    let m = msg_body(json!([{"type":"tool_use","id":"toolu_1","name":"exec_command","input":{}},
+        {"type":"tool_use","id":"toolu_2","name":"exec_command"}]));
+    let deltas: Vec<Value> = message_events(&m).into_iter().filter(|e| e.event == "content_block_delta").map(|e| e.data).collect();
+    assert_eq!(deltas, [
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}),
+        json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}}),
+    ]);
+}
+
+#[test] // RS-13, K§6.4.3 stream obligations 8 and 9: 1.5 MiB of `"` passes the encoder; each event stays under 2 × INPUT_DELTA_MAX plus framing
+fn message_events_large_tool_input_within_hold_max() {
+    let input = json!({"a": "\"".repeat(3 << 19)});
+    let m = msg_body(json!([{"type":"tool_use","id":"toolu_1","name":"exec_command","input":input}]));
+    let evs = message_events(&m);
+    let longest = evs.iter().map(|e| e.to_bytes().len()).max().unwrap();
+    assert!(longest < 2 * INPUT_DELTA_MAX + 256, "{longest}");
+    let (out, codes) = encoded(&m);
+    assert_eq!(out.last().unwrap().event, "response.completed", "{:?}", out.last().unwrap().data);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["type"], "function_call");
+    assert_eq!(items[0]["arguments"], input.to_string());
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+#[test] // RS-13 round 1 review F1, K§6.4.3 stream obligation 8: a body of `"` as close to COPY_MAX as fits still completes
+fn message_events_tool_input_near_copy_max_completes() {
+    let body = |n: usize| msg_body(json!([{"type":"tool_use","id":"toolu_1","name":"exec_command","input":{"a":"\"".repeat(n)}}]));
+    let base = serde_json::to_vec(&body(0)).unwrap().len();
+    let m = body((COPY_MAX - base) / 2);
+    let size = serde_json::to_vec(&m).unwrap().len();
+    assert!(size <= COPY_MAX && size + 2 > COPY_MAX, "{size}");
+    let (want, _) = response(&m, "role-x", &tgt(), &Calls::default());
+    let (out, codes) = encoded(&m);
+    assert_eq!(out.last().unwrap().event, "response.completed", "{:?}", out.last().unwrap().data);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["arguments"], want["output"][0]["arguments"]);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// A chat SSE stream of one tool call whose `arguments` come in 60 KB deltas (RS-13 round 2 review G2).
+fn chat_args_sse(args: &str) -> String {
+    let call = json!({"index":0,"id":"call_1","type":"function","function":{"name":"exec_command","arguments":""}});
+    let mut s = chat_delta(json!({"role":"assistant","tool_calls":[call]}), Value::Null);
+    for p in args.as_bytes().chunks(60_000) {
+        let a = std::str::from_utf8(p).unwrap();
+        s += &chat_delta(json!({"tool_calls":[{"index":0,"function":{"arguments":a}}]}), Value::Null);
+    }
+    s + &chat_delta(json!({}), json!("tool_calls")) + DONE
+}
+
+/// Chat SSE through the mapper, the restore filter when given, and the Responses encoder: the longest mapped event
+/// as bytes, and the encoder's events.
+fn chat_through_encoder(sse: &str, mut restore: Option<RestoreFilter>) -> (usize, Vec<SseEvent>) {
+    let mut m = chat();
+    let mut evs = m.push(sse.as_bytes());
+    evs.extend(m.finish_events());
+    if let Some(r) = &mut restore {
+        let mut x: Vec<SseEvent> = evs.into_iter().flat_map(|e| r.push(e)).collect();
+        x.extend(r.finish());
+        evs = x;
+    }
+    let longest = evs.iter().map(|e| e.to_bytes().len()).max().unwrap();
+    let bytes: Vec<u8> = evs.iter().flat_map(SseEvent::to_bytes).collect();
+    let mut e = Encoder::new("role-x", &tgt(), Calls::default());
+    let mut out = e.push(&bytes);
+    out.extend(e.finish());
+    (longest, out)
+}
+
+#[test] // RS-13 round 2 review G2, K§6.4.3 stream obligation 8: 2,621,448 bytes of chat arguments in 60 KB deltas complete
+fn chat_sse_large_tool_arguments_complete() {
+    let args = format!("{{\"a\":\"{}\"}}", "\\\"".repeat(5 << 18));
+    assert_eq!(args.len(), 2_621_448);
+    let (longest, out) = chat_through_encoder(&chat_args_sse(&args), None);
+    assert!(longest < 2 * INPUT_DELTA_MAX + 256, "{longest}");
+    assert_eq!(out.last().unwrap().event, "response.completed", "{:?}", out.last().unwrap().data);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["type"], "function_call");
+    assert_eq!(items[0]["arguments"], json!(args));
+}
+
+#[test] // RS-13 round 2 review G2: the restore filter's rebuilt arguments go out in INPUT_DELTA_MAX pieces too
+fn chat_sse_large_restored_tool_arguments_complete() {
+    let b = "\"".repeat(5 << 18);
+    let args = json!({"a":null,"b":b}).to_string();
+    assert!(args.len() > 2_600_000, "{}", args.len());
+    let nulls = NullMap { tools: BTreeMap::from([("exec_command".to_string(), vec![vec![Seg::Key("a".into())]])]), output: vec![] };
+    let (longest, out) = chat_through_encoder(&chat_args_sse(&args), Some(RestoreFilter::new(nulls)));
+    assert!(longest < 2 * INPUT_DELTA_MAX + 256, "{longest}");
+    assert_eq!(out.last().unwrap().event, "response.completed", "{:?}", out.last().unwrap().data);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["arguments"], json!(json!({"b":b}).to_string()));
+}
+
+#[test] // RS-13 round 3 review H5, K§6.4.3 stream obligation 8: the raw path's rebuilt arguments go out in several INPUT_DELTA_MAX pieces
+fn anthropic_sse_large_restored_tool_arguments_complete_raw() {
+    let b = "\"".repeat(600_000);
+    let args = json!({"a":null,"b":b}).to_string();
+    let want = json!({"b":b}).to_string();
+    assert!(want.len() > 18 * INPUT_DELTA_MAX, "{}", want.len());
+    let mut evs = vec![msg_start("msg_1", "up"), block_start(0, json!({"type":"tool_use","id":"toolu_1","name":"exec_command","input":{}}))];
+    evs.extend(args.as_bytes().chunks(60_000).map(|p| json_d(0, std::str::from_utf8(p).unwrap())));
+    evs.extend([block_stop(0), msg_delta("tool_use", [3, 0, 0, 2]), msg_stop()]);
+    let sse: Vec<u8> = evs.iter().flat_map(SseEvent::to_bytes).collect();
+    let nulls = NullMap { tools: BTreeMap::from([("exec_command".to_string(), vec![vec![Seg::Key("a".into())]])]), output: vec![] };
+    for n in [16 << 10, 1 << 20, sse.len()] {
+        let mut r = RestoreFilter::new(nulls.clone());
+        let mut e = Encoder::new("role-x", &tgt(), Calls::default());
+        let (mut sent, mut out) = (Vec::new(), Vec::new());
+        for c in sse.chunks(n) {
+            let x = r.push_raw(c);
+            out.extend(e.push(&x));
+            sent.extend(x);
+        }
+        let x = r.finish_raw();
+        out.extend(e.push(&x));
+        out.extend(e.finish());
+        sent.extend(x);
+        let text = String::from_utf8(sent).unwrap();
+        let rebuilt = text.split("\n\n").filter(|ev| ev.contains("input_json_delta")).count();
+        assert_eq!(rebuilt, want.len().div_ceil(INPUT_DELTA_MAX), "chunk {n}");
+        let longest = text.split("\n\n").map(str::len).max().unwrap();
+        assert!(longest < 2 * INPUT_DELTA_MAX + 256, "chunk {n}: {longest}");
+        assert_eq!(out.last().unwrap().event, "response.completed", "chunk {n}: {:?}", out.last().unwrap().data);
+        let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+        assert_eq!(items.len(), 1, "chunk {n}");
+        assert_eq!(items[0]["arguments"], json!(want), "chunk {n}");
+    }
 }

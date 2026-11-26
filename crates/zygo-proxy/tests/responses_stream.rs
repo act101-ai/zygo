@@ -391,6 +391,23 @@ fn stream_tool_args_over_hold_max_fails() {
     assert!(e.ended());
 }
 
+#[test] // RS-13 round 2 review G4: the first delta clears the start's input; only the delta counts toward HOLD_MAX
+fn stream_large_start_input_then_small_delta_completes() {
+    let input = json!({"a":"x".repeat(HOLD_MAX - 1024)});
+    let args = format!("{{\"b\":\"{}\"}}", "y".repeat(4096));
+    let mut ev = vec![message_start(), start(0, json!({"type":"tool_use","id":"t","name":"n","input":input}))];
+    ev.push(delta(0, json!({"type":"input_json_delta","partial_json":args})));
+    ev.push(stop(0));
+    ev.extend(end("tool_use"));
+    let mut e = enc();
+    let evs = run(&mut e, &ev);
+    assert_sequence(&evs);
+    assert_eq!(evs.last().unwrap().event, "response.completed", "{:?}", terminals(&evs).last().map(|t| &t.data));
+    let items = items_done(&evs);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["arguments"], json!(args));
+}
+
 #[test]
 fn stream_one_chunk_of_small_blocks_over_hold_max_completes() {
     // The bound counts held bytes, not the size of one push: the lines already read are not held.

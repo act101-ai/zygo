@@ -1066,8 +1066,9 @@ impl Encoder {
     }
 
     /// Messages SSE bytes in, Responses events out. Each byte is scanned once. Only a partial line is copied whole;
-    /// a complete line is read from `chunk`. Before any byte is held, the held total is checked against `HOLD_MAX`
-    /// (obligation 9).
+    /// a complete line is read from `chunk`. Before any byte is held, it is checked against `HOLD_MAX` (obligation 9):
+    /// the partial line, the current event's `data` and the open block summed; while a tool call is open, its
+    /// arguments alone, and the partial line plus `data` alone.
     pub fn push(&mut self, chunk: &[u8]) -> Vec<SseEvent> {
         let mut out = Vec::new();
         let mut rest = chunk;
@@ -1160,15 +1161,23 @@ impl Encoder {
     }
 
     /// Whether `extra` more bytes of the partial line, the current event's `data` and the open block can be held
-    /// within `HOLD_MAX` (obligation 9). If not, everything held is freed and `response.failed` names the largest held
-    /// part.
+    /// within `HOLD_MAX` (obligation 9). A tool call's arguments are bounded alone, and the partial line and `data`
+    /// that carry its next delta are bounded alone: neither counts toward the other. If not, everything held is freed
+    /// and `response.failed` names the largest held part.
     fn hold(&mut self, extra: [usize; 3], out: &mut Vec<SseEvent>) -> bool {
         let block = self.open.as_ref();
-        let [line, data, held] = [
+        let [mut line, mut data, mut held] = [
             self.buf.len() + extra[0],
             self.data.as_ref().map_or(0, Vec::len) + extra[1],
             block.map_or(0, Block::held) + extra[2],
         ];
+        if block.is_some_and(|b| matches!(b.kind, Kind::Call { .. })) {
+            if extra[2] > 0 {
+                [line, data] = [0, 0];
+            } else {
+                held = 0;
+            }
+        }
         if line.saturating_add(data).saturating_add(held) <= HOLD_MAX {
             return true;
         }
@@ -1316,6 +1325,14 @@ impl Encoder {
             _ => return,
         };
         let Some(x) = s(d, key).filter(|x| !x.is_empty()) else { return };
+        // A call's first delta replaces the start's `input`: only what is kept counts toward HOLD_MAX.
+        if let Some(b) = &mut self.open
+            && let Kind::Call { delta, .. } = &mut b.kind
+            && !*delta
+        {
+            *delta = true;
+            b.text.clear();
+        }
         if !self.hold([0, 0, x.len()], out) {
             return;
         }
@@ -1339,11 +1356,7 @@ impl Encoder {
                 self.emit("response.reasoning_summary_text.delta", ev, out);
             }
             ("signature", _) => b.sig.push_str(x),
-            (_, Kind::Call { custom, delta, .. }) => {
-                if !*delta {
-                    *delta = true;
-                    b.text.clear();
-                }
+            (_, Kind::Call { custom, .. }) => {
                 b.text.push_str(x);
                 if !*custom {
                     let ev = json!({"item_id":iid,"output_index":oi,"delta":x});
