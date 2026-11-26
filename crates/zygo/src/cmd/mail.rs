@@ -141,9 +141,9 @@ pub fn run(a: MailArgs) -> i32 {
         Some(MailCmd::Ls { name }) => finish(ls_text(&paths, &ws, name.as_deref())),
         Some(MailCmd::Read { name, max }) => {
             let keys = match (name, pane) {
-                (Some(n), _) => match names::resolve(&ws, &n, None) {
+                (Some(n), _) => match member_arg(&paths, &ws, &n).and_then(|m| names::resolve(&ws, &m, None).map_err(Into::into)) {
                     Ok(t) => t.into_iter().map(|t| t.key).collect(),
-                    Err(e) => return finish(Err(e.into())),
+                    Err(e) => return finish(Err(e)),
                 },
                 (None, Some(k)) => vec![k],
                 (None, None) => {
@@ -168,10 +168,10 @@ pub fn run(a: MailArgs) -> i32 {
                 return 2;
             };
             let key = match (name, pane) {
-                (Some(n), _) => match names::resolve(&ws, &n, None) {
+                (Some(n), _) => match member_arg(&paths, &ws, &n).and_then(|m| names::resolve(&ws, &m, None).map_err(Into::into)) {
                     Ok(mut t) if t.len() == 1 => t.remove(0).key,
                     Ok(_) => return finish(Err(UsageError(format!("zygo mail watch: {n} is not one member")).into())),
-                    Err(e) => return finish(Err(e.into())),
+                    Err(e) => return finish(Err(e)),
                 },
                 (None, Some(k)) => k,
                 (None, None) => {
@@ -580,7 +580,7 @@ fn ls_text(paths: &Paths, ws: &Workspace, name: Option<&str>) -> anyhow::Result<
             }
         }
         Some(n) => {
-            for t in names::resolve(ws, n, None)? {
+            for t in names::resolve(ws, &member_arg(paths, ws, n)?, None)? {
                 for s in store::list(&dir, &t.key)? {
                     lines.push(format!("{} {} {}", esc(&s.id), esc(&s.from), esc(&s.subject)));
                 }
@@ -591,6 +591,21 @@ fn ls_text(paths: &Paths, ws: &Workspace, name: Option<&str>) -> anyhow::Result<
         }
     }
     Ok(lines.join("\n"))
+}
+
+/// S§7.2 (P1, D4): the member value of `read`, `ls` and `watch`. A value with no `@` is kept as it is; a value with
+/// `@` is resolved against the host in force (none with sync off or a config that does not load), and only
+/// `<name>@<own host>` is taken, as `<name>`; any other value with `@` is the not-local error. Only a value with `@`
+/// loads the config, so a local listing never fails on config.
+fn member_arg(paths: &Paths, ws: &Workspace, n: &str) -> anyhow::Result<String> {
+    if !n.contains('@') {
+        return Ok(n.to_string());
+    }
+    let own = user_config(paths).ok().and_then(|c| sync_for(&c, &ws.name).ok()).map(|s| vec![s.host]).unwrap_or_default();
+    match resolve_to(n, &own) {
+        Ok(To::Local(name)) => Ok(name),
+        _ => Err(anyhow!("zygo: {n} is not a local address; zygo mail read, ls and watch take a member of this machine")),
+    }
 }
 
 /// `<key> (<name>)`, or `<key>` for a member with no valid name.

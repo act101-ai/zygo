@@ -247,3 +247,31 @@ fn the_other_s7_2_refusals_write_nothing() {
     let (code, o, _) = send(&x, Some(ALICE), "elena", BODY);
     assert_eq!((code, o.ends_with(" to elena\n")), (0, true));
 }
+
+#[test] // R1: S§7.2 (rewritten): a value with `@` that is not local is refused in read, ls and watch
+fn read_ls_and_watch_refuse_a_value_with_at_that_is_not_local() {
+    let x = setup();
+    for v in ["bob@b", "cli@a", "Bob@a"] {
+        for args in [vec!["mail", "read", "--name", v], vec!["mail", "ls", v], vec!["mail", "watch", v, "--timeout", "0s"]] {
+            let o = zygo(&x.h, &args, &[]);
+            assert_eq!((o.status.code(), out(&o), err(&o)), (Some(1), String::new(), not_local(v)), "{args:?}");
+        }
+    }
+    config(&x, ""); // sync off: no local host
+    let o = zygo(&x.h, &["mail", "ls", "elena@a"], &[]);
+    assert_eq!((o.status.code(), err(&o)), (Some(1), not_local("elena@a")));
+}
+
+#[test] // R2: S§7.2: `<name>@<own host>` works as `<name>`
+fn own_host_address_works_as_the_bare_name_in_ls_read_and_watch() {
+    let x = setup();
+    let r = zygo_workspace::mail::send(&x.h.paths, &x.w, None, "elena", SUBJECT, BODY, &MailConfig::default(), at(T0)).unwrap();
+    let id = r.sent[0].id.clone();
+    let line = format!("{id} cli {SUBJECT}\n");
+    for args in [&["mail", "ls", "elena@a"][..], &["mail", "ls", "elena"][..], &["mail", "watch", "elena@a", "--timeout", "0s"][..]] {
+        let o = zygo(&x.h, args, &[]);
+        assert_eq!((o.status.code(), out(&o)), (Some(0), line.clone()), "{args:?}: {}", err(&o));
+    }
+    let o = zygo(&x.h, &["mail", "read", "--name", "elena@a"], &[]);
+    assert_eq!((o.status.code(), out(&o)), (Some(0), format!("{id} cli 2023-11-14T22:13:20Z {SUBJECT}\n  {BODY}\n")), "{}", err(&o));
+}
