@@ -228,7 +228,7 @@ Such a call keeps the §10.1 size view, with stdout only (as today). A pipeline 
 
 Each step takes text and gives text or "no change". No step adds content: it removes characters or lines that it recognizes (O-C9), or adds a count or a fixed note. Then O§7.8 decides if the view is used.
 
-**Text that the model may reuse** **(lead)**: when a segment runs `git diff`, `git show`, `git log` with `-p` or `--patch`, `git format-patch --stdout` or `diff`, or when the sniffed kind of the raw text (`kind.rs:51`) is `diff`, `json` or `jsonl`, steps 1 and 2 only remove ANSI escape sequences: no `\r` change and no dedup. Failure prevented: a patch or a JSON value that the agent copies or applies differs from the real one.
+**Text that the model may reuse** **(lead)**: when a segment runs `git diff`, `git show`, `git log` with `-p` or `--patch`, `git format-patch --stdout` or `diff`, or when the sniffed kind of `stdout` (`kind.rs:51`; OpenCode: `output.output`) is `diff`, `json` or `jsonl`, steps 1 and 2 only remove ANSI escape sequences: no `\r` change and no dedup. Failure prevented: a patch or a JSON value that the agent copies or applies differs from the real one.
 
 Above `SHAPE_MAX_BYTES`, only step 5 runs, on the raw text. Failure prevented: a hook that runs for seconds on a huge output; the OpenCode plugin hook has a 10 s timeout (§8.7). The bound is in bytes, not time, so the result does not depend on machine speed.
 
@@ -251,7 +251,7 @@ Build order **(operator)**: steps 1-2, then step 4, then step 3. The work graph 
 
 **(author)** The first runners: `cargo test` (libtest output), `pytest` and `go test`. Others (`cargo nextest`, `jest`, `vitest`, `mocha`, `rspec`) wait until these three are measured (O§13).
 
-Each runner view is a blacklist **(lead)**: it hides only the noise forms listed in its row, and keeps every other line, in order. Thus `--nocapture` output, `note:` lines, `error: test failed, to rerun pass …`, signal and crash text (`process didn't exit successfully`, `SIGSEGV`, `panicked at`), compile errors and warnings all stay. A hidden form must match the whole line.
+Each runner view is a blacklist **(lead)**: it hides only the noise forms listed in its row, and keeps every other line, in order. Thus `--nocapture` output, `note:` lines, `error: test failed, to rerun pass …`, signal and crash text (`process didn't exit successfully`, `SIGSEGV`, `panicked at`), compile errors and warnings all stay. A hidden form must match the whole line. In the hidden forms, `\s` is an ASCII space or tab, and a line that ends in CR matches no form.
 
 A runner view is tried when a segment of the command names the runner, and it is used only when the text has the runner's summary. The command picks the parser; the output confirms it. A wrapper segment `make test`, `just test`, `npm test`, `pnpm test` or `yarn test` tries the three runners in the table's order.
 
@@ -263,7 +263,7 @@ A runner view is tried when a segment of the command names the runner, and it is
 
 **Failure section** of each runner: the lines that a view keeps whole for each failed test.
 
-- libtest: the line `test <name> ... FAILED`, the `---- <name> stdout ----` block to the next `---- ` header or `failures:` line, and the `failures:` name list. None of these match a hidden form.
+- libtest: the line `test <name> ... FAILED`, the `---- <name> stdout ----` block to the next `---- ` header or `failures:` line, and the `failures:` name list. No hidden form applies to a line inside a failure section, also when the line has a hidden form (trybuild output, a test that runs cargo), because O-C9 keeps it. A libtest test binary's hidden test lines end at its `test result:` line or at the next cargo binary line `^\s+(Running|Doc-tests) `, so a binary that crashed before its summary gets its own count line.
 - pytest: the `FAILURES` and `ERRORS` sections and the `short test summary info` section, to the next `=`-line header. None of these match a hidden form.
 - go test: every line from the test's `=== RUN <name>` to its `--- FAIL: <name>` line and the indented lines after it, including all output lines that the rules below give to that test.
 
@@ -278,7 +278,7 @@ A runner view is tried when a segment of the command names the runner, and it is
 
 ### 7.7 Kind views
 
-**(author)** Only for a text that is still over the threshold after steps 1-3. Each replaces the head-and-tail view, which can cut through the part that matters. Each stays within `VIEW_CAP_BYTES` (`crates/zygo-results/src/view.rs:6`, 8 KiB). When a kind view cannot fit its first unit, it gives "no change" and step 5 runs.
+**(author)** Only for a text that is still over the threshold after steps 1-3. Each replaces the head-and-tail view, which can cut through the part that matters. Each stays within `VIEW_CAP_BYTES` (`crates/zygo-results/src/view.rs:6`, 8 KiB) less the largest shaped marker (O§7.8), so the final view with its marker stays within `VIEW_CAP_BYTES` (O§8.2). When a kind view cannot fit its first unit, it gives "no change" and step 5 runs.
 
 - **diff** (`kind.rs:72-74`): first a list of the changed files, one line each, `<path> +<added> -<removed>`. Then whole file sections, in order, while they fit; the first section that does not fit ends the walk. Then the marker `[zygo: <n> file sections not shown]`, where `<n>` is the count of file sections not shown; the marker is written also when `<n>` is 0. Text before the first file section (for example a commit header) is not shown. Failure prevented: a head-and-tail cut hides which files changed.
 - **json**: the key outline of `result_tree` (`kind.rs:89-91`, depth 3 with array lengths), cut to half the cap; then the first lines of the text to fill the cap. A parse error (including serde_json's nesting limit) gives "no change".
@@ -591,4 +591,9 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | 2026-11-25 | O§6.6 | author's call | the sample block's key amounts did not sum to its total, and its Read key kept out more bytes than were read back; replaced with figures a store can produce (OS-8). |
 | 2026-11-25 | O§7.4 | author's call (pending operator ratification under O§15 item 2) | OS-12 review F4/F5: charset designations and ESC ESC left residue |
 | 2026-11-25 | O§7.7, O§8.1, O§8.2, O§8.3 item 4 | author's call (lead) | OS-29 plan open items: diff marker text, diff preamble not shown, log level words and line numbers, log with no level line, a `must_keep` line holds when a view line equals it or, in the log view, equals `<n>: ` followed by it, and an empty `must_keep` line is invalid (O§8.1 Bless, O§8.2, O§8.3 item 4; OS-29 review R3); `VIEW_CAP_BYTES` cite moved to `view.rs:6` |
+| 2026-11-25 | O§7.3 | author's call | kind sniffed on stdout: the combined text with a [stderr] part never sniffs as JSON, so the reuse protection was lost |
+| 2026-11-25 | O§7.7 | author's call (lead) | kind views left no room for the shaped marker, so a view near 8 KiB broke the O§8.2 view ≤ 8 KiB floor (OS-28 plan, OS-29 F3) |
 | 2026-11-25 | O§7.2, O§17 PO2 | author's call (lead) | PO2 live run on 2.1.332: stderr arrives merged into stdout; premise verified |
+| 2026-11-25 | O§7.6 | author's call (lead) | OS-30 review F1: failure sections can hold lines of a hidden form (trybuild, tests that run cargo); O-C9 keeps them |
+| 2026-11-25 | O§7.6 | author's call (lead) | OS-30 review F4: Unicode and CR whitespace matched the hidden forms; ASCII only hides less (O§15 item 2 decision record) |
+| 2026-11-25 | O§7.6 | author's call (lead) | OS-30 review F2: a crashed test binary's count absorbed the next binary's test lines; a cargo binary line now ends the group |
