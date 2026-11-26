@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use zygo_results::Kind;
 use zygo_results::kind::sniff;
 use zygo_results::shape::kind_view::kind_view;
+use zygo_results::shape::runner::libtest;
 use zygo_results::view::VIEW_CAP_BYTES;
 use zygo_results::shape::{self, clean::clean, command::parse, ShapeInput, Shaped, Shaper, Step, SHAPE_MAX_BYTES};
 use Step::{ColorCodesRemoved as Color, ProgressLinesRemoved as Progress, RepeatedLinesCounted as Counted};
@@ -255,4 +256,86 @@ fn small_diff_over_threshold_gets_no_kind_view() {
     let out = shape::run(&raw, &input(None, Kind::Diff, 1000));
     assert!(!out.steps.contains(&Step::DiffFilesListed), "{:?}", out.steps);
     assert!(out.size_view);
+}
+
+/// The O§7.2 raw text of an OS-19 case: stdout, then `[stderr]` and stderr when stderr is not empty.
+fn raw_text(dir: &str, name: &str) -> String {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/shaping").join(dir).join(name);
+    let read = |f: &str| String::from_utf8(std::fs::read(p.join(f)).unwrap()).unwrap();
+    let (so, se) = (read("stdout"), read("stderr"));
+    if se.is_empty() {
+        return so;
+    }
+    let nl = if !so.is_empty() && !so.ends_with('\n') { "\n" } else { "" };
+    format!("{so}{nl}[stderr]\n{se}")
+}
+
+#[test]
+fn runner_view_runs_below_the_threshold() {
+    // O§7.3 step 3 has no threshold; O§7.6 dispatch by the command, wrapper order
+    let raw = raw_text("libtest", "passing");
+    for cmd in ["cargo test", "cargo +nightly test", "cargo test || true", "make test", "just test"] {
+        let out = shape::run(&raw, &input(Some(cmd), Kind::Text, T));
+        let want = Shaped { text: libtest(&raw).unwrap().0, steps: vec![Step::PassedTestsHidden, Step::BuildProgressHidden], shaper: Some(Shaper::Libtest), size_view: false };
+        assert_eq!(out, want, "{cmd}");
+    }
+}
+
+#[test]
+fn runner_view_needs_a_runner_in_the_command() {
+    // O§7.6 "tried when a segment of the command names the runner"
+    let raw = raw_text("libtest", "passing");
+    for cmd in [None, Some("cargo build"), Some("ls")] {
+        let out = shape::run(&raw, &input(cmd, Kind::Text, T));
+        assert_eq!(out, Shaped { text: raw.clone(), steps: vec![], shaper: None, size_view: false }, "{cmd:?}");
+    }
+}
+
+#[test]
+fn runner_view_follows_clean() {
+    // O§7.3: step 3 reads the text after step 1, so a colored summary confirms
+    let raw: String = (0..40).map(|i| format!("test t::case_{i:03} ... \x1b[32mok\x1b[0m\n")).collect::<String>()
+        + "\ntest result: \x1b[32mok\x1b[0m. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+    let out = shape::run(&raw, &input(Some("cargo test"), Kind::Text, T));
+    assert_eq!(out.text, "[zygo: 40 passed and 0 ignored test lines hidden]\n\ntest result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n");
+    assert_eq!(out.steps, vec![Color, Step::PassedTestsHidden]);
+    assert_eq!(out.shaper, Some(Shaper::Libtest));
+    assert!(!out.size_view);
+}
+
+#[test]
+fn runner_view_under_the_threshold_skips_steps_4_and_5() {
+    // O§7.3 item 4: the kind view runs only when the text after steps 1-3 is still over the threshold
+    let raw = raw_text("libtest", "passing");
+    assert!(raw.len() > 1000);
+    let out = shape::run(&raw, &input(Some("cargo test"), Kind::Log, 1000));
+    assert_eq!(out.text, libtest(&raw).unwrap().0);
+    assert_eq!(out.steps, vec![Step::PassedTestsHidden, Step::BuildProgressHidden]);
+    assert_eq!(out.shaper, Some(Shaper::Libtest));
+    assert!(!out.size_view);
+}
+
+#[test]
+fn kind_view_runs_on_the_runner_view_when_still_over() {
+    // O§7.3 items 3-4; O§7.7 log line numbers count lines of the text after steps 1-3
+    let log = |i: usize| if i == 35 { format!("2026-11-25 10:{i:02}:00 ERROR boom\n") } else { format!("2026-11-25 10:{i:02}:00 INFO step {i}\n") };
+    let raw: String = (1..=30).map(log).collect::<String>()
+        + &(0..200).map(|i| format!("test t::case_{i:03} ... ok\n")).collect::<String>()
+        + "test result: ok. 200 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+        + &(31..=60).map(log).collect::<String>();
+    let runner = libtest(&raw).unwrap().0;
+    let out = shape::run(&raw, &input(Some("cargo test"), Kind::Log, 100));
+    assert_eq!(out.text, kind_view(&runner, Kind::Log, VIEW_CAP_BYTES).unwrap().0);
+    assert!(out.text.lines().any(|l| l == "37: 2026-11-25 10:35:00 ERROR boom"), "{:?}", out.text);
+    assert_eq!(out.steps, vec![Step::PassedTestsHidden, Step::LogErrorsKept]);
+    assert_eq!(out.shaper, Some(Shaper::Log));
+    assert!(out.size_view);
+}
+
+#[test]
+fn compile_error_gets_no_runner_view() {
+    // O§8.2 last paragraph: no summary, no change
+    let raw = raw_text("libtest", "compile-error");
+    let out = shape::run(&raw, &input(Some("cargo test"), Kind::Text, T));
+    assert_eq!(out, Shaped { text: raw.clone(), steps: vec![], shaper: None, size_view: false });
 }
