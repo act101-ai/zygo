@@ -136,21 +136,21 @@ fn commands_without_a_printer_are_not_file_printers() {
 #[test]
 fn stored_name_and_runners() {
     // O§7.2, O§7.6
-    const ALL: &[Runner] = &[Libtest, Pytest, Gotest];
+    const WRAPPER: &[Runner] = &[Libtest, Gotest]; // O§7.6: a wrapper tries no pytest view
     let cases: &[(&str, &str, &[Runner])] = &[
         ("cargo test || true", "cargo test", &[Libtest]),
         ("cd x && git diff", "git diff", &[]),
         ("cargo +nightly test", "cargo test", &[Libtest]),
-        ("make test", "make", ALL),
+        ("make test", "make", WRAPPER),
         ("FOO=1 env time python3 -m pytest", "python3", &[Pytest]),
         ("/usr/local/bin/go test ./...", "go test", &[Gotest]),
         ("frobnicate --all", "other", &[]),
         ("", "other", &[]),
-        ("just test", "just", ALL),
-        ("npm test", "npm test", ALL),
-        ("pnpm test", "pnpm test", ALL),
-        ("yarn test", "yarn test", ALL),
-        ("make -C sub test", "make", ALL),
+        ("just test", "just", WRAPPER),
+        ("npm test", "npm test", WRAPPER),
+        ("pnpm test", "pnpm test", WRAPPER),
+        ("yarn test", "yarn test", WRAPPER),
+        ("make -C sub test", "make", WRAPPER),
         ("pytest -x", "pytest", &[Pytest]),
         ("py.test", "other", &[Pytest]),
         ("python -m pytest", "python", &[Pytest]),
@@ -160,7 +160,7 @@ fn stored_name_and_runners() {
         ("git frobnicate", "git", &[]),
         ("ls && cargo test", "cargo test", &[Libtest]), // runner segment wins
         ("cargo test && go test", "cargo test", &[Libtest, Gotest]),
-        ("make test && cargo test", "make", ALL), // union, no repeats
+        ("make test && cargo test", "make", WRAPPER), // union, no repeats
         ("sh -c 'cargo test'", "other", &[]),     // name and runners: top level only
         ("cargo nextest run", "cargo nextest", &[]),
     ];
