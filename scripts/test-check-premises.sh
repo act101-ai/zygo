@@ -141,20 +141,20 @@ run "$D"
 expect_ok
 case "$OUT" in *' PW15-bash PW15-tool PW15-slash '*) ;; *) fail "ok line lacks ' PW15-bash PW15-tool PW15-slash '" ;; esac
 
-CASE="Codex header and PC1 row"
+CASE="Codex header and PC99 row"
 D=$(mk pc1)
 evidence "$D"
 add_header "$D" 'Codex: 0.172.0'
-add_row "$D" "$(row PC1 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
 run "$D"
 expect_ok
-case "$OUT" in *' PC1)'*) ;; *) fail "ok line lacks ' PC1)'" ;; esac
+case "$OUT" in *' PC99)'*) ;; *) fail "ok line lacks ' PC99)'" ;; esac
 
 CASE="a failed PC row needs no note"
 D=$(mk pc1failed)
 evidence "$D"
 add_header "$D" 'Codex: 0.172.0'
-add_row "$D" "$(row PC1 Codex 0.172.0 failed fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 Codex 0.172.0 failed fixtures/codex/pc1.txt)"
 run "$D"
 expect_ok
 
@@ -175,23 +175,23 @@ expect_fail "PW15: expected exactly one row, found 0"
 CASE="an agent with no header line"
 D=$(mk cursor)
 evidence "$D"
-add_row "$D" "$(row PC1 Cursor 1.0.0 verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 Cursor 1.0.0 verified fixtures/codex/pc1.txt)"
 run "$D"
-expect_fail "PC1: agent 'Cursor' has no header line 'Cursor: <version>' before the first '## ' of docs/premises.md"
+expect_fail "PC99: agent 'Cursor' has no header line 'Cursor: <version>' before the first '## ' of docs/premises.md"
 
 CASE="Codex below its header"
 D=$(mk codexlow)
 evidence "$D"
 add_header "$D" 'Codex: 0.172.0'
-add_row "$D" "$(row PC1 Codex 0.171.9 verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 Codex 0.171.9 verified fixtures/codex/pc1.txt)"
 run "$D"
-expect_fail "PC1: version '0.171.9' is below the header's '0.172.0' for Codex, or not a dotted number"
+expect_fail "PC99: version '0.171.9' is below the header's '0.172.0' for Codex, or not a dotted number"
 
 CASE="Codex above its header"
 D=$(mk codexhigh)
 evidence "$D"
 add_header "$D" 'Codex: 0.172.0'
-add_row "$D" "$(row PC1 Codex 0.173.0 verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 Codex 0.173.0 verified fixtures/codex/pc1.txt)"
 run "$D"
 expect_ok
 
@@ -205,7 +205,7 @@ expect_fail "P6b: version '1.2.4' differs from the header's '1.2.3' for act-lite
 CASE="tmux with one letter"
 D=$(mk tmuxletter)
 evidence "$D"
-add_row "$D" "$(row PC2 tmux 3.2a verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC98 tmux 3.2a verified fixtures/codex/pc1.txt)"
 run "$D"
 expect_ok
 
@@ -213,9 +213,9 @@ CASE="trivial evidence"
 D=$(mk trivial)
 evidence "$D"
 add_header "$D" 'Codex: 0.172.0'
-add_row "$D" "$(row PC1 Codex 0.172.0 verified fixtures/codex/empty.json)"
+add_row "$D" "$(row PC99 Codex 0.172.0 verified fixtures/codex/empty.json)"
 run "$D"
-expect_fail "PC1: evidence path fixtures/codex/empty.json is missing, not a regular file, or trivial"
+expect_fail "PC99: evidence path fixtures/codex/empty.json is missing, not a regular file, or trivial"
 
 CASE="PW15-bash gets the row checks"
 D=$(mk pw15bash)
@@ -259,16 +259,16 @@ expect_fail "docs/premises.md:$(lnof "$D" "$R"): row id '' $ID_FORM"
 CASE="a row with no blank after the first bar"
 D=$(mk nobar)
 evidence "$D"
-add_row "$D" '|PC9 | Test row | tmux | 3.2 | 2026-11-25 | verified | `fixtures/codex/empty.json` |'
+add_row "$D" '|PC97 | Test row | tmux | 3.2 | 2026-11-25 | verified | `fixtures/codex/empty.json` |'
 run "$D"
-expect_fail "PC9: evidence path fixtures/codex/empty.json is missing, not a regular file, or trivial"
+expect_fail "PC97: evidence path fixtures/codex/empty.json is missing, not a regular file, or trivial"
 
 CASE="a row with a blank before the first bar"
 D=$(mk lead)
 evidence "$D"
-add_row "$D" ' | PC9 | Test row | tmux | 3.2 | 2026-11-25 | verified | `fixtures/codex/empty.json` |'
+add_row "$D" ' | PC97 | Test row | tmux | 3.2 | 2026-11-25 | verified | `fixtures/codex/empty.json` |'
 run "$D"
-expect_fail "PC9: evidence path fixtures/codex/empty.json is missing, not a regular file, or trivial"
+expect_fail "PC97: evidence path fixtures/codex/empty.json is missing, not a regular file, or trivial"
 
 CASE="an Id with an inner space"
 D=$(mk innerspace)
@@ -302,10 +302,10 @@ expect_fail "PW15-bash: expected exactly one row, found 2"
 CASE="a header line after the first ##"
 D=$(mk latehdr)
 evidence "$D"
-add_row "$D" "$(row PC1 Cursor 1.0 verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 Cursor 1.0 verified fixtures/codex/pc1.txt)"
 printf '\n%s\n' 'Cursor: 1.0' >> "$D/docs/premises.md"
 run "$D"
-expect_fail "PC1: agent 'Cursor' has no header line 'Cursor: <version>' before the first '## ' of docs/premises.md"
+expect_fail "PC99: agent 'Cursor' has no header line 'Cursor: <version>' before the first '## ' of docs/premises.md"
 
 CASE="a header value with extra words"
 D=$(mk hdrwords)
@@ -336,37 +336,37 @@ expect_fail "Q7: expected exactly one row, found 2"
 
 CASE="a results-like row in a later table"
 D=$(mk late)
-printf '\n%s\n' '| Name | Value |' '|---|---|' '| PC5 | x |' >> "$D/docs/premises.md"
+printf '\n%s\n' '| Name | Value |' '|---|---|' '| PC95 | x |' >> "$D/docs/premises.md"
 run "$D"
-expect_fail "docs/premises.md:$(lnof "$D" '| PC5 | x |'): row 'PC5' is outside the Results table"
+expect_fail "docs/premises.md:$(lnof "$D" '| PC95 | x |'): row 'PC95' is outside the Results table"
 
 CASE="an empty Agent cell"
 D=$(mk noagent)
 evidence "$D"
-add_row "$D" "$(row PC1 '' 3.2 verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 '' 3.2 verified fixtures/codex/pc1.txt)"
 run "$D"
-expect_fail "PC1: the Agent cell is empty"
+expect_fail "PC99: the Agent cell is empty"
 
 CASE="an empty Version cell"
 D=$(mk nover)
 evidence "$D"
-add_row "$D" "$(row PC1 tmux '' verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 tmux '' verified fixtures/codex/pc1.txt)"
 run "$D"
-expect_fail "PC1: the Version cell is empty"
+expect_fail "PC99: the Version cell is empty"
 
 CASE="empty Agent and Version cells"
 D=$(mk noagentver)
 evidence "$D"
-add_row "$D" "$(row PC1 '' '' verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 '' '' verified fixtures/codex/pc1.txt)"
 run "$D"
-expect_fail "PC1: the Agent cell is empty"
+expect_fail "PC99: the Agent cell is empty"
 
 CASE="a result that is not verified or failed"
 D=$(mk badresult)
 evidence "$D"
-add_row "$D" "$(row PC1 tmux 3.2 passed fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 tmux 3.2 passed fixtures/codex/pc1.txt)"
 run "$D"
-expect_fail "PC1: result 'passed' is not verified or failed"
+expect_fail "PC99: result 'passed' is not verified or failed"
 
 # hdr_twice <dir> <first> <second>: inserts both header lines after the `tmux: ` line, in that order.
 # PC-13: it first drops the copy's real `Codex: ` header lines before the first `## ` (since PC-12).
@@ -380,7 +380,7 @@ CASE="the same header line twice"
 D=$(mk hdrsame)
 evidence "$D"
 hdr_twice "$D" 'Codex: 0.172.0' 'Codex: 0.172.0'
-add_row "$D" "$(row PC1 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
 run "$D"
 expect_ok
 
@@ -388,14 +388,14 @@ CASE="a second header line with another version"
 D=$(mk hdrconflict)
 evidence "$D"
 hdr_twice "$D" 'Codex: 0.172.0' 'Codex: 0.100.0'
-add_row "$D" "$(row PC1 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
 run "$D"
 expect_fail "docs/premises.md:$(grep -nx 'Codex: 0\.100\.0' "$D/docs/premises.md" | cut -d: -f1): header 'Codex: 0.100.0' differs from the first header line 'Codex: 0.172.0'"
 
 CASE="extra blanks at the ends of cells"
 D=$(mk blanks)
 evidence "$D"
-add_row "$D" '| PC1   | Test row |   tmux   |   3.2   |   2026-11-25   |   verified   | `fixtures/codex/pc1.txt` |'
+add_row "$D" '| PC99   | Test row |   tmux   |   3.2   |   2026-11-25   |   verified   | `fixtures/codex/pc1.txt` |'
 run "$D"
 expect_ok
 
@@ -403,7 +403,7 @@ CASE="a header value with blanks at its end"
 D=$(mk hdrblanks)
 evidence "$D"
 add_header "$D" 'Codex: 0.172.0   '
-add_row "$D" "$(row PC1 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
 run "$D"
 expect_ok
 
@@ -412,30 +412,30 @@ NOHDR="has no header line 'Cursor: <version>' before the first '## ' of docs/pre
 CASE="a date cell with a backslash sequence"
 D=$(mk datebs)
 evidence "$D"
-add_row "$D" '| PC1 | Test row | tmux | 3.2 | 2026-11-2\0065 | verified | `fixtures/codex/pc1.txt` |'
+add_row "$D" '| PC99 | Test row | tmux | 3.2 | 2026-11-2\0065 | verified | `fixtures/codex/pc1.txt` |'
 run "$D"
-expect_fail "PC1: date '2026-11-2\0065' is not YYYY-MM-DD"
+expect_fail "PC99: date '2026-11-2\0065' is not YYYY-MM-DD"
 
 CASE="a result cell with a backslash sequence"
 D=$(mk resultbs)
 evidence "$D"
-add_row "$D" '| PC1 | Test row | tmux | 3.2 | 2026-11-25 | verifie\0144 | `fixtures/codex/pc1.txt` |'
+add_row "$D" '| PC99 | Test row | tmux | 3.2 | 2026-11-25 | verifie\0144 | `fixtures/codex/pc1.txt` |'
 run "$D"
-expect_fail "PC1: result 'verifie\0144' is not verified or failed"
+expect_fail "PC99: result 'verifie\0144' is not verified or failed"
 
 CASE="a version cell with a backslash sequence"
 D=$(mk verbs)
 evidence "$D"
 add_header "$D" 'Codex: 0.172.0'
-add_row "$D" "$(row PC1 Codex '0.172.\060' verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 Codex '0.172.\060' verified fixtures/codex/pc1.txt)"
 run "$D"
-expect_fail "PC1: version '0.172.\060' is below the header's '0.172.0' for Codex, or not a dotted number"
+expect_fail "PC99: version '0.172.\060' is below the header's '0.172.0' for Codex, or not a dotted number"
 
 CASE="an Item cell with a backslash n"
 D=$(mk itembn)
 evidence "$D"
 add_header "$D" 'Codex: 0.172.0'
-add_row "$D" '| PC1 | Codex writes `a\nb` | Codex | 0.172.0 | 2026-11-25 | verified | `fixtures/codex/pc1.txt` |'
+add_row "$D" '| PC99 | Codex writes `a\nb` | Codex | 0.172.0 | 2026-11-25 | verified | `fixtures/codex/pc1.txt` |'
 run "$D"
 expect_ok
 
@@ -443,7 +443,7 @@ CASE="an Item cell with a backslash c"
 D=$(mk itembc)
 evidence "$D"
 add_header "$D" 'Codex: 0.172.0'
-add_row "$D" '| PC1 | Codex reads `\c` | Codex | 0.172.0 | 2026-11-25 | verified | `fixtures/codex/pc1.txt` |'
+add_row "$D" '| PC99 | Codex reads `\c` | Codex | 0.172.0 | 2026-11-25 | verified | `fixtures/codex/pc1.txt` |'
 run "$D"
 expect_ok
 
@@ -452,7 +452,7 @@ D=$(mk hdrtab)
 evidence "$D"
 H=$(printf 'Codex: 0.172.0\tjunk')
 add_header "$D" "$H"
-add_row "$D" "$(row PC1 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
 run "$D"
 expect_fail "docs/premises.md:$(lnof "$D" "$H"): the value of a header line holds a tab"
 
@@ -461,27 +461,27 @@ D=$(mk hdrfence)
 evidence "$D"
 add_lines "$D" '```text' 'Cursor: 1.0' '```'
 [ "$(grep -cx 'Cursor: 1\.0' "$D/docs/premises.md")" -eq 1 ] || fail "planted change did not apply"
-add_row "$D" "$(row PC1 Cursor 1.0 verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 Cursor 1.0 verified fixtures/codex/pc1.txt)"
 run "$D"
-expect_fail "PC1: agent 'Cursor' $NOHDR"
+expect_fail "PC99: agent 'Cursor' $NOHDR"
 
 CASE="a header line in a tilde fence"
 D=$(mk hdrtilde)
 evidence "$D"
 add_lines "$D" '~~~' 'Cursor: 1.0' '~~~'
 [ "$(grep -cx 'Cursor: 1\.0' "$D/docs/premises.md")" -eq 1 ] || fail "planted change did not apply"
-add_row "$D" "$(row PC1 Cursor 1.0 verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 Cursor 1.0 verified fixtures/codex/pc1.txt)"
 run "$D"
-expect_fail "PC1: agent 'Cursor' $NOHDR"
+expect_fail "PC99: agent 'Cursor' $NOHDR"
 
 CASE="a header line in an HTML comment"
 D=$(mk hdrcomment)
 evidence "$D"
 add_lines "$D" '<!--' 'Cursor: 1.0' '-->'
 [ "$(grep -cx 'Cursor: 1\.0' "$D/docs/premises.md")" -eq 1 ] || fail "planted change did not apply"
-add_row "$D" "$(row PC1 Cursor 1.0 verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 Cursor 1.0 verified fixtures/codex/pc1.txt)"
 run "$D"
-expect_fail "PC1: agent 'Cursor' $NOHDR"
+expect_fail "PC99: agent 'Cursor' $NOHDR"
 
 CASE="no ## line"
 D=$(mk noh2)
@@ -500,7 +500,7 @@ CASE="an escaped pipe in a cell"
 D=$(mk escpipe)
 evidence "$D"
 add_header "$D" 'Codex: 0.172.0'
-add_row "$D" '| PC1 | Codex pipes a \| b | Codex | 0.172.0 | 2026-11-25 | verified | `fixtures/codex/pc1.txt` |'
+add_row "$D" '| PC99 | Codex pipes a \| b | Codex | 0.172.0 | 2026-11-25 | verified | `fixtures/codex/pc1.txt` |'
 run "$D"
 expect_ok
 
@@ -508,15 +508,15 @@ CASE="a tab at the end of a cell"
 D=$(mk celltab)
 evidence "$D"
 add_header "$D" 'Codex: 0.172.0'
-add_row "$D" "$(printf '| PC1 | Test row | Codex\t| 0.172.0 | 2026-11-25 | verified | `fixtures/codex/pc1.txt` |')"
+add_row "$D" "$(printf '| PC99 | Test row | Codex\t| 0.172.0 | 2026-11-25 | verified | `fixtures/codex/pc1.txt` |')"
 run "$D"
 expect_ok
 
 CASE="an evidence path with a .. component"
 D=$(mk dotdot)
-add_row "$D" "$(row PC1 tmux 3.2 verified docs/../docs/premises.md)"
+add_row "$D" "$(row PC99 tmux 3.2 verified docs/../docs/premises.md)"
 run "$D"
-expect_fail "PC1: evidence path docs/../docs/premises.md is absolute or holds a '..' component"
+expect_fail "PC99: evidence path docs/../docs/premises.md is absolute or holds a '..' component"
 
 # PC-9 round 2 (F1): the last component is a regular file, but a directory on the path is a symlink
 # to a folder outside the tree; scripts/premises/ext is outside the forbidden-content scan scope.
@@ -525,32 +525,32 @@ D=$(mk symdir)
 mkdir -p "$T/symdir_out"
 echo 'outside evidence' > "$T/symdir_out/ev.sh"
 ln -s "$T/symdir_out" "$D/scripts/premises/ext"
-add_row "$D" "$(row PC1 tmux 3.2 verified scripts/premises/ext/ev.sh)"
+add_row "$D" "$(row PC99 tmux 3.2 verified scripts/premises/ext/ev.sh)"
 run "$D"
 INREPO='is not a plain path inside the repository (a symlink, `.`/`//` part, or unreadable directory)'
-expect_fail "PC1: evidence path scripts/premises/ext/ev.sh $INREPO"
+expect_fail "PC99: evidence path scripts/premises/ext/ev.sh $INREPO"
 
 # PC-9 round 3 (G4): a '.' or '//' part in the directory is refused too, with the same message.
 CASE="an evidence path with a . part"
 D=$(mk dotpart)
 evidence "$D"
-add_row "$D" "$(row PC1 tmux 3.2 verified fixtures/./codex/pc1.txt)"
+add_row "$D" "$(row PC99 tmux 3.2 verified fixtures/./codex/pc1.txt)"
 run "$D"
-expect_fail "PC1: evidence path fixtures/./codex/pc1.txt $INREPO"
+expect_fail "PC99: evidence path fixtures/./codex/pc1.txt $INREPO"
 
 CASE="an evidence path with a // part"
 D=$(mk slashpart)
 evidence "$D"
-add_row "$D" "$(row PC1 tmux 3.2 verified fixtures//codex/pc1.txt)"
+add_row "$D" "$(row PC99 tmux 3.2 verified fixtures//codex/pc1.txt)"
 run "$D"
-expect_fail "PC1: evidence path fixtures//codex/pc1.txt $INREPO"
+expect_fail "PC99: evidence path fixtures//codex/pc1.txt $INREPO"
 
 CASE="a joint agent with no header for the second"
 D=$(mk joint)
 evidence "$D"
-add_row "$D" "$(row PC1 'Claude Code + Cursor' '2.1.328 + 1.0' verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 'Claude Code + Cursor' '2.1.328 + 1.0' verified fixtures/codex/pc1.txt)"
 run "$D"
-expect_fail "PC1: agent 'Cursor' $NOHDR"
+expect_fail "PC99: agent 'Cursor' $NOHDR"
 
 CASE="a forbidden name only in the verbatim schema"
 D=$(mk names_verbatim)
@@ -567,40 +567,40 @@ expect_fail "forbidden name from N2_FORBIDDEN_NAMES: fixtures/codex/other.txt:1"
 CASE="a row indented four blanks"
 D=$(mk indent4)
 evidence "$D"
-add_row "$D" '    | PC9 | Test row | tmux | 3.2 | 2026-11-25 | verified | `fixtures/codex/empty.json` |'
+add_row "$D" '    | PC97 | Test row | tmux | 3.2 | 2026-11-25 | verified | `fixtures/codex/empty.json` |'
 run "$D"
 expect_ok
-case "$OUT" in *' PC9'*) fail "ok line names PC9" ;; esac
+case "$OUT" in *' PC97'*) fail "ok line names PC97" ;; esac
 
 CASE="a row indented with a tab"
 D=$(mk indenttab)
 evidence "$D"
-add_row "$D" "$(printf '\t| PC9 | Test row | tmux | 3.2 | 2026-11-25 | verified | `fixtures/codex/empty.json` |')"
+add_row "$D" "$(printf '\t| PC97 | Test row | tmux | 3.2 | 2026-11-25 | verified | `fixtures/codex/empty.json` |')"
 run "$D"
 expect_ok
-case "$OUT" in *' PC9'*) fail "ok line names PC9" ;; esac
+case "$OUT" in *' PC97'*) fail "ok line names PC97" ;; esac
 
 CASE="a row indented three blanks"
 D=$(mk indent3)
 evidence "$D"
-add_row "$D" '   | PC9 | Test row | tmux | 3.2 | 2026-11-25 | verified | `fixtures/codex/empty.json` |'
+add_row "$D" '   | PC97 | Test row | tmux | 3.2 | 2026-11-25 | verified | `fixtures/codex/empty.json` |'
 run "$D"
-expect_fail "PC9: evidence path fixtures/codex/empty.json is missing, not a regular file, or trivial"
+expect_fail "PC97: evidence path fixtures/codex/empty.json is missing, not a regular file, or trivial"
 
 CASE="a header line indented four blanks"
 D=$(mk hdrindent4)
 evidence "$D"
 add_header "$D" '    Cursor: 1.0'
-add_row "$D" "$(row PC1 Cursor 1.0 verified fixtures/codex/pc1.txt)"
+add_row "$D" "$(row PC99 Cursor 1.0 verified fixtures/codex/pc1.txt)"
 run "$D"
-expect_fail "PC1: agent 'Cursor' $NOHDR"
+expect_fail "PC99: agent 'Cursor' $NOHDR"
 
 # Review round 1 (PC-8).
 CASE="an indented line in the middle of the Results table"
 D=$(mk indentmid)
-L='    | PC9 | indented |' awk '{ print } /^\| Q7 \|/ { print ENVIRON["L"] }' "$D/docs/premises.md" > "$D/docs/premises.md.new" &&
+L='    | PC97 | indented |' awk '{ print } /^\| Q7 \|/ { print ENVIRON["L"] }' "$D/docs/premises.md" > "$D/docs/premises.md.new" &&
     mv "$D/docs/premises.md.new" "$D/docs/premises.md"
-[ "$(grep -c '^    | PC9 |' "$D/docs/premises.md")" -eq 1 ] || fail "planted change did not apply"
+[ "$(grep -c '^    | PC97 |' "$D/docs/premises.md")" -eq 1 ] || fail "planted change did not apply"
 run "$D"
 expect_fail "docs/premises.md:$(lnof "$D" "$(grep '^| PW6 |' "$D/docs/premises.md")"): row 'PW6' is outside the Results table"
 

@@ -4,6 +4,7 @@ Checks on the real pinned agents, one dated result per check. A pinned agent ver
 
 Claude Code: 2.1.328 or later
 OpenCode: 1.18.16 or later
+Codex: 0.172.0 or later
 
 ## Method
 
@@ -193,3 +194,4 @@ PATH="$HOME/.opencode/bin:$PATH" sh scripts/premises/live-attribution.sh [login 
 | FIX21-BARE-ZYGO | `zygo claude --passthrough -- --bare` (§12.3) | Claude Code | 2.1.330 | 2026-11-22 | recorded | Exit 2: "zygo: --passthrough does not work with --bare: bare mode reads only API keys" |
 | FIX21-BARE | Claude Code alone, `--bare` with zygo's two attribution keys in `--settings`, commits on the stored login | Claude Code | 2.1.330 | 2026-11-22 | fail: cannot sign in | Exit 1, stdout "Not logged in · Please run /login": bare mode reads only `ANTHROPIC_API_KEY` or an `apiKeyHelper` (`claude --help`). No request was sent. `fixtures/claude-code/live/fix21-bare.json`; FIX21-MOCK covers bare mode |
 | FIX21-MOCK | Claude Code's commit attribution text is in no request of a zygo session, with or without `--bare` (§8.5) | Claude Code | 2.1.330 | 2026-11-22 | pass | Linux; mock upstream. Control (Claude Code alone): 1 of 2 requests, the main one (12 tools), holds the commit attribution reminder with the noreply address in angle brackets; control `--bare` (recorded): 0 of 2, its main request has Bash, Edit and Read; zygo: 0 of 1 (12 tools, Bash among them); zygo `--bare`: 0 of 1 (9 tools, Bash among them). `fixtures/claude-code/live/fix21-mock.json` |
+| LC-CX1 | Codex's own update notice against a real newer Codex release: with no `check_for_update_on_startup` key, a TUI start shows the notice text (K§6.3.7 PC16, K§6.5.4) | Codex | — | — | not run: owner-run (K§6.3.7 PC16) | No script yet. Owner-run only, never by an agent and never in CI. PC16 (`docs/premises.md`) measured the release-source request against the mock: inferred `api.github.com:443`, path not visible. |
