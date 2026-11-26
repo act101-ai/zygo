@@ -26,6 +26,9 @@ type Key = (u64, u64);
 const CHAT_TEXT: Key = (0, u64::MAX);
 /// The held count of a chat tool call before its id, name and argument bytes: an empty call is not free.
 const CALL_COST: usize = 64;
+/// The most `partial_json` bytes in one `input_json_delta` that `message_events`, the chat mapper and the null-restore
+/// filter send (K§6.4.3 stream obligation 8).
+pub const INPUT_DELTA_MAX: usize = 64 << 10;
 
 struct Open {
     key: Key,
@@ -332,12 +335,12 @@ impl StreamMapper {
         }
     }
 
-    /// The held chat tool calls, each as one whole `tool_use` block.
+    /// The held chat tool calls, each as one whole `tool_use` block; its arguments in `input_deltas` pieces.
     fn calls_out(&mut self, out: &mut Vec<SseEvent>) {
         for c in std::mem::take(&mut self.calls) {
             self.open((1, c.index), json!({"type":"tool_use","id":c.id,"name":c.name,"input":{}}), out);
-            if !c.args.is_empty() {
-                self.delta(json!({"type":"input_json_delta","partial_json":c.args}), out);
+            for d in input_deltas(&c.args) {
+                self.delta(d, out);
             }
             self.close(out);
         }
@@ -432,7 +435,12 @@ impl StreamMapper {
     }
 }
 
-/// A Messages body as the Messages SSE events that build it: one delta per block, the usage on `message_delta`.
+/// A Messages body as the Messages SSE events that build it: one delta per text or thinking block; a tool_use input
+/// as compact JSON in `input_json_delta` pieces of at most `INPUT_DELTA_MAX` bytes, cut on a char boundary, so that
+/// each event stays within `HOLD_MAX` (K§6.4.3 stream obligation 8); any other block (of another type or with no
+/// `type`) goes out whole in its content_block_start with no delta; the usage on message_delta. The Responses encoder
+/// keeps redacted_thinking from that arm and drops server-tool and unknown blocks; a Messages client never reaches
+/// it, because its translated bodies hold only text, thinking and tool_use.
 pub fn message_events(m: &Value) -> Vec<SseEvent> {
     let mut start = m.clone();
     start["content"] = json!([]);
@@ -450,9 +458,10 @@ pub fn message_events(m: &Value) -> Vec<SseEvent> {
             }
             Some("tool_use") => {
                 let input = b.get("input").map_or_else(|| "{}".into(), Value::to_string);
-                (json!({"type":"tool_use","id":b["id"],"name":b["name"],"input":{}}), vec![json!({"type":"input_json_delta","partial_json":input})])
+                (json!({"type":"tool_use","id":b["id"],"name":b["name"],"input":{}}), input_deltas(&input))
             }
-            _ => (json!({"type":"text","text":""}), vec![json!({"type":"text_delta","text":s(b, "text").unwrap_or("")})]),
+            Some("text") => (json!({"type":"text","text":""}), vec![json!({"type":"text_delta","text":s(b, "text").unwrap_or("")})]),
+            _ => (b.clone(), vec![]),
         };
         out.push(ev("content_block_start", json!({"type":"content_block_start","index":i,"content_block":first})));
         out.extend(deltas.into_iter().map(|d| ev("content_block_delta", json!({"type":"content_block_delta","index":i,"delta":d}))));
@@ -461,6 +470,19 @@ pub fn message_events(m: &Value) -> Vec<SseEvent> {
     out.push(ev("message_delta", json!({"type":"message_delta","delta":{"stop_reason":m["stop_reason"],"stop_sequence":null},"usage":m["usage"]})));
     out.push(ev("message_stop", json!({"type":"message_stop"})));
     out
+}
+
+/// `partial_json` as `input_json_delta` values of at most `INPUT_DELTA_MAX` bytes each, cut on a char boundary (a
+/// char has at most 4 bytes, so no piece is empty); none for an empty string (K§6.4.3 stream obligation 8).
+pub(super) fn input_deltas(partial_json: &str) -> Vec<Value> {
+    let mut d = vec![];
+    let mut rest = partial_json;
+    while !rest.is_empty() {
+        let (p, r) = rest.split_at(rest.floor_char_boundary(INPUT_DELTA_MAX));
+        d.push(json!({"type":"input_json_delta","partial_json":p}));
+        rest = r;
+    }
+    d
 }
 
 fn ev(event: &str, data: Value) -> SseEvent {

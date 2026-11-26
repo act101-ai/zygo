@@ -24,6 +24,7 @@ use zygo_core::tokens::BYTES_PER_TOKEN;
 use zygo_redact::DeadlinePolicy;
 use zygo_usage::{RedactionCount, RequestRow};
 
+use crate::cache;
 use crate::errors::ZygoError;
 use crate::passthrough::CredentialType;
 use crate::pipeline::{Adjustment, ModelRoute, Pipeline, RequestCtx, ResponseCtx};
@@ -31,10 +32,10 @@ use crate::provider::{loopback, unavailable, Candidate};
 use crate::resolve::Resolved;
 use crate::server::App;
 use crate::session::{InFlight, SessionState};
-use crate::tee::{CacheSplit, ErrorCapture, SseLine, Tee, Ticket, Usage, UsageSink, COPY_MAX, ERROR_BODY_MAX};
+use crate::tee::{CacheSplit, ErrorCapture, SseLine, Tee, Ticket, Usage, UsageSink, COPY_MAX, ERROR_BODY_MAX, HOLD_MAX};
 use crate::translate::schema::{NullMap, RestoreFilter};
 use crate::translate::{
-    facts, is_response, message_events, reasoning, schema, translate_error, translate_request, translate_response, SseEvent, StreamMapper,
+    facts, is_response, responses_client, message_events, reasoning, schema, scrub, translate_error, translate_request, translate_response, SseEvent, StreamMapper,
     Target,
 };
 use crate::window;
@@ -42,6 +43,8 @@ use crate::Url;
 
 pub const BUSY_WAIT: Duration = Duration::from_secs(5); // §7.3
 pub const INFLIGHT_FACTOR: u64 = 4; // §7.3
+/// The `anthropic-version` sent for a client that sends none (K§6.4.3).
+const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// Never forwarded upstream, whatever `forward_headers` says (§7.3 and its note; RFC 9110 §7.2, §7.6.1, §8.6;
 /// RFC 9112 §6.1).
@@ -168,12 +171,15 @@ impl ModelRoute {
         match self {
             ModelRoute::Messages => "/anthropic/v1/messages",
             ModelRoute::CountTokens => "/anthropic/v1/messages/count_tokens",
+            ModelRoute::Responses => "/openai/v1/responses",
         }
     }
     fn upstream_path(self) -> &'static str {
         match self {
             ModelRoute::Messages => "/v1/messages",
             ModelRoute::CountTokens => "/v1/messages/count_tokens",
+            // Its path on an `anthropic` upstream: the Messages body the request side builds (K§6.4.3).
+            ModelRoute::Responses => "/v1/messages",
         }
     }
 }
@@ -308,7 +314,7 @@ pub(crate) async fn handle(app: Arc<App>, s: Arc<SessionState>, route: ModelRout
                 p.row.status = e.status.as_u16();
                 p.row.latency_ms = ms(&app, start);
             }
-            e.into_response()
+            e.response(route.dialect())
         }
     }
 }
@@ -330,12 +336,20 @@ async fn run(
     let (raw, permit) = read_charged(app, req).await?;
     let repeated = key_scan(&raw)?;
     let body: Value = serde_json::from_slice(&raw).map_err(|_| ZygoError::bad_request("invalid JSON body"))?;
+    // The Responses field lists before any stage (K§11 item 12).
+    if route == ModelRoute::Responses {
+        responses_client::check_fields(&body)?;
+    }
+    // The client's tools as received, for the call items of the answer (K§6.4.3 stream obligation 2).
+    let calls = (route == ModelRoute::Responses).then(|| responses_client::Calls::of(&body));
     let name = body.get("model").and_then(Value::as_str).ok_or_else(|| ZygoError::bad_request("model must be a string"))?.to_string();
+    // The name the client sent: the Response's `model` (stream obligation 1).
+    let client_model = name.clone();
     let mut ctx = RequestCtx {
         session: s.clone(),
         cfg: app.served().cfg.clone(),
         route,
-        dialect: Dialect::Anthropic,
+        dialect: route.dialect(),
         headers,
         raw,
         body,
@@ -376,6 +390,14 @@ async fn run(
         p.row.role_requested = requested;
     }
     r?;
+    // With an `openai` candidate, before any candidate is tried: one answer whichever candidate serves (K§6.4.3
+    // Responses → Responses). With none, `include` is safe to ignore.
+    if route == ModelRoute::Responses
+        && ctx.candidates.iter().any(|c| c.dialect == Dialect::Openai)
+        && ctx.body.get("include").is_some_and(|i| !i.is_null() && !i.is_array())
+    {
+        return Err(ZygoError::bad_request("include must be an array"));
+    }
     app.sessions.accept(s)?;
     pending(slot).in_flight = Some(InFlight::begin(s, &app.clock));
     let resolved = ctx.resolved.clone().expect("stage 2 resolved the request");
@@ -403,6 +425,7 @@ async fn run(
         facts: cfg.config.catalog.get(&resolved.model).and_then(|m| m.facts.as_ref()),
         rules: &cfg.config.schema_rule,
         strict: cfg.config.proxy.strict_schemas,
+        markers: cfg.config.cache.insert_markers.get(s.agent.as_str()).copied().unwrap_or(false),
     };
     // Attempts (§7.3): fallback on a connect error, a 5xx or a 429.
     let mut attempted = false;
@@ -435,12 +458,17 @@ async fn run(
         attempted = true;
         // A loopback upstream never goes through a proxy (C3).
         let http = if loopback(&url, &[]) { &app.direct } else { &app.http };
+        let mut out = match pt {
+            Some(t) => t.outbound(&ctx.headers, &c.provider),
+            None => outbound_headers(&ctx.headers, &c.provider, c.dialect, c.key.as_ref()),
+        };
+        // A Responses client sends no `anthropic-version`; the Anthropic API needs it (K§6.4.3).
+        if ctx.dialect == Dialect::Openai && c.dialect == Dialect::Anthropic && !out.contains_key("anthropic-version") {
+            out.insert("anthropic-version", HeaderValue::from_static(ANTHROPIC_VERSION));
+        }
         let sent = http
             .post(url)
-            .headers(match pt {
-                Some(t) => t.outbound(&ctx.headers, &c.provider),
-                None => outbound_headers(&ctx.headers, &c.provider, c.dialect, c.key.as_ref()),
-            })
+            .headers(out)
             .body(body)
             .send()
             .await;
@@ -489,14 +517,22 @@ async fn run(
     // COPY_MAX, with the in-flight charge still held) and mapped.
     let sse_upstream = streamed;
     let translated = c.dialect != ctx.dialect;
+    // A translated body reaches the tee as Messages events or a Messages body: the mapper output, an Anthropic
+    // upstream, or `translate_response` (K§6.4.2 C3).
+    let form = if translated { Dialect::Anthropic } else { c.dialect };
     let key = c.key.as_ref().map(|k| k.expose());
     let estimate = string_bytes(&ctx.body).div_ceil(BYTES_PER_TOKEN);
     let mut headers = response_headers(resp.headers(), translated, s.team_label.is_some());
     let mut adjustments = ctx.adjustments;
     adjustments.extend(extra);
     let mut mapper = None;
-    // Injected nulls are removed on the way back (§7.6): a Messages 2xx with a non-empty map.
-    let armed = route == ModelRoute::Messages && status.is_success() && !nulls.is_empty();
+    // Injected nulls are removed on the way back (§7.6): a Messages 2xx, or a translated Responses 2xx, with a
+    // non-empty map.
+    let armed = status.is_success()
+        && !nulls.is_empty()
+        && (route == ModelRoute::Messages || (route == ModelRoute::Responses && translated));
+    // The Messages body of a translated 2xx read whole: a Responses client's Response object is built from it.
+    let mut msg = None;
     let mut restore = None;
     let upstream: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>> = if !translated && armed && streamed {
         restore = Some(RestoreFilter::new(nulls));
@@ -507,21 +543,32 @@ async fn run(
     } else if !translated {
         Box::pin(resp.bytes_stream())
     } else if status.is_success() && streamed {
-        mapper = Some(StreamMapper::new(c.dialect, &Target::of(c)).errors(estimate, key));
+        // An Anthropic upstream already sends Messages SSE (a Responses client): no mapper (K§6.4.2).
+        mapper = (c.dialect != Dialect::Anthropic).then(|| StreamMapper::new(c.dialect, &Target::of(c)).errors(estimate, key));
         restore = armed.then(|| RestoreFilter::new(nulls));
         Box::pin(resp.bytes_stream())
     } else {
         let bytes = read_capped(resp).await.map_err(|e| read_failed(slot, c, &adjustments, e))?;
         // A 2xx that is no response body of the upstream dialect never reaches the client (§7.3, §7.6).
         let v = if status.is_success() {
-            let v = serde_json::from_slice::<Value>(&bytes).ok().filter(|v| is_response(v, c.dialect)).ok_or_else(|| read_failed(slot, c, &adjustments, upstream_bad_response()))?;
-            let mut m = translate_response(&v, c.dialect, &Target::of(c));
+            // An Anthropic upstream (a Responses client) answers in the Messages form already.
+            let anthropic = c.dialect == Dialect::Anthropic;
+            let v = serde_json::from_slice::<Value>(&bytes)
+                .ok()
+                .filter(|v| if anthropic { is_message(v) } else { is_response(v, c.dialect) })
+                .ok_or_else(|| read_failed(slot, c, &adjustments, upstream_bad_response()))?;
+            let mut m = if anthropic { v } else { translate_response(&v, c.dialect, &Target::of(c)) };
             if armed {
                 nulls.restore_message(&mut m);
             }
+            msg = (ctx.dialect == Dialect::Openai).then(|| m.clone());
             m
         } else {
-            let (s, v) = translate_error(status, &bytes, estimate, key);
+            let (s, v) = if ctx.dialect == Dialect::Openai {
+                responses_error(status, &bytes, estimate, key)
+            } else {
+                translate_error(status, &bytes, estimate, key)
+            };
             status = s;
             v
         };
@@ -536,17 +583,33 @@ async fn run(
         };
         futures_util::stream::once(async move { Ok(Bytes::from(out)) }).boxed()
     };
+    // A translated 2xx to a Responses client: the encoder after the tee, or the whole Response object (K§6.4.2 C3).
+    let encode = if ctx.dialect == Dialect::Openai && translated && status.is_success() {
+        let t = Target::of(c);
+        let calls = calls.unwrap_or_default();
+        if streamed {
+            Some(Encode::Stream(Box::new(Streamed::new(&client_model, &t, calls, c.key.clone()))))
+        } else {
+            let (r, codes) = responses_client::response(msg.as_ref().unwrap_or(&Value::Null), &client_model, &t, &calls);
+            adjustments.extend(codes);
+            Some(Encode::Whole(Bytes::from(serde_json::to_vec(&r).unwrap_or_default())))
+        }
+    } else {
+        None
+    };
     if pin {
         pins().insert(model, c.provider.name.clone());
     }
     drop(permit);
-    let mut tee = Tee::new(streamed);
+    let mut tee = Tee::new(streamed).with_lines(form);
     // Passthrough, not 2xx: the copy stays after `finish` for the upstream_errors capture (§14, FIX-10).
     if s.passthrough && !status.is_success() {
         tee.keep_body();
     }
     // Only an SSE upstream body is rewritten (§10.2.6): not a whole body sent to the client as SSE.
-    if ctx.line_mode && status.is_success() && sse_upstream {
+    // A Responses stream is read in lines too: its upstream `error` lines are rewritten before the encoder (K§6.4.4).
+    let lines = ctx.line_mode || matches!(encode, Some(Encode::Stream(_)));
+    if lines && status.is_success() && sse_upstream {
         tee.arm_line_mode();
     }
     if tee.line_mode() {
@@ -568,15 +631,59 @@ async fn run(
         resolved,
         provider: c.provider.name.clone(),
         dialect: c.dialect,
+        lines: form,
         adjustments,
         usage: Usage::default(),
         compact_call: false,
     };
-    let flow = Flow { upstream, mapper, restore, tee, rctx, pipeline: app.pipeline.clone(), pending: p, done: false, failed: false, body_len };
+    let flow = Flow { upstream, mapper, restore, tee, encode, rctx, pipeline: app.pipeline.clone(), pending: p, done: false, failed: false, body_len };
     let mut out = Response::new(Body::from_stream(futures_util::stream::unfold(flow, next_chunk)));
     *out.status_mut() = status;
     *out.headers_mut() = headers;
     Ok(out)
+}
+
+/// An upstream error on a translated Responses request, before the first byte (K§6.4.4, K-D50): `translate_error`'s
+/// status and error in the OpenAI shape; a context-limit refusal in the shape Codex recovers from (PC14,
+/// `fixtures/codex/errors/context-400.json`): a `prompt is too long` message (Anthropic's own text, or `translate_error`'s
+/// mapping), or Anthropic's full `max_tokens` limit form with its message cleaned (`pc14_message`). That form is
+/// mapped here only: every other client gets it unchanged (Claude Code parses it).
+fn responses_error(status: StatusCode, body: &[u8], estimate: u64, key: Option<&str>) -> (StatusCode, Value) {
+    let (s, m) = translate_error(status, body, estimate, key);
+    let message = m["error"]["message"].as_str().unwrap_or_default();
+    if s == StatusCode::BAD_REQUEST && let Some(message) = pc14_form(message) {
+        let e = json!({"message": message, "type": "invalid_request_error", "param": "input", "code": CONTEXT_CODE});
+        return (s, json!({ "error": e }));
+    }
+    (s, json!({ "error": m["error"] }))
+}
+
+/// The most characters of an upstream message in the PC14 shape: the limit form's numbers survive (K§6.4.4).
+const PC14_MESSAGE_MAX: usize = 512;
+
+/// The upstream message, its first `PC14_MESSAGE_MAX` characters, each control (Cc), format (Cf), line separator (Zl)
+/// or paragraph separator (Zp) character replaced with `?` (K§6.4.4).
+fn pc14_message(m: &str) -> String {
+    m.chars()
+        .take(PC14_MESSAGE_MAX)
+        .map(|c| if c.is_control() || responses_client::is_format_or_separator(c) { '?' } else { c })
+        .collect()
+}
+
+/// The error code with which Codex runs its own recovery for an over-long prompt (PC14, K§6.4.4).
+const CONTEXT_CODE: &str = "context_length_exceeded";
+
+/// An over-long prompt's message by the PC14 rule (K§6.4.4): a `prompt is too long` text or Anthropic's full
+/// `max_tokens` limit form, cleaned (`pc14_message`, K§6.4.3 obligation 6); `None` for any other message.
+fn pc14_form(message: &str) -> Option<String> {
+    (message.starts_with("prompt is too long") || anthropic_limit_form(message)).then(|| pc14_message(message))
+}
+
+/// Anthropic's refusal when input plus `max_tokens` is over the window, in full (the form Claude Code parses).
+fn anthropic_limit_form(m: &str) -> bool {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"input length and `max_tokens` exceed context limit: \d+ \+ \d+ > \d+").expect("valid pattern"))
+        .is_match(m)
 }
 
 /// A read error on the served response (Round 2, F6), or a translated 2xx that is not a response (Round 3, D4): the
@@ -771,6 +878,9 @@ struct Rewrite<'a> {
     facts: Option<&'a Facts>,
     rules: &'a [SchemaRule],
     strict: bool,
+    /// `[cache] insert_markers.<agent>` for the session's agent (§10.4); read only toward an `anthropic` candidate of a
+    /// Responses client (K§6.4.2).
+    markers: bool,
 }
 
 /// One attempt's body (§7.6): translated when the candidate's dialect is not the client's (facts, then the schema
@@ -786,6 +896,12 @@ fn attempt_body(
 ) -> Result<(Bytes, Vec<Adjustment>, NullMap), ZygoError> {
     let family = if c.dialect == Dialect::Anthropic { Family::Anthropic } else { Family::Openai };
     let rules: Vec<SchemaRule> = rw.rules.iter().filter(|r| r.family == family).cloned().collect();
+    if client == Dialect::Openai && c.dialect == Dialect::Openai {
+        return responses_same(body, raw, changed, c);
+    }
+    if client == Dialect::Openai && c.dialect != client {
+        return responses_attempt(body, raw, c, rw, &rules);
+    }
     if c.dialect != client {
         let mut a = body.clone();
         let mut codes = match rw.facts {
@@ -826,6 +942,81 @@ fn attempt_body(
     }
     let (b, adj) = model_body(body, raw, changed, c)?;
     Ok((b, adj, NullMap::default()))
+}
+
+/// The reasoning item content Codex needs on the next turn when nothing is stored upstream (K§6.4.3).
+const ENCRYPTED_REASONING: &str = "reasoning.encrypted_content";
+
+/// A Responses body toward an openai candidate (K§6.4.3 Responses → Responses): store := false, include gains
+/// reasoning.encrypted_content, then model_body. body is left as it was.
+fn responses_same(
+    body: &mut Value,
+    raw: &Bytes,
+    changed: bool,
+    c: &Candidate,
+) -> Result<(Bytes, Vec<Adjustment>, NullMap), ZygoError> {
+    let store_ok = body.get("store") == Some(&Value::Bool(false));
+    // `run` refused any other JSON type before the first candidate.
+    let include = match body.get("include").and_then(Value::as_array) {
+        None => Some(json!([ENCRYPTED_REASONING])),
+        Some(a) if a.iter().any(|v| v.as_str() == Some(ENCRYPTED_REASONING)) => None,
+        Some(a) => {
+            let mut a = a.clone();
+            a.push(json!(ENCRYPTED_REASONING));
+            Some(Value::Array(a))
+        }
+    };
+    if store_ok && include.is_none() {
+        let (b, adj) = model_body(body, raw, changed, c)?;
+        return Ok((b, adj, NullMap::default()));
+    }
+    let mut v = body.clone();
+    let obj = v.as_object_mut().ok_or_else(|| ZygoError::bad_request("the body must be a JSON object"))?;
+    obj.insert("store".into(), Value::Bool(false));
+    if let Some(i) = include {
+        obj.insert("include".into(), i);
+    }
+    let (b, adj) = model_body(&mut v, raw, true, c)?;
+    Ok((b, adj, NullMap::default()))
+}
+
+/// A Responses body toward an `anthropic` or `openai-chat` candidate (K§6.4.3): the Messages body of
+/// `responses_client::request`, then facts and the schema rewrite as on a translated Messages request; to
+/// `openai-chat`, the Messages → chat translator after them (Messages is the pivot); to `anthropic`, the §10.4 markers
+/// when `rw.markers` (K§6.4.2), last, so they sit on the final `system` text. Codes in the order `model_body`,
+/// `request`, facts, schema, translator.
+fn responses_attempt(
+    body: &Value,
+    raw: &Bytes,
+    c: &Candidate,
+    rw: &Rewrite,
+    rules: &[SchemaRule],
+) -> Result<(Bytes, Vec<Adjustment>, NullMap), ZygoError> {
+    let t = Target::of(c);
+    let (mut m, rc) = responses_client::request(body, &t, rw.facts)?;
+    let mut codes = match rw.facts {
+        Some(f) => facts::apply(&mut m, f),
+        None => vec![Adjustment("facts_missing".into())],
+    };
+    let (sc, nulls) = schema::rewrite(&mut m, rules);
+    codes.extend(sc);
+    let (mut v, tc) = if c.dialect == Dialect::OpenaiChat {
+        let (mut v, tc) = translate_request(&m, Dialect::OpenaiChat, &t)?;
+        if rw.facts.is_some() {
+            facts::write_effort(&m, &mut v, Dialect::OpenaiChat);
+        }
+        (v, tc)
+    } else {
+        if rw.markers {
+            cache::mark_upstream(&mut m);
+        }
+        (m, Vec::new())
+    };
+    let (b, mut adj) = model_body(&mut v, raw, true, c)?;
+    adj.extend(rc);
+    adj.extend(codes);
+    adj.extend(tc);
+    Ok((b, adj, nulls))
 }
 
 /// `model` := `upstream_model`; `provider.zdr = true` on an openrouter.ai host (§7.5), else
@@ -1036,13 +1227,210 @@ async fn charge(sem: &Arc<Semaphore>, n: u32, deadline: tokio::time::Instant) ->
     }
 }
 
+/// A translated 2xx to a Responses client, after the tee (K§6.4.2 C3): the stream encoder, or a whole answer's
+/// Response object, sent when the upstream body ends.
+enum Encode {
+    Stream(Box<Streamed>),
+    Whole(Bytes),
+}
+
+/// The message of a read error on a started Responses stream (K§6.4.3 stream obligation 6).
+const READ_FAILED: &str = "upstream response failed";
+/// A Messages `message_start` with no fields: it starts the spare encoder.
+const EMPTY_START: &[u8] = b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{}}\n\n";
+
+/// A Responses stream after the tee (K§6.4.2): the encoder, and what the proxy adds around it.
+struct Streamed {
+    enc: responses_client::Encoder,
+    /// Starts and fails a stream that a read error ends before its first event: nothing reached the client yet.
+    spare: responses_client::Encoder,
+    /// Removed from an upstream error message, as the chat mapper does (`translate/sse.rs:420-424`).
+    key: Option<Secret>,
+    /// An upstream over-long prompt's message by the PC14 rule (K§6.4.4); the encoder cuts messages shorter.
+    context: Option<String>,
+    /// The current event's `event` field is `error`.
+    error_event: bool,
+    /// The `data` lines of an error event split over lines, until its blank line.
+    held: Held,
+    /// The held `data` passed `HOLD_MAX`: the stream fails as the encoder fails an over-long event.
+    too_long: bool,
+}
+
+/// The `data` of a split error event, joined as SSE joins it (`\n` between lines).
+#[derive(Default)]
+enum Held {
+    #[default]
+    None,
+    Data(Vec<u8>),
+    /// Over `HOLD_MAX`: the rest of the event's `data` lines are dropped too.
+    Over,
+}
+
+/// The encoder's message for held event `data` over `HOLD_MAX` (`responses_client.rs` `EVENT_TOO_LONG`).
+const EVENT_TOO_LONG: &str = "upstream event too long";
+/// An SSE comment line: it takes the place of a held `data` line, and the encoder ignores it.
+const COMMENT: &[u8] = b":";
+
+impl Streamed {
+    fn new(model: &str, t: &Target, calls: responses_client::Calls, key: Option<Secret>) -> Streamed {
+        let spare = responses_client::Encoder::new(model, t, calls.clone());
+        Streamed {
+            enc: responses_client::Encoder::new(model, t, calls),
+            spare,
+            key,
+            context: None,
+            error_event: false,
+            held: Held::None,
+            too_long: false,
+        }
+    }
+
+    /// A Messages `error` event before the encoder: its message without the provider key. An over-long prompt
+    /// (`invalid_request_error` with a PC14 form, K§6.4.4) gets the code `context_length_exceeded`. An error event
+    /// split over several `data` lines (its `event` is `error`, or its first `data` line names `"error"`) is held to its
+    /// blank line, each held line sent on as an SSE comment, then sent as one `data` line read like a whole one. Lines of
+    /// other events are not held. A `data` line that is no JSON and not held has each occurrence of the key replaced.
+    fn line(&mut self, l: &mut SseLine) {
+        if let Some(new) = self.replaced(&l.0) {
+            l.0 = new;
+        }
+    }
+
+    /// The bytes that take the place of `line` (without its `\n`); `None`: no change.
+    fn replaced(&mut self, line: &[u8]) -> Option<Vec<u8>> {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() {
+            self.error_event = false;
+            let Held::Data(d) = std::mem::take(&mut self.held) else { return None };
+            // The tee adds the blank line's `\n` after this `data` line's.
+            return Some(match self.error_data(&d) {
+                Some(v) => format!("data: {v}\n").into_bytes(),
+                None => {
+                    let t = scrub(&String::from_utf8_lossy(&d), self.key.as_ref().map(Secret::expose));
+                    format!("data:{}\n", t.replace('\n', "\ndata:")).into_bytes()
+                }
+            });
+        }
+        if let Some(name) = line.strip_prefix(b"event:") {
+            self.error_event = name.trim_ascii() == b"error";
+            return None;
+        }
+        let d = line.strip_prefix(b"data:")?;
+        let d = d.strip_prefix(b" ").unwrap_or(d);
+        match &mut self.held {
+            Held::None => {}
+            Held::Data(h) if h.len() + 1 + d.len() <= HOLD_MAX => {
+                h.push(b'\n');
+                h.extend_from_slice(d);
+                return Some(COMMENT.to_vec());
+            }
+            Held::Data(_) | Held::Over => {
+                self.held = Held::Over;
+                self.too_long = true;
+                return Some(COMMENT.to_vec());
+            }
+        }
+        let key = self.key.as_ref().map(Secret::expose).filter(|k| !k.is_empty());
+        let keyed = key.is_some_and(|k| d.windows(k.len()).any(|w| w == k.as_bytes()));
+        let named = d.windows(7).any(|w| w == b"\"error\"");
+        if !keyed && !named && !self.error_event {
+            return None;
+        }
+        if serde_json::from_slice::<serde::de::IgnoredAny>(d).is_ok() {
+            return self.error_data(d).map(|v| format!("data: {v}").into_bytes());
+        }
+        if named || self.error_event {
+            self.held = Held::Data(d.to_vec());
+            return Some(COMMENT.to_vec());
+        }
+        Some(format!("data:{}", scrub(&String::from_utf8_lossy(d), key)).into_bytes())
+    }
+
+    /// One whole event's `data` when it is a Messages `error`: the message without the key, and an over-long prompt's
+    /// PC14 code (its PC14 message kept for `push`); `None` for any other `data`.
+    fn error_data(&mut self, d: &[u8]) -> Option<Value> {
+        let mut v = serde_json::from_slice::<Value>(d).ok()?;
+        if v.get("type").and_then(Value::as_str) != Some("error") {
+            return None;
+        }
+        let e = v.get_mut("error").and_then(Value::as_object_mut)?;
+        let m = scrub(e.get("message").and_then(Value::as_str).unwrap_or_default(), self.key.as_ref().map(Secret::expose));
+        if e.get("type").and_then(Value::as_str) == Some("invalid_request_error")
+            && let Some(pc14) = pc14_form(&m)
+        {
+            e.insert("type".into(), json!(CONTEXT_CODE));
+            self.context = Some(pc14);
+        }
+        e.insert("message".into(), json!(m));
+        Some(v)
+    }
+
+    /// The encoder's events for the tee's bytes (and its last ones at `end`), an over-long prompt's `response.failed`
+    /// with the PC14 message.
+    fn push(&mut self, out: &[u8], end: bool) -> Vec<SseEvent> {
+        let mut evs = self.enc.push(out);
+        if self.too_long {
+            evs.extend(self.enc.fail("api_error", EVENT_TOO_LONG));
+        }
+        if end {
+            evs.extend(self.enc.finish());
+        }
+        if let Some(m) = &self.context {
+            for ev in evs.iter_mut().filter(|ev| ev.event == "response.failed") {
+                let e = &mut ev.data["response"]["error"];
+                if e["code"] == CONTEXT_CODE {
+                    e["message"] = json!(m);
+                }
+            }
+        }
+        evs
+    }
+
+    /// A read error: one `response.failed` with `READ_FAILED`, the stream started first when it was not (stream
+    /// obligation 6); nothing after a terminal event.
+    fn read_failed(&mut self) -> Vec<SseEvent> {
+        if self.enc.ended() {
+            return Vec::new();
+        }
+        let evs = self.enc.fail("api_error", READ_FAILED);
+        if !evs.is_empty() {
+            return evs;
+        }
+        let mut evs = self.spare.push(EMPTY_START);
+        evs.extend(self.spare.fail("api_error", READ_FAILED));
+        evs
+    }
+}
+
+fn sse_bytes(evs: &[SseEvent]) -> Bytes {
+    Bytes::from(evs.iter().flat_map(SseEvent::to_bytes).collect::<Vec<u8>>())
+}
+
+/// The tee's Messages bytes as the client's bytes: unchanged with no encoder; the encoder's Responses events (and its
+/// last ones at `end`); a whole Response object at `end` only.
+fn encoded(encode: &mut Option<Encode>, out: Bytes, end: bool) -> Bytes {
+    match encode {
+        None => out,
+        Some(Encode::Stream(s)) => sse_bytes(&s.push(&out, end)),
+        Some(Encode::Whole(b)) if end => std::mem::take(b),
+        Some(Encode::Whole(_)) => Bytes::new(),
+    }
+}
+
+/// A Messages body (an Anthropic upstream's 2xx to a Responses client).
+fn is_message(v: &Value) -> bool {
+    v.get("type").and_then(Value::as_str) == Some("message") && v.get("content").is_some_and(Value::is_array)
+}
+
 /// The response body: upstream chunks through the mapper (a translated stream, §7.6) and the restore filter (injected
-/// nulls, §7.6), then the tee; the usage row is written when it is dropped (stream end or client disconnect, §14).
+/// nulls, §7.6), then the tee, then the Responses encoder (a Responses client, K§6.4.2); the usage row is written when it is dropped (stream end or client disconnect, §14).
 struct Flow {
     upstream: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>,
     mapper: Option<StreamMapper>,
     restore: Option<RestoreFilter>,
     tee: Tee,
+    /// After the tee: a translated 2xx to a Responses client.
+    encode: Option<Encode>,
     rctx: ResponseCtx,
     pipeline: Arc<Pipeline>,
     pending: Pending,
@@ -1081,6 +1469,14 @@ impl Drop for Flow {
                 .map(Secret::new);
             self.pending.upstream_error = Some(ErrorCapture { head, credential, session: self.pending.session.clone() });
         }
+        // The encoder's codes (K§6.4.3 obligations 2, 3) reach the row.
+        if let Some(Encode::Stream(s)) = &self.encode {
+            self.rctx.adjustments.extend(s.enc.adjustments());
+        }
+        // A 2xx Responses stream with no usage read: the zero counts are marked (K§6.4.2 C3).
+        if self.rctx.status.is_success() && self.tee.usage_unread() {
+            self.rctx.adjustments.push(Adjustment("usage_unread".into()));
+        }
         // Codes a line stage added (§10.2.3) reach the row, not the headers.
         self.pending.row.adjustments = names(&self.rctx.adjustments);
     }
@@ -1088,12 +1484,45 @@ impl Drop for Flow {
 
 async fn next_chunk(mut f: Flow) -> Option<(Result<Bytes, std::io::Error>, Flow)> {
     while !f.done {
+        // After the encoder's terminal event the client body ends; the rest of the upstream is read in a detached
+        // task, through the tee, for the usage row (written when the flow drops): to its end, a read error or the
+        // upstream idle read timeout.
+        if let Some(Encode::Stream(s)) = &f.encode
+            && s.enc.ended()
+        {
+            tokio::spawn(drain(f));
+            return None;
+        }
+        match f.step().await {
+            Ok(b) if b.is_empty() => {}
+            r => return Some((r, f)),
+        }
+    }
+    None
+}
+
+/// The rest of the upstream body after the client body ended; the client's bytes are dropped.
+async fn drain(mut f: Flow) {
+    while !f.done {
+        let _ = f.step().await;
+    }
+}
+
+impl Flow {
+    /// One upstream read through the stages: the client's bytes (empty when there are none yet), or the read error.
+    async fn step(&mut self) -> Result<Bytes, std::io::Error> {
+        let f = self;
         let next = f.upstream.next().await;
-        let Flow { tee, rctx, pipeline, mapper, restore, .. } = &mut f;
+        let Flow { tee, rctx, pipeline, mapper, restore, encode, done, failed, .. } = f;
         // The stages see the upstream numbers up to and including this line.
         let mut on_line = |l: &mut SseLine| {
-            rctx.usage.observe(&l.0);
-            pipeline.on_response_line(rctx, l)
+            rctx.usage.observe(rctx.lines, &l.0);
+            match encode {
+                // A Responses stream: its error lines only. The line stages are armed on the Messages route only
+                // (`window.rs:130`).
+                Some(Encode::Stream(s)) => s.line(l),
+                _ => pipeline.on_response_line(rctx, l),
+            }
         };
         let out = match next {
             Some(Ok(chunk)) => match mapper {
@@ -1108,15 +1537,19 @@ async fn next_chunk(mut f: Flow) -> Option<(Result<Bytes, std::io::Error>, Flow)
                     // A terminal or error event: the upstream is no longer read.
                     if m.ended() {
                         out.extend_from_slice(&tee.finish(&mut on_line));
-                        f.done = true;
+                        *done = true;
                     }
                     out.freeze()
                 }
             },
             Some(Err(_)) => {
-                f.done = true;
-                f.failed = true;
-                return Some((Err(std::io::Error::other("upstream response failed")), f));
+                *done = true;
+                *failed = true;
+                // A Responses stream ends with one terminal event (K§6.4.3 stream obligation 6).
+                if let Some(Encode::Stream(s)) = encode {
+                    return Ok(sse_bytes(&s.read_failed()));
+                }
+                return Err(std::io::Error::other(READ_FAILED));
             }
             None => {
                 let mut out = BytesMut::new();
@@ -1127,16 +1560,14 @@ async fn next_chunk(mut f: Flow) -> Option<(Result<Bytes, std::io::Error>, Flow)
                     out.extend_from_slice(&tee.push(Bytes::from(r.finish_raw()), &mut on_line));
                 }
                 out.extend_from_slice(&tee.finish(&mut on_line));
-                f.done = true;
+                *done = true;
                 out.freeze()
             }
         };
-        f.rctx.usage = f.tee.usage();
-        if !out.is_empty() {
-            return Some((Ok(out), f));
-        }
+        let out = encoded(encode, out, *done);
+        rctx.usage = tee.usage();
+        Ok(out)
     }
-    None
 }
 
 #[cfg(test)]

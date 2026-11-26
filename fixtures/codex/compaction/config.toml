@@ -1,0 +1,15 @@
+model_context_window = 200000
+model_auto_compact_token_limit = 100000
+compact_prompt = "tracer-pc8-compact-prompt"
+model = "gpt-mock"
+model_provider = "mock"
+
+[model_providers.mock]
+name = "mock"
+base_url = "http://127.0.0.1:52350/v1"
+env_key = "MOCK_API_KEY"
+wire_api = "responses"
+
+[projects."/repo"]
+trust_level = "trusted"
+

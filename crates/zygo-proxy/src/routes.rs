@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use bytes::{Bytes, BytesMut};
-use http::{HeaderMap, StatusCode};
+use http::{HeaderMap, StatusCode, Uri};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use zygo_core::overrides::Overrides;
@@ -45,9 +45,9 @@ pub(crate) fn router(app: Arc<App>) -> Router {
         .route("/anthropic/v1/messages", post(messages))
         .route("/anthropic/v1/messages/count_tokens", post(count_tokens))
         .route("/anthropic/v1/models", get(models))
-        .route("/openai/v1/responses", post(not_in_v1))
+        .route("/openai/v1/responses", post(responses))
         .route("/openai/v1/chat/completions", post(not_in_v1))
-        .route("/openai/v1/models", get(not_in_v1))
+        .route("/openai/v1/models", get(openai_models))
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .with_state(app)
@@ -57,18 +57,29 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
-async fn not_found() -> ZygoError {
-    ZygoError::new(StatusCode::NOT_FOUND, "zygo_not_found", "no such route")
+/// The error shape of a fallback reply: OpenAI for `/openai/v1` and each path under `/openai/v1/` (K§6.4.1), else
+/// Anthropic (so `/openai/v1x/…` and `/openai/v10/…` stay Anthropic).
+fn path_dialect(uri: &Uri) -> Dialect {
+    let p = uri.path();
+    if p == "/openai/v1" || p.starts_with("/openai/v1/") {
+        Dialect::Openai
+    } else {
+        Dialect::Anthropic
+    }
 }
 
-/// The v2 routes (§7.6), with no identity check.
+async fn not_found(uri: Uri) -> Response {
+    ZygoError::new(StatusCode::NOT_FOUND, "zygo_not_found", "no such route").response(path_dialect(&uri))
+}
+
+/// The v2 route `POST /openai/v1/chat/completions` (§7.6, K§3), with no identity check.
 async fn not_in_v1() -> Response {
     let e = ZygoError::new(StatusCode::NOT_FOUND, "zygo_route_not_in_v1", "this route is not in zygo v1");
     (e.status, Json(e.body(Dialect::Openai))).into_response()
 }
 
-async fn method_not_allowed() -> ZygoError {
-    ZygoError::new(StatusCode::METHOD_NOT_ALLOWED, "zygo_method_not_allowed", "method not allowed")
+async fn method_not_allowed(uri: Uri) -> Response {
+    ZygoError::new(StatusCode::METHOD_NOT_ALLOWED, "zygo_method_not_allowed", "method not allowed").response(path_dialect(&uri))
 }
 
 /// Reads the body after stage 1 (the handlers authenticate first), under `BODY_LIMIT`. `app.body_idle` bounds each wait
@@ -254,7 +265,7 @@ async fn settings(State(app): State<Arc<App>>, id: Result<Path<String>, PathReje
 async fn model_route(app: Arc<App>, route: ModelRoute, req: Request) -> Response {
     match model_identity(req.headers(), &app.sessions) {
         Ok(s) => forward::handle(app, s, route, req).await,
-        Err(e) => e.into_response(),
+        Err(e) => e.response(route.dialect()),
     }
 }
 
@@ -266,8 +277,20 @@ async fn count_tokens(State(app): State<Arc<App>>, req: Request) -> Response {
     model_route(app, ModelRoute::CountTokens, req).await
 }
 
+async fn responses(State(app): State<Arc<App>>, req: Request) -> Response {
+    model_route(app, ModelRoute::Responses, req).await
+}
+
 async fn models(State(app): State<Arc<App>>, h: HeaderMap) -> Reply {
     let s = model_identity(&h, &app.sessions)?;
     app.sessions.accept(&s)?;
     Ok(Json(models::list(&s, &app.served().cfg, Dialect::Anthropic)).into_response())
+}
+
+/// `GET /openai/v1/models`: the session's role list in the shape Codex lists (K§6.4.1); errors in the OpenAI shape.
+async fn openai_models(State(app): State<Arc<App>>, h: HeaderMap) -> Response {
+    match model_identity(&h, &app.sessions).and_then(|s| app.sessions.accept(&s).map(|()| s)) {
+        Ok(s) => Json(models::list_openai(&s)).into_response(),
+        Err(e) => e.response(Dialect::Openai),
+    }
 }

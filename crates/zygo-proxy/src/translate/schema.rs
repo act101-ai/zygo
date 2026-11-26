@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashSet};
 use serde_json::{json, Map, Value};
 use zygo_config::{RuleSeverity, SchemaRule};
 
+use super::sse::input_deltas;
 use super::{s, SseEvent};
 use crate::pipeline::Adjustment;
 use crate::tee::HOLD_MAX;
@@ -517,7 +518,8 @@ impl Hold {
 }
 
 /// Removes injected nulls from a Messages response stream: holds one block's deltas until its `content_block_stop`;
-/// a block from which a null was removed gets one delta with the compact JSON in place of its deltas.
+/// a block from which a null was removed gets the compact JSON in place of its deltas (a tool's in `INPUT_DELTA_MAX`
+/// pieces, a text block's in one delta).
 pub struct RestoreFilter {
     tools: BTreeMap<String, Trie>,
     output: Option<Trie>,
@@ -564,15 +566,17 @@ impl RestoreFilter {
         Some(Hold { index: d.get("index")?.clone(), tool, events: Vec::new(), bytes: Vec::new(), others: Vec::new(), first: None, text: String::new(), size: 0 })
     }
 
-    /// The one delta that replaces the block's deltas; `None` when no null was removed.
-    fn rebuilt(&self, h: &Hold) -> Option<SseEvent> {
-        let (t, d) = match &h.tool {
-            Some(n) => (self.tools.get(n)?, "input_json_delta"),
-            None => (self.output.as_ref()?, "text_delta"),
+    /// The deltas that replace the block's deltas: a tool's arguments in `input_deltas` pieces (K§6.4.3 stream
+    /// obligation 8), else one text delta; `None` when no null was removed.
+    fn rebuilt(&self, h: &Hold) -> Option<Vec<SseEvent>> {
+        let t = match &h.tool {
+            Some(n) => self.tools.get(n)?,
+            None => self.output.as_ref()?,
         };
         let x = t.strip_text(&h.text)?;
-        let delta = if h.tool.is_some() { json!({"type":d,"partial_json":x}) } else { json!({"type":d,"text":x}) };
-        Some(SseEvent { event: "content_block_delta".into(), data: json!({"type":"content_block_delta","index":h.index,"delta":delta}) })
+        let deltas = if h.tool.is_some() { input_deltas(&x) } else { vec![json!({"type":"text_delta","text":x})] };
+        let ev = |delta| SseEvent { event: "content_block_delta".into(), data: json!({"type":"content_block_delta","index":h.index,"delta":delta}) };
+        Some(deltas.into_iter().map(ev).collect())
     }
 
     /// Translated streams: one Messages event in, the events to send out.
@@ -600,13 +604,13 @@ impl RestoreFilter {
         }
         let Some(h) = self.hold.take() else { return vec![ev] };
         let mut out = match (ty == Some("content_block_stop") && mine).then(|| self.rebuilt(&h)).flatten() {
-            // The held pings keep their order; the rebuilt delta goes where the first delta was.
+            // The held pings keep their order; the rebuilt deltas go where the first delta was.
             Some(e) => {
                 let mut e = Some(e);
                 let mut out = Vec::new();
                 for x in h.events {
                     if kind(&x.data) == Some("content_block_delta") {
-                        out.extend(e.take());
+                        out.extend(e.take().into_iter().flatten());
                     } else {
                         out.push(x);
                     }
@@ -737,11 +741,11 @@ impl RestoreFilter {
         }
         let Some(h) = self.hold.take() else { return };
         match (ty == Some("content_block_stop") && mine).then(|| self.rebuilt(&h)).flatten() {
-            // The held non-delta events keep their order; the rebuilt delta goes where the first delta was.
+            // The held non-delta events keep their order; the rebuilt deltas go where the first delta was.
             Some(e) => {
                 let at = h.first.unwrap_or(h.others.len());
                 out.extend_from_slice(&h.others[..at]);
-                out.extend_from_slice(&e.to_bytes());
+                out.extend(e.iter().flat_map(SseEvent::to_bytes));
                 out.extend_from_slice(&h.others[at..]);
             }
             None => out.extend_from_slice(&h.bytes),

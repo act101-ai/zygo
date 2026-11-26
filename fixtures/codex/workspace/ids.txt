@@ -1,0 +1,9 @@
+rollout_id=uuid-0003
+rollout_meta_id=uuid-0003
+exec_thread_id=uuid-0003
+session_start_a=uuid-0003
+session_start_b=uuid-0003
+session_start_c=uuid-0003
+session_start_d=none
+session_start_e=uuid-0001
+session_start_f=uuid-0002

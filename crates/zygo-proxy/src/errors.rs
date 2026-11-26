@@ -43,6 +43,13 @@ impl ZygoError {
     }
 }
 
+impl ZygoError {
+    /// The error reply in the client's dialect `d`.
+    pub fn response(&self, d: Dialect) -> Response {
+        (self.status, Json(self.body(d))).into_response()
+    }
+}
+
 impl IntoResponse for ZygoError {
     fn into_response(self) -> Response {
         (self.status, Json(self.body(Dialect::Anthropic))).into_response()

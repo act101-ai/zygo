@@ -1,0 +1,3 @@
+home: name=seen description=seen body=absent
+repo: name=seen description=seen body=absent
+path: name=absent description=absent body=absent
