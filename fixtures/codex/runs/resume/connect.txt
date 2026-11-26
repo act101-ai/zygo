@@ -10,21 +10,23 @@ raw.githubusercontent.com:443 refused
 github.com:443 refused
 api.github.com:443 refused
 chatgpt.com:443 refused
-127.0.0.1:65002 POST /mcp refused
+127.0.0.1:49356 POST /mcp refused
 api.github.com:443 refused
 ab.chatgpt.com:443 refused
 github.com:443 refused
+api.github.com:443 refused
 ab.chatgpt.com:443 refused
+chatgpt.com:443 refused
 raw.githubusercontent.com:443 refused
 github.com:443 refused
 api.github.com:443 refused
 chatgpt.com:443 refused
 api.github.com:443 refused
-127.0.0.1:65015 POST /mcp refused
+127.0.0.1:49377 POST /mcp refused
 ab.chatgpt.com:443 refused
 raw.githubusercontent.com:443 refused
 github.com:443 refused
 api.github.com:443 refused
 chatgpt.com:443 refused
-127.0.0.1:65273 POST /mcp refused
+127.0.0.1:49452 POST /mcp refused
 ab.chatgpt.com:443 refused

@@ -11,4 +11,5 @@ links_kept=yes
 store_rollouts=1
 no_link_resume_exit=1
 no_link_resume_history=no
+warnings_panel=captured
 pc10=verified

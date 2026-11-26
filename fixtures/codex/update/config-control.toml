@@ -4,7 +4,7 @@ check_for_update_on_startup = false
 
 [model_providers.mock]
 name = "mock"
-base_url = "http://127.0.0.1:64696/v1"
+base_url = "http://127.0.0.1:49334/v1"
 env_key = "MOCK_API_KEY"
 wire_api = "responses"
 

@@ -3,5 +3,5 @@ github.com:443 refused
 api.github.com:443 refused
 chatgpt.com:443 refused
 api.github.com:443 refused
-127.0.0.1:65015 POST /mcp refused
+127.0.0.1:49377 POST /mcp refused
 ab.chatgpt.com:443 refused
