@@ -352,3 +352,19 @@ fn mail_sweep_deletes_old_refused_and_tmp_files_at_command_start() { // T14
     assert!(!old_refused.exists() && !old_tmp.exists());
     assert!(new_refused.exists() && queued.exists());
 }
+
+#[test]
+#[ignore = "timing: the CLI waits 30 s for the lock (S§8.3 step 3)"]
+fn cli_waits_for_a_held_lock_then_exits_1() { // T13
+    let r = remote();
+    let a = machine(&r, "a", &[(ALICE, "alice")]);
+    let s = sp(&a);
+    for d in [&s.mail, &s.sync] { zygo_workspace::mail::ensure_mail_root(d).unwrap(); }
+    let f = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&s.lock).unwrap();
+    fs4::FileExt::try_lock(&f).unwrap();
+    let t = std::time::Instant::now();
+    let o = zygo(&a, &["mail", "sync"], &[], None);
+    assert!(t.elapsed() >= Duration::from_secs(30));
+    assert_eq!((o.status.code(), err(&o)), (Some(1), "zygo: another mail sync of this workspace holds the lock; try again\n".to_string()));
+    drop(f);
+}
