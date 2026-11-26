@@ -8,6 +8,66 @@ pub const SHAPE_MAX_BYTES: usize = 4 * 1024 * 1024;
 /// A view is used only when it saves at least this many bytes (O§7.8).
 pub const MIN_SAVING_BYTES: usize = 256;
 
+use crate::Kind;
+use command::Parsed;
+
+/// What the pipeline needs to know about one output (O§7.3).
+#[derive(Debug, Clone)]
+pub struct ShapeInput {
+    /// The parsed command; `None` when the output has no command.
+    pub parsed: Option<Parsed>,
+    /// The sniffed kind of the raw text.
+    pub kind: Kind,
+    /// `trim_threshold_bytes`: text over this size needs a view.
+    pub threshold: u64,
+}
+
+/// The pipeline result (O§7.3, O§7.9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shaped {
+    /// The text after steps 1-4.
+    pub text: String,
+    /// The steps that changed the text, in order.
+    pub steps: Vec<Step>,
+    /// The last step that changed the text, or `Size` when only the size view applies.
+    pub shaper: Option<Shaper>,
+    /// Step 5, the size view, must run: the text is still over the threshold.
+    pub size_view: bool,
+}
+
+/// Runs steps 1-4 of O§7.3 in order and tells whether step 5 must run.
+pub fn run(raw: &str, input: &ShapeInput) -> Shaped {
+    let over = |t: &str| t.len() as u64 > input.threshold;
+    if raw.len() > SHAPE_MAX_BYTES {
+        let size_view = over(raw);
+        return Shaped { text: raw.to_string(), steps: vec![], shaper: size_view.then_some(Shaper::Size), size_view };
+    }
+    let reuse = input.parsed.as_ref().is_some_and(|p| p.reuse)
+        || matches!(input.kind, Kind::Diff | Kind::Json | Kind::Jsonl);
+    let mut text = raw.to_string();
+    let mut steps = Vec::new();
+    let mut shaper = None;
+    // Step 1, clean (O§7.4).
+    if let Some((t, s)) = clean::clean(&text, reuse) {
+        text = t;
+        steps.extend(s);
+        shaper = Some(Shaper::Clean);
+    }
+    // Step 2, dedup (O§7.5), only when the model may not reuse the text.
+    if !reuse && let Some(t) = dedup::dedup(&text) {
+        text = t;
+        steps.push(Step::RepeatedLinesCounted);
+        shaper = Some(Shaper::Dedup);
+    }
+    // Step 3, runner view (O§7.6): OS-30.
+    // Step 4, kind view (O§7.7), only when over the threshold: OS-29.
+    let size_view = over(&text);
+    if shaper.is_none() && size_view {
+        shaper = Some(Shaper::Size);
+    }
+    Shaped { text, steps, shaper, size_view }
+}
+
 /// One name in the `<steps>` list of the shaped marker (O§7.8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
