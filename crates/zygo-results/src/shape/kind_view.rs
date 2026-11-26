@@ -13,15 +13,18 @@ const LOG_EDGE: usize = 20;
 
 static LOG_KEEP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b(ERROR|WARN|WARNING|FATAL|CRITICAL)\b|^(panic|Traceback)").unwrap());
 
-/// The kind view of `text`, at most `cap` bytes, with its step and shaper; `None` when the kind has no view
-/// or the view cannot fit its first unit (O§7.7).
+static HUNK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@").unwrap());
+
+/// The kind view of `text`, at most `cap` bytes, with its step and shaper; `None` when the kind has no view,
+/// the view cannot fit its first unit (O§7.7), or the view is not shorter than `text` (O§7.3 "No step adds content").
 pub fn kind_view(text: &str, kind: Kind, cap: usize) -> Option<(String, Step, Shaper)> {
-    match kind {
+    let view = match kind {
         Kind::Diff => diff_view(text, cap).map(|v| (v, Step::DiffFilesListed, Shaper::Diff)),
         Kind::Json => json_view(text, cap).map(|v| (v, Step::JsonOutlined, Shaper::Json)),
         Kind::Log => log_view(text, cap).map(|v| (v, Step::LogErrorsKept, Shaper::Log)),
         Kind::Jsonl | Kind::Tree | Kind::Text => None,
-    }
+    };
+    view.filter(|(v, _, _)| v.len() < text.len())
 }
 
 /// A line as the view writes it: verbatim, with a `\n` added when it has none.
@@ -60,12 +63,36 @@ fn diff_list_line(section: &[&str]) -> String {
     format!("{path} +{added} -{removed}\n")
 }
 
+/// Section starts of a diff with no `diff --git ` line: a `--- ` line followed by a `+++ ` line,
+/// only when no hunk has lines left (by the `@@ -l,s +l,s @@` counts).
+fn plain_starts(lines: &[&str]) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let (mut old, mut new) = (0usize, 0usize);
+    for (i, l) in lines.iter().enumerate() {
+        if old > 0 || new > 0 {
+            match l.as_bytes().first() {
+                Some(b'-') => old = old.saturating_sub(1),
+                Some(b'+') => new = new.saturating_sub(1),
+                Some(b'\\') => {}
+                _ => {
+                    old = old.saturating_sub(1);
+                    new = new.saturating_sub(1);
+                }
+            }
+        } else if let Some(c) = HUNK.captures(l) {
+            let count = |m: Option<regex::Match>| m.map_or(1, |m| m.as_str().parse().unwrap_or(0));
+            (old, new) = (count(c.get(1)), count(c.get(2)));
+        } else if l.starts_with("--- ") && lines.get(i + 1).is_some_and(|n| n.starts_with("+++ ")) {
+            starts.push(i);
+        }
+    }
+    starts
+}
+
 fn diff_view(text: &str, cap: usize) -> Option<String> {
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
     let git = lines.iter().any(|l| l.starts_with("diff --git "));
-    let starts: Vec<usize> = (0..lines.len())
-        .filter(|&i| if git { lines[i].starts_with("diff --git ") } else { lines[i].starts_with("--- ") && lines.get(i + 1).is_some_and(|n| n.starts_with("+++ ")) })
-        .collect();
+    let starts = if git { (0..lines.len()).filter(|&i| lines[i].starts_with("diff --git ")).collect() } else { plain_starts(&lines) };
     let sections: Vec<&[&str]> = starts.iter().enumerate().map(|(k, &s)| &lines[s..starts.get(k + 1).copied().unwrap_or(lines.len())]).collect();
     let mut view: String = sections.iter().map(|s| diff_list_line(s)).collect();
     let mut shown = 0;

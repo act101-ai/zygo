@@ -9,7 +9,22 @@ use zygo_results::{Kind, Stored};
 fn case(dir: &str, name: &str) -> (String, Vec<String>) {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/shaping").join(dir).join(name);
     let read = |f: &str| String::from_utf8(std::fs::read(p.join(f)).unwrap()).unwrap();
-    (read("stdout"), read("must_keep").lines().map(String::from).collect())
+    let keep: Vec<String> = read("must_keep").lines().map(String::from).collect();
+    assert!(keep.iter().all(|l| !l.is_empty()), "{name}: an empty must_keep line is invalid");
+    (read("stdout"), keep)
+}
+
+/// O§8.2: a `must_keep` line holds when a view line equals it, or, in the log view, equals `<n>: ` and it.
+fn holds(view: &str, line: &str, log: bool) -> bool {
+    let numbered = |x: &str| {
+        x.split_once(": ").is_some_and(|(n, rest)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) && rest == line)
+    };
+    !line.is_empty() && view.lines().any(|x| x == line || (log && numbered(x)))
+}
+
+/// A git file section larger than the 8 KiB cap, so it is never shown.
+fn big_git(path: &str) -> String {
+    format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1 +1,2000 @@\n{}", "+line\n".repeat(2000))
 }
 
 /// The result_tree outline of a JSON text (`kind.rs:89`).
@@ -46,8 +61,7 @@ fn fixture_cases_fit_the_cap_and_keep_must_keep_lines() {
         assert!(v.len() <= 8192, "{name}: {}", v.len());
         assert_eq!((s, k), (step, shaper), "{name}");
         for l in &keep {
-            // O§8.2: `must_keep` lines are checked with `contains` (a log line is in a `<n>: <line>` view line)
-            assert!(v.contains(l.as_str()), "{name}: {l}");
+            assert!(holds(&v, l, kind == Kind::Log), "{name}: {l}");
         }
     }
 }
@@ -60,7 +74,7 @@ fn diff_fixture_lists_files_then_sections_then_marker() {
     let list = nl(&["Cargo.toml +1 -0", "src/kind.rs +1 -0", "src/lib.rs +1 -0", "src/shape/mod.rs +1 -0", "src/store.rs +1 -0", "src/sweep.rs +1 -0", "src/view.rs +1 -0", "tests/results.rs +586 -586"]);
     assert_eq!(v, format!("{list}{}[zygo: 1 file sections not shown]\n", &raw[..cut]));
     for l in &keep {
-        assert!(v.lines().any(|x| x == l), "{l}");
+        assert!(holds(&v, l, false), "{l}");
     }
 }
 
@@ -70,7 +84,6 @@ fn diff_view_keeps_whole_sections_in_order_while_they_fit() {
     let w = format!("{LIST}{S1}{S2}[zygo: 2 file sections not shown]\n");
     assert_eq!(kind_view(&t, Kind::Diff, w.len()), Some((w.clone(), Step::DiffFilesListed, Shaper::Diff)));
     assert_eq!(kind_view(&t, Kind::Diff, w.len() - 1), Some((format!("{LIST}{S1}[zygo: 3 file sections not shown]\n"), Step::DiffFilesListed, Shaper::Diff)));
-    assert_eq!(kind_view(&t, Kind::Diff, 8192).unwrap().0, format!("{LIST}{t}[zygo: 0 file sections not shown]\n"));
     // The first section that does not fit ends the walk; a later, smaller one is not tried.
     let big = format!("diff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1,200 @@\n{}", "+line\n".repeat(200));
     let t2 = [S1, &big, S3].concat();
@@ -89,13 +102,14 @@ fn diff_whose_first_section_does_not_fit_gives_none() {
 #[test]
 fn diff_without_git_headers_splits_at_minus_plus_pairs() {
     let t = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-1\n+2\n--- y.orig\t2026-01-01\n+++ y\t2026-01-01\n@@ -1 +1 @@\n-3\n+4\n";
-    assert_eq!(kind_view(t, Kind::Diff, 8192).unwrap().0, format!("x +1 -1\ny +1 -1\n{t}[zygo: 0 file sections not shown]\n"));
+    let big = format!("--- z\n+++ z\n@@ -1 +1,2000 @@\n{}", "+line\n".repeat(2000));
+    assert_eq!(kind_view(&(t.to_string() + &big), Kind::Diff, 8192).unwrap().0, format!("x +1 -1\ny +1 -1\nz +2000 -0\n{t}[zygo: 1 file sections not shown]\n"));
 }
 
 #[test]
 fn diff_crlf_section_stays_byte_equal() {
     let s = "diff --git a/w b/w\n--- a/w\n+++ b/w\n@@ -1 +1 @@\n-a\r\n+b\r\n";
-    assert_eq!(kind_view(s, Kind::Diff, 8192).unwrap().0, format!("w +1 -1\n{s}[zygo: 0 file sections not shown]\n"));
+    assert_eq!(kind_view(&(s.to_string() + &big_git("z")), Kind::Diff, 8192).unwrap().0, format!("w +1 -1\nz +2000 -0\n{s}[zygo: 1 file sections not shown]\n"));
 }
 
 #[test]
@@ -109,8 +123,8 @@ fn json_fixture_is_the_outline() {
 #[test]
 fn json_outline_is_cut_to_half_the_cap_then_text_lines_fill() {
     let mut t = String::from("{\n");
-    for i in 0..600 {
-        t += &format!("  \"k{i:03}\": 0{}\n", if i < 599 { "," } else { "" });
+    for i in 0..1000 {
+        t += &format!("  \"k{i:03}\": 0{}\n", if i < 999 { "," } else { "" });
     }
     t += "}\n";
     let want = (0..315).map(|i| format!("k{i:03}: number\n")).collect::<String>() + "{\n" + &(0..315).map(|i| format!("  \"k{i:03}\": 0,\n")).collect::<String>();
@@ -189,4 +203,65 @@ fn other_kinds_give_none() {
     for k in [Kind::Jsonl, Kind::Tree, Kind::Text] {
         assert!(kind_view(&raw, k, VIEW_CAP_BYTES).is_none(), "{k:?}");
     }
+}
+
+#[test]
+fn diff_view_not_smaller_than_text_gives_none() {
+    // R1, O§7.3 "No step adds content"
+    assert!(kind_view(S1, Kind::Diff, 8192).is_none());
+}
+
+#[test]
+fn json_view_not_smaller_than_text_gives_none() {
+    assert!(kind_view("{\n  \"a\": 1,\n  \"b\": [1, 2]\n}\n", Kind::Json, 8192).is_none());
+}
+
+#[test]
+fn log_view_not_smaller_than_text_gives_none() {
+    let t: String = (1..=60).map(|i| format!("2026-11-25 10:{i:02}:00 ERROR boom {i}\n")).collect();
+    assert!(kind_view(&t, Kind::Log, 8192).is_none());
+}
+
+#[test]
+fn plain_diff_minus_plus_lines_inside_a_hunk_are_body_lines() {
+    // R2: `--- a` / `+++ b` are hunk lines while the `@@ -1,3 +1,3 @@` counts have lines left
+    let t = "--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n ctx\n--- a\n+++ b\n ctx2\n";
+    let big = format!("--- z\n+++ z\n@@ -1 +1,2000 @@\n{}", "+line\n".repeat(2000));
+    let v = kind_view(&(t.to_string() + &big), Kind::Diff, 8192).unwrap().0;
+    assert_eq!(v, format!("x +1 -1\nz +2000 -0\n{t}[zygo: 1 file sections not shown]\n"));
+    assert!(!v.lines().any(|l| l.starts_with("b +")));
+}
+
+#[test]
+fn must_keep_rule_needs_a_whole_line() {
+    // R3, O§8.2
+    assert!(!holds("diff --git a/x b/x.orig\n", "diff --git a/x b/x", false));
+    assert!(holds("diff --git a/x b/x\n", "diff --git a/x b/x", false));
+    assert!(holds("12: E boom\n", "E boom", true));
+    assert!(!holds("12: E boom\n", "E boom", false));
+    assert!(!holds("x12: E boom\n", "E boom", true));
+    assert!(!holds("\n", "", false));
+}
+
+#[test]
+fn empty_text_gives_none_for_each_kind() {
+    for k in [Kind::Json, Kind::Jsonl, Kind::Diff, Kind::Log, Kind::Tree, Kind::Text] {
+        assert!(kind_view("", k, VIEW_CAP_BYTES).is_none(), "{k:?}");
+    }
+}
+
+#[test]
+fn text_sniffed_as_json_that_does_not_parse_gives_none() {
+    let t = format!("{{\"a\": \"{}\n", "x".repeat(5000));
+    assert_eq!(sniff(t.as_bytes()), Kind::Json);
+    assert!(kind_view(&t, Kind::Json, VIEW_CAP_BYTES).is_none());
+}
+
+#[test]
+fn diff_of_300_files_gives_none() {
+    // R4: the file list alone passes the cap, so no section fits (current behavior, O§7.7)
+    let t: String = (0..300)
+        .map(|i| format!("diff --git a/src/some/deep/module/path/file_{i:03}.rs b/src/some/deep/module/path/file_{i:03}.rs\n--- a/src/some/deep/module/path/file_{i:03}.rs\n+++ b/src/some/deep/module/path/file_{i:03}.rs\n@@ -1 +1 @@\n-a\n+b\n"))
+        .collect();
+    assert!(kind_view(&t, Kind::Diff, VIEW_CAP_BYTES).is_none());
 }

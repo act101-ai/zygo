@@ -244,3 +244,15 @@ fn no_kind_view_for_jsonl_tree_text() {
         assert!(out.size_view, "{k:?}");
     }
 }
+
+#[test]
+fn small_diff_over_threshold_gets_no_kind_view() {
+    // R1: a 5-file diff of about 3.3 KB; the list and marker would make the view larger than the text
+    let raw: String = (0..5)
+        .map(|i| format!("diff --git a/f{i} b/f{i}\n--- a/f{i}\n+++ b/f{i}\n@@ -1,30 +1,30 @@\n{}", (0..30).map(|j| format!(" context line {j:02} here\n")).collect::<String>()))
+        .collect();
+    assert!((3000..3700).contains(&raw.len()), "{}", raw.len());
+    let out = shape::run(&raw, &input(None, Kind::Diff, 1000));
+    assert!(!out.steps.contains(&Step::DiffFilesListed), "{:?}", out.steps);
+    assert!(out.size_view);
+}
