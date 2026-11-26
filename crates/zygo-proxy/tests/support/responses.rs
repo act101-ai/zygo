@@ -36,6 +36,7 @@ pub const MAX_OUTPUT: u64 = 32000;
 
 type Got = (String, HeaderMap, Vec<u8>);
 type Reply = (u16, String, Vec<u8>);
+type Hold = Arc<Mutex<Option<tokio::sync::oneshot::Receiver<()>>>>;
 
 struct Upstream {
     addr: SocketAddr,
@@ -43,6 +44,8 @@ struct Upstream {
     reply: Arc<Mutex<Reply>>,
     /// Set: the reply ends before its `content-length` (`reply_cut`).
     cut: Arc<AtomicBool>,
+    /// Set: the next reply's connection stays open after the body until the test releases it (`reply_held`).
+    hold: Hold,
     _stop: tokio::sync::oneshot::Sender<()>,
 }
 
@@ -53,11 +56,12 @@ impl Upstream {
         let got: Arc<Mutex<Vec<Got>>> = Arc::default();
         let reply = Arc::new(Mutex::new(reply));
         let cut: Arc<AtomicBool> = Arc::default();
+        let hold: Hold = Arc::default();
         let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         l.set_nonblocking(true).unwrap();
         let addr = l.local_addr().unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let (g2, r2, c2) = (got.clone(), reply.clone(), cut.clone());
+        let (g2, r2, c2, h2) = (got.clone(), reply.clone(), cut.clone(), hold.clone());
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
             rt.block_on(async move {
@@ -65,9 +69,9 @@ impl Upstream {
                 let serve = async {
                     loop {
                         let Ok((s, _)) = l.accept().await else { continue };
-                        let (g3, r3, c3) = (g2.clone(), r2.clone(), c2.clone());
+                        let (g3, r3, c3, h3) = (g2.clone(), r2.clone(), c2.clone(), h2.clone());
                         tokio::spawn(async move {
-                            let _ = exchange(s, &g3, &r3, &c3).await;
+                            let _ = exchange(s, &g3, &r3, &c3, &h3).await;
                         });
                     }
                 };
@@ -77,14 +81,15 @@ impl Upstream {
                 }
             });
         });
-        Upstream { addr, got, reply, cut, _stop: tx }
+        Upstream { addr, got, reply, cut, hold, _stop: tx }
     }
 }
 
 /// One request read from `s` (its head, then `content-length` body bytes) and recorded; then the reply with
 /// `connection: close`. Cut: `content-length` is one byte more than the body sent, and the connection closes after the
-/// body, so the proxy reads the body and then a read error (an early end), with no timer.
-async fn exchange(mut s: tokio::net::TcpStream, got: &Mutex<Vec<Got>>, reply: &Mutex<Reply>, cut: &AtomicBool) -> std::io::Result<()> {
+/// body, so the proxy reads the body and then a read error (an early end), with no timer. Held: the connection closes
+/// only when the test releases it.
+async fn exchange(mut s: tokio::net::TcpStream, got: &Mutex<Vec<Got>>, reply: &Mutex<Reply>, cut: &AtomicBool, hold: &Hold) -> std::io::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut buf = Vec::new();
     let mut chunk = [0u8; 16 * 1024];
@@ -124,6 +129,10 @@ async fn exchange(mut s: tokio::net::TcpStream, got: &Mutex<Vec<Got>>, reply: &M
     let head = format!("HTTP/1.1 {status} {reason}\r\ncontent-type: {ctype}\r\ncontent-length: {declared}\r\nconnection: close\r\n\r\n");
     s.write_all(head.as_bytes()).await?;
     s.write_all(&b).await?;
+    let held = hold.lock().unwrap().take();
+    if let Some(rx) = held {
+        let _ = rx.await;
+    }
     s.shutdown().await
 }
 
@@ -333,6 +342,7 @@ impl Harness {
     /// The mock's reply to every later request.
     pub fn reply_with(&self, status: u16, content_type: &str, body: Vec<u8>) {
         self.up.cut.store(false, Ordering::SeqCst);
+        *self.up.hold.lock().unwrap() = None;
         *self.up.reply.lock().unwrap() = (status, content_type.to_string(), body);
     }
 
@@ -341,6 +351,15 @@ impl Harness {
     pub fn reply_cut(&self, status: u16, content_type: &str, body: Vec<u8>) {
         *self.up.reply.lock().unwrap() = (status, content_type.to_string(), body);
         self.up.cut.store(true, Ordering::SeqCst);
+    }
+
+    /// As `reply_cut`, but the connection stays open after `body` until the returned sender sends or drops: the proxy
+    /// has read the body and waits for its last byte; then a read error.
+    pub fn reply_held(&self, status: u16, content_type: &str, body: Vec<u8>) -> tokio::sync::oneshot::Sender<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        *self.up.hold.lock().unwrap() = Some(rx);
+        self.reply_cut(status, content_type, body);
+        tx
     }
 
     fn usage_db(&self) -> PathBuf {

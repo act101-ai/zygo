@@ -1337,8 +1337,36 @@ impl Drop for Flow {
 
 async fn next_chunk(mut f: Flow) -> Option<(Result<Bytes, std::io::Error>, Flow)> {
     while !f.done {
+        // After the encoder's terminal event the client body ends; the rest of the upstream is read in a detached
+        // task, through the tee, for the usage row (written when the flow drops): to its end, a read error or the
+        // upstream idle read timeout.
+        if let Some(Encode::Stream(s)) = &f.encode
+            && s.enc.ended()
+        {
+            tokio::spawn(drain(f));
+            return None;
+        }
+        match f.step().await {
+            Ok(b) if b.is_empty() => {}
+            r => return Some((r, f)),
+        }
+    }
+    None
+}
+
+/// The rest of the upstream body after the client body ended; the client's bytes are dropped.
+async fn drain(mut f: Flow) {
+    while !f.done {
+        let _ = f.step().await;
+    }
+}
+
+impl Flow {
+    /// One upstream read through the stages: the client's bytes (empty when there are none yet), or the read error.
+    async fn step(&mut self) -> Result<Bytes, std::io::Error> {
+        let f = self;
         let next = f.upstream.next().await;
-        let Flow { tee, rctx, pipeline, mapper, restore, encode, done, failed, .. } = &mut f;
+        let Flow { tee, rctx, pipeline, mapper, restore, encode, done, failed, .. } = f;
         // The stages see the upstream numbers up to and including this line.
         let mut on_line = |l: &mut SseLine| {
             rctx.usage.observe(&l.0);
@@ -1372,10 +1400,9 @@ async fn next_chunk(mut f: Flow) -> Option<(Result<Bytes, std::io::Error>, Flow)
                 *failed = true;
                 // A Responses stream ends with one terminal event (K§6.4.3 stream obligation 6).
                 if let Some(Encode::Stream(s)) = encode {
-                    let b = sse_bytes(&s.read_failed());
-                    return Some((Ok(b), f));
+                    return Ok(sse_bytes(&s.read_failed()));
                 }
-                return Some((Err(std::io::Error::other(READ_FAILED)), f));
+                return Err(std::io::Error::other(READ_FAILED));
             }
             None => {
                 let mut out = BytesMut::new();
@@ -1390,15 +1417,10 @@ async fn next_chunk(mut f: Flow) -> Option<(Result<Bytes, std::io::Error>, Flow)
                 out.freeze()
             }
         };
-        // After the encoder's terminal event the upstream is still read to its end, through the tee, for the usage
-        // row; the client gets nothing more.
         let out = encoded(encode, out, *done);
-        f.rctx.usage = f.tee.usage();
-        if !out.is_empty() {
-            return Some((Ok(out), f));
-        }
+        rctx.usage = tee.usage();
+        Ok(out)
     }
-    None
 }
 
 #[cfg(test)]

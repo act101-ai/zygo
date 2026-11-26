@@ -439,6 +439,47 @@ fn encoder_failure_row_has_final_usage() {
     assert_eq!(counts(&rows[0]), (100, 30, 5, 4242));
 }
 
+#[test] // review round 2 G1: the client body ends at the encoder's terminal event; the rest of the upstream drains detached
+fn client_released_at_completed() {
+    let h = start(A);
+    let evs = [
+        message_start(),
+        text_start(0),
+        text_delta(0, "hi"),
+        stop(0),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":77}}),
+        json!({"type":"message_stop"}),
+    ];
+    let release = h.reply_held(200, SSE, msg_sse(&evs));
+    // A regression: this read never ends (the upstream is still open).
+    let (s, _, b) = h.post(R, &codex_request("after-custom-tool-call-output"));
+    assert_eq!(s, 200);
+    let evs = events(&b);
+    assert_eq!(terminals(&evs).len(), 1, "{:?}", names(&evs));
+    assert_eq!(evs.last().unwrap().0, "response.completed");
+    release.send(()).unwrap();
+    assert_eq!(counts(&h.usage_rows()[0]), (100, 30, 5, 77));
+}
+
+#[test] // review round 2 G1: an encoder failure (a non-JSON event after `message_start`) ends the client body at once
+fn client_released_at_encoder_failure() {
+    let h = start(A);
+    let mut body = msg_sse(&[message_start()]);
+    body.extend_from_slice(b"event: content_block_start\ndata: not json\n\n");
+    body.extend(msg_sse(&[
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":88}}),
+        json!({"type":"message_stop"}),
+    ]));
+    let release = h.reply_held(200, SSE, body);
+    let (s, _, b) = h.post(R, &codex_request("after-custom-tool-call-output"));
+    assert_eq!(s, 200);
+    let evs = events(&b);
+    assert_eq!(terminals(&evs).len(), 1, "{:?}", names(&evs));
+    assert_eq!(evs.last().unwrap().0, "response.failed");
+    release.send(()).unwrap();
+    assert_eq!(counts(&h.usage_rows()[0]), (100, 30, 5, 88));
+}
+
 /// An Anthropic stream that fails after its first event with `error`.
 fn failing(error: Value) -> Vec<u8> {
     msg_sse(&[message_start(), text_start(0), text_delta(0, "par"), json!({"type":"error","error":error})])
