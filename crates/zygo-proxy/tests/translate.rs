@@ -416,6 +416,23 @@ fn err(t: &str, m: &str) -> Value {
     json!({"type":"error","error":{"type":t,"message":m}})
 }
 
+/// Anthropic's other overflow text: input plus `max_tokens` over the context window. Claude Code parses it to retry
+/// with a smaller `max_tokens`, so an `anthropic` client gets it unchanged (RS-3 review round 2, G1).
+const ANTH_LIMIT: &str = "input length and `max_tokens` exceed context limit: 180000 + 32000 > 200000, decrease input length or `max_tokens` and try again";
+/// The part Claude Code's pattern reads.
+const ANTH_LIMIT_CORE: &str = "input length and `max_tokens` exceed context limit: 180000 + 32000 > 200000";
+
+#[allow(non_snake_case)]
+fn CTX_ANTH_LIMIT() -> Value {
+    json!({"type":"error","error":{"type":"invalid_request_error","message":ANTH_LIMIT}})
+}
+
+#[test]
+fn res_json_anthropic_limit_text_unchanged() {
+    let (s, v) = translate_error(StatusCode::BAD_REQUEST, CTX_ANTH_LIMIT().to_string().as_bytes(), 1, None);
+    assert_eq!((s, v), (StatusCode::BAD_REQUEST, err("invalid_request_error", ANTH_LIMIT)));
+}
+
 #[test]
 fn res_json_context_errors() {
     let cases = [
@@ -719,6 +736,15 @@ fn res_sse_in_stream_context_error() {
         + "data: {\"error\":{\"message\":\"This model's maximum context length is 128000 tokens. However, your messages resulted in 130532 tokens.\",\"code\":\"context_length_exceeded\"}}\n\n";
     assert_eq!(feed(&mut chat().errors(10, None), &s), [msg_start("chatcmpl-1", "up-chat"),
         err_ev("invalid_request_error", "prompt is too long: 130532 tokens > 128000 maximum")]);
+}
+
+/// Inside a translated stream, Anthropic's limit text reaches the Messages client unchanged (RS-3 review round 2, G1).
+#[test]
+fn res_sse_in_stream_anthropic_limit_text_unchanged() {
+    let s = chat_delta(json!({"role":"assistant","content":""}), Value::Null)
+        + &format!("data: {}\n\n", json!({"error":{"message":ANTH_LIMIT,"type":"invalid_request_error"}}));
+    let out = feed(&mut chat().errors(10, None), &s);
+    assert_eq!(out, [msg_start("chatcmpl-1", "up-chat"), err_ev("api_error", ANTH_LIMIT)]);
 }
 
 #[test]
@@ -1253,6 +1279,22 @@ fn wire_round_trip_tool_loop() {
     assert!(!adj(&r.1).contains("thinking_dropped"));
 }
 
+/// A chat upstream relays Anthropic's limit text: the Messages client gets it unchanged (RS-3 review round 2, G1).
+#[test]
+fn wire_anthropic_limit_text_unchanged_from_chat() {
+    let t = setup();
+    let g = grant(&t, false);
+    // `test-mix`: the Responses provider fails over (503) to the chat provider.
+    t.up.script("/resp", vec![json_reply(503, json!({"error":{"message":"busy"}}))]);
+    t.up.script("/chat", vec![json_reply(400, json!({"error":{"message":ANTH_LIMIT,"type":"invalid_request_error"}}))]);
+    let r = post(&t, &g, &msgs("test-mix", json!([user(json!("hi"))])));
+    assert_eq!(t.up.count("/chat"), 1);
+    assert_eq!(r.0, 400);
+    let v: Value = serde_json::from_slice(&r.2).unwrap();
+    assert_eq!(v, err("invalid_request_error", ANTH_LIMIT));
+    assert!(v["error"]["message"].as_str().unwrap().contains(ANTH_LIMIT_CORE));
+}
+
 #[test]
 fn wire_context_error_prompt_too_long() {
     let t = setup();
@@ -1387,8 +1429,7 @@ fn wire_openai_routes_not_in_v1() {
     let g = grant(&t, false);
     let not_in_v1 = json!({"error":{"type":"zygo_route_not_in_v1","message":"this route is not in zygo v1"}});
     for hd in [vec![], auth(&g)] {
-        for (m, p, b) in [("POST", "openai/v1/responses", Some(b"{}".to_vec())), ("POST", "openai/v1/chat/completions", Some(b"{}".to_vec())),
-            ("GET", "openai/v1/models", None)] {
+        for (m, p, b) in [("POST", "openai/v1/chat/completions", Some(b"{}".to_vec())), ("GET", "openai/v1/models", None)] {
             let r = send(&t.h, m, p, &hd, b);
             assert_eq!(r.0, 404, "{m} {p}");
             assert_eq!(serde_json::from_slice::<Value>(&r.2).unwrap(), not_in_v1);
