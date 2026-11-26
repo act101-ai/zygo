@@ -6,14 +6,12 @@ use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::Arc;
-#[cfg(feature = "test-hooks")]
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use zygo_config::profile::{requested, select, valid_name, validate, Profile};
 use zygo_config::keys::default_store;
-use zygo_config::repo_def::{check_default, short, GitRunner, SystemGit, Use};
+use zygo_config::repo_def::{check_default, check_pinned, short, GitRunner, Pin, PinnedUse, SystemGit, Use};
 use zygo_config::{load, Dialect, LoadContext, Merged};
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
@@ -145,6 +143,12 @@ pub struct LaunchOpts {
     pub agent_session: Option<AgentSession>,
     /// An error is logged to the session log and the launch goes on.
     pub on_session: Option<SessionCallback>,
+    /// R§7.4: the saved pin of this member. `Some`: a repository profile resolves only by the pinned read of this
+    /// commit and digest, never by a default-branch read; a pin that is gone, not approved or unread stops the launch.
+    pub definition: Option<Pin>,
+    /// R§7.4: set to the pin of this launch's own default-branch read when that read is approved and gives the
+    /// requested profile; never set by a pinned launch. The member callback reads it before its start write.
+    pub definition_out: Option<Arc<Mutex<Option<Pin>>>>,
     /// `Some`: the built-in layer is this table (`load_with_builtin`).
     #[cfg(feature = "test-hooks")]
     pub builtin: Option<toml::Table>,
@@ -181,6 +185,8 @@ impl LaunchOpts {
             resume_note: None,
             agent_session: None,
             on_session: None,
+            definition: None,
+            definition_out: None,
             #[cfg(feature = "test-hooks")]
             builtin: None,
             #[cfg(feature = "test-hooks")]
@@ -347,10 +353,25 @@ impl Launcher {
         if let Some(n) = name {
             if !cfg.config.profile.contains_key(&n) {
                 // A name that no profile can have reads nothing.
-                let read = if valid_name(&n) {
-                    repository_profile(&opts, &cfg, &n, top.as_deref(), common_dir.as_deref())
-                } else {
+                let read = if !valid_name(&n) {
                     Err(format!("zygo: profile {} not found; launching without it", zygo_core::esc(&n)))
+                } else if let Some(pin) = &opts.definition {
+                    match pinned_profile(&opts, &cfg, &n, pin, top.as_deref(), common_dir.as_deref()) {
+                        Pinned::Apply(m) => Ok(m),
+                        Pinned::NotFound(line) => Err(line),
+                        // R§7.4: before the proxy, the session and the callback, so the record does not change (AU92).
+                        Pinned::Stop(line) => {
+                            out.line(&line);
+                            return 1;
+                        }
+                    }
+                } else {
+                    repository_profile(&opts, &cfg, &n, top.as_deref(), common_dir.as_deref()).map(|(m, pin)| {
+                        if let Some(o) = &opts.definition_out {
+                            *o.lock().unwrap_or_else(|e| e.into_inner()) = Some(pin);
+                        }
+                        m
+                    })
                 };
                 match read {
                     Ok(m) => cfg = m,
@@ -869,22 +890,22 @@ fn definition_git(#[allow(unused_variables)] opts: &LaunchOpts) -> Arc<dyn GitRu
 }
 
 /// R§8 "When the launcher reads": one default-branch read and check (R§7.3) for profile `name`, which neither the user
-/// nor the team config has. `Ok`: `cfg` with the approved definition added (`Merged::with_definition`). `Err`: the one
-/// line printed in place of the profile.
+/// nor the team config has. `Ok`: `cfg` with the approved definition added (`Merged::with_definition`), and the pin of
+/// that read. `Err`: the one line printed in place of the profile.
 fn repository_profile(
     opts: &LaunchOpts,
     cfg: &Merged,
     name: &str,
     top: Option<&Path>,
     common_dir: Option<&Path>,
-) -> Result<Merged, String> {
+) -> Result<(Merged, Pin), String> {
     let n = zygo_core::esc(name);
     let not_found = format!("zygo: profile {n} not found; launching without it");
     let (Some(top), Some(cd)) = (top, common_dir) else {
         return Err(not_found);
     };
     match check_default(top, &workspace_id(cd), &opts.paths.approvals_file, definition_git(opts).as_ref()) {
-        Use::Approved { def, .. } if def.profiles.contains_key(name) => Ok(cfg.with_definition(&def)),
+        Use::Approved { def, pin, .. } if def.profiles.contains_key(name) => Ok((cfg.with_definition(&def), pin)),
         Use::NotApproved { digest, def, .. } if def.profiles.contains_key(name) => Err(format!(
             "zygo: profile {n} is in this repository's workspace files, which are not approved on this machine (digest {}); launching without it; see zygo workspace approve",
             short(&digest)
@@ -898,6 +919,43 @@ fn repository_profile(
             zygo_core::esc(&why)
         )),
         _ => Err(not_found),
+    }
+}
+
+/// The R§7.4 stop text of a pin that is gone or no longer approved.
+const NO_LONGER: &str = "this repository no longer has or no longer approves";
+
+/// What a pinned read (R§7.4) gives the launch.
+enum Pinned {
+    /// The approved pinned definition is added; the profile applies.
+    Apply(Merged),
+    /// The approved pinned definition has no profile of the name: the R§8 not-found line; the launch goes on.
+    NotFound(String),
+    /// The launch stops before the session with this line (exit 1).
+    Stop(String),
+}
+
+/// The R§7.4 line; `n` is the escaped profile name; the commit and the digest are escaped after `short` (C6).
+fn pin_line(n: &str, pin: &Pin, which: &str) -> String {
+    format!(
+        "zygo: profile {n} of this member comes from the workspace files at commit {} (digest {}), which {which}; the agent was not started; to start from the current files: zygo down, then zygo up --reset",
+        zygo_core::esc(short(&pin.commit)),
+        zygo_core::esc(short(&pin.digest))
+    )
+}
+
+/// R§7.4: one pinned read (`check_pinned`) for profile `name`, which neither the user nor the team config has. No
+/// checkout (no common dir): the `NO_LONGER` stop.
+fn pinned_profile(opts: &LaunchOpts, cfg: &Merged, name: &str, pin: &Pin, top: Option<&Path>, common_dir: Option<&Path>) -> Pinned {
+    let n = zygo_core::esc(name);
+    let (Some(top), Some(cd)) = (top, common_dir) else {
+        return Pinned::Stop(pin_line(&n, pin, NO_LONGER));
+    };
+    match check_pinned(top, &workspace_id(cd), pin, &opts.paths.approvals_file, definition_git(opts).as_ref()) {
+        PinnedUse::Approved { def } if def.profiles.contains_key(name) => Pinned::Apply(cfg.with_definition(&def)),
+        PinnedUse::Approved { .. } => Pinned::NotFound(format!("zygo: profile {n} not found; launching without it")),
+        PinnedUse::Gone | PinnedUse::NotApproved => Pinned::Stop(pin_line(&n, pin, NO_LONGER)),
+        PinnedUse::Unread { why } => Pinned::Stop(pin_line(&n, pin, &format!("were not read ({})", zygo_core::esc(&why)))),
     }
 }
 
