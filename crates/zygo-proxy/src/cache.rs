@@ -27,11 +27,23 @@ fn mark_last(body: &mut Value, field: &str) -> bool {
     true
 }
 
-/// A Messages body built for an Anthropic upstream (K§6.4.2, base §10.4): with no `cache_control` key anywhere, a
-/// string `system` becomes one text block, then the last `system` block and the last tool get
+/// A `cache_control` key where Anthropic accepts a marker: on a `system` block, on a content block of a `messages`
+/// entry, or at the top level of a `tools` entry. A key inside a user value (a schema, a `tool_use` input) is not one.
+fn has_placed_marker(body: &Value) -> bool {
+    fn all(v: Option<&Value>) -> impl Iterator<Item = &Value> {
+        v.and_then(Value::as_array).into_iter().flatten()
+    }
+    let marked = |v: &Value| v.get("cache_control").is_some();
+    all(body.get("system")).any(marked)
+        || all(body.get("tools")).any(marked)
+        || all(body.get("messages")).any(|m| all(m.get("content")).any(marked))
+}
+
+/// A Messages body built for an Anthropic upstream (K§6.4.2, base §10.4): with no marker where Anthropic accepts one
+/// (`has_placed_marker`), a string `system` becomes one text block, then the last `system` block and the last tool get
 /// `{"type":"ephemeral","ttl":"1h"}`. `true` when it added a marker.
 pub fn mark_upstream(body: &mut Value) -> bool {
-    if has_marker(body) {
+    if has_placed_marker(body) {
         return false;
     }
     if let Some(system) = body.get_mut("system").filter(|s| s.is_string()) {
@@ -96,6 +108,28 @@ mod tests {
     #[test]
     fn mark_upstream_without_system_or_tools_is_false() {
         let before = json!({"messages":[{"role":"user","content":"hi"}]});
+        let mut b = before.clone();
+        assert!(!mark_upstream(&mut b));
+        assert_eq!(b, before);
+    }
+
+    /// Round 1 review F3: a `cache_control` key that a user wrote inside a tool parameter schema, the
+    /// `output_config.format` schema or a `tool_use` input is not a marker.
+    #[test]
+    fn mark_upstream_ignores_cache_control_in_user_values() {
+        let cc = json!({"type":"object","properties":{"cache_control":{"type":"string"}}});
+        let mut b = json!({"system":"S","tools":[{"name":"a","input_schema":cc}],
+            "output_config":{"format":{"type":"json_schema","schema":cc}},
+            "messages":[{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"a","input":{"cache_control":"x"}}]}]});
+        assert!(mark_upstream(&mut b));
+        assert_eq!(b["system"], json!([{"type":"text","text":"S","cache_control":mark()}]));
+        assert_eq!(b["tools"][0]["cache_control"], mark());
+    }
+
+    #[test]
+    fn mark_upstream_leaves_a_marked_system_block() {
+        let before = json!({"system":[{"type":"text","text":"a","cache_control":{"type":"ephemeral"}},{"type":"text","text":"b"}],
+            "tools":[{"name":"a"}]});
         let mut b = before.clone();
         assert!(!mark_upstream(&mut b));
         assert_eq!(b, before);
