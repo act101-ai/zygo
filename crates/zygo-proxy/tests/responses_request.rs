@@ -841,6 +841,25 @@ fn g4_duplicate_tool_names_400() {
 }
 
 #[test]
+fn g5_text_sub_keys() {
+    for v in ["low", "medium", "high"] {
+        let mut b = body(json!([user("go")]));
+        b["text"] = json!({"verbosity":v,"format":{"type":"text"}});
+        let (m, _) = rq(&b).unwrap();
+        assert!(m.get("text").is_none() && m.get("verbosity").is_none());
+    }
+    let mut b = body(json!([user("go")]));
+    b["text"] = json!({"verbosity":null});
+    assert!(rq(&b).is_ok());
+    for v in [json!(42), json!("ultra")] {
+        b["text"] = json!({"verbosity":v});
+        assert_400(err(rq(&b)), "text.verbosity must be one of low, medium, high");
+    }
+    b["text"] = json!({"verbosity":"low","junk":1});
+    assert_400(err(rq(&b)), "unknown field: text.junk");
+}
+
+#[test]
 fn f9_other_hosted_items_dropped() {
     let b = body(json!([user("go"), {"type":"local_shell_call","id":"l","status":"completed"},
         {"type":"mcp_call","id":"m"}, asst("a")]));
