@@ -1324,6 +1324,14 @@ impl Encoder {
             _ => return,
         };
         let Some(x) = s(d, key).filter(|x| !x.is_empty()) else { return };
+        // A call's first delta replaces the start's `input`: only what is kept counts toward HOLD_MAX.
+        if let Some(b) = &mut self.open
+            && let Kind::Call { delta, .. } = &mut b.kind
+            && !*delta
+        {
+            *delta = true;
+            b.text.clear();
+        }
         if !self.hold([0, 0, x.len()], out) {
             return;
         }
@@ -1347,11 +1355,7 @@ impl Encoder {
                 self.emit("response.reasoning_summary_text.delta", ev, out);
             }
             ("signature", _) => b.sig.push_str(x),
-            (_, Kind::Call { custom, delta, .. }) => {
-                if !*delta {
-                    *delta = true;
-                    b.text.clear();
-                }
+            (_, Kind::Call { custom, .. }) => {
                 b.text.push_str(x);
                 if !*custom {
                     let ev = json!({"item_id":iid,"output_index":oi,"delta":x});
