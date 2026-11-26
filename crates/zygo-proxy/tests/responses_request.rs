@@ -747,6 +747,53 @@ fn f9_item_and_part_errors() {
     }
 }
 
+// ---- review round 2 findings ----
+
+fn history_tool(name: &str) -> Value {
+    json!({"name":name,"description":"history only","input_schema":{"type":"object"}})
+}
+
+#[test]
+fn g1_compaction_request_declares_history_tools() {
+    // PC-5's compaction request (fixtures/codex/compaction/requests/pc8-live-high-0022.json): tools [] and a call in
+    // its history.
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/compaction-request.json");
+    let rec: Value = serde_json::from_slice(&std::fs::read(p).unwrap()).unwrap();
+    let (m, codes) = rq(&rec["body"]).unwrap();
+    assert_valid(&m);
+    assert_eq!(m["tools"], json!([history_tool("exec_command")]));
+    assert_eq!(m["tool_choice"], json!({"type":"none"}));
+    assert!(codes.contains(&"tools_from_history:1".to_string()), "{codes:?}");
+}
+
+#[test]
+fn g1_no_tools_with_history() {
+    let mut b = body(json!([user("go"), fc("c1", "f", "{}"), fco("c1", "r"), fc("c2", "g", "{}"), fco("c2", "r"),
+        fc("c3", "f", "{}"), fco("c3", "r"), user("compact")]));
+    b["tools"] = json!([]);
+    b["tool_choice"] = json!("auto");
+    b["parallel_tool_calls"] = json!(false);
+    let (m, codes) = rq(&b).unwrap();
+    assert_valid(&m);
+    assert_eq!(m["tools"], json!([history_tool("f"), history_tool("g")]));
+    assert_eq!(m["tool_choice"], json!({"type":"none"}));
+    assert!(codes.contains(&"tools_from_history:2".to_string()), "{codes:?}");
+}
+
+#[test]
+fn g1_dropped_namespace_tool_called_in_history() {
+    let mut b = body(json!([user("go"), fc("c1", "spawn_agent", "{}"), fco("c1", "r"), user("next")]));
+    b["tools"] = json!([{"type":"function","name":"g","parameters":{"type":"object"}},
+        {"type":"namespace","name":"multi_agent_v1","tools":[{"type":"function","name":"spawn_agent"}]}]);
+    b["tool_choice"] = json!("auto");
+    let (m, codes) = rq(&b).unwrap();
+    assert_valid(&m);
+    assert_eq!(m["tools"], json!([{"name":"g","input_schema":{"type":"object"}}, history_tool("spawn_agent")]));
+    assert_eq!(m["tool_choice"], json!({"type":"auto"}));
+    assert!(codes.contains(&"tools_from_history:1".to_string()), "{codes:?}");
+    assert!(codes.contains(&"tools_dropped:namespace:1".to_string()), "{codes:?}");
+}
+
 #[test]
 fn f9_other_hosted_items_dropped() {
     let b = body(json!([user("go"), {"type":"local_shell_call","id":"l","status":"completed"},
