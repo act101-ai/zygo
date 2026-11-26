@@ -168,6 +168,13 @@ fn max_tokens(req: &Value, facts: Option<&Facts>) -> Result<u64, ZygoError> {
     }
 }
 
+/// A client type as it may appear in an adjustment code: kept when it is 1-32 characters of `[a-z0-9_]`, else
+/// `other` (a code is one header value; a newline, comma or colon would break or forge one).
+fn code_type(ty: &str) -> &str {
+    let ok = (1..=32).contains(&ty.len()) && ty.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    if ok { ty } else { "other" }
+}
+
 /// What the translation removed or changed, for the adjustment codes.
 #[derive(Default)]
 struct Drops {
@@ -258,7 +265,7 @@ fn item(c: &mut Conv, it: &Value, t: &Target, d: &mut Drops) -> Result<(), ZygoE
             Some(b) => c.push("assistant", b),
             None => d.reasoning += 1,
         },
-        _ if HOSTED_ITEMS.contains(&ty) => *d.items.entry(ty.into()).or_default() += 1,
+        _ if HOSTED_ITEMS.contains(&ty) => *d.items.entry(code_type(ty).into()).or_default() += 1,
         _ => return Err(bad(format!("unknown input item type: {}", cut(ty)))),
     }
     Ok(())
@@ -347,7 +354,7 @@ fn tools(req: &Value, d: &mut Drops) -> Result<Vec<Value>, ZygoError> {
             }
             other => {
                 // The `namespace` drop is RS-9's to replace (flatten into function tools).
-                *d.tools.entry(cut(other).into()).or_default() += 1;
+                *d.tools.entry(code_type(other).into()).or_default() += 1;
                 continue;
             }
         };
