@@ -104,10 +104,12 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | WD-11 | `zygo up`: loadout choice, checked read, pin, member maximum | WD-7, WD-8, WD-10, ML-14, MS-5 | DONE | judgment | a1f4eb0c, f16c93f8, 767b954a, e0905dec, 8cd02ad7, 6fe57c61, e6fca6e4 · up_definition 17/0 ; floor green · PR #120 |
 | WD-13 | Launcher: repository profile by a default-branch read (not pinned) | WD-7, DR-13, OS-9 | DONE | judgment | b00e2819, ffe10789, 777c51d6, d5c92329, 93add253 · repo_profile 15/0 ; floor green · PR #121 |
 | WD-17 | `zygo doctor` lines: workspace files, pool, member maximum | WD-7, WD-9 | DONE | implementation | d31d6c56, 8a15ab61, 2ec94a9a, 3a944a2d · definition_doctor 15/0 ; floor green · PR #119 |
+| SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | DONE | implementation | plan 25427cb5 · node d4c77b98, 99aa5725 · acceptance pass (claude_code 62 passed) · PR #181 |
 | ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | DONE | implementation | plan 8ca46aed · node 133f55bc, 37bd93c8 · acceptance pass (workspace_mail 7 passed, --include-ignored) · PR #171 |
 | MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | DONE | judgment | node commits 717f910e, ab5fc14b, 91b95bcb, dba2a089, 5dd04b76; acceptance: sync_pass 39/39; floor ws 3422/0; PR #150 |
 | OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | DONE | judgment | node commits 81332899, b442555c, 095ee7bb, 63e6f26a, fe154009, 725e2609; acceptance: shaping_hook 21/21, shaping_off 5/5, hooks_basic 60/60, hook_trim 6/6; floor ws 3432/0; PR #154 |
 | OS-41 | Kind views leave room for the shaped marker | OS-28, OS-29, OS-30 | DONE | implementation | 8f22ddd9, 453a297c, 68d99c41 · PR #167 |
+| OS-31 | pytest runner view | OS-30, OS-20 | DONE | judgment | 86aaac5a, 1b22b0ca, f6759d10, 7544ce89 · acceptance 18 passed · PR #166 |
 
 ## Log
 

@@ -191,10 +191,8 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | TODO | judgment | — |
 | OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4 | TODO | judgment | — |
-| OS-31 | pytest runner view | OS-30, OS-20 | DONE | judgment | 86aaac5a, 1b22b0ca, f6759d10, 7544ce89 · acceptance 18 passed · PR #166 |
 | WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | DONE | judgment | bae5b7af, 11d71492 · up_definition 35/0 ; floor green · PR #125 |
 | ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | DONE | mechanical | plan 0cbac05c · node b16ce79f, f13fe09b · acceptance LIVE M12 verified (agent 2.1.332): 3 of 3 ; check-premises ok · PR #178 |
 | MS-14 | Prune: orphan rewrite of acknowledged files, lease push | MS-13 | DONE | judgment | plan d2642ab4; node 51e0a828, ba8f8542, af8c6af8, f0cb91a7, f7a2bd2a; prune 18 passed; PR #179 |
@@ -412,6 +410,7 @@ Session text (T, SX nodes):
 | 2026-11-25 | MS-14 DONE, kept, round 1. Fixed F1 (non-lease failure: `prune skipped (<check>)`; S§9 Push rewritten, lead's call; D11), F2 (`pruned <n> files` / `prune skipped: the branch moved; run again`), F6 (regular files only), F7 (`--max-count=1000`). Refuted F3, F4 (D8 gap), F5 · PR #179 |
 | 2026-11-25 | ML-19 DONE (live run by the lead, override "YOU BUILD YOU TEST"). R1: 9 findings; 6 confirmed (F1 Method bullets, F2 line 3 M§14, F4 plan deviations, F6 beta's turn stopped by cleanup, F8 bounds, F9 exit-1 list); F3 → FX-18; 2 refuted (F5 operator override, F7 new checks) · PR #178 |
 | 2026-11-25 | MS-20 DONE: review round 1: 7 findings, 4 confirmed (F2 consumer contracts FX-9/WD-18, F4 duplicate remote addresses, F6 two tests, F7 S§10.4/S§17 text), 3 refuted (F1 mail_list remote is MS-19, F3 per-request rebuild is FX-9, F5 cache size cap would be a new rule) · PR #177 |
+| 2026-11-26 | SX-5 DONE, kept, round 1. Fixed F2 (step 9 ran 0 tests: workspace_down all #[ignore] timing; recorded). Refuted F1 (SubagentStart without agent_id: spec T§6.3 item 2 covers agent_id input only; a guard is a new check), F3 (settings order only) · PR #181 |
 | 2026-11-26 | OS-32 DONE, kept, round 1. Fixed F1 (panic/race/teardown after a passed test hidden; O-C9), F2 (unparsed mark), F3 (go test rules 1-3 rewritten, lead's call, O§15 decision record). Refuted F4 (fixed step set), F5, F6 (OS-36 seam) · PR #182 |
 | 2026-11-26 | OS-34 DONE, kept, round 1. Fixed F1 (test follows the PO2 row to failed), F3 (no prose assertion). F2 → FX-19 (PO2 run had stderr merged into stdout). Refuted F4 (fixed acceptance; --exact used), F5 (no failure) · PR #184 |
 | 2026-11-26 | FX-19 added: PO2 row states what its run observed (OS-34 review F2); OS-42 and MS-25 now depend on it (shared files: output-shaping spec, premises.md) |
