@@ -111,6 +111,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | OS-41 | Kind views leave room for the shaped marker | OS-28, OS-29, OS-30 | DONE | implementation | 8f22ddd9, 453a297c, 68d99c41 · PR #167 |
 | OS-31 | pytest runner view | OS-30, OS-20 | DONE | judgment | 86aaac5a, 1b22b0ca, f6759d10, 7544ce89 · acceptance 18 passed · PR #166 |
 | WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | DONE | judgment | bae5b7af, 11d71492 · up_definition 35/0 ; floor green · PR #125 |
+| ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | DONE | mechanical | plan 0cbac05c · node b16ce79f, f13fe09b · acceptance LIVE M12 verified (agent 2.1.332): 3 of 3 ; check-premises ok · PR #178 |
 
 ## Log
 
