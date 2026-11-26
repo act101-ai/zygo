@@ -8,9 +8,12 @@ use zygo_proxy::errors::ZygoError;
 use zygo_proxy::translate::reasoning::{
     decode, decode_thinking, encode, encode_thinking, MARK_MAX, THINKING_PREFIX,
 };
-use zygo_config::{Dialect, Effort, Facts, Reasoning};
+use zygo_config::builtin::schema_rules;
+use zygo_config::{Dialect, Effort, Facts, Family, Reasoning, SchemaRule, StructuredOutput};
 use zygo_proxy::translate::facts;
+use zygo_proxy::translate::facts::SCHEMA_PROMPT;
 use zygo_proxy::translate::responses_client::{check_fields, flat_name, request, IGNORED, NO_STATE, REFUSED};
+use zygo_proxy::translate::schema::rewrite;
 use zygo_proxy::translate::{translate_request, Target, DOC_OMITTED};
 
 fn tgt() -> Target {
@@ -542,8 +545,8 @@ fn text_format_rules() {
     b["text"] = json!({"format":{"type":"text"},"verbosity":"low"});
     let (m, _) = tr(&b);
     assert!(m.get("text").is_none());
-    b["text"] = json!({"format":{"type":"json_schema","name":"o","schema":{}}});
-    assert_400(err(request(&b, &tgt(), Some(&facts()))), "text.format: only type text is accepted toward this upstream");
+    b["text"] = json!({"format":{"type":"json_object"}});
+    assert_400(err(request(&b, &tgt(), Some(&facts()))), "text.format: only types text and json_schema are accepted toward this upstream");
 }
 
 // ---- review round 1 findings ----
@@ -1147,4 +1150,96 @@ fn namespace_tools_flatten_tool_choice_selects_only_a_sent_pair() {
     let tc = json!({"type":"custom","name":"c","namespace":null});
     let (m, _) = rq(&choose(json!([{"type":"custom","name":"c"}]), tc)).unwrap();
     assert_eq!(m["tool_choice"], json!({"type":"tool","name":"c"}));
+}
+
+// ---- RS-11: text.format json_schema → output_config.format (K§6.4.3 request obligation 11) ----
+
+const TITLE_FIXTURES: [&str; 2] =
+    ["compaction/requests/pc8-tui-high-0028.json", "compaction/requests/pc8-tui-low-0025.json"];
+
+fn fam(f: Family) -> Vec<SchemaRule> {
+    schema_rules().into_iter().filter(|r| r.family == f).collect()
+}
+
+#[test]
+fn text_format_json_schema_codex_title_fixtures() {
+    for rel in TITLE_FIXTURES {
+        let b = record(rel);
+        let schema = b["text"]["format"]["schema"].clone();
+        let (m, _) = tr(&b);
+        assert_valid(&m);
+        assert_eq!(m["output_config"], json!({"format":{"type":"json_schema","schema":schema}}), "{rel}");
+        assert!(m.get("tools").is_none() && m.get("tool_choice").is_none() && m.get("text").is_none(), "{rel}");
+        // Anthropic, native: facts keep the format; the built-in rules move the string lengths.
+        let f = Facts { structured_output: StructuredOutput::Native, max_output_tokens: 32000, ..Facts::default() };
+        let mut a = m.clone();
+        assert!(facts::apply(&mut a, &f).is_empty(), "{rel}");
+        let (codes, nulls) = rewrite(&mut a, &fam(Family::Anthropic));
+        assert_eq!(codes.into_iter().map(|c| c.0).collect::<Vec<_>>(), vec!["schema:string_length:1"]);
+        assert!(nulls.is_empty());
+        assert_eq!(
+            a["output_config"]["format"]["schema"]["properties"]["title"],
+            json!({"type":"string","description":"{\"minLength\":1,\"maxLength\":36}"})
+        );
+        // Chat: the OpenAI rules leave the schema; response_format carries it.
+        let mut c = m.clone();
+        facts::apply(&mut c, &f);
+        let (codes, _) = rewrite(&mut c, &fam(Family::Openai));
+        assert!(codes.is_empty(), "{codes:?}");
+        let (v, _) = translate_request(&c, Dialect::OpenaiChat, &tgt()).unwrap();
+        assert_eq!(v["response_format"], json!({"type":"json_schema","json_schema":{"name":"output","schema":schema}}));
+        // No structured output: the schema goes into the system text.
+        let mut p = m.clone();
+        let none = Facts { structured_output: StructuredOutput::None, ..f };
+        assert_eq!(
+            facts::apply(&mut p, &none).into_iter().map(|c| c.0).collect::<Vec<_>>(),
+            vec!["structured_output_prompted"]
+        );
+        assert!(p.get("output_config").is_none());
+        assert!(p["system"].as_str().unwrap().ends_with(&format!("{SCHEMA_PROMPT}{schema}")));
+    }
+}
+
+#[test]
+fn text_format_json_schema_to_output_config() {
+    let s = json!({"type":"object","properties":{"x":{"type":"string"}},"required":["x"],"additionalProperties":false});
+    let mut b = body(json!([user("go")]));
+    b["text"] = json!({"format":{"type":"json_schema","name":"o","schema":s,"strict":true,"description":"d"},"verbosity":"low"});
+    let (m, codes) = tr(&b);
+    assert_eq!(m["output_config"], json!({"format":{"type":"json_schema","schema":s}}));
+    assert!(codes.is_empty(), "{codes:?}");
+    b["reasoning"] = json!({"effort":"high"});
+    let want = json!({"effort":"high","format":{"type":"json_schema","schema":s}});
+    assert_eq!(tr(&b).0["output_config"], want);
+    b["tools"] = json!([{"type":"function","name":"f","parameters":{"type":"object"}}]);
+    b["tool_choice"] = json!("auto");
+    let (m, _) = tr(&b);
+    assert_eq!(m["tools"].as_array().unwrap().len(), 1);
+    assert_eq!(m["tools"][0]["name"], "f");
+    assert_eq!(m["tool_choice"], json!({"type":"auto"}));
+    assert_eq!(m["output_config"], want);
+}
+
+#[test]
+fn text_format_json_schema_field_rules() {
+    const TYPES: &str = "text.format: only types text and json_schema are accepted toward this upstream";
+    let cases = [
+        (json!({"type":"json_object"}), TYPES),
+        (json!({"name":"o","schema":{}}), TYPES),
+        (json!({"type":"json_schema","name":"o"}), "text.format: missing schema"),
+        (json!({"type":"json_schema","schema":null}), "text.format: missing schema"),
+        (json!({"type":"json_schema","schema":"x"}), "text.format.schema must be an object"),
+        (json!({"type":"json_schema","schema":{},"name":1}), "text.format.name must be a string"),
+        (json!({"type":"json_schema","schema":{},"description":1}), "text.format.description must be a string"),
+        (json!({"type":"json_schema","schema":{},"strict":"yes"}), "text.format.strict must be a boolean"),
+        (json!({"type":"json_schema","schema":{},"extra":1}), "unknown field: text.format.extra"),
+    ];
+    for (f, msg) in cases {
+        let mut b = body(json!([user("go")]));
+        b["text"] = json!({"format": f});
+        assert_400(err(rq(&b)), msg);
+    }
+    let mut b = body(json!([user("go")]));
+    b["text"] = json!({"format":{"type":"json_schema","schema":{},"name":null,"strict":null,"description":null}});
+    assert_eq!(rq(&b).unwrap().0["output_config"], json!({"format":{"type":"json_schema","schema":{}}}));
 }

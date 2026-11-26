@@ -956,3 +956,30 @@ fn namespace_call_maps_back_after_resumed_plain_history_call() {
     assert_eq!(r["output"][0]["name"], "compact");
     assert_eq!(r["output"][0]["namespace"], "mcp__zygo");
 }
+
+// ---- RS-11: a json_schema answer returns as output_text (K§6.4.3 stream obligation 2) ----
+
+#[test]
+fn text_format_json_schema_answer_returns_as_output_text() {
+    let body = record("compaction/requests/pc8-tui-high-0028.json");
+    let answer = "{\"title\":\"Fix the build\"}";
+    let mut ev = vec![message_start()];
+    ev.extend(text_block(0, &["{\"title\":", "\"Fix the build\"}"]));
+    ev.extend(end("end_turn"));
+    let evs = run(&mut Encoder::new("role-x", &tgt(), Calls::of(&body)), &ev);
+    assert_sequence(&evs);
+    let term = terminals(&evs);
+    assert_eq!(term.len(), 1);
+    assert_eq!(term[0].event, "response.completed");
+    let want = json!({"type":"message","role":"assistant","status":"completed",
+        "content":[{"type":"output_text","text":answer,"annotations":[]}]});
+    assert_eq!(items_done(&evs).iter().map(norm).collect::<Vec<_>>(), vec![want.clone()]);
+    // JSON form: Anthropic upstream, then chat upstream.
+    let msg = json!({"content":[{"type":"text","text":answer}],"stop_reason":"end_turn","usage":{}});
+    let (r, _) = response(&msg, "role-x", &tgt(), &Calls::of(&body));
+    assert_eq!(norm(&r["output"]), json!([want.clone()]));
+    let chat = json!({"id":"c1","model":"up","choices":[{"index":0,"message":{"role":"assistant","content":answer},
+        "finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}});
+    let (r, _) = response(&translate_response(&chat, Dialect::OpenaiChat, &tgt()), "role-x", &tgt(), &Calls::of(&body));
+    assert_eq!(norm(&r["output"]), json!([want]));
+}
