@@ -155,8 +155,21 @@ fn bare_repository_main_worktree_is_the_first_non_bare_entry() {
 fn worktrees_fails_after_the_deadline_and_when_git_fails() {
     let t = TempDir::new().unwrap();
     let w = repo(t.path(), "w");
-    assert!(worktrees(&Checkout { deadline: Instant::now(), ..co(&w) }).is_err());
-    let gone = t.path().join("gone"); // no such directory: `git -C` exits non-zero
+    assert_eq!(worktrees(&Checkout { deadline: Instant::now(), ..co(&w) }), Err(ListError::TimedOut));
+    let gone = t.path().join("gone"); // no such directory: `git -C` exits non-zero with "cannot change to"
     let c = Checkout { top: gone.clone(), common_dir: gone.clone(), main_root: gone, deadline: Instant::now() + GIT };
-    assert!(worktrees(&c).is_err());
+    assert_eq!(worktrees(&c), Err(ListError::Failed));
+}
+
+#[test] // FX-25 f6: git's "not a git repository" is told from a failure
+fn worktrees_tells_not_a_repository_from_a_failure() {
+    let t = TempDir::new().unwrap();
+    let plain = t.path().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let c = Checkout { top: plain.clone(), common_dir: plain.clone(), main_root: plain, deadline: Instant::now() + GIT };
+    assert_eq!(worktrees(&c), Err(ListError::NotARepository));
+    assert_eq!(
+        [ListError::NotARepository, ListError::NotFound, ListError::Failed, ListError::TimedOut].map(|e| e.to_string()),
+        ["not a git repository", "git not found", "git worktree list failed", "git worktree list timed out"]
+    );
 }

@@ -1056,3 +1056,36 @@ fn pool_line_escapes_control_characters() {
     assert!(err.contains(&line), "{err}");
     assert!(!err.chars().any(|c| c.is_control() && c != '\n'), "{err:?}");
 }
+
+#[test] // FX-25 f5, R§10 zygo up row, R§6.1 step 1: the read runs at the top of the current checkout
+fn first_worktree_deleted_reads_the_definition_at_the_current_checkout() {
+    let _g = serial();
+    let mut f = fx(&[(WS, b"version = 1\n")]);
+    git(&f.t, &["clone", "-q", "--bare", "o.git", "b.git"]);
+    let b = canon(&f.t.join("b.git"));
+    git(&b, &["worktree", "add", "-q", "--detach", "../one", "main"]);
+    git(&b, &["worktree", "add", "-q", "--detach", "../two", "main"]);
+    let two = canon(&f.t.join("two"));
+    // `one` stays the first non-bare entry of `git worktree list` (the main worktree, AU77) with its folder gone.
+    fs::remove_dir_all(f.t.join("one")).unwrap();
+    let id = workspace_id(&b);
+    // The bare clone has no `origin/HEAD`, so the read is `refs/heads/main` (R§6.1 step 2).
+    let Use::NotApproved { digest, .. } = check_default(&two, &id, &f.o.paths.approvals_file, &SystemGit) else {
+        panic!("not approved")
+    };
+    approve_workspace_in(&f.o.paths.approvals_file, &id, &digest).unwrap();
+    let store = Store::open(&f.o.paths, &id);
+    let (state, planned) = (store.dir().join("workspace.json"), f.t.join("planned.json"));
+    up::testing::hook(
+        store.dir(),
+        "before_undo",
+        Some(Box::new(move || fs::copy(&state, &planned).map(|_| ()).map_err(|e| e.to_string()))),
+    );
+    f.o.cwd = two;
+    // Stderr is only the tmux line: no not-approved and no unread line.
+    assert_eq!(f.up(), gone());
+    assert_eq!(f.git.reads(), 1);
+    let ws = f.planned();
+    assert_eq!((ws.loadout.as_str(), ws.common_dir.clone()), ("repository", b.clone()));
+    assert!(ws.members.values().all(|m| m.launch.definition.as_ref().is_some_and(|p| p.digest == digest)));
+}

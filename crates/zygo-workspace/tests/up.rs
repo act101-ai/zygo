@@ -388,6 +388,85 @@ fn preflight_tmux_version() {
     assert!(!o.paths.workspaces_dir().exists());
 }
 
+/// The first `git` file on the `PATH` of the test process (read only: no test changes that `PATH`).
+fn real_git() -> PathBuf {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&path).map(|d| d.join("git")).find(|g| g.is_file()).expect("git on PATH")
+}
+
+/// `<dir>/bin/git` (by `script`): a call whose arguments hold `worktree list` prints `fatal: stub` to stderr and exits
+/// 1; every other call is `exec '<real_git()>' "$@"`. Returns the program, for the `git` seam of
+/// `up::find_checkout_with` and `up::preflight_with`.
+fn failing_list_git(dir: &Path) -> PathBuf {
+    let bin = dir.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let body = format!(
+        "case \" $* \" in *\" worktree list \"*) echo 'fatal: stub' >&2; exit 1;; esac\nexec '{}' \"$@\"",
+        real_git().display()
+    );
+    script(&bin, "git", &body)
+}
+
+#[test] // FX-25 f6, W§8.1 step 3, AU25: a failed or timed-out list keeps its reason, exit 1, no write
+fn worktree_list_failure_exits_1_with_the_reason() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let r = repo(t, "app");
+    let far = Duration::from_secs(3600);
+    // Timed out: with no time left, no git starts.
+    assert_eq!(up::find_checkout(&r, Duration::ZERO).err(), Some(Exit { code: 1, message: "git worktree list timed out".into() }));
+    // Failed: the list of the checkout found from a work tree, and the probe list in a bare repository's own folder.
+    let stub = failing_list_git(t);
+    let failed = Some(Exit { code: 1, message: "git worktree list failed".into() });
+    assert_eq!(up::find_checkout_with(&r, far, stub.as_os_str()).err(), failed);
+    git(t, &["clone", "-q", "--bare", "app", "repo.git"]);
+    assert_eq!(up::find_checkout_with(&t.join("repo.git"), far, stub.as_os_str()).err(), failed);
+    // `zygo up` (and attach, down) prints the reason with its `zygo: ` prefix, and writes nothing.
+    let o = opts(t, &r, &version_tmux(t, "tmux34", "tmux 3.4"), &t.join("zygo"));
+    assert_eq!(
+        up::preflight_with(&o.paths, &o.tmux, None, &r, stub.as_os_str()).err(),
+        Some(Exit { code: 1, message: "zygo: git worktree list failed".into() })
+    );
+    assert!(!o.paths.workspaces_dir().exists());
+    // No git: the program cannot start.
+    let missing = t.join("empty").join("git");
+    assert_eq!(up::find_checkout_with(&r, far, missing.as_os_str()).err(), Some(Exit { code: 1, message: "git not found".into() }));
+}
+
+#[test] // AU25, AU77 unchanged: not a repository and a bare repository with no worktree exit 2
+fn not_a_repository_and_a_bare_repository_exit_2() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let far = Duration::from_secs(3600);
+    let plain = t.join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    assert_eq!(up::find_checkout(&plain, far).err(), Some(Exit { code: 2, message: "zygo up needs a git repository".into() }));
+    repo(t, "w");
+    git(t, &["clone", "-q", "--bare", "w", "repo.git"]);
+    assert_eq!(
+        up::find_checkout(&t.join("repo.git"), far).err(),
+        Some(Exit { code: 2, message: "zygo up needs a worktree; this repository is bare".into() })
+    );
+}
+
+#[test] // FX-25 f6, W§8.1 step 3: from the bare folder, a main worktree with no checkout is exit 1
+fn bare_folder_with_its_main_worktree_gone_exits_1() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let far = Duration::from_secs(3600);
+    repo(t, "w");
+    git(t, &["clone", "-q", "--bare", "w", "repo.git"]);
+    git(&t.join("repo.git"), &["worktree", "add", "-q", "--detach", "../one", "main"]);
+    fs::remove_dir_all(t.join("one")).unwrap();
+    assert_eq!(
+        up::find_checkout(&t.join("repo.git"), far).err(),
+        Some(Exit { code: 1, message: format!("no checkout at the main worktree {}", t.join("one").display()) })
+    );
+}
+
 #[test] // W§18 #3, #11, #29, AU2, AU20, AU25, AU77, D1, D4, D5
 #[ignore = "timing: stand-in tmux and git under the fixed 2 s tmux and 5 s git bounds"]
 fn preflight_finds_the_workspace() {

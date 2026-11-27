@@ -384,6 +384,33 @@ fn absent_exits_1() {
     assert!(!approvals(&h).exists());
 }
 
+#[cfg(unix)]
+#[test] // FX-25 f6, R§7.1 step 3: a failed git worktree list keeps its reason, exit 1
+fn worktree_list_failure_exits_1_with_the_reason() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = fx(&[(WS, MIN.as_bytes())]);
+    let h = home(&f, "");
+    let old = std::env::var_os("PATH").unwrap_or_default();
+    let real = std::env::split_paths(&old).map(|d| d.join("git")).find(|g| g.is_file()).expect("git on PATH");
+    let bin = f.t.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let stub = bin.join("git");
+    let body = format!(
+        "#!/bin/sh\ncase \" $* \" in *\" worktree list \"*) echo 'fatal: stub' >&2; exit 1;; esac\nexec '{}' \"$@\"\n",
+        real.display()
+    );
+    std::fs::write(&stub, body).unwrap();
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // `PATH` goes to the child only; the test process keeps its own.
+    let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&old))).unwrap();
+    let o = approve(&f, &h, &["--yes"], None, &[("PATH", path.as_os_str())]);
+    assert_eq!(
+        (o.status.code(), text(&o.stderr).as_str(), text(&o.stdout).as_str()),
+        (Some(1), "zygo: workspace approve: git worktree list failed\n", "")
+    );
+    assert!(!approvals(&h).exists());
+}
+
 #[test] // R§7.1 step 3: not a repository
 fn outside_a_repository_exits_2() {
     let f = min();
