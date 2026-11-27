@@ -130,7 +130,8 @@ fn quoted(s: &str) -> String {
 
 /// The summary of R§7.1 step 6 and R§9.5 "Shown to the operator" (plan call 9): each member of the repository loadout
 /// with the defaults filled in, the agent count, each profile, and with a pool the members that run in passthrough, or,
-/// when `zygo up` refuses the pool (`up::pool_refused`, WD-15 review F6), its reason. Names the shape restricts to `[a-z0-9-]` (member, profile and role names) and the fixed values of `kind` and `job`
+/// when `zygo up` refuses the pool (`up::pool_unexpanded`, WD-15 review round 2 finding 1; `up::pool_refused`, WD-15
+/// review F6), its reason. Names the shape restricts to `[a-z0-9-]` (member, profile and role names) and the fixed values of `kind` and `job`
 /// are bare; the free text of the files (`cwd`, each override's model) is `quoted`.
 fn summary(def: &Definition, cfg: &Config, home: Option<&Path>) -> Vec<String> {
     let panes: Vec<_> = repository_loadout(def).map(|l| l.window.into_iter().flat_map(|w| w.pane).collect()).unwrap_or_default();
@@ -160,9 +161,13 @@ fn summary(def: &Definition, cfg: &Config, home: Option<&Path>) -> Vec<String> {
         .filter(|(_, p)| up::pool_member(p.pool, p.kind == "claude-code", p.server.as_deref()))
         .collect();
     if let Some(text) = cfg.workspace.pool.as_deref().filter(|_| !members.is_empty()) {
+        // R§9.5: `zygo up` refuses a pool it cannot expand (`up::pool_unexpanded`), so no member runs in passthrough.
         let dir = match pool::expand(text, home) {
             Ok(d) => esc(&d.to_string_lossy()),
-            Err(r) => format!("{} ({})", esc(text), esc(&r)),
+            Err(r) => {
+                out.push(format!("  {}; zygo up starts nothing", up::pool_unexpanded(text, &r)));
+                return out;
+            }
         };
         // R§9.5 "Local mode only": `zygo up` refuses the pool, so no member runs in passthrough.
         if let Some(why) = up::pool_refused(cfg) {

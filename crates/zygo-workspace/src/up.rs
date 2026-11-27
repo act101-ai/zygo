@@ -820,6 +820,12 @@ pub fn pool_refused(config: &Config) -> Option<&'static str> {
     config.server.url.is_some().then_some("passthrough is local mode only, and [server] url is set")
 }
 
+/// R§9.5: the refusal of a `[workspace] pool` that `pool::expand` refuses with `why`, as `pool <text>: <why>`. `zygo up`
+/// ends it with `; nothing started`; the approve summary with `; zygo up starts nothing`.
+pub fn pool_unexpanded(text: &str, why: &str) -> String {
+    format!("pool {}: {}", esc(text), esc(why))
+}
+
 /// R§9.5 at a fresh build: the pool members (`pool = true` on a claude-code pane that gets a member record) take the
 /// directories of `[workspace] pool` in turn and run in passthrough. Checks the pool before any write; `Some` is the
 /// line for the operator. No pool member, or no pool: the pool is not read.
@@ -835,7 +841,7 @@ fn apply_pool(opts: &UpOpts, plan: &mut loadout::Plan) -> Result<Option<String>,
         .collect();
     let Some(text) = opts.config.workspace.pool.as_deref().filter(|_| !members.is_empty()) else { return Ok(None) };
     let home = pool::home_in(|k| opts.vars.get(OsStr::new(k)).cloned());
-    let dir = pool::expand(text, home.as_deref()).map_err(|r| fail(format!("zygo: pool {}: {r}; nothing started", esc(text))))?;
+    let dir = pool::expand(text, home.as_deref()).map_err(|r| fail(format!("zygo: {}; nothing started", pool_unexpanded(text, &r))))?;
     let shown = esc(&dir.to_string_lossy());
     if let Some(why) = pool_refused(&opts.config) {
         return Err(fail(format!("zygo: pool {shown}: {why}; nothing started")));

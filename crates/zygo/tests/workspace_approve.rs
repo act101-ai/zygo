@@ -561,6 +561,21 @@ fn summary_with_a_server_url_names_the_refusal_of_zygo_up() {
     assert!(out.lines().any(|l| l == refused), "{refused:?} not in {out}");
 }
 
+const POOL_WS: &str = "version = 1\n[members.w]\npool = true\nprofile = \"p\"\n";
+const POOL_P: &str = "disabled = [\"design\"]\n";
+
+#[test] // R§9.5 (WD-15 review round 2, finding 1): a pool `zygo up` cannot expand: the summary names its refusal, no passthrough
+fn summary_with_an_unexpandable_pool_names_the_refusal_of_zygo_up() {
+    let f = fx(&[(WS, POOL_WS.as_bytes()), (".zygo/profiles/p.toml", POOL_P.as_bytes())]);
+    let h = home(&f, "[workspace]\npool = '~nouser/x'\n");
+    let o = approve(&f, &h, &["--yes"], None, &[]);
+    let out = text(&o.stdout);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert!(!out.contains("run in passthrough"), "{out}");
+    let refused = "  pool ~nouser/x: must be absolute after ~ expansion; zygo up starts nothing";
+    assert!(out.lines().any(|l| l == refused), "{refused:?} not in {out}");
+}
+
 #[test] // R§11 "Approvals file invalid"
 fn invalid_approvals_file_is_left_as_it_is() {
     let f = min();
