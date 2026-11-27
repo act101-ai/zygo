@@ -7,13 +7,14 @@ use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use common::{blob, commit_tree, git, git_in, plain, tip_file, ForgetClock, Machine, Remote, ALICE, BOB, WS_ID};
+use common::{blob, commit_tree, far, git, git_in, plain, tip_file, ForgetClock, Machine, Remote, ALICE, BOB, WS_ID};
 use serde_json::Value;
 use ulid::Ulid;
 use zygo_config::{LoadContext, MailConfig};
 use zygo_core::paths::Paths;
 use zygo_mail_sync::address::Address;
 use zygo_mail_sync::env::{self, Env, Spawner, Verdict, Wake};
+use zygo_mail_sync::identity::{own_hosts, read_meta};
 use zygo_mail_sync::ops::{drop_host, drop_prompt, new_identity, take_host, waiting_for};
 use zygo_mail_sync::outbox::SendError;
 use zygo_mail_sync::state;
@@ -672,4 +673,188 @@ fn take_host_forgets_the_keys_of_the_old_host() {
     take_host(&env(&b), WS_ID).unwrap();
     assert_eq!(file(&r, "ack/b.json"), None);
     assert_eq!(state_keys(&b), (own_keys(&["a"]), BTreeSet::new()));
+}
+
+/// A gitlink names a commit that need not exist.
+const GITLINK: &str = "0123456789abcdef0123456789abcdef01234567";
+
+/// A new remote tip with each `(mode, object id, path)` of `entries` put in, on a scratch index of the bare
+/// repository. A path with a `/` under `<ULID>.json` makes a tree entry.
+fn put_entries(r: &Remote, entries: &[(&str, &str, &str)]) {
+    use std::io::Write;
+    let tip = r.tip(BRANCH).unwrap();
+    let idx = r.dir.path().join("put-index");
+    let info: String = entries.iter().map(|(mode, id, path)| format!("{mode} {id}\t{path}\n")).collect();
+    assert!(plain(&r.bare).env("GIT_INDEX_FILE", &idx).args(["read-tree", &tip]).status().unwrap().success());
+    let mut ch = plain(&r.bare).env("GIT_INDEX_FILE", &idx).args(["update-index", "--index-info"])
+        .stdin(std::process::Stdio::piped()).spawn().unwrap();
+    ch.stdin.take().unwrap().write_all(info.as_bytes()).unwrap();
+    assert!(ch.wait().unwrap().success());
+    let out = plain(&r.bare).env("GIT_INDEX_FILE", &idx).arg("write-tree").output().unwrap();
+    assert!(out.status.success(), "write-tree: {}", String::from_utf8_lossy(&out.stderr));
+    let tree = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    let c = commit_tree(&r.bare, &tree, Some(&tip));
+    git(&r.bare, &["update-ref", &format!("refs/heads/{BRANCH}"), &c]);
+}
+
+/// S§7.5: the own hosts of `m` with current host `host` at the remote tip. Call it only right after a sync of `m`,
+/// so `m.wt` has the tip's objects.
+fn own_at_tip(r: &Remote, m: &Machine, host: &str) -> Vec<String> {
+    let meta = read_meta(&m.wt, &r.tip(BRANCH).unwrap(), far(), &mut |_| {}).unwrap();
+    own_hosts(&meta, &ident(m), host)
+}
+
+/// The blob of a link target.
+fn link(r: &Remote) -> String { blob(&r.bare, b"../ZYGO-MAIL") }
+
+#[test] // S§7.6 Rename, S§9 Tree, S§13 limit 2 (FX-27): acked links and gitlinks do not keep the old ack
+fn renamed_host_ack_goes_with_only_acked_link_and_gitlink_entries() {
+    let (r, _a, b) = pair();
+    let (u1, u2) = (Ulid::from_parts(T0 * 1000, 1), Ulid::from_parts(T0 * 1000, 2));
+    let (p1, p2) = (format!("bob@b/{u1}.json"), format!("bob@b/{u2}.json"));
+    put_entries(&r, &[("120000", &link(&r), &p1), ("160000", GITLINK, &p2)]);
+    assert_eq!(sync(&b).delivered, 0);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([u1.to_string(), u2.to_string()]));
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    let paths = tip_paths(&r);
+    assert!(paths.contains(&p1) && paths.contains(&p2), "{paths:?}");
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+    assert!(prune_now(&b).notes.contains(&"pruned 0 files".to_string()));
+    let paths = tip_paths(&r);
+    assert!(paths.contains(&p1) && paths.contains(&p2), "{paths:?}");
+    assert_eq!(file(&r, "ack/b.json"), None);
+}
+
+#[test] // S§7.6 Rename (a), S§9 Tree (FX-27): the old ack waits for the prune of the message file, then goes
+fn renamed_host_ack_goes_after_the_prune_takes_the_message_file() {
+    let (r, a, b) = pair();
+    let m = send(&a, "alice", ("bob", "b"));
+    sync(&a);
+    let u = Ulid::from_parts(T0 * 1000, 5);
+    let p = format!("bob@b/{u}.json");
+    put_entries(&r, &[("120000", &link(&r), &p)]);
+    assert_eq!(sync(&b).delivered, 1);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([m.to_string(), u.to_string()]));
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    assert!(file(&r, "ack/b.json").is_some()); // R2(a): the message file waits
+    assert!(prune_now(&b).notes.contains(&"pruned 1 files".to_string()));
+    sync(&b);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert!(tip_paths(&r).contains(&p));
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+    assert_eq!(state_keys(&b), (own_keys(&["b2"]), BTreeSet::new()));
+}
+
+#[test] // S§7.6 Rename, S§7.4 Owner, S§8.5 Candidates (FX-27): one ULID in the old and the new host, one pass
+fn renamed_host_ack_goes_with_a_same_pass_duplicate_in_the_new_host() {
+    let (r, _a, b) = pair();
+    let x = Ulid::from_parts(T0 * 1000, 10);
+    let (old, new) = (format!("bob@b/{x}.json"), format!("bob@b2/{x}.json"));
+    let l = link(&r);
+    put_entries(&r, &[("120000", &l, &old), ("120000", &l, &new)]);
+    b.config(Some("b2"), "");
+    assert_eq!(sync(&b).delivered, 0);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+    assert_eq!(imported(&r, "ack/b2.json"), BTreeSet::from([x.to_string()]));
+    let paths = tip_paths(&r);
+    assert!(paths.contains(&old) && paths.contains(&new), "{paths:?}");
+}
+
+#[test] // S§7.6 Rename, S§7.4 Owner (R1 own-ack union, FX-27): a link whose ULID the new host acked lets the old ack go
+fn renamed_host_ack_goes_with_a_link_whose_ulid_another_host_acked() {
+    let (r, a, b) = pair();
+    let m = send(&a, "alice", ("bob", "b"));
+    sync(&a);
+    let u = Ulid::from_parts(T0 * 1000, 11);
+    put_entries(&r, &[("120000", &link(&r), &format!("bob@b2/{u}.json"))]);
+    b.config(Some("b2"), "");
+    assert_eq!(sync(&b).delivered, 1);
+    assert_eq!(imported(&r, "ack/b2.json"), BTreeSet::from([u.to_string()]));
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([m.to_string()]));
+    let p = format!("bob@b/{u}.json");
+    put_entries(&r, &[("120000", &link(&r), &p)]);
+    assert_eq!(sync(&b).delivered, 0);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([m.to_string(), u.to_string()]));
+    assert!(prune_now(&b).notes.contains(&"pruned 1 files".to_string()));
+    sync(&b);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+    assert!(tip_paths(&r).contains(&p));
+}
+
+#[test] // S§7.6 Rename, S§7.4 Owner, S§9 Tree (FX-27): a duplicate message file of an acked ULID is pruned, not delivered
+fn renamed_host_ack_goes_after_the_prune_takes_a_duplicate_message_file() {
+    let (r, a, b) = pair();
+    let m = send(&a, "alice", ("bob", "b"));
+    sync(&a);
+    let u = Ulid::from_parts(T0 * 1000, 12);
+    put_entries(&r, &[("120000", &link(&r), &format!("bob@b2/{u}.json"))]);
+    b.config(Some("b2"), "");
+    assert_eq!(sync(&b).delivered, 1);
+    assert_eq!(imported(&r, "ack/b2.json"), BTreeSet::from([u.to_string()]));
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([m.to_string()]));
+    let p = format!("bob@b/{u}.json");
+    put_entries(&r, &[("100644", &blob(&r.bare, b"{}"), &p)]);
+    assert_eq!(sync(&b).delivered, 0);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([m.to_string(), u.to_string()]));
+    assert!(prune_now(&b).notes.contains(&"pruned 2 files".to_string()));
+    assert!(!tip_paths(&r).contains(&p));
+    sync(&b);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+    assert_eq!(new_ids(&b, BOB), BTreeSet::from([format!("{m}.json")]));
+}
+
+#[test] // S§7.6 Rename, S§9 Tree (FX-27): an acked tree entry at a message path does not keep the old ack
+fn renamed_host_ack_goes_with_only_an_acked_tree_entry() {
+    let (r, _a, b) = pair();
+    let u = Ulid::from_parts(T0 * 1000, 13);
+    let p = format!("bob@b/{u}.json/x");
+    put_entries(&r, &[("100644", &blob(&r.bare, b"{}"), &p)]);
+    assert_eq!(sync(&b).delivered, 0);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([u.to_string()]));
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+    assert!(tip_paths(&r).contains(&p));
+}
+
+#[test] // S§7.6 Rename, S§7.4 Owner (R1 acked term, FX-27): the pass that acks the last link deletes the old ack
+fn renamed_host_ack_goes_in_the_pass_that_acks_the_last_link() {
+    let (r, _a, b) = pair();
+    let l = Ulid::from_parts(T0 * 1000, 14);
+    put_entries(&r, &[("120000", &link(&r), &format!("bob@b/{l}.json"))]);
+    b.config(Some("b2"), "");
+    assert_eq!(sync(&b).delivered, 0);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+    assert_eq!(imported(&r, "ack/b2.json"), BTreeSet::new());
+}
+
+#[test] // S§7.6 Rename, S§7.5 Twin (MS-22 forget_old_hosts, FX-27): a gone old ack leaves no twin and no old keys
+fn renamed_host_ack_gone_leaves_no_twin_and_no_old_keys() {
+    let (r, a, b) = pair();
+    let (u1, u2) = (Ulid::from_parts(T0 * 1000, 15), Ulid::from_parts(T0 * 1000, 16));
+    let (p1, p2) = (format!("bob@b/{u1}.json"), format!("bob@b/{u2}.json"));
+    put_entries(&r, &[("120000", &link(&r), &p1), ("160000", GITLINK, &p2)]);
+    sync(&b);
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(state_keys(&b), (own_keys(&["b2"]), BTreeSet::new()));
+    assert!(run(&env(&b), WS_ID, Mode::Cli).is_ok());
+    assert!(run(&env(&a), WS_ID, Mode::Cli).is_ok());
+    assert_eq!(state_keys(&b), (own_keys(&["b2"]), BTreeSet::new()));
+    let id = send(&a, "alice", ("bob", "b2"));
+    sync(&a);
+    assert_eq!(sync(&b).delivered, 1);
+    assert!(new_ids(&b, BOB).contains(&format!("{id}.json")));
 }
