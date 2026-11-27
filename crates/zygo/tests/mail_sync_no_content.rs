@@ -1116,10 +1116,9 @@ fn marked_files(root: &Path, known: &[PathBuf], dirs: &[PathBuf]) -> Marked {
 /// index of the sync worktree, a maildir file (`mail/<key>/{new,cur,tmp}/`), the outbox with `refused/`, `incoming/`,
 /// `members.json`, the config inputs (`config.toml`, `team/team.toml`), `workspace.json` with its own member names
 /// only, `state.json` with its own hosts only, and the results store `sess-*/results/`. Any other file is a finding.
-/// FX-26 re-plan review round 1 F7: so is any file, folder or link whose name or link target holds a marker, except a
-/// name or link target with no subject or body inside the sync worktree folder below a top folder `<name>@<host>`, or
-/// at `registry/<host>.json` or `ack/<host>.json` with a valid host (the S-C2 paths of the synced tree; FX-26 re-plan
-/// review round 2 F3 and the author's decision after it).
+/// FX-26 re-plan review round 1 F7: so is any file, folder or link whose name or link target holds a marker. FX-26
+/// re-plan 2 a (author's call): there is no exception, also not inside the sync worktree folder. S§6.3 makes that
+/// worktree with `--no-checkout` and zygo never checks a file out, so production writes no entry there.
 fn sweep_machine(m: &Scanned) -> Vec<String> {
     let (h, s) = (m.h, sp(m.h));
     let maildir = mail_dir(&h.paths, WS_ID);
@@ -1138,27 +1137,10 @@ fn sweep_machine(m: &Scanned) -> Vec<String> {
     }
     let mut found = Vec::new();
     let marked = marked_files(h.root(), &known, &m.folders);
-    // F7: a name or a link target that holds a marker is a finding. FX-26 re-plan review round 2 F3 (author's call):
-    // except where S-C2 allows it, the paths of the synced tree: an entry inside the sync worktree folder (not its
-    // `.git`) below a top folder `<name>@<host>`, whose name or link target holds no subject or body (S-C2: no subject
-    // or body goes into a path).
-    // Author's decision (after round 2): also the S§7.3 and S§7.4 own files, exactly `registry/<host>.json` and
-    // `ack/<host>.json` with `<host>` in the mail host form (`zygo_config::valid_mail_host`). These and
-    // `<name>@<host>/…` are every path form that S§6.1 and S§7 give for the branch with a host or member in it.
-    let in_synced_tree = |p: &Path, hits: &[&str]| {
-        let Some(c) = p.strip_prefix(&s.worktree).ok().map(|rel| rel.iter().map(OsStr::to_str).collect::<Option<Vec<_>>>())
-        else { return false };
-        let Some(c) = c else { return false };
-        let address = c.first().is_some_and(|t| *t != ".git"
-            && t.split_once('@').is_some_and(|(n, host)| !n.is_empty() && !host.is_empty() && !host.contains('@')));
-        let own_file = c.len() == 2 && (c[0] == "registry" || c[0] == "ack")
-            && c[1].strip_suffix(".json").is_some_and(zygo_config::valid_mail_host);
-        (address || own_file) && hits.iter().all(|x| !CONTENT.contains(x))
-    };
+    // F7: a name or a link target that holds a marker is a finding, anywhere in the home. FX-26 re-plan 2 a (author's
+    // call): the sync worktree folder has no exception, as S§6.3 keeps it unchecked-out (`--no-checkout`).
     for (p, hits) in marked.names {
-        if !in_synced_tree(&p, &hits) {
-            found.push(format!("{} {} has a name or link target that holds {hits:?}", m.label, p.display()));
-        }
+        found.push(format!("{} {} has a name or link target that holds {hits:?}", m.label, p.display()));
     }
     for (p, hits) in marked.files {
         // FX-26 re-plan review round 2 F2: `mail/outbox/` is allowed whole below (`s.outbox`), so this rule names
@@ -1333,15 +1315,7 @@ fn scanners_find_a_planted_marker() {
     put(&h.root().join("old.git/objects/pack/p.pack"), HOST_B2);
     let results = h.root().join("sess-x/results");
     put(&results.join("r.json"), SUBJ);
-    // FX-26 re-plan review round 2 F3: a name of the S-C2 form `<name>@<host>/…` inside the sync worktree folder (the
-    // synced tree, outside its `.git`) is allowed.
     assert!(s.worktree.starts_with(h.root()), "{}", s.worktree.display());
-    let tree_dir = s.worktree.join(format!("{B_NAME}@{HOST_B}"));
-    put(&tree_dir.join("01JQ0000000000000000000000.json"), "x");
-    // Author's decision (after round 2): the own-file forms of S§7.3 and S§7.4, `registry/<host>.json` and
-    // `ack/<host>.json` with a valid host, are allowed there too.
-    put(&s.worktree.join(format!("registry/{HOST_B2}.json")), "x");
-    put(&s.worktree.join(format!("ack/{HOST_B2}.json")), "x");
     let m = Scanned { label: "X", h: &h, own_names: vec![A_NAME], own_hosts: vec![HOST_A.into()], synced: false,
         errors_log: false, zygo_commits: false,
         folders: vec![mail_dir(&h.paths, WS_ID).join(ALICE).join("new"), s.incoming.clone(), h.root().join("sess-x"), results.clone()] };
@@ -1384,20 +1358,34 @@ fn scanners_find_a_planted_marker() {
     let link = h.root().join("ln");
     std::os::unix::fs::symlink(format!("/nonexistent/{HOST_A3}"), &link).unwrap();
     let named = [(named_file, HOST_B), (named_dir, HOST_A2), (link, HOST_A3)];
-    // FX-26 re-plan review round 2 F3: the same `<name>@<host>` folder outside the sync worktree folder is a finding.
-    // Inside it, so is a name that is not below a top folder `<name>@<host>`, and a name that holds a subject (S-C2:
-    // no subject or body goes into a path).
+    // FX-26 re-plan 2 a (author's call): a marked name is a finding anywhere, also inside the sync worktree folder,
+    // which S§6.3 keeps unchecked-out (`--no-checkout`), so production writes no entry there. Outside it: a
+    // `<name>@<host>` folder. Inside it: the S§6.1 and S§7 path forms (`<name>@<host>/<ULID>.json`, where the finding
+    // is the `<name>@<host>` folder, as a ULID holds no marker; `registry/<host>.json`; `ack/<host>.json`), a top folder
+    // with `@` and a host that is not in the host form, each name of a deeper path, a name that is not of a synced form,
+    // a name that holds a subject, and a registry file one folder deeper.
     let outside = h.root().join(format!("{B_NAME}@{HOST_B}"));
     put(&outside.join("f"), "x");
+    let tree_dir = s.worktree.join(format!("{B_NAME}@{HOST_B}"));
+    put(&tree_dir.join("01JQ0000000000000000000000.json"), "x");
+    let registry = s.worktree.join(format!("registry/{HOST_B2}.json"));
+    put(&registry, "x");
+    let ack = s.worktree.join(format!("ack/{HOST_B2}.json"));
+    put(&ack, "x");
+    let bad_host = s.worktree.join(format!("x@{HOST_R1}!!"));
+    put(&bad_host.join("f"), "x");
+    let deep_dir = tree_dir.join(format!("dir-{HOST_A2}"));
+    let deep_file = deep_dir.join(format!("note-{HOST_A3}.txt"));
+    put(&deep_file, "x");
     let loose = s.worktree.join(format!("note-{HOST_A2}"));
     put(&loose, "x");
     let subject_name = tree_dir.join(format!("{SUBJ}.json"));
     put(&subject_name, "x");
-    // A near miss of the registry form: one folder deeper.
     let deep_registry = s.worktree.join(format!("registry/x/{HOST_A}.json"));
     put(&deep_registry, "x");
-    let tree_names = [(outside, vec![B_NAME, HOST_B]), (loose, vec![HOST_A2]), (subject_name, vec![SUBJ]),
-        (deep_registry, vec![HOST_A])];
+    let tree_names = [(outside, vec![B_NAME, HOST_B]), (tree_dir, vec![B_NAME, HOST_B]), (registry, vec![HOST_B2]),
+        (ack, vec![HOST_B2]), (bad_host, vec![HOST_R1]), (deep_dir, vec![HOST_A2]), (deep_file, vec![HOST_A3]),
+        (loose, vec![HOST_A2]), (subject_name, vec![SUBJ]), (deep_registry, vec![HOST_A])];
     let f = sweep_machine(&m);
     assert_eq!(f.len(), planted.len() + named.len() + tree_names.len(), "{f:?}");
     for (p, hits) in &tree_names {
