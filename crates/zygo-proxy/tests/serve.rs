@@ -446,6 +446,33 @@ fn start_check_error_refused() {
     assert!(!format!("{e:#}").contains("not toml"));
 }
 
+/// A user `[workspace] default_loadout = "repository"` with no user `[loadout.repository]` (workspace definition
+/// design R§10; FX-29 F1).
+fn repository_default(t: String) -> String { format!("{t}\n[workspace]\ndefault_loadout = \"repository\"\n") }
+/// The `config check` error that a check with no read of the workspace files gives for `repository_default`.
+fn has_unknown_loadout_error(m: &Merged) -> bool {
+    check(&m.config).iter().any(|v| v.severity == Severity::Error && v.path == "workspace.default_loadout")
+}
+
+/// `zygo serve` reads no workspace files, so it checks as `config check` does with no read (R§10; base design §7.2
+/// "runs zygo config check"): `default_loadout = "repository"` is a warning there, not a refusal.
+#[test]
+fn start_accepts_default_loadout_repository() {
+    let s = setup_with(repository_default, |_| {});
+    assert!(has_unknown_loadout_error(&load_in(s.d.path())), "the no-read check must differ from serve's");
+    assert_eq!(healthz(&s.h, None).unwrap().0, 200);
+    s.h.shutdown();
+}
+
+#[test]
+fn reload_accepts_default_loadout_repository() {
+    let s = setup(false, false, false);
+    rewrite(&s, repository_default);
+    s.h.reload().unwrap();
+    assert_eq!(last_line(&s), "zygo serve: config reloaded");
+    s.h.shutdown();
+}
+
 #[test]
 fn pid_second_instance_refused() {
     let a = setup(false, true, false);

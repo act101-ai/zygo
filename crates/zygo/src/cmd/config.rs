@@ -164,12 +164,15 @@ fn loadout_checks(cfg: &Config, base: &PaneBase) -> Vec<Violation> {
 }
 
 /// What the R§10 read gave for the `repository` loadout of the workspace files, as `zygo up` uses it (`up.rs`
-/// `choose`; FX-29): approved files that hold `.zygo/workspace.toml` add it; with no read (no checkout, a failed read,
-/// a slash call) the files are not known; every other state adds none.
+/// `choose`; FX-29): approved files that hold `.zygo/workspace.toml` add it; with no read (no checkout, a failed read)
+/// the files are not known; every other state adds none.
 fn repository_of(state: &State) -> RepositoryLoadout {
     match state {
         State::Approved { workspace: true } => RepositoryLoadout::Added,
-        State::Outside | State::Unread | State::Slash => RepositoryLoadout::NotRead,
+        State::Outside | State::Unread => RepositoryLoadout::NotRead,
+        // `config check` calls `view`, not `here_in`, so it never gets `Slash`. The arm stays because the match names
+        // every state (no wildcard): a new state must get a decision here. `Slash` is a state with no read.
+        State::Slash => RepositoryLoadout::NotRead,
         State::Absent | State::Invalid { .. } | State::NotApproved { .. } | State::Approved { workspace: false } => {
             RepositoryLoadout::NotAdded
         }
