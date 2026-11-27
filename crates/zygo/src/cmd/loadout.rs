@@ -394,7 +394,7 @@ pub fn run(a: &LoadoutArgs) -> i32 {
             // R§10 `zygo loadout list`: the approved files add `repository` (source `workspace-files`); a not-approved,
             // invalid or shadowed repository loadout is one more `repository` row after the others of that name. Only
             // an unread read prints its line; the other states are the text of that row.
-            let v = here(&m, &paths.approvals_file);
+            let v = here(&m, &paths.approvals_file, false);
             if let (State::Unread, Some(line)) = (&v.state, &v.line) {
                 print_err(&format!("{line}\n"));
             }
@@ -432,7 +432,7 @@ pub fn run(a: &LoadoutArgs) -> i32 {
                 Some(l) => l.clone(),
                 None if name == BUILTIN_LOADOUT => loadout::builtin_solo(),
                 None if name == REPOSITORY_LOADOUT => {
-                    let v = here(&m, &paths.approvals_file);
+                    let v = here(&m, &paths.approvals_file, false);
                     match (v.merged.config.loadout.get(name), &v.line) {
                         (Some(l), _) => l.clone(),
                         (None, Some(line)) => {

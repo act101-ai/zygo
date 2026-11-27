@@ -1,8 +1,9 @@
 //! The R§10 read of the workspace files for `zygo config show/check`, `zygo profile list/show` and `zygo loadout
 //! list/show`, and the read of `zygo doctor` (WD-16 plan call 1). CLI only: `profile.rs` enters it only when
-//! `!ctx.slash`, through [`here`], so no slash verb file names the read (R-C8, R§18 item 20).
+//! `!ctx.slash`, through [`here`], so no slash verb file names the read (R-C8, R§18 item 20); [`here`] takes the slash
+//! flag too and reads nothing when it is set (review F2).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use zygo_config::repo_def::{check_default, short, GitRunner, SystemGit, Use};
 use zygo_config::Merged;
@@ -15,6 +16,8 @@ use zygo_workspace::up::{find_checkout, Exit, GIT_BOUND};
 pub(crate) enum State {
     /// No folder, or no checkout at it (`find_checkout` exited 2): no read.
     Outside,
+    /// The slash form of a verb (hook process): no read, no folder lookup, no git (R-C8; review F2).
+    Slash,
     Absent,
     Unread,
     /// `why`: the R§6.4 violation as the read gives it (not escaped).
@@ -95,10 +98,25 @@ pub(crate) fn view_of(merged: &Merged, found: Option<Use>) -> View {
     }
 }
 
-/// `view` at `std::env::current_dir()` with `SystemGit`: the call of `profile.rs`, which may not name the read.
-pub(crate) fn here(merged: &Merged, approvals: &Path) -> View {
-    let cwd = std::env::current_dir().ok();
-    view(merged, cwd.as_deref(), approvals, &SystemGit)
+/// [`here_in`] at `std::env::current_dir()` with `SystemGit`: the call of `profile.rs`, which may not name the read,
+/// and of `loadout.rs`. `slash`: the verb runs as a slash verb in the hook process.
+pub(crate) fn here(merged: &Merged, approvals: &Path, slash: bool) -> View {
+    here_in(merged, approvals, slash, &|| std::env::current_dir().ok(), &SystemGit)
+}
+
+/// `view` at `cwd()` with `git`. With `slash` set it reads nothing, finds no folder and calls no git: `State::Slash`,
+/// `merged` unchanged, no line (R-C8, R§18 item 20; WD-16 review F2: this holds whatever guard the caller has).
+pub(crate) fn here_in(
+    merged: &Merged,
+    approvals: &Path,
+    slash: bool,
+    cwd: &dyn Fn() -> Option<PathBuf>,
+    git: &dyn GitRunner,
+) -> View {
+    if slash {
+        return View { merged: merged.clone(), state: State::Slash, line: None };
+    }
+    view(merged, cwd().as_deref(), approvals, git)
 }
 
 #[cfg(test)]
@@ -207,6 +225,21 @@ mod tests {
         );
         let v = view_of(&m, found(Err(exit(1, zygo_workspace::up::NOT_A_REPO))));
         assert_eq!(v.state, State::Unread, "decided by the exit code, not the message");
+    }
+
+    /// WD-16 review F2: with `slash` set, `here_in` looks up no folder and never calls the git runner.
+    #[test]
+    fn here_with_slash_set_reads_nothing() {
+        let (t, r) = repo();
+        let m = merged(t.path());
+        let no_cwd = || -> Option<PathBuf> { panic!("a slash call looked up the folder") };
+        let v = here_in(&m, &t.path().join("approvals.toml"), true, &no_cwd, &Panics);
+        assert_eq!(v.state, State::Slash);
+        assert_eq!(v.line, None);
+        assert_eq!(v.merged.config.profile, m.config.profile);
+        // Control: the same call with `slash` unset reaches the runner.
+        let v = here_in(&m, &t.path().join("approvals.toml"), false, &|| Some(r.clone()), &Fails("ran"));
+        assert_eq!(v.state, State::Unread);
     }
 
     #[test]

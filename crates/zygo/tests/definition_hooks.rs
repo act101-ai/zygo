@@ -818,11 +818,20 @@ mod unix {
             .collect()
     }
 
-    /// `zygo hook prompt` with `/zygo:profile list` and `/zygo:profile show rust` (WD-16 plan call 2): the CLI form of
-    /// these subverbs shows the approved workspace files; the slash form shows the config profiles only and reads none.
+    /// `zygo hook prompt` with each `/zygo:profile` form (WD-16 plan call 2; review F2): the CLI form of `list` and
+    /// `show` shows the approved workspace files; no slash form reads any, whether it lists, shows or fails.
+    const PROFILE_FORMS: [&str; 6] = [
+        "/zygo:profile",
+        "/zygo:profile list",
+        "/zygo:profile show",
+        "/zygo:profile show rust",
+        "/zygo:profile show x y",
+        "/zygo:profile --bad",
+    ];
+
     fn profile_rows(fx: &Fx) -> Vec<Row> {
         let base: Value = serde_json::from_slice(&cc(fx, "UserPromptSubmit-main.json")).unwrap();
-        ["/zygo:profile list", "/zygo:profile show rust"]
+        PROFILE_FORMS
             .into_iter()
             .map(|p| {
                 let mut v = base.clone();
@@ -1100,7 +1109,7 @@ mod unix {
             rows.extend(profile_rows(fx));
             run_rows(fx, &sd, rows)
         });
-        assert_eq!(ran.len(), 22 + 19 + 2 + 2);
+        assert_eq!(ran.len(), 22 + 19 + 2 + PROFILE_FORMS.len());
         // WD-15 review F4: `/zygo:workspace approve` ran no definition read (`run_as`: no tripwire line) and replied
         // with the shell command.
         for p in ["/zygo:workspace approve", "/zygo:workspace approve --yes"] {
@@ -1109,9 +1118,9 @@ mod unix {
             assert_eq!(v["decision"], "block", "{p}: {out}");
             assert_eq!(v["reason"], "zygo: run in your shell: zygo workspace approve", "{p}: {out}");
         }
-        // WD-16 plan call 2: `/zygo:profile list` and `/zygo:profile show rust` ran no definition read (`run_as`: no
-        // tripwire line), replied, and showed no repository profile.
-        for p in ["/zygo:profile list", "/zygo:profile show rust"] {
+        // WD-16 plan call 2, review F2: each `/zygo:profile` form ran no definition read (`run_as`: no tripwire line),
+        // replied, and showed no repository profile.
+        for p in PROFILE_FORMS {
             let out = &ran_of(&ran, &format!("hook prompt < {p}")).1;
             let v: Value = serde_json::from_str(out).unwrap_or_else(|e| panic!("{p}: {e}: {out}"));
             assert_eq!(v["decision"], "block", "{p}: {out}");
