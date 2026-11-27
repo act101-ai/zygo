@@ -24,12 +24,11 @@ use zygo_core::Agent;
 use zygo_hooks::mail::{other_machines, stop_block};
 use zygo_hooks::workspace::{run_with_sync, session_start_with_sync};
 use zygo_mail_sync::env::{Clock, Crash, Env, NoSeam, Probe, Seam, Spawner, Verdict, Wake};
-use zygo_mail_sync::import::finish_incoming;
 use zygo_mail_sync::outbox;
 use zygo_mail_sync::public::{map_url, probe_command, Mapped};
 use zygo_mail_sync::registry::{read_cache, write_cache, MemberCache};
 use zygo_mail_sync::state::{mark_again, read_last_start, SyncPaths};
-use zygo_mail_sync::sync::{run_with, Mode, Opts, Report, SyncError};
+use zygo_mail_sync::sync::{run_with, run_with_deadline, Mode, Opts, Report, SyncError};
 use zygo_mcp::tools::mail::tools_with_sync;
 use zygo_mcp::{McpCtx, Tool, ToolError};
 use zygo_redact::act_lite_store;
@@ -413,6 +412,16 @@ fn far() -> DeadlinePolicy { DeadlinePolicy { base: Duration::from_secs(3600), .
 /// Author's call 2: a sync in process, with an hour of secret-pass budget.
 fn sync_in(h: &Harness) -> Report {
     run_with(&env_in(h, Box::new(NoSeam), far()), WS_ID, Mode::Cli, &Opts::default()).unwrap()
+}
+
+/// FX-26 review round 2 F-3: an hour of pass deadline (S§8.3 step 4) in place of the production 120 s
+/// (`sync::PASS_DEADLINE`), so a result that counts the work of one pass does not depend on how fast git runs.
+const FAR_PASS: Duration = Duration::from_secs(3600);
+
+/// [`sync_in`] with the pass deadline [`FAR_PASS`] (`sync::run_with_deadline`, the S-C9 seam of FX-26 review round 2
+/// F-3).
+fn sync_far(h: &Harness) -> Report {
+    run_with_deadline(&env_in(h, Box::new(NoSeam), far()), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap()
 }
 
 /// The user config of `h`, as the binary loads it.
@@ -981,17 +990,35 @@ fn file_markers(path: &Path) -> Vec<&'static str> {
     MARKERS.iter().copied().filter(|m| bytes.windows(m.len()).any(|w| w == m.as_bytes())).collect()
 }
 
+/// FX-26 review round 2 F-4: `rel` (a path below the swept root) is inside a git object store: under a folder
+/// `objects` whose parent folder is `.git` (a checkout) or `<name>.git` (a bare repository). A folder `objects`
+/// anywhere else is not left out.
+fn in_object_store(rel: &Path) -> bool {
+    let c: Vec<&OsStr> = rel.iter().collect();
+    c.windows(3).any(|w| w[1] == "objects" && w[0].as_encoded_bytes().ends_with(b".git"))
+}
+
 /// Each file under `root` (links not followed; git object stores left out, as [`commit_findings`] reads every commit
-/// and tag) that holds a marker: its path and the markers.
-fn marked_files(root: &Path) -> Vec<(PathBuf, Vec<&'static str>)> {
-    walkdir::WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok)
-        .filter(|e| e.file_type().is_file() && !e.path().components().any(|c| c.as_os_str() == "objects"))
-        .map(|e| {
-            let hits = file_markers(e.path());
-            (e.into_path(), hits)
-        })
-        .filter(|(_, hits)| !hits.is_empty())
-        .collect()
+/// and tag) that holds a marker: its path and the markers. FX-26 review round 2 F-4: the sweep read each file of
+/// `known` (the files that the walk knows exist under `root`, at least one), so a sweep that reads nothing fails.
+fn marked_files(root: &Path, known: &[PathBuf]) -> Vec<(PathBuf, Vec<&'static str>)> {
+    assert!(!known.is_empty(), "{}: no known file", root.display());
+    let mut read = BTreeSet::new();
+    let mut marked = Vec::new();
+    for e in walkdir::WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok) {
+        if !e.file_type().is_file() || in_object_store(e.path().strip_prefix(root).unwrap()) {
+            continue;
+        }
+        let hits = file_markers(e.path());
+        read.insert(e.path().to_path_buf());
+        if !hits.is_empty() {
+            marked.push((e.into_path(), hits));
+        }
+    }
+    for k in known {
+        assert!(read.contains(k), "{}: the sweep of {} did not read it ({} files read)", k.display(), root.display(), read.len());
+    }
+    marked
 }
 
 /// FX-26 review F5: the whole scratch home of `m`. Each file that holds a marker must be in the S-C2 allowed set: the
@@ -1005,8 +1032,17 @@ fn sweep_machine(m: &Scanned) -> Vec<String> {
     // The admin folder of the sync worktree: the `gitdir:` line of its `.git` file.
     let sync_index = std::fs::read_to_string(s.worktree.join(".git")).ok()
         .and_then(|g| g.strip_prefix("gitdir: ").map(|d| PathBuf::from(d.trim_end()).join("index")));
+    // FX-26 review round 2 F-4: the files that the walk knows exist in this home (`imported` is not among them: a
+    // synced machine that never received mail has none).
+    let mut known = vec![h.paths.config_file.clone()];
+    if m.errors_log {
+        known.push(h.store(WS_ID).dir().join("errors.log"));
+    }
+    if m.synced {
+        known.extend([ws_json.clone(), s.state.clone(), s.identity.clone(), h.repo().join(".git/HEAD")]);
+    }
     let mut found = Vec::new();
-    for (p, hits) in marked_files(h.root()) {
+    for (p, hits) in marked_files(h.root(), &known) {
         let in_maildir = p.strip_prefix(&maildir).ok().is_some_and(|rel| {
             let c: Vec<&OsStr> = rel.iter().collect();
             c.len() == 3 && c[0] != "sync" && c[0] != "outbox" && ["new", "cur", "tmp"].iter().any(|d| c[1] == *d)
@@ -1028,12 +1064,15 @@ fn sweep_machine(m: &Scanned) -> Vec<String> {
     found
 }
 
-/// FX-26 review F5: the folder of the bare repository `r` with the seed clones that the test makes. Only a test input
-/// may hold a marker there: the `.zygo.toml` that #25 commits at the top of a seed clone.
+/// FX-26 review F5: the folder of the bare repository `r` with the seed clone that [`remote`] makes. Only a test input
+/// may hold a marker there. FX-26 review round 2 F-5: that is the one file `seed/.zygo.toml`, which #25 commits in
+/// the seed clone; no file of `bare.git/` (its object store left out) and no other file.
 fn sweep_remote(r: &Remote) -> Vec<String> {
     let root = r.bare.parent().unwrap();
-    marked_files(root).into_iter()
-        .filter(|(p, _)| !(p.file_name() == Some(OsStr::new(".zygo.toml")) && p.parent().and_then(Path::parent) == Some(root)))
+    let input = root.join("seed/.zygo.toml");
+    let known = [r.bare.join("HEAD"), r.bare.join("config"), root.join("seed/README"), root.join("seed/.git/HEAD")];
+    marked_files(root, &known).into_iter()
+        .filter(|(p, _)| *p != input)
         .map(|(p, hits)| format!("{} holds {hits:?} and is not a test input", p.display()))
         .collect()
 }
@@ -1127,24 +1166,73 @@ fn scanners_find_a_planted_marker() {
     std::fs::write(mail_dir(&h.paths, WS_ID).join(ALICE).join("new").join("m.json"), SUBJ).unwrap();
     std::fs::write(s.incoming.join("m.json"), BODY).unwrap();
     std::fs::write(&s.state, format!("registry/{HOST_A}.json")).unwrap();
+    // FX-26 review round 2 F-6: the allowed form at each boundary. `workspace.json` with its own member name only; the
+    // index of the sync worktree (the `gitdir:` of its `.git` file); a file of a git object store, of a checkout and
+    // of a bare repository; a file at the top of a results store.
+    let put = |p: &Path, text: &str| {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    };
+    let ws_json = h.store(WS_ID).dir().join("workspace.json");
+    put(&ws_json, A_NAME);
+    let git_dir = h.root().join("repo/.git");
+    let admin = git_dir.join("worktrees/mail-sync");
+    put(&s.worktree.join(".git"), &format!("gitdir: {}\n", admin.display()));
+    put(&admin.join("index"), B_NAME);
+    put(&git_dir.join("objects/ab/cdef"), HOST_B);
+    put(&h.root().join("old.git/objects/pack/p.pack"), HOST_B2);
+    let results = h.root().join("sess-x/results");
+    put(&results.join("r.json"), SUBJ);
     let m = Scanned { label: "X", h: &h, own_names: vec![A_NAME], own_hosts: vec![HOST_A.into()], synced: false,
         errors_log: false, zygo_commits: false };
     assert_eq!(sweep_machine(&m), Vec::<String>::new());
-    std::fs::write(&s.state, format!("registry/{HOST_B}.json")).unwrap(); // not an own host
-    std::fs::write(h.root().join("stray"), B_NAME).unwrap(); // not in the set
-    std::fs::write(mail_dir(&h.paths, WS_ID).join(ALICE).join("wake.json"), A_NAME).unwrap(); // not a maildir file
+    // Outside the set, each is reported: the review F5 plants, then the FX-26 review round 2 F-6 plants at each
+    // boundary (a foreign member name in the swept `workspace.json`, a file of `.git/` that is not the sync index, a
+    // file deeper in `results/`, a file under folders named `objects` that are not a git object store).
+    let planted = [
+        (s.state.clone(), HOST_B), // not an own host
+        (h.root().join("stray"), B_NAME),
+        (mail_dir(&h.paths, WS_ID).join(ALICE).join("wake.json"), A_NAME), // not a maildir file
+        (ws_json.clone(), B_NAME),
+        (git_dir.join("COMMIT_EDITMSG"), SUBJ),
+        (admin.join("HEAD"), HOST_A2),
+        (results.join("deep/r.json"), BODY),
+        (h.root().join("objects/o"), HOST_A3),
+        (h.root().join("cache/objects/ab/cdef"), HOST_R1),
+        (h.root().join("repo/objects/ab/cdef"), HOST_R2), // `objects` in a checkout's work tree, not in `.git/`
+    ];
+    for (p, hit) in &planted {
+        put(p, hit);
+    }
     let f = sweep_machine(&m);
-    assert_eq!(f.len(), 3, "{f:?}");
-    for (p, hit) in [(s.state.clone(), HOST_B), (h.root().join("stray"), B_NAME), (mail_dir(&h.paths, WS_ID).join(ALICE).join("wake.json"), A_NAME)] {
+    assert_eq!(f.len(), planted.len(), "{f:?}");
+    for (p, hit) in &planted {
         assert!(f.contains(&format!("X {} holds [{hit:?}] and is not in the S-C2 allowed set", p.display())), "{p:?}: {f:?}");
     }
+    // FX-26 review round 2 F-4: a sweep that does not read a file the walk knows exists fails.
+    let empty = d.path().join("empty");
+    std::fs::create_dir(&empty).unwrap();
+    assert!(std::panic::catch_unwind(|| marked_files(&empty, &[empty.join("absent")])).is_err());
+    // FX-26 review round 2 F-5: on a remote, only `seed/.zygo.toml` may hold a marker; the object store is left out.
     let r = remote();
-    let seed = r.bare.parent().unwrap().join("seed9");
-    std::fs::create_dir(&seed).unwrap();
-    std::fs::write(seed.join(".zygo.toml"), HOST_R1).unwrap();
+    let root = r.bare.parent().unwrap();
+    put(&root.join("seed/.zygo.toml"), HOST_R1);
+    put(&r.bare.join("objects/zz/f"), HOST_R2);
     assert_eq!(sweep_remote(&r), Vec::<String>::new());
-    std::fs::write(seed.join("notes"), HOST_R1).unwrap();
-    assert_eq!(sweep_remote(&r), vec![format!("{} holds [{HOST_R1:?}] and is not a test input", seed.join("notes").display())]);
+    let planted = [
+        (root.join("seed/notes"), HOST_R1),
+        (root.join("seed9/.zygo.toml"), HOST_R1), // a `.zygo.toml` of another clone
+        (r.bare.join("description"), HOST_R3), // a file of `bare.git/`
+        (r.bare.join("hooks/x"), HOST_R3),
+    ];
+    for (p, hit) in &planted {
+        put(p, hit);
+    }
+    let mut want: Vec<String> = planted.iter().map(|(p, hit)| format!("{} holds [{hit:?}] and is not a test input", p.display())).collect();
+    let mut got = sweep_remote(&r);
+    want.sort();
+    got.sort();
+    assert_eq!(got, want);
 }
 
 #[test] // S-C2, S§6.5, S§19 #24 (as rewritten): after #1, #3, #4, #5, #12, #15, #19, #9, #20, #11, #6, #22, #23 and a
@@ -1690,7 +1778,9 @@ fn no_mail_content_after_the_import_and_prune_scenarios() {
     let lines: Vec<String> = blobs.lines().zip(&ids).map(|(blob, id)| format!("100644 blob {blob}\t{id}.json")).collect();
     assert_eq!(lines.len(), 1200);
     made.insert(add_folder(&r.bare, &to_b, &lines));
-    let got: Vec<usize> = (0..3).map(|_| sync_in(&b).delivered).collect();
+    // FX-26 review round 2 F-3: each pass of 500 deliveries gets an hour, so the 500/500/200 result is the cap's
+    // (`import::CANDIDATE_CAP`), never the 120 s pass deadline of a slow machine.
+    let got: Vec<usize> = (0..3).map(|_| sync_far(&b).delivered).collect();
     assert_eq!(got, vec![500, 500, 200]);
     assert_eq!(new_ids(&b, BOB), ids);
     let log = std::fs::read_to_string(sp(&b).imported).unwrap();
@@ -1722,20 +1812,20 @@ fn no_mail_content_after_the_import_and_prune_scenarios() {
     assert_eq!(sync_in(&b).delivered, 0);
     assert_eq!((new_ids(&b, BOB), imported_times(&b, &u)), (vec![u.clone()], 1));
     assert!(acked(&r, HOST_B).contains(&u)); // acked again
-    for (n, (point, finished)) in (31..).zip([("after_incoming", 1), ("after_log", 1), ("after_new", 0), ("after_ack", 0)]) {
+    for (n, point) in (31..).zip(["after_incoming", "after_log", "after_new", "after_ack"]) {
         let v = send_ok(&a, ALICE, &to_b, n);
         assert_eq!(sync_in(&a).pushed, 1);
         let e = run_with(&env_in(&b, Box::new(crash_once(point)), far()), WS_ID, Mode::Cli, &Opts::default()).unwrap_err();
         assert_eq!(e, SyncError::Stopped { line: format!("zygo: stopped at seam {point}"), check: "seam" });
-        // FX-26 review F2, the values of `crates/zygo-mail-sync/tests/import.rs:353-366`: the finish of the staged
-        // delivery moves 1 file after `after_incoming` and `after_log`, and 0 after `after_new` and `after_ack`. The
-        // pass calls the same `finish_incoming` first and drops its count (`sync.rs` `pass`), so `Report.delivered`
-        // cannot carry it; the walk calls it as the model does, then the next pass delivers nothing.
-        assert_eq!(finish_incoming(&sp(&b), &b.store(WS_ID)).unwrap(), finished, "{point}");
-        assert_eq!(sync_in(&b).delivered, 0, "{point}");
-        assert_eq!(std::fs::read_dir(sp(&b).incoming).map_or(0, Iterator::count), 0, "{point}");
+        // FX-26 review round 2 F-2: the recovery runs through the pass, as in production (S§8.3 step 5, then step 9).
+        // Its `delivered` and its wake are not asserted here: the pass drops the count of `import::finish_incoming`,
+        // and a message that reached `new/` in the crashed run is only acknowledged, so the recovered message gets no
+        // count and no wake. That is the defect FX-30 (`docs/work/phase3/nodes/FX-30.md`), which asserts both.
+        sync_in(&b);
         assert_eq!(new_ids(&b, BOB).iter().filter(|i| **i == v).count(), 1, "{point}");
         assert_eq!(imported_times(&b, &v), 1, "{point}");
+        assert_eq!(std::fs::read_dir(sp(&b).incoming).map_or(0, Iterator::count), 0, "{point}");
+        assert_eq!(sync_in(&b).delivered, 0, "{point}");
     }
 
     // 3.3 #17 (prune after push): 999 commits; the pass whose push makes 1000 prunes, and the new root holds the
@@ -2023,9 +2113,9 @@ fn no_mail_content_after_the_hook_wake_and_text_scenarios() {
 
     // 4.7 #25 (config layers): `[mail]` in `.zygo.toml` on the default branch is ignored with the existing line; in
     // team config it is dropped with one warning.
-    let parent = r.bare.parent().unwrap();
-    git(parent, &["clone", "-q", &r.url, "seed25"]);
-    let seed = parent.join("seed25");
+    // FX-26 review round 2 F-5: in the seed clone of `remote()` (no other clone pushes `main`); its `.zygo.toml` is the
+    // one test input that `sweep_remote` allows.
+    let seed = r.bare.parent().unwrap().join("seed");
     std::fs::write(seed.join(".zygo.toml"), format!("[mail]\nhost = \"{HOST_R1}\"\n")).unwrap();
     git(&seed, &["add", ".zygo.toml"]);
     git(&seed, &["commit", "-q", "-m", "repo config"]);
@@ -2103,31 +2193,69 @@ fn no_mail_content_after_the_hook_wake_and_text_scenarios() {
     let calls = a.root().join("ls-remote-calls");
     let tmp = a.root().join("tmp"); // the binary's TMPDIR: `LsRemote` makes its empty home here
     std::fs::create_dir(&tmp).unwrap();
+    // FX-26 review round 2 F-7: `HTTPS_PROXY` is recorded too; S§8.2 step 3 keeps the proxy variables.
     let probe_env = ["GIT_ASKPASS", "SSH_ASKPASS", "GIT_TERMINAL_PROMPT", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
-        "GIT_CONFIG_SYSTEM"];
+        "GIT_CONFIG_SYSTEM", "HTTPS_PROXY"];
+    const PROXY: &str = "http://proxy.invalid:3128";
+    // FX-26 review round 2 F-8: the stub refuses a `push` or a `fetch` whose remote URL (the argument after `--`, or
+    // the URL that `git remote get-url [--push]` gives for a remote name) or argument list names `example.invalid`.
+    // It logs the call to `refused` and exits 128 without running the real git, so a later change that makes this
+    // pass commit something still asks no network host.
+    let refused = a.root().join("refused-calls");
+    const STUB: &str = r#"#!/bin/sh
+sub=
+for x in "$@"; do
+  case "$x" in push|fetch|ls-remote) sub=$x; break ;; esac
+done
+if [ "$sub" = push ] || [ "$sub" = fetch ]; then
+  remote= after=
+  for x in "$@"; do
+    if [ -n "$after" ]; then remote=$x; break; fi
+    if [ "$x" = -- ]; then after=1; fi
+  done
+  url=$remote
+  case "$remote" in
+    ''|*:*) ;;
+    *) if [ "$sub" = push ]; then url=$('@REAL@' remote get-url --push -- "$remote" 2>/dev/null)
+       else url=$('@REAL@' remote get-url -- "$remote" 2>/dev/null); fi ;;
+  esac
+  case "$url $*" in
+    *example.invalid*) printf '%s %s\n' "$sub" "$url" >> '@REFUSED@'; exit 128 ;;
+  esac
+fi
+if [ "$sub" = ls-remote ]; then
+  {
+    printf 'argv\n'; for y in "$@"; do printf '%s\n' "$y"; done
+@ENV@    printf 'HOME=%s\n' "$HOME"
+    e=empty
+    for f in "$HOME"/* "$HOME"/.[!.]* "$HOME"/..?*; do [ -e "$f" ] && e=not-empty; done
+    printf 'HOME is %s\n' "$e"
+  } >> '@CALLS@'
+  @ANSWER@
+fi
+exec '@REAL@' "$@"
+"#;
     // Author's call 2: the script is written under `SERIAL` (this test holds it), so no fork of another test thread
     // holds it open for writing when the binary runs it (ETXTBSY).
     let stub = |answer: &str| {
-        let mut body = String::from("#!/bin/sh\nfor x in \"$@\"; do\n  if [ \"$x\" = ls-remote ]; then\n    {\n");
-        body.push_str("      printf 'argv\\n'; for y in \"$@\"; do printf '%s\\n' \"$y\"; done\n");
-        for k in probe_env {
-            body.push_str(&format!("      printf '{k}=%s\\n' \"${{{k}-(unset)}}\"\n"));
-        }
-        body.push_str("      printf 'HOME=%s\\n' \"$HOME\"\n      e=empty\n");
-        body.push_str("      for f in \"$HOME\"/* \"$HOME\"/.[!.]* \"$HOME\"/..?*; do [ -e \"$f\" ] && e=not-empty; done\n");
-        body.push_str("      printf 'HOME is %s\\n' \"$e\"\n");
-        body.push_str(&format!("    }} >> '{}'\n    {answer}\n  fi\ndone\nexec '{}' \"$@\"\n", calls.display(), real_git.display()));
+        let env_lines: String = probe_env.iter().map(|k| format!("    printf '{k}=%s\\n' \"${{{k}-(unset)}}\"\n")).collect();
+        let body = STUB.replace("@REAL@", &real_git.display().to_string())
+            .replace("@REFUSED@", &refused.display().to_string())
+            .replace("@CALLS@", &calls.display().to_string())
+            .replace("@ENV@", &env_lines)
+            .replace("@ANSWER@", answer);
         std::fs::remove_file(a.bin.join("git")).unwrap();
         std::fs::write(a.bin.join("git"), body).unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(a.bin.join("git"), std::fs::Permissions::from_mode(0o755)).unwrap();
     };
-    // The binary gets ask-pass programs and a prompt on: the probe must remove and turn them off.
+    // The binary gets ask-pass programs and a prompt on: the probe must remove and turn them off. It also gets a
+    // proxy, which the probe must keep (F-7).
     let askpass = a.root().join("no-askpass");
     let probe_run = || {
         assert_eq!(outbox::count(&sp(&a)).unwrap(), 0, "the binary syncs only an empty outbox");
         zygo_at(&a, a.root(), &["mail", "sync"], &[("GIT_ASKPASS", askpass.as_os_str()), ("SSH_ASKPASS", askpass.as_os_str()),
-            ("GIT_TERMINAL_PROMPT", OsStr::new("1")), ("TMPDIR", tmp.as_os_str())])
+            ("GIT_TERMINAL_PROMPT", OsStr::new("1")), ("TMPDIR", tmp.as_os_str()), ("HTTPS_PROXY", OsStr::new(PROXY))])
     };
     let refs0 = git(&r.bare, &["for-each-ref"]);
     // `public`: a ref line and exit 0. The sync stops before any fetch.
@@ -2152,12 +2280,26 @@ fn no_mail_content_after_the_hook_wake_and_text_scenarios() {
         let k = lines.iter().position(|l| l.starts_with("GIT_ASKPASS=")).unwrap_or_else(|| panic!("{rec}"));
         let want: Vec<String> = probe_command(url, Path::new("/unused")).get_args().map(|x| x.to_string_lossy().into_owned()).collect();
         assert_eq!(lines[..k], want, "{rec}");
-        assert_eq!(lines[k..k + 6], ["GIT_ASKPASS=(unset)", "SSH_ASKPASS=(unset)", "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1",
-            "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null"], "{rec}");
-        let home = Path::new(lines[k + 6].strip_prefix("HOME=").unwrap_or_else(|| panic!("{rec}")));
+        let proxy = format!("HTTPS_PROXY={PROXY}");
+        assert_eq!(lines[k..k + 7], ["GIT_ASKPASS=(unset)", "SSH_ASKPASS=(unset)", "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1",
+            "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", proxy.as_str()], "{rec}");
+        let home = Path::new(lines[k + 7].strip_prefix("HOME=").unwrap_or_else(|| panic!("{rec}")));
         assert!(home.starts_with(&tmp) && home != tmp, "{rec}");
-        assert_eq!(lines[k + 7..], ["HOME is empty"], "{rec}");
+        assert_eq!(lines[k + 8..], ["HOME is empty"], "{rec}");
     }
+    // F-8: neither run that must stay local tried a push or a fetch to an `example.invalid` URL.
+    assert!(!refused.exists(), "{}", std::fs::read_to_string(&refused).unwrap_or_default());
+    // F-8: the guard itself. A push to `origin` (its push URL is the `https` form) and a fetch of an `example.invalid`
+    // URL each exit 128, run no real git, and are logged; the bare repository's refs do not change.
+    let guarded = |args: &[&str]| {
+        Command::new(a.bin.join("git")).args(args).current_dir(a.repo())
+            .env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").stdin(Stdio::null()).output().unwrap()
+    };
+    assert_eq!(guarded(&["push", "--porcelain", "--", "origin", "HEAD:refs/heads/x"]).status.code(), Some(128));
+    assert_eq!(guarded(&["fetch", "--no-tags", "--", "https://example.invalid/r.git", "+refs/heads/x:refs/x"]).status.code(), Some(128));
+    assert_eq!(std::fs::read_to_string(&refused).unwrap(),
+        "push https://example.invalid/q.git\nfetch https://example.invalid/r.git\n");
+    assert_eq!(git(&r.bare, &["for-each-ref"]), refs0);
     // The real git again, for the scans.
     std::fs::remove_file(a.bin.join("git")).unwrap();
     std::os::unix::fs::symlink(&real_git, a.bin.join("git")).unwrap();
