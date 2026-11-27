@@ -6,6 +6,7 @@ use std::io::{BufRead, Write};
 use std::path::Path;
 
 use anyhow::{anyhow, bail};
+use zygo_config::Config;
 use zygo_config::repo_def::{approve_workspace_in, check_default, repository_loadout, Definition, Files, Stored, SystemGit, Use};
 use zygo_core::esc;
 use zygo_workspace::identity::workspace_id;
@@ -97,9 +98,8 @@ pub(crate) fn run(ctx: &VerbCtx, args: &[String], input: &mut dyn BufRead, promp
     };
     let cfg = user_config(&ctx.paths)
         .map_err(|e| anyhow!("zygo: user config not read ({}); nothing approved", esc(&e.to_string())))?;
-    let pool_text = cfg.workspace.pool.as_deref();
     let home = pool::home();
-    let shown_files = show(&co.top, &full_ref, &files, &digest, &def, pool_text, home.as_deref());
+    let shown_files = show(&co.top, &full_ref, &files, &digest, &def, &cfg, home.as_deref());
     // R§7.1 step 6: with `--yes` the listing is part of the result (stdout); else it and the question go to `prompt`.
     if !yes {
         let _ = write!(prompt, "{shown_files}\n{QUESTION}");
@@ -129,10 +129,10 @@ fn quoted(s: &str) -> String {
 }
 
 /// The summary of R§7.1 step 6 and R§9.5 "Shown to the operator" (plan call 9): each member of the repository loadout
-/// with the defaults filled in, the agent count, each profile, and with a pool the members that run in passthrough.
-/// Names the shape restricts to `[a-z0-9-]` (member, profile and role names) and the fixed values of `kind` and `job`
+/// with the defaults filled in, the agent count, each profile, and with a pool the members that run in passthrough, or,
+/// when `zygo up` refuses the pool (`up::pool_refused`, WD-15 review F6), its reason. Names the shape restricts to `[a-z0-9-]` (member, profile and role names) and the fixed values of `kind` and `job`
 /// are bare; the free text of the files (`cwd`, each override's model) is `quoted`.
-fn summary(def: &Definition, pool_text: Option<&str>, home: Option<&Path>) -> Vec<String> {
+fn summary(def: &Definition, cfg: &Config, home: Option<&Path>) -> Vec<String> {
     let panes: Vec<_> = repository_loadout(def).map(|l| l.window.into_iter().flat_map(|w| w.pane).collect()).unwrap_or_default();
     let or_dash = |v: &Option<String>| v.as_deref().map_or_else(|| "-".to_string(), esc);
     let mut out = vec!["summary:".to_string(), format!("  agents: {}", panes.len())];
@@ -153,14 +153,22 @@ fn summary(def: &Definition, pool_text: Option<&str>, home: Option<&Path>) -> Ve
         let list = |v: Vec<String>| if v.is_empty() { "-".to_string() } else { v.join(", ") };
         out.push(format!("  profile {}: overrides {}; disabled {}", esc(name), list(overrides), list(disabled)));
     }
-    // R§9.5: the pool members are `pool = true` claude-code panes; named in `pool::order`, the text of `zygo up`.
-    let members: Vec<(usize, _)> =
-        panes.iter().enumerate().filter(|(_, p)| p.pool && p.kind == "claude-code").collect();
-    if let Some(text) = pool_text.filter(|_| !members.is_empty()) {
+    // R§9.5: the pool members by the rule of `zygo up` (`up::pool_member`); named in `pool::order`, the text of `zygo up`.
+    let members: Vec<(usize, _)> = panes
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| up::pool_member(p.pool, p.kind == "claude-code", p.server.as_deref()))
+        .collect();
+    if let Some(text) = cfg.workspace.pool.as_deref().filter(|_| !members.is_empty()) {
         let dir = match pool::expand(text, home) {
             Ok(d) => esc(&d.to_string_lossy()),
             Err(r) => format!("{} ({})", esc(text), esc(&r)),
         };
+        // R§9.5 "Local mode only": `zygo up` refuses the pool, so no member runs in passthrough.
+        if let Some(why) = up::pool_refused(cfg) {
+            out.push(format!("  pool {dir}: {why}; zygo up starts nothing"));
+            return out;
+        }
         let names: Vec<Option<String>> = members.iter().map(|(_, p)| p.name.clone()).collect();
         let label = |i: usize| match &members[i].1.name {
             Some(n) => esc(n),
@@ -181,7 +189,7 @@ fn summary(def: &Definition, pool_text: Option<&str>, home: Option<&Path>) -> Ve
 
 /// The listing of R§7.1 step 6 (plan call 9): the folder, the full ref, the read commit, the digest, each file with its
 /// size and its lines through `listing` (4 spaces in), the ignored entries and the summary.
-fn show(folder: &Path, full_ref: &str, files: &Files, digest: &str, def: &Definition, pool_text: Option<&str>,
+fn show(folder: &Path, full_ref: &str, files: &Files, digest: &str, def: &Definition, cfg: &Config,
     home: Option<&Path>) -> String {
     let mut out = vec![
         format!("folder: {}", esc(&folder.to_string_lossy())),
@@ -206,6 +214,6 @@ fn show(folder: &Path, full_ref: &str, files: &Files, digest: &str, def: &Defini
     } else {
         format!("ignored: {}", files.ignored.iter().map(|e| shown(e)).collect::<Vec<_>>().join(", "))
     });
-    out.extend(summary(def, pool_text, home));
+    out.extend(summary(def, cfg, home));
     out.join("\n")
 }

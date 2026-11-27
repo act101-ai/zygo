@@ -545,6 +545,22 @@ fn summary_names_passthrough_members_and_the_profile_that_does_not_apply() {
     assert!(out.lines().any(|l| l == pt), "{out}");
 }
 
+#[test] // R§9.5 "Local mode only" (WD-15 review F6): with `[server] url` the summary claims no passthrough, as `zygo up` refuses the pool
+fn summary_with_a_server_url_names_the_refusal_of_zygo_up() {
+    let f = min();
+    let p = pool(&f);
+    let h = home(&f, &format!("{}[server]\nurl = \"http://127.0.0.1:9/\"\n", pool_toml(&p)));
+    let o = approve(&f, &h, &["--yes"], None, &[]);
+    let out = text(&o.stdout);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert!(!out.contains("run in passthrough"), "{out}");
+    let refused = format!(
+        "  pool {}: passthrough is local mode only, and [server] url is set; zygo up starts nothing",
+        zygo_core::esc(&p.display().to_string())
+    );
+    assert!(out.lines().any(|l| l == refused), "{refused:?} not in {out}");
+}
+
 #[test] // R§11 "Approvals file invalid"
 fn invalid_approvals_file_is_left_as_it_is() {
     let f = min();

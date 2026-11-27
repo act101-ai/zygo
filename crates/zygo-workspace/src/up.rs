@@ -809,6 +809,17 @@ fn check_jobs(cfg: &Config, name: &str) -> Result<(), Exit> {
     }
 }
 
+/// R§9.5: true when a pane takes a pool directory and runs in passthrough at a fresh build: `pool = true` on a
+/// claude-code pane whose server holds no user info. The rule of `apply_pool`, also used by the approve summary.
+pub fn pool_member(pool: bool, claude_code: bool, server: Option<&str>) -> bool {
+    pool && claude_code && !server.is_some_and(has_user_info)
+}
+
+/// R§9.5 "Local mode only": the reason `zygo up` refuses a pool with at least one member, or `None` when it does not.
+pub fn pool_refused(config: &Config) -> Option<&'static str> {
+    config.server.url.is_some().then_some("passthrough is local mode only, and [server] url is set")
+}
+
 /// R§9.5 at a fresh build: the pool members (`pool = true` on a claude-code pane that gets a member record) take the
 /// directories of `[workspace] pool` in turn and run in passthrough. Checks the pool before any write; `Some` is the
 /// line for the operator. No pool member, or no pool: the pool is not read.
@@ -819,19 +830,15 @@ fn apply_pool(opts: &UpOpts, plan: &mut loadout::Plan) -> Result<Option<String>,
         .flat_map(|w| w.panes.iter_mut())
         .enumerate()
         .filter(|(_, pp)| {
-            pp.pool
-                && pp.kind == PlanKind::Agent(zygo_core::Agent::ClaudeCode)
-                && !pp.server.as_deref().is_some_and(has_user_info)
+            pool_member(pp.pool, pp.kind == PlanKind::Agent(zygo_core::Agent::ClaudeCode), pp.server.as_deref())
         })
         .collect();
     let Some(text) = opts.config.workspace.pool.as_deref().filter(|_| !members.is_empty()) else { return Ok(None) };
     let home = pool::home_in(|k| opts.vars.get(OsStr::new(k)).cloned());
     let dir = pool::expand(text, home.as_deref()).map_err(|r| fail(format!("zygo: pool {}: {r}; nothing started", esc(text))))?;
     let shown = esc(&dir.to_string_lossy());
-    if opts.config.server.url.is_some() {
-        return Err(fail(format!(
-            "zygo: pool {shown}: passthrough is local mode only, and [server] url is set; nothing started"
-        )));
+    if let Some(why) = pool_refused(&opts.config) {
+        return Err(fail(format!("zygo: pool {shown}: {why}; nothing started")));
     }
     let dirs = pool::list(&dir).map_err(|r| fail(format!("zygo: pool {shown}: {}; nothing started", esc(&r))))?;
     let names: Vec<Option<String>> = members.iter().map(|(_, pp)| pp.name.clone()).collect();
