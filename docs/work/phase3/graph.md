@@ -207,7 +207,7 @@ Session text (T, SX nodes):
 | WD-21 | PR1 live check (operator): two pool members send two logins | WD-14, ML-19 | TODO | mechanical | — |
 | WD-22 | PR2 live check (operator): per-session settings act the same on a pool directory | WD-14, WD-21 | TODO | mechanical | — |
 | MS-22 | No mail content in logs, state, usage rows, commits or refs | MS-18, MS-19, MS-21 | TODO | implementation | — |
-| WD-15 | `zygo workspace approve [--yes] [--digest <hex>]` | WD-14, DR-3, MS-21 | TODO | judgment | — |
+| WD-15 | `zygo workspace approve [--yes] [--digest <hex>]` | WD-14, DR-3, MS-21 | PLANNED | judgment | — |
 | WD-16 | `config show/check`, `profile list/show`, `loadout list/show` show the repository files | WD-15, WD-24 | TODO | implementation | — |
 | WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | TODO | mechanical | — |
 | SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | TODO | implementation | — |
@@ -438,3 +438,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-22 DONE: built-in act101 v2.9.2 re-pinned to the tag's current commit 9d82bd97 (upstream rewrote history; same tree and act-lite 1.2.3 digest); Acceptance self-checking, author's call: lightweight tags have no ^{} line · PR #221 |
 | 2026-11-26 | MS-21 plan: premise drift: S§14 forget order (checks, sync lock, question, worktree, then state and cache); S§6.3 git runs only when the worktree folder and main_root exist |
 | 2026-11-26 | MS-21 DONE: ws forget asks for unsent and refused mail and removes the sync worktree; R1 F1 (a waiting sync rebuilt what forget deleted) F2-F5 fixed; R2 R2-1..R2-4 fixed, R2-5 refuted (OP5) · PR #217 |
+| 2026-11-26 | WD-15 PLANNED: R§18 item 7 rewritten (ESC/lone CR invalid in TOML comments; checked via ignored names); R§6.5: R§7.1 lines show the full digest; read moved to cmd/workspace_approve.rs (definition_hooks p2); no pool listing in approve |
