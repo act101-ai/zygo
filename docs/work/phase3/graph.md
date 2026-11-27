@@ -225,7 +225,7 @@ Session text (T, SX nodes):
 | FX-24 | Mail sync deliveries and ws forget take the M§5 mail lock | FX-13, MS-21 | DONE | judgment | f1661e09^..f20d5502 · acceptance pass (import 32, sync_pass 57, admin 40) · PR #224 |
 | FX-25 | `zygo up` reads the definition at the current checkout; `find_checkout` keeps a failed or timed-out `git worktree list` (exit 1) | WD-15 | DONE | implementation | a8092a70^..3c511812 · acceptance pass (up_definition 42, up 82, workspace_approve 29) · PR #226 |
 | FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | TODO | implementation | — |
-| FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | BLOCKED(3 review rounds failed: member-gated prune left delivered mail after a member rename, cross-pass member duplicate never acked, member_names quadratic; PR #230 closed) | judgment | — |
+| FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | PLANNED | judgment | PR TBD |
 | FX-28 | A remote send during `ws forget` is lost uncounted | FX-24 | TODO | judgment | — |
 
 ## Log
@@ -453,3 +453,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-25 PLANNED: R§10 up row and W§8.1 step 3 rewritten; author's calls: up reads at Target.top (by name: main_root); worktrees returns ListError, git's "not a git repository" alone is exit 2; failed/timed-out list, no git, gone main worktree exit 1 |
 | 2026-11-26 | FX-25 DONE: zygo up reads at the current checkout; main worktree = first valid (not prunable, not zygo's sync worktree) and a valid saved one wins, moves announced; failed or timed-out worktree list exits 1 with git's reason · PR #226 |
 | 2026-11-26 | FX-27 BLOCKED: failed 3 review rounds; round 3: the member-gated prune (R2 D-B) leaves delivered mail after a member rename, a cross-pass member duplicate is never acked, member_names is quadratic; branch discarded, re-plan · PR #230 closed |
+| 2026-11-26 | FX-27 PLANNED (re-plan), author's call: R1 ack = (old ∪ acked ∪ own-ack union) ∩ folder ULIDs; R2 old ack goes with no message file, every ULID listed, registry gone; R3 prune unchanged; R4 drop-host counts message files; invariant: one delivery per ULID |
