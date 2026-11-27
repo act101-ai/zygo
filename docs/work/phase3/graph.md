@@ -191,7 +191,6 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | DONE | judgment | e8f19e67..5bc5249b · acceptance pass (operator 22 passed) · PR #190 |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | DONE | implementation | 0167648d..826c59f6 · acceptance pass (mail_sync_cli 14 passed, cli_surface 21 passed) · PR #210 |
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | DONE | implementation | 37139e44^..e21d5e0b · acceptance pass (mail_remote 16 passed) · PR #212 |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
@@ -223,7 +222,7 @@ Session text (T, SX nodes):
 | FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | DONE | implementation | bb21eadf^..c99eeb95 · acceptance pass (offline: 7 test files, 0 failed) · PR #220 |
 | FX-24 | Mail sync deliveries and ws forget take the M§5 mail lock | FX-13, MS-21 | DONE | judgment | f1661e09^..f20d5502 · acceptance pass (import 32, sync_pass 57, admin 40) · PR #224 |
 | FX-25 | `zygo up` reads the definition at the current checkout; `find_checkout` keeps a failed or timed-out `git worktree list` (exit 1) | WD-15 | DONE | implementation | a8092a70^..3c511812 · acceptance pass (up_definition 42, up 82, workspace_approve 29) · PR #226 |
-| FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | IN-PROGRESS | judgment | PR #236 |
+| FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | DONE | judgment | ccb3aaec^..336d5654 · acceptance pass (mail_sync_no_content 5 passed) · PR #236 |
 | FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | DONE | judgment | 343897e2^..a9b6f61c · acceptance pass (renamed_host_ack_goes_with_only_acked_link_and_gitlink_entries 1 passed) · PR #231 |
 | FX-28 | A remote send during `ws forget` is lost uncounted | FX-24, FX-26 | TODO | judgment | — |
 | FX-30 | A crash-recovered delivery gets no wake and no count | FX-26, FX-28 | TODO | judgment | — |
@@ -464,3 +463,5 @@ Session text (T, SX nodes):
 | 2026-11-27 | FX-26 re-plan 2: sweep allows no marked name (S§6.3 no-checkout); reviewed work re-applied (patches 0001-0012 of 86ed9358, no docs/work); steps a-f done |
 | 2026-11-27 | FX-26 IN-PROGRESS: re-plan 2 review round 1 fixes (exact #4 notice; #5, #9, #15 fully walked; FX-28 merge note for both orders; change-log rounds; S-C9 live-premise build; run_with keeps 120 s; CI permission-case check) |
 | 2026-11-27 | FX-26 IN-PROGRESS: re-plan 2 review round 2 fixes (#12 none delivered and its write set; run_with lower bound; test-hooks comment); author's call: no Row line in nodes/FX-28.md and FX-30.md (graph-format §3: deps live in this table) |
+| 2026-11-27 | FX-26 DONE: the walk covers S§19 except the SP2 premise and FX-30 (the #14 count and wake); author's calls: no marked name anywhere (S§6.3 no-checkout), the test-hooks pass-deadline seam (S-C9); round 3 fixed F1-F8 · PR #236 |
+| 2026-11-27 | Author's correction: execute-work §4: a stage passes once every confirmed finding is fixed; earlier re-plans of FX-27/FX-28/FX-26 counted a re-review after the fixes as a failed round (author's error, recorded for operator review) |
