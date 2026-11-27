@@ -151,14 +151,15 @@ pub fn finish_incoming(sp: &SyncPaths, store: &Store) -> std::io::Result<usize> 
 
 /// S§8.5 (FX-24 review F6): the check name of the log line of a delivery that could not begin: `busy` (`mail/lock`
 /// held for the whole bound), `no-workspace` (no state folder or no `workspace.json`), `state` (a state folder that
-/// is a link or not a folder, or a state that does not read as valid), `io` (any other error).
+/// is a link or not a folder, or a state that does not read as valid), `mail` (FX-24 review R2 F2: `mail/` that
+/// cannot be made or checked, such as a link or an entry that is not a folder), `io` (any other error). The kind
+/// comes from the `MailError` variant of [`Delivery::begin`], not from an `io::ErrorKind`.
 fn begin_error(e: &MailError) -> &'static str {
     match e {
         MailError::Busy => "busy",
         MailError::NoWorkspace => "no-workspace",
-        MailError::Io(e) if matches!(e.kind(), std::io::ErrorKind::InvalidInput | std::io::ErrorKind::InvalidData) => {
-            "state"
-        }
+        MailError::BadState(_) => "state",
+        MailError::BadMail(_) => "mail",
         _ => "io",
     }
 }

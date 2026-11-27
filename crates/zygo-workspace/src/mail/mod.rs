@@ -84,6 +84,11 @@ pub enum MailError {
     NoWorkspace,
     /// The key has no member record in the read under `mail/lock` (M§5 P1).
     NoRecord { key: String },
+    /// [`Delivery::begin`]: the state folder is a link or not a folder, or the state does not read as valid.
+    BadState(std::io::Error),
+    /// [`Delivery::begin`]: `mail/` cannot be made or checked: a link, an entry that is not a folder, or another error
+    /// of its `mkdir` or check (FX-24 review R2 F2).
+    BadMail(std::io::Error),
     Io(std::io::Error),
 }
 
@@ -105,7 +110,7 @@ impl fmt::Display for MailError {
             MailError::Busy => write!(f, "zygo: mail is busy; try again"),
             MailError::NoWorkspace => write!(f, "zygo: the workspace has no state; nothing sent"),
             MailError::NoRecord { key } => write!(f, "zygo: pane {key} has no member record; nothing delivered"),
-            MailError::Io(e) => write!(f, "zygo: mail: {e}"),
+            MailError::BadState(e) | MailError::BadMail(e) | MailError::Io(e) => write!(f, "zygo: mail: {e}"),
         }
     }
 }
@@ -155,17 +160,18 @@ impl Delivery {
     /// Takes `mail/lock` of `store`'s workspace shared, waiting at most `bound`, then reads the state under it. It
     /// makes `mail/` (`0700`) when the state folder exists, never the state folder itself. A missing state folder,
     /// `mail/` that cannot be made because the folder went away, or no `workspace.json` is `NoWorkspace`; a lock held
-    /// for the whole bound is `Busy`; a state folder that is a link or not a folder (`InvalidInput`), a state that
-    /// does not read as valid (`InvalidData`), and every other error is `Io`.
+    /// for the whole bound is `Busy`; a state folder that is a link or not a folder, and a state that does not read as
+    /// valid, is `BadState`; every other error of the make or check of `mail/` (a link or an entry that is not a
+    /// folder at `mail/`) is `BadMail` (FX-24 review R2 F2); every other error is `Io`.
     pub fn begin(store: &Store, bound: Duration) -> Result<Delivery, MailError> {
         match fs::symlink_metadata(store.dir()) {
             Ok(m) if m.file_type().is_symlink() => {
                 let text = format!("{} is a link; it is not followed", store.dir().display());
-                return Err(std::io::Error::new(ErrorKind::InvalidInput, text).into());
+                return Err(MailError::BadState(std::io::Error::new(ErrorKind::InvalidInput, text)));
             }
             Ok(m) if !m.is_dir() => {
                 let text = format!("{} is not a folder", store.dir().display());
-                return Err(std::io::Error::new(ErrorKind::InvalidInput, text).into());
+                return Err(MailError::BadState(std::io::Error::new(ErrorKind::InvalidInput, text)));
             }
             Ok(_) => {}
             Err(e) if e.kind() == ErrorKind::NotFound => return Err(MailError::NoWorkspace),
@@ -173,8 +179,9 @@ impl Delivery {
         }
         let mail = store.dir().join("mail");
         match store::make_dir_in_place(&mail) {
+            Ok(()) => {}
             Err(e) if e.kind() == ErrorKind::NotFound => return Err(MailError::NoWorkspace),
-            r => r?,
+            Err(e) => return Err(MailError::BadMail(e)),
         }
         let lock = match lock_file_as(&mail.join("lock"), bound, true) {
             Ok(Some(f)) => f,
@@ -186,7 +193,7 @@ impl Delivery {
             Ok(Some(ws)) => ws,
             Ok(None) => return Err(MailError::NoWorkspace),
             Err(crate::state::StateError::Io(e)) => return Err(e.into()),
-            Err(e) => return Err(std::io::Error::new(ErrorKind::InvalidData, e.to_string()).into()),
+            Err(e) => return Err(MailError::BadState(std::io::Error::new(ErrorKind::InvalidData, e.to_string()))),
         };
         crate::up::fire(store.dir(), "mail_delivery_after_read").map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(Delivery { mail_dir: mail, ws, _lock: lock })

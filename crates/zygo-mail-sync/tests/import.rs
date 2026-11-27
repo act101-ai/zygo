@@ -682,3 +682,17 @@ fn finish_incoming_keeps_a_staged_file_while_its_maildir_exists() {
     assert!(!sp.mail.join("kcccccccc").exists());
     assert!(imported_load(&sp).unwrap().contains(&u(1)));
 }
+
+#[test] // FX-24 review R2 F2, S§8.5: a link at mail/ is the kind `mail`, apart from `state`
+fn mail_that_is_a_link_is_logged_as_mail() {
+    let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+    let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
+    let _ = fs::remove_dir_all(&sp.mail);
+    let elsewhere = m.root.parent().unwrap().join("elsewhere");
+    fs::create_dir_all(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &sp.mail).unwrap();
+    assert!(Store::open(&m.paths, WS_ID).read().unwrap().is_some(), "the state reads");
+    let (_, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    assert_eq!(lines, [log_line(u(1), "mail")]);
+    assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0, "a delivery wrote through the link");
+}

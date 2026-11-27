@@ -253,6 +253,32 @@ fn lifecycle_send_to_a_key_with_no_record_creates_no_maildir() {
     assert!(gone(&p.workspaces_dir().join(OTHER)));
 }
 
+#[test] // FX-24 review R2 F2: Delivery::begin names its source: `mail/` (BadMail) apart from the state (BadState)
+fn lifecycle_delivery_begin_names_a_bad_mail_folder_apart_from_a_bad_state() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let id = THIRD;
+    let store = stored(&p, id, &[("kaaaaaaaa", None)]);
+    let mail = mail_dir(&p, id);
+    let _ = fs::remove_dir_all(&mail);
+    let outside = t.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, &mail).unwrap();
+    let e = Delivery::begin(&store, MAIL_LOCK_WAIT).err().unwrap();
+    assert!(matches!(e, MailError::BadMail(_)), "{e:?}");
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 0, "a lock was made through the link");
+    fs::remove_file(&mail).unwrap();
+    fs::write(&mail, b"").unwrap();
+    let e = Delivery::begin(&store, MAIL_LOCK_WAIT).err().unwrap();
+    assert!(matches!(e, MailError::BadMail(_)), "{e:?}");
+    fs::remove_file(&mail).unwrap();
+    fs::write(store.dir().join("workspace.json"), b"{not json").unwrap();
+    let e = Delivery::begin(&store, MAIL_LOCK_WAIT).err().unwrap();
+    assert!(matches!(e, MailError::BadState(_)), "{e:?}");
+}
+
 #[test] // F4: the report carries the read under the lock: a record added after the caller's read gets its label, and
 // the wake reads that record
 fn lifecycle_send_report_carries_the_read_under_the_lock() {
