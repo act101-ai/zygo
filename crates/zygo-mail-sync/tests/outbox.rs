@@ -9,7 +9,7 @@ use ulid::Ulid;
 use zygo_config::{builtin_patterns, parse_duration, Action, MailConfig, RedactionConfig, RedactionPattern, SyncOff, SyncSettings};
 use zygo_core::paths::Paths;
 use zygo_mail_sync::address::{resolve_to, AddrError, Address};
-use zygo_mail_sync::outbox::{count, pending, refuse, refused_count, send_remote, send_remote_with, sweep, SendError};
+use zygo_mail_sync::outbox::{count, pending, refuse, refused_count, send_remote, send_remote_with, sweep, NoticeError, SendError};
 use zygo_mail_sync::registry::{write_cache, MemberCache};
 use zygo_mail_sync::state::{save, PublicCache, State, SyncPaths};
 use zygo_redact::DeadlinePolicy;
@@ -278,14 +278,14 @@ fn notify_can_deliver_the_notice_from_zygo() {
     let id = outbox_file(&f, "alice@a");
     refuse(&f.sp, id, &aws_ids(), &mut |to: &str, subject: &str, body: &str| {
         let m = Message::new("zygo", to, subject, body, now()).map_err(std::io::Error::other)?;
-        deliver(&f.sp.mail, KEY, to, &m, 500).map_err(std::io::Error::other)
+        Ok(deliver(&f.sp.mail, KEY, to, &m, 500).map_err(std::io::Error::other)?)
     }, now()).unwrap();
     let l = list(&f.sp.mail, KEY).unwrap();
     assert_eq!(l.len(), 1);
     assert_eq!((l[0].from.as_str(), l[0].subject.clone()), ("zygo", format!("not sent: {id}")));
 }
 
-#[test] // crash after the link, before the outbox name was removed
+#[test] // crash after the notice and the link, before the outbox name was removed: one more notice (S§8.6 accepted cost)
 fn refuse_again_after_a_partial_move_notifies_once() {
     let f = fx();
     let id = outbox_file(&f, "alice@a");
@@ -347,7 +347,7 @@ fn sweep_with_no_outbox_does_nothing() {
     assert!(!f.sp.outbox.exists());
 }
 
-fn no_notice(n: &mut u32) -> impl FnMut(&str, &str, &str) -> std::io::Result<()> + '_ {
+fn no_notice(n: &mut u32) -> impl FnMut(&str, &str, &str) -> Result<(), NoticeError> + '_ {
     move |_: &str, _: &str, _: &str| { *n += 1; Ok(()) }
 }
 
@@ -449,13 +449,30 @@ fn refuse_of_an_unparsable_file_moves_it_without_notice() {
     assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (0, 1));
 }
 
-#[test] // the move is done before the notice; a failed notice is the caller's error
-fn notify_error_after_the_move_keeps_the_file_refused() {
+#[test] // S§8.6 (FX-24 review F5): the notice comes before the move; a notice not delivered leaves the message queued
+fn notify_error_keeps_the_message_in_the_outbox_for_the_next_pass() {
     let f = fx();
     let id = outbox_file(&f, "alice@a");
-    let e = refuse(&f.sp, id, &aws_ids(), &mut |_: &str, _: &str, _: &str| Err(std::io::Error::other("no inbox")), now()).unwrap_err();
-    assert_eq!(e.to_string(), "no inbox");
+    let before = fs::read(f.sp.outbox.join(format!("{id}.json"))).unwrap();
+    let e = refuse(&f.sp, id, &aws_ids(), &mut |_: &str, _: &str, _: &str| Err(std::io::Error::other("busy").into()), now()).unwrap_err();
+    assert_eq!(e.to_string(), "busy");
+    assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (1, 0));
+    assert_eq!(fs::read(f.sp.outbox.join(format!("{id}.json"))).unwrap(), before);
+    let mut n = 0;
+    assert_eq!(refuse(&f.sp, id, &aws_ids(), &mut |_: &str, _: &str, _: &str| { n += 1; Ok(()) }, now()).unwrap(), None);
+    assert_eq!(n, 1);
     assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (0, 1));
+}
+
+#[test] // S§8.6 (FX-24 review R2 F1): a notice that no pass can deliver moves the message, and its reason comes back
+fn lasting_notice_error_moves_the_message_with_its_reason() {
+    let f = fx();
+    let id = outbox_file(&f, "alice@a");
+    let before = fs::read(f.sp.outbox.join(format!("{id}.json"))).unwrap();
+    let why = refuse(&f.sp, id, &aws_ids(), &mut |_: &str, _: &str, _: &str| Err(NoticeError::Never("full")), now()).unwrap();
+    assert_eq!(why, Some("full"));
+    assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (0, 1));
+    assert_eq!(fs::read(f.sp.refused.join(format!("{id}.json"))).unwrap(), before);
 }
 
 #[test] // M§5 FILE_MAX: a file over it is not read whole; it is moved with no notice, as a file that does not parse

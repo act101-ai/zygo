@@ -10,10 +10,12 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 use ulid::Ulid;
 use zygo_core::paths::Paths;
+use zygo_core::Agent;
 use zygo_mail_sync::branch::ensure_worktree;
 use zygo_mail_sync::env::{Crash, NoSeam, Seam};
 use zygo_mail_sync::import::*;
 use zygo_mail_sync::state::{imported_append, imported_load, SyncPaths};
+use zygo_workspace::state::{MemberRecord, Phase, Store};
 
 const KEY: &str = "kbbbbbbbb"; // bob's pane key
 fn u(n: u64) -> Ulid { Ulid::from_parts(1_764_000_000_000 + n, n as u128) }
@@ -122,14 +124,38 @@ fn paths(p: &Path) -> Paths {
         usage_db: p.join("data/usage.db"),
     }
 }
-/// `sp` on a fresh TempDir (no git), with `mail/`, `mail/sync/` and `incoming/` made.
-fn local() -> (tempfile::TempDir, SyncPaths) {
+/// The state `app` of workspace [`WS_ID`] under `p` (identity fields as `Machine::workspace`), with exactly the member
+/// records `(pane key, name)` (M§5: a delivery needs one).
+fn record(p: &Paths, members: &[(&str, &str)]) {
+    Store::open(p, WS_ID).update(Duration::from_secs(10), &mut |ws| {
+        ws.name = "app".into();
+        ws.common_dir = "/srv/app/.git".into();
+        ws.main_root = "/srv/app".into();
+        ws.tmux_session = "zygo-app".into();
+        ws.loadout = "solo".into();
+        ws.phase = Phase::Up;
+        ws.members.clear();
+        for (key, name) in members {
+            let mut m = MemberRecord::new(Agent::ClaudeCode);
+            m.name = Some(name.to_string());
+            ws.members.insert(key.to_string(), m);
+        }
+        Ok(())
+    }).unwrap();
+}
+/// `sp` and the workspace store on a fresh TempDir (no git): bob's record, and `mail/`, `mail/sync/` and `incoming/`
+/// made.
+fn local() -> (tempfile::TempDir, SyncPaths, Store) {
     let t = tempfile::TempDir::new().unwrap();
-    let sp = SyncPaths::new(&paths(t.path()), WS_ID).unwrap();
+    let p = paths(t.path());
+    record(&p, &[(KEY, "bob")]);
+    let sp = SyncPaths::new(&p, WS_ID).unwrap();
     for d in [&sp.mail, &sp.sync, &sp.incoming] {
         zygo_workspace::mail::ensure_mail_root(d).unwrap();
     }
-    (t, sp)
+    let store = Store::open(&p, WS_ID);
+    assert_eq!(store.dir().join("mail"), sp.mail);
+    (t, sp, store)
 }
 fn staged(sp: &SyncPaths, name: &str, bytes: &[u8]) {
     zygo_workspace::mail::store::write_synced(&sp.incoming.join(name), bytes).unwrap();
@@ -149,9 +175,10 @@ fn blobs(m: &Machine, all: &[Vec<u8>]) -> Vec<String> {
 fn sync_paths(m: &Machine) -> SyncPaths {
     let p = paths(m.root.parent().unwrap());
     let sp = SyncPaths::new(&p, WS_ID).unwrap();
-    fs::create_dir_all(sp.mail.parent().unwrap()).unwrap(); // the workspace exists (MS-21 review R2-1)
+    m.workspace(&[(KEY, "bob"), ("kcccccccc", "carol")]); // the workspace exists (MS-21 review R2-1)
     assert_eq!(sp.worktree, m.wt);
     assert_eq!(sp.mail, zygo_workspace::mail::mail_dir(&p, WS_ID));
+    assert_eq!(sp.mail, Store::open(&m.paths, WS_ID).dir().join("mail"));
     sp
 }
 fn new_dir(sp: &SyncPaths) -> PathBuf { sp.mail.join(KEY).join("new") }
@@ -176,12 +203,22 @@ struct CrashAt(&'static str);
 impl Seam for CrashAt {
     fn at(&self, p: &'static str) -> Result<(), Crash> { if p == self.0 { Err(Crash(p)) } else { Ok(()) } }
 }
-/// `run` with host list `hosts`, targets `bob()`, deadline `far()`; returns the result and the log lines.
+/// `run` with host list `hosts`, targets `bob()`, deadline `far()`; returns the result and the log lines. It checks
+/// that `read` is there exactly when a message was delivered and holds the record of each delivered key (no test
+/// changes the records during a run), then sets it to `None` so a test compares the rest.
 fn go(m: &Machine, sp: &SyncPaths, tip: &str, hosts: &[&str], ack: &BTreeSet<Ulid>, max: u32, seam: &dyn Seam)
     -> (Result<Imported, Crash>, Vec<String>) {
     let hosts: Vec<String> = hosts.iter().map(|h| h.to_string()).collect();
     let mut lines = Vec::new();
-    let r = run(sp, &sp.mail, &m.wt, tip, &hosts, &bob(), ack, max, far(), seam, &mut |l| lines.push(l.to_string()));
+    let r = run(sp, &Store::open(&m.paths, WS_ID), &m.wt, tip, &hosts, &bob(), ack, max, far(), seam, &mut |l| lines.push(l.to_string()));
+    let r = r.map(|mut i| {
+        let read = i.read.take();
+        assert_eq!(read.is_some(), !i.delivered.is_empty(), "read {read:?}");
+        for (k, _) in &i.delivered {
+            assert!(read.as_ref().is_some_and(|ws| ws.members.contains_key(k)), "{k} not in the read");
+        }
+        i
+    });
     (r, lines)
 }
 /// Every path under `dir`, links not followed.
@@ -205,7 +242,7 @@ fn delivers_the_blob_bytes_unchanged() { // S§6.2, S§19 #1 delivery part
     let f = tree_literally(&m.root, &[("100644", file(u(1)).as_bytes(), &blob(&m.root, &b))]);
     let t = tip(&m, &[("bob@b", f)]);
     let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![(KEY.into(), u(1))], acked: vec![u(1)], left: 0 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![(KEY.into(), u(1))], acked: vec![u(1)], left: 0 }));
     assert_eq!(fs::read(new_dir(&sp).join(file(u(1)))).unwrap(), b);
     assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
     assert_eq!(names(&sp.incoming), Vec::<String>::new());
@@ -229,7 +266,7 @@ fn hostile_entries_are_acked_not_delivered() { // S§19 #12 delivery part, S-C5
     let t = tip(&m, &[("bob@b", f)]);
     let before = all_files(m.root.parent().unwrap());
     let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![], acked: (1..=6).map(u).collect(), left: 0 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: (1..=6).map(u).collect(), left: 0 }));
     assert_eq!(lines, [log_line(u(1), "mode"), log_line(u(2), "mode"), log_line(u(3), "size"),
         log_line(u(4), "id"), log_line(u(5), "to"), log_line(u(6), "json")]);
     assert!(!sp.mail.join(KEY).exists());
@@ -251,12 +288,14 @@ fn hostile_names_never_reach_a_path() { // review focus 8
     let t = tip(&m, &[("bob@b", f)]);
     let before = all_files(m.root.parent().unwrap());
     let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![(KEY.into(), u(1))], acked: vec![u(1), u(2)], left: 0 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![(KEY.into(), u(1))], acked: vec![u(1), u(2)], left: 0 }));
     assert_eq!(lines, [log_line(u(2), "mode")]);
     assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
     for p in all_files(m.root.parent().unwrap()).difference(&before) {
         let md = sp.mail.join(KEY);
-        assert!(p.starts_with(&sp.sync) || p.starts_with(&md) || sp.sync.starts_with(p) || md.starts_with(p), "{p:?}");
+        // `mail/lock`: the M§5 lock the delivery takes (FX-24); it names no remote value.
+        assert!(p.starts_with(&sp.sync) || p.starts_with(&md) || sp.sync.starts_with(p) || md.starts_with(p)
+            || *p == sp.mail.join("lock"), "{p:?}");
     }
 }
 
@@ -288,7 +327,7 @@ fn a_ulid_in_the_imported_log_is_acked_not_delivered() {
     let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
     imported_append(&sp, u(1)).unwrap();
     let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![u(1)], left: 0 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![u(1)], left: 0 }));
     assert!(lines.is_empty());
     assert!(!new_dir(&sp).exists());
 }
@@ -301,7 +340,7 @@ fn a_full_inbox_leaves_the_message_unacked() { // S§19 #15
     fs::write(new_dir(&sp).join(file(u(90))), b"{}").unwrap();
     fs::write(new_dir(&sp).join(file(u(91))), b"{}").unwrap();
     let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 2, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![], left: 1 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![], left: 1 }));
     assert!(lines.is_empty());
     assert!(!imported_load(&sp).unwrap().contains(&u(1)));
     assert!(!sp.incoming.exists() || names(&sp.incoming).is_empty());
@@ -317,9 +356,9 @@ fn a_crash_after_each_delivery_step_gives_one_file() { // S§19 #14 delivery par
         let b = msg(u(1), "bob@b");
         let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
         assert_eq!(go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &CrashAt(point)).0, Err(Crash(point)));
-        assert_eq!(finish_incoming(&sp, &sp.mail).unwrap(), finished, "{point}");
+        assert_eq!(finish_incoming(&sp, &Store::open(&m.paths, WS_ID)).unwrap(), finished, "{point}");
         let (res, _) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-        assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![u(1)], left: 0 }), "{point}");
+        assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![u(1)], left: 0 }), "{point}");
         assert_eq!(names(&new_dir(&sp)), [file(u(1))], "{point}");
         assert_eq!(fs::read(new_dir(&sp).join(file(u(1)))).unwrap(), b, "{point}");
         assert_eq!(names(&sp.incoming), Vec::<String>::new(), "{point}");
@@ -329,13 +368,13 @@ fn a_crash_after_each_delivery_step_gives_one_file() { // S§19 #14 delivery par
 
 #[test]
 fn finish_incoming_with_the_ulid_logged_and_the_target_present() { // review focus 17
-    let (_t, sp) = local();
+    let (_t, sp, store) = local();
     let b = msg(u(1), "bob@b");
     staged(&sp, &format!("{KEY}.{}.json", u(1)), &b);
     imported_append(&sp, u(1)).unwrap();
     fs::create_dir_all(new_dir(&sp)).unwrap();
     fs::write(new_dir(&sp).join(file(u(1))), &b).unwrap();
-    assert_eq!(finish_incoming(&sp, &sp.mail).unwrap(), 0);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
     assert_eq!(names(&sp.incoming), Vec::<String>::new());
     assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
     assert_eq!(fs::read_to_string(&sp.imported).unwrap(), format!("{}\n", u(1)));
@@ -343,21 +382,21 @@ fn finish_incoming_with_the_ulid_logged_and_the_target_present() { // review foc
 
 #[test]
 fn finish_incoming_after_a_torn_log() { // review focus 17, the MS-12 half
-    let (_t, sp) = local();
+    let (_t, sp, store) = local();
     fs::write(&sp.imported, &u(2).to_string()[..20]).unwrap();
     staged(&sp, &format!("{KEY}.{}.json", u(1)), &msg(u(1), "bob@b"));
-    assert_eq!(finish_incoming(&sp, &sp.mail).unwrap(), 1);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 1);
     assert_eq!(imported_load(&sp).unwrap(), HashSet::from([u(1)]));
     assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
 }
 
 #[test]
 fn incoming_is_never_swept() {
-    let (_t, sp) = local();
+    let (_t, sp, store) = local();
     for n in ["notes.txt".to_string(), format!("{KEY}.bad.json"), format!("KBBBBBBBB.{}.json", u(1))] {
         staged(&sp, &n, b"{}");
     }
-    assert_eq!(finish_incoming(&sp, &sp.mail).unwrap(), 0);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
     assert_eq!(names(&sp.incoming).len(), 3);
     zygo_workspace::mail::store::sweep(&sp.mail, Duration::ZERO, SystemTime::now() + Duration::from_secs(365 * 86400));
     assert_eq!(names(&sp.incoming).len(), 3);
@@ -369,7 +408,7 @@ fn own_hosts_dedupe_and_unknown_names() { // S§7.5 own hosts, S§13 limit 2, on
     let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)])), ("bob@b2", folder(&m, "bob@b2", &[u(1), u(2)])),
         ("carol@b", folder(&m, "carol@b", &[u(3)]))]);
     let (res, lines) = go(&m, &sp, &t, &["b", "b2"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![(KEY.into(), u(1)), (KEY.into(), u(2))], acked: vec![u(1), u(2)], left: 0 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![(KEY.into(), u(1)), (KEY.into(), u(2))], acked: vec![u(1), u(2)], left: 0 }));
     assert!(lines.is_empty());
     assert_eq!(names(&new_dir(&sp)), [file(u(1)), file(u(2))]);
 }
@@ -388,13 +427,13 @@ fn a_passed_deadline_or_a_bad_target_reads_nothing() {
     let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
     let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
     let mut lines = Vec::new();
-    let res = run(&sp, &sp.mail, &m.wt, &t, &["b".into()], &bob(), &BTreeSet::new(), 5000, Instant::now(), &NoSeam,
+    let res = run(&sp, &Store::open(&m.paths, WS_ID), &m.wt, &t, &["b".into()], &bob(), &BTreeSet::new(), 5000, Instant::now(), &NoSeam,
         &mut |l| lines.push(l.to_string()));
-    assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![], left: 1 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![], left: 1 }));
     assert!(lines.is_empty(), "{lines:?}"); // stopping at the deadline is normal: no error line
     for (targets, host) in [(vec![Target { name: "bob".into(), pane_key: "../x".into() }], "b"),
         (vec![Target { name: "cli".into(), pane_key: KEY.into() }], "b"), (bob(), "B!")] {
-        let res = run(&sp, &sp.mail, &m.wt, &t, &[host.into()], &targets, &BTreeSet::new(), 5000, far(), &NoSeam, &mut |_| {});
+        let res = run(&sp, &Store::open(&m.paths, WS_ID), &m.wt, &t, &[host.into()], &targets, &BTreeSet::new(), 5000, far(), &NoSeam, &mut |_| {});
         assert_eq!(res, Ok(Imported::default()));
     }
     assert!(!sp.mail.join(KEY).exists() && !sp.incoming.exists());
@@ -444,12 +483,12 @@ fn finish_incoming_deletes_a_torn_staged_file() {
             zygo_workspace::mail::ensure_mail_root(d).unwrap();
         }
         staged(&sp, &format!("{KEY}.{}.json", u(1)), &torn);
-        assert_eq!(finish_incoming(&sp, &sp.mail).unwrap(), 0, "{}", torn.len());
+        assert_eq!(finish_incoming(&sp, &Store::open(&m.paths, WS_ID)).unwrap(), 0, "{}", torn.len());
         assert_eq!(names(&sp.incoming), Vec::<String>::new());
         assert!(!imported_load(&sp).unwrap().contains(&u(1)));
         assert!(!new_dir(&sp).exists());
         let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-        assert_eq!(res, Ok(Imported { delivered: vec![(KEY.into(), u(1))], acked: vec![u(1)], left: 0 }));
+        assert_eq!(res, Ok(Imported { read: None, delivered: vec![(KEY.into(), u(1))], acked: vec![u(1)], left: 0 }));
         assert!(lines.is_empty());
         assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
         assert_eq!(fs::read(new_dir(&sp).join(file(u(1)))).unwrap(), full);
@@ -475,7 +514,7 @@ fn a_full_inbox_with_a_backlog_does_not_stop_the_others() {
             fs::write(new_dir(&sp).join(file(u(9000 + n))), b"{}").unwrap();
         }
         let mut lines = Vec::new();
-        let res = run(&sp, &sp.mail, &m.wt, &t, &["b".into()], &targets, &BTreeSet::new(), 3, far(), &NoSeam,
+        let res = run(&sp, &Store::open(&m.paths, WS_ID), &m.wt, &t, &["b".into()], &targets, &BTreeSet::new(), 3, far(), &NoSeam,
             &mut |l| lines.push(l.to_string())).unwrap();
         let mut want: Vec<(String, Ulid)> = (1..=bob_got).map(|n| (KEY.to_string(), u(n))).collect();
         want.extend(carol.iter().map(|id| (CAROL.to_string(), *id)));
@@ -493,6 +532,167 @@ fn a_failed_ls_tree_is_logged() {
     tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
     let missing = "0123456789abcdef0123456789abcdef01234567";
     let (res, lines) = go(&m, &sp, missing, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![], left: 1 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![], left: 1 }));
     assert_eq!(lines, ["mail sync: import: ls-tree"]);
+}
+
+// ---- FX-24: the import and the finish of incoming/ are M§5 deliveries (S§8.5 "Delivery, crash-safe", step 5) ----
+
+/// Holds `mail/lock` of `sp` exclusive, as a removal of a maildir holds it (M§5 P1), until the file is dropped.
+fn hold_mail_lock(sp: &SyncPaths) -> fs::File {
+    use std::os::unix::fs::OpenOptionsExt;
+    zygo_workspace::mail::ensure_mail_dir(&sp.mail).unwrap();
+    let f = fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).mode(0o600)
+        .open(sp.mail.join("lock")).unwrap();
+    fs4::FileExt::try_lock(&f).unwrap();
+    f
+}
+
+#[test] // d3, author's call 2: a candidate whose key has no record in the read under the lock waits on the branch
+fn import_to_a_key_with_no_record_stages_nothing() {
+    let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+    let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
+    m.workspace(&[("kcccccccc", "carol")]); // bob's record went; bob() is the older read of the gate
+    let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    assert_eq!(res, Ok(Imported::default()));
+    assert!(lines.is_empty(), "{lines:?}");
+    assert!(!sp.mail.join(KEY).exists() && !sp.incoming.exists());
+    assert!(!imported_load(&sp).unwrap().contains(&u(1)));
+    m.workspace(&[(KEY, "bob")]); // the message waited on the branch
+    let (res, _) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![(KEY.into(), u(1))], acked: vec![u(1)], left: 0 }));
+}
+
+#[test] // d3, author's calls 4 and 7: a mail/lock held for the whole bound stops the import for this pass
+fn import_stops_at_a_held_mail_lock() {
+    let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+    let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1), u(2)]))]);
+    let held = hold_mail_lock(&sp);
+    let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![], left: 1 }));
+    assert_eq!(lines, [log_line(u(1), "busy")]); // review F6: the error kind
+    assert!(!sp.mail.join(KEY).exists() && !sp.incoming.exists());
+    assert!(imported_load(&sp).unwrap().is_empty());
+    drop(held);
+    let (res, _) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    assert_eq!(res.unwrap().delivered, [(KEY.to_string(), u(1)), (KEY.to_string(), u(2))]);
+}
+
+#[test] // FX-24 review F6: a delivery that cannot begin logs its error kind, not `lock`, and stops the import
+fn import_logs_the_kind_of_a_delivery_that_cannot_begin() {
+    let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+    let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1), u(2)]))]);
+    let state = Store::open(&m.paths, WS_ID).dir().join("workspace.json");
+    let good = fs::read(&state).unwrap();
+    for (bytes, kind) in [(None, "no-workspace"), (Some(b"{".to_vec()), "state")] {
+        match &bytes {
+            None => fs::remove_file(&state).unwrap(),
+            Some(b) => fs::write(&state, b).unwrap(),
+        }
+        let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+        assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![], left: 1 }), "{kind}");
+        assert_eq!(lines, [log_line(u(1), kind)]);
+        assert!(!sp.mail.join(KEY).exists() && imported_load(&sp).unwrap().is_empty(), "{kind}");
+        fs::write(&state, &good).unwrap();
+    }
+}
+
+#[test] // d2, author's call 3: a staged file whose key has no record is deleted, the log unchanged, no maildir made
+fn finish_incoming_deletes_a_staged_file_of_a_key_with_no_record() {
+    for logged in [false, true] {
+        let (_t, sp, store) = local(); // record: bob only
+        staged(&sp, &format!("kcccccccc.{}.json", u(1)), &msg(u(1), "carol@b"));
+        if logged {
+            imported_append(&sp, u(1)).unwrap();
+        }
+        assert_eq!(finish_incoming(&sp, &store).unwrap(), 0, "logged {logged}");
+        assert_eq!(names(&sp.incoming), Vec::<String>::new(), "logged {logged}");
+        assert!(!sp.mail.join("kcccccccc").exists(), "logged {logged}");
+        assert_eq!(imported_load(&sp).unwrap().contains(&u(1)), logged, "logged {logged}");
+    }
+}
+
+#[test] // d2, author's call 7: a mail/lock held for the whole bound ends the finish; the staged file stays
+fn finish_incoming_stops_at_a_held_mail_lock() {
+    let (_t, sp, store) = local();
+    let name = format!("{KEY}.{}.json", u(1));
+    staged(&sp, &name, &msg(u(1), "bob@b"));
+    let held = hold_mail_lock(&sp);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
+    assert_eq!(names(&sp.incoming), [name]);
+    assert!(!new_dir(&sp).exists());
+    assert!(imported_load(&sp).unwrap().is_empty());
+    drop(held);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 1);
+    assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
+}
+
+#[test] // FX-24 review F1: a record gone for a short time (up step 8 to its undo write) loses no logged staged message
+fn a_short_record_gap_keeps_a_logged_staged_message() {
+    let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+    let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
+    let store = Store::open(&m.paths, WS_ID);
+    // the process stops between step 2 (log append) and step 3 (move into new/)
+    assert_eq!(go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &CrashAt("after_log")).0, Err(Crash("after_log")));
+    let staged = vec![format!("{KEY}.{}.json", u(1))];
+    assert_eq!(names(&sp.incoming), staged);
+    assert!(imported_load(&sp).unwrap().contains(&u(1)));
+    assert!(fs::symlink_metadata(sp.mail.join(KEY)).is_ok_and(|m| m.is_dir()), "step 1 makes bob's maildir");
+    // up step 8 wrote the state without bob's record; his maildir stays until the up write or the undo write (M§5)
+    m.workspace(&[("kcccccccc", "carol")]);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
+    assert_eq!(names(&sp.incoming), staged, "the staged file stays while bob's maildir exists");
+    let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![], left: 1 }), "a logged ULID with a staged file waits");
+    assert!(lines.is_empty(), "{lines:?}");
+    // the undo write of up puts bob's record back: the next pass delivers to bob, then acknowledges
+    m.workspace(&[(KEY, "bob"), ("kcccccccc", "carol")]);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 1);
+    assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
+    assert_eq!(names(&sp.incoming), Vec::<String>::new());
+    let (res, _) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![u(1)], left: 0 }));
+}
+
+#[test] // FX-24 review F2: the folder name maps to the key of the read under mail/lock, not of the pass's first read
+fn import_delivers_by_the_name_to_key_map_under_the_lock() {
+    let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+    let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
+    m.workspace(&[(KEY, "robert"), ("kcccccccc", "bob")]); // bob() is the older read: bob was KEY
+    let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    let res = res.unwrap();
+    assert!(lines.is_empty(), "{lines:?}");
+    assert_eq!((res.delivered, res.acked, res.left), (vec![("kcccccccc".to_string(), u(1))], vec![u(1)], 0));
+    assert!(sp.mail.join("kcccccccc").join("new").join(file(u(1))).is_file());
+    assert!(!new_dir(&sp).join(file(u(1))).exists(), "robert got bob's message");
+}
+
+#[test] // FX-24 review F1: no record and no maildir (M§5 removed it after the record went) is the only delete
+fn finish_incoming_keeps_a_staged_file_while_its_maildir_exists() {
+    let (_t, sp, store) = local(); // record: bob only
+    let name = format!("kcccccccc.{}.json", u(1));
+    staged(&sp, &name, &msg(u(1), "carol@b"));
+    imported_append(&sp, u(1)).unwrap();
+    zygo_workspace::mail::ensure_mail_dir(&sp.mail.join("kcccccccc")).unwrap();
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
+    assert_eq!(names(&sp.incoming), [name]);
+    fs::remove_dir(sp.mail.join("kcccccccc")).unwrap(); // the M§5 removal after the up write
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
+    assert_eq!(names(&sp.incoming), Vec::<String>::new());
+    assert!(!sp.mail.join("kcccccccc").exists());
+    assert!(imported_load(&sp).unwrap().contains(&u(1)));
+}
+
+#[test] // FX-24 review R2 F2, S§8.5: a link at mail/ is the kind `mail`, apart from `state`
+fn mail_that_is_a_link_is_logged_as_mail() {
+    let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+    let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
+    let _ = fs::remove_dir_all(&sp.mail);
+    let elsewhere = m.root.parent().unwrap().join("elsewhere");
+    fs::create_dir_all(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &sp.mail).unwrap();
+    assert!(Store::open(&m.paths, WS_ID).read().unwrap().is_some(), "the state reads");
+    let (_, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    assert_eq!(lines, [log_line(u(1), "mail")]);
+    assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0, "a delivery wrote through the link");
 }

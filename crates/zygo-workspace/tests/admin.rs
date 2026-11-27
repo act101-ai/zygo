@@ -22,7 +22,7 @@ use zygo_core::paths::Paths;
 use zygo_core::Agent;
 use zygo_workspace::admin::{self, ListRow, ListState};
 use zygo_workspace::identity::workspace_id;
-use zygo_workspace::mail::{mail_dir, store as mail_store, Message};
+use zygo_workspace::mail::{mail_dir, store as mail_store, Delivery, MailError, Message, MAIL_LOCK_WAIT};
 use zygo_workspace::mux::testing::{require_tmux, PrivateServer};
 use zygo_workspace::mux::{HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split};
 use zygo_workspace::state::{MemberRecord, MemberState, Pane, PaneKind, Phase, Store, Workspace};
@@ -2151,6 +2151,28 @@ fn forget_does_not_follow_a_mail_link() {
     assert!(common_names(&elsewhere.join("sync")).is_empty());
 }
 
+#[test] // FX-24 review R2 F4, S§7.6 steps 1 and 4: a lock file that no sync or delivery can hold does not stop the forget
+fn forget_goes_on_when_a_lock_file_is_a_link_or_a_folder() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let target = t.join("target");
+    fs::write(&target, b"kept").unwrap();
+    // A link at mail/lock: a delivery refuses to open it, so no delivery can hold it.
+    ws_state(&p, ID, "app", &t.join("r/app"), |_| {});
+    fs::create_dir_all(mail_dir(&p, ID)).unwrap();
+    std::os::unix::fs::symlink(&target, mail_dir(&p, ID).join("lock")).unwrap();
+    // A folder at mail/sync/lock: a sync refuses to open it, so no sync can hold it.
+    ws_state(&p, OTHER, "bee", &t.join("r/bee"), |_| {});
+    fs::create_dir_all(mail_dir(&p, OTHER).join("sync/lock")).unwrap();
+    for (name, id) in [("app", ID), ("bee", OTHER)] {
+        assert_eq!(forget_run(&p, &t.join("none"), None, name), (0, format!("zygo: forgot {name}\n"), String::new()));
+        assert!(fs::symlink_metadata(p.workspaces_dir().join(id)).is_err(), "the state folder of {name} stayed");
+    }
+    assert_eq!(fs::read(&target).unwrap(), b"kept");
+}
+
 #[test] // S§7.6 steps 2-3: an Err of before_remove refuses with exit 1 and its reason; nothing deleted
 fn forget_refuses_with_the_reason_of_before_remove() {
     let _s = serial();
@@ -2188,6 +2210,326 @@ fn forget_refuses_while_a_mail_sync_holds_its_lock() {
     assert_eq!((calls, state_bytes(&p, ID)), (0, bytes));
     drop(held);
     assert_eq!(forget_run(&p, &t.join("none"), None, "app"), (0, "zygo: forgot app\n".to_string(), String::new()));
+}
+
+// ---- FX-24: ws forget holds mail/lock across the state rename (M§5 P1, S§7.6 step 4) ----
+
+/// What a paused thread of an FX-24 test says: it is at its hook point (it holds `mail/lock`), its body ended with
+/// this value, or its body panicked with this text (review R3 F5).
+enum Event<T> {
+    Held,
+    Done(T),
+    Panicked(String),
+}
+
+/// The text of a caught panic.
+fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
+    match (p.downcast_ref::<&str>(), p.downcast_ref::<String>()) {
+        (Some(s), _) => (*s).to_string(),
+        (_, Some(s)) => s.clone(),
+        _ => "a panic with no text".to_string(),
+    }
+}
+
+/// A thread of an FX-24 test that runs `body` and pauses at the hook point `point` of the state folder `dir` until
+/// [`Paused::release`]. Review F3: the body's value comes on the channel of the "held" signal, so a body that ends
+/// before its hook reaches the test as that value. Review R3 F5: the body runs in `catch_unwind` and its panic comes
+/// on that channel too, so a panic fails the test and never hangs it; the drop clears the hook (with its copy of the
+/// sender) and releases the thread on every exit path of the test.
+struct Paused<T> {
+    dir: PathBuf,
+    point: &'static str,
+    ev_rx: std::sync::mpsc::Receiver<Event<T>>,
+    go_tx: Option<std::sync::mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl<T: Send + std::fmt::Debug + 'static> Paused<T> {
+    fn start(dir: &Path, point: &'static str, body: impl FnOnce() -> T + Send + 'static) -> Paused<T> {
+        let (ev_tx, ev_rx) = std::sync::mpsc::channel::<Event<T>>();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let (go_rx, held_tx) = (Mutex::new(go_rx), Mutex::new(ev_tx.clone()));
+        up::testing::hook(
+            dir,
+            point,
+            Some(Box::new(move || {
+                let _ = held_tx.lock().unwrap_or_else(|e| e.into_inner()).send(Event::Held);
+                let _ = go_rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                Ok(())
+            })),
+        );
+        let thread = std::thread::spawn(move || {
+            let ev = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
+                Ok(v) => Event::Done(v),
+                Err(p) => Event::Panicked(panic_text(&*p)),
+            };
+            let _ = ev_tx.send(ev);
+        });
+        Paused { dir: dir.to_path_buf(), point, ev_rx, go_tx: Some(go_tx), thread: Some(thread) }
+    }
+
+    /// Waits, with no time bound, until the thread is at its hook point; a body that ended or panicked first fails the
+    /// test with its value or its panic.
+    fn held(&self) {
+        match self.ev_rx.recv() {
+            Ok(Event::Held) => {}
+            Ok(Event::Done(v)) => panic!("the thread ended before its hook: {v:?}"),
+            Ok(Event::Panicked(m)) => panic!("the thread panicked before its hook: {m}"),
+            Err(_) => panic!("the thread ended with no event"),
+        }
+    }
+
+    /// Releases the thread from its hook and waits, with no time bound, for the value of its body.
+    fn release(mut self) -> T {
+        drop(self.go_tx.take());
+        let v = match self.ev_rx.recv() {
+            Ok(Event::Done(v)) => v,
+            Ok(Event::Held) => panic!("a second held signal"),
+            Ok(Event::Panicked(m)) => panic!("the thread panicked: {m}"),
+            Err(_) => panic!("the thread ended with no event"),
+        };
+        if let Some(t) = self.thread.take() {
+            t.join().unwrap();
+        }
+        v
+    }
+}
+
+impl<T> Drop for Paused<T> {
+    fn drop(&mut self) {
+        up::testing::hook(&self.dir, self.point, None);
+        drop(self.go_tx.take());
+    }
+}
+
+/// The body of a d4 delivery thread: one delivery to `kbbbbbbbb` of `store`'s workspace.
+fn deliver_to_bob(store: Store) -> impl FnOnce() -> Result<(), MailError> + Send + 'static {
+    move || {
+        Delivery::begin(&store, MAIL_LOCK_WAIT).and_then(|d| {
+            d.deliver("kbbbbbbbb", "x", &Message::new("cli", "x", "s", "b", SystemTime::now()).unwrap(), 500)
+        })
+    }
+}
+
+/// A readable state `app` of workspace `ID` with the record of `kbbbbbbbb`.
+fn ws_with_bob(p: &Paths, t: &Path) -> Store {
+    ws_state(p, ID, "app", &t.join("r/app"), |ws| {
+        ws.members.insert("kbbbbbbbb".into(), MemberRecord::new(Agent::ClaudeCode));
+    })
+}
+
+#[test] // d4, review F4: a delivery that holds mail/lock refuses the forget; after it linked, the forget leaves nothing
+fn forget_waits_for_a_delivery_in_flight_and_leaves_no_maildir() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let store = ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    // (a) The delivery holds mail/lock shared, paused after its record read.
+    let d = Paused::start(&dir, "mail_delivery_after_read", deliver_to_bob(store));
+    d.held();
+    // (b) The lock stays held for the forget's whole bound: refused, nothing deleted.
+    let busy = forget_run(&p, &t.join("none"), None, "app");
+    // (c) Released, the delivery links and ends; the test waits for its result, with no time bound.
+    let delivered = d.release();
+    assert_eq!(busy, (1, String::new(), "zygo: cannot forget app: mail is busy; try again\n".to_string()));
+    assert!(delivered.is_ok(), "{delivered:?}");
+    assert_eq!(fs::read_dir(dir.join("mail/kbbbbbbbb/new")).unwrap().count(), 1);
+    // (d) The forget now runs to its end: no state folder and no maildir stay, and a new delivery finds no workspace.
+    assert_eq!(forget_run(&p, &t.join("none"), None, "app"), (0, "zygo: forgot app\n".to_string(), String::new()));
+    assert!(fs::symlink_metadata(&dir).is_err(), "the state folder or its maildir stayed");
+    let e = Delivery::begin(&Store::open(&p, ID), MAIL_LOCK_WAIT).unwrap_err();
+    assert!(matches!(e, MailError::NoWorkspace), "{e:?}");
+    assert!(fs::symlink_metadata(&dir).is_err(), "a delivery made the state folder again");
+}
+
+#[test] // FX-24 review R2 F3, M§5 P1, S§7.6 step 4: a delivery whose locked file is no longer mail/lock finds no workspace
+fn delivery_that_locked_a_moved_mail_lock_finds_no_workspace() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let store = ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    // (a) The delivery holds the lock of mail/lock, paused before it checks that file.
+    let d = Paused::start(&dir, "mail_delivery_after_lock", deliver_to_bob(store));
+    d.held();
+    // (b) A forget's rename moves the state folder (and the locked file) away; a new workspace of the same id.
+    let old = renew_state(&p, t);
+    // (c) Released, the delivery checks its locked file, finds it is not mail/lock, and writes nothing.
+    let r = d.release();
+    assert!(matches!(r, Err(MailError::NoWorkspace)), "{r:?}");
+    assert!(fs::symlink_metadata(dir.join("mail/kbbbbbbbb")).is_err(), "the delivery wrote into the new workspace");
+    assert!(fs::symlink_metadata(old.join("mail/kbbbbbbbb")).is_err(), "the delivery wrote into the old workspace");
+}
+
+/// A forget's rename of the state folder of `ID` to `<t>/tombstone` (returned), with the `mail/lock` that a paused
+/// taker holds, then a new workspace of the same id: a new state folder with the record of `kbbbbbbbb` and a new
+/// `mail/lock`.
+fn renew_state(p: &Paths, t: &Path) -> PathBuf {
+    let dir = p.workspaces_dir().join(ID);
+    let old = t.join("tombstone");
+    fs::rename(&dir, &old).unwrap();
+    ws_with_bob(p, t);
+    fs::create_dir(dir.join("mail")).unwrap();
+    fs::write(dir.join("mail/lock"), b"").unwrap();
+    old
+}
+
+#[test] // FX-24 review R3 F2 (a), M§5 P1, S§7.6 step 4: a read whose locked file is no longer mail/lock returns nothing
+fn read_that_locked_a_moved_mail_lock_returns_no_message() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    fs::create_dir(dir.join("mail")).unwrap();
+    // (a) The read holds mail/lock shared, paused before it checks that file.
+    let mail = dir.join("mail");
+    let d = Paused::start(&dir, "mail_read_after_lock", move || mail_store::read_within(&mail, "kbbbbbbbb", 10, MAIL_LOCK_WAIT));
+    d.held();
+    // (b) The rename and a new workspace with one unread message for kbbbbbbbb: a read that went on into it would move
+    // that message to cur/ and return it.
+    renew_state(&p, t);
+    deliver_to_bob(Store::open(&p, ID))().unwrap();
+    // (c) Released, the read checks its locked file, finds it is not mail/lock, and returns no message.
+    let r = d.release();
+    assert!(matches!(&r, Ok(v) if v.is_empty()), "{r:?}");
+    assert_eq!(fs::read_dir(dir.join("mail/kbbbbbbbb/new")).unwrap().count(), 1, "the read took the new workspace's message");
+    assert_eq!(fs::read_dir(dir.join("mail/kbbbbbbbb/cur")).unwrap().count(), 0, "the read moved a message to cur/");
+}
+
+/// The maildir of `kcccccccc`, a pane key with no member record, in the state folder `dir`.
+fn orphan_maildir(dir: &Path) -> PathBuf {
+    let md = dir.join("mail/kcccccccc");
+    fs::create_dir_all(md.join("new")).unwrap();
+    md
+}
+
+#[test] // FX-24 review R3 F2 (b), M§5 P1, S§7.6 step 4: a maildir removal whose locked file is no longer mail/lock removes nothing
+fn removal_that_locked_a_moved_mail_lock_removes_nothing() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let store = ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    orphan_maildir(&dir);
+    // (a) The removal holds mail/lock exclusive, paused before it checks that file.
+    let d = Paused::start(&dir, "mail_removal_after_lock", move || {
+        zygo_workspace::mail::remove_maildir(&store, "kcccccccc", MAIL_LOCK_WAIT)
+    });
+    d.held();
+    // (b) The rename and a new workspace with a maildir of kcccccccc, which has no record there either.
+    let old = renew_state(&p, t);
+    let md = orphan_maildir(&dir);
+    // (c) Released, the removal checks its locked file, finds it is not mail/lock, and removes nothing.
+    let r = d.release();
+    assert!(matches!(r, Ok(false)), "{r:?}");
+    assert!(md.is_dir(), "the removal removed a maildir of the new workspace");
+    assert!(old.join("mail/kcccccccc").is_dir(), "the removal removed a maildir of the old workspace");
+}
+
+#[test] // FX-24 review R3 F2 (b), M§5 P1, S§7.6 step 4: a prune whose locked file is no longer mail/lock removes nothing
+fn prune_that_locked_a_moved_mail_lock_removes_nothing() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let store = ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    orphan_maildir(&dir);
+    // (a) The prune holds mail/lock exclusive, paused before it checks that file.
+    let d = Paused::start(&dir, "mail_removal_after_lock", move || zygo_workspace::mail::prune(&store, MAIL_LOCK_WAIT));
+    d.held();
+    // (b) The rename and a new workspace with a maildir of kcccccccc, which has no record there either.
+    let old = renew_state(&p, t);
+    let md = orphan_maildir(&dir);
+    // (c) Released, the prune checks its locked file, finds it is not mail/lock, and removes nothing.
+    let r = d.release();
+    assert!(matches!(&r, Ok(v) if v.is_empty()), "{r:?}");
+    assert!(md.is_dir(), "the prune removed a maildir of the new workspace");
+    assert!(old.join("mail/kcccccccc").is_dir(), "the prune removed a maildir of the old workspace");
+}
+
+#[test] // S§7.6 step 4: under all forget locks, right before the rename, a delivery cannot take mail/lock
+fn forget_holds_mail_lock_across_the_state_rename() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let store = ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    let seen: Arc<Mutex<Option<Option<String>>>> = Arc::new(Mutex::new(None));
+    let (hp, hs) = (p.clone(), Arc::clone(&seen));
+    up::testing::hook(
+        &dir,
+        "forget_before_state",
+        Some(Box::new(move || {
+            *hs.lock().unwrap() = Some(Delivery::begin(&Store::open(&hp, ID), Duration::ZERO).err().map(|e| e.to_string()));
+            Ok(())
+        })),
+    );
+    let forgot = forget_run(&p, &t.join("none"), None, "app");
+    up::testing::hook(&dir, "forget_before_state", None);
+    assert_eq!(forgot, (0, "zygo: forgot app\n".to_string(), String::new()));
+    assert_eq!(*seen.lock().unwrap(), Some(Some("zygo: mail is busy; try again".to_string())));
+    let e = Delivery::begin(&store, MAIL_LOCK_WAIT).unwrap_err();
+    assert!(matches!(e, MailError::NoWorkspace), "{e:?}");
+    assert!(fs::symlink_metadata(&dir).is_err());
+}
+
+#[test] // S§7.6 step 4: a mail/lock held for the whole 2 s bound refuses the forget, and the state stays
+fn forget_refuses_when_mail_lock_stays_held() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let store = ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    let held = Delivery::begin(&store, MAIL_LOCK_WAIT).unwrap();
+    assert_eq!(
+        forget_run(&p, &t.join("none"), None, "app"),
+        (1, String::new(), "zygo: cannot forget app: mail is busy; try again\n".to_string())
+    );
+    assert_eq!(Store::open(&p, ID).read().unwrap().unwrap().name, "app");
+    drop(held);
+    assert_eq!(forget_run(&p, &t.join("none"), None, "app"), (0, "zygo: forgot app\n".to_string(), String::new()));
+    assert!(fs::symlink_metadata(&dir).is_err());
+}
+
+#[test] // review F7: mail/lock is released before op.lock, so it is free when op.lock is (before the tombstone removal)
+fn forget_releases_mail_lock_before_op_lock() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let _store = ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    let seen: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let (wd, hs) = (p.workspaces_dir(), Arc::clone(&seen));
+    up::testing::hook(
+        &dir,
+        "forget_before_tombstone_remove",
+        Some(Box::new(move || {
+            // The state folder is renamed to its tombstone `.forget-<id>-<pid>` by now.
+            let tomb = fs::read_dir(&wd).map_err(|e| e.to_string())?.filter_map(Result::ok).map(|e| e.path())
+                .find(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(".forget-")))
+                .ok_or("no tombstone")?;
+            let f = fs::OpenOptions::new().read(true).write(true).open(tomb.join("mail/lock")).map_err(|e| e.to_string())?;
+            *hs.lock().unwrap() = Some(match fs4::FileExt::try_lock_shared(&f) {
+                Ok(()) => "free".to_string(),
+                Err(e) => format!("held: {e}"),
+            });
+            Ok(())
+        })),
+    );
+    let forgot = forget_run(&p, &t.join("none"), None, "app");
+    up::testing::hook(&dir, "forget_before_tombstone_remove", None);
+    assert_eq!(forgot, (0, "zygo: forgot app\n".to_string(), String::new()));
+    assert_eq!(seen.lock().unwrap().as_deref(), Some("free"), "mail/lock was still held after op.lock");
 }
 
 #[test] // S§7.6 last paragraph: a state that cannot be read gets before_remove with its raw absolute main_root

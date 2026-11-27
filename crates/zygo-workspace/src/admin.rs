@@ -23,7 +23,7 @@ use crate::mux::tmux::Tmux;
 use crate::mux::{check_path, session_target, Multiplexer, MuxError, SessionAnswer, BOUND, UNSAFE_PATH_MESSAGE};
 use crate::repair::check_saved_socket;
 use crate::snapshot;
-use crate::state::{list_all, lock_file, read_state_capped, StateBytes, MemberRecord, MemberState, OpLock, PaneKind, Phase, StateError, Store, Workspace};
+use crate::state::{list_all, lock_file, read_state_capped, take_lock, StateBytes, MemberRecord, MemberState, OpLock, PaneKind, Phase, StateError, Store, Taken, Workspace};
 use crate::up::{check_server, find_checkout, fire, member_live, server, socket_is_private, Exit, GIT_BOUND};
 
 /// The git bound of `status`, so `/zygo:workspace` fits the 4.5 s hook bound (D12, D23).
@@ -614,7 +614,9 @@ fn find(paths: &Paths, arg: &str, for_pane: bool) -> Result<Found, Exit> {
 /// checks, with `op.lock` and the sync lock ([`sync_lock`]) held, and before anything is deleted, `before_remove`
 /// runs on the state (a state that cannot be read: the probe of [`check_invalid`]): `Ok(true)` goes on; `Ok(false)`
 /// prints `zygo: <label> not forgotten` on `out` (exit 0, nothing deleted); `Err(reason)` refuses with
-/// `zygo: cannot forget <label>: <reason>` (exit 1, nothing deleted).
+/// `zygo: cannot forget <label>: <reason>` (exit 1, nothing deleted). After `Ok(true)`, `mail/lock` is taken exclusive
+/// and held across the state rename ([`mail_lock`]; M§5 P1, S§7.6 step 4); held by a delivery for the whole
+/// [`MAIL_LOCK_WAIT`]: `zygo: cannot forget <label>: mail is busy; try again` (exit 1, nothing deleted).
 pub fn forget(
     paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: &str,
     before_remove: &mut dyn FnMut(&Workspace) -> Result<bool, String>, out: &mut dyn Write, err: &mut dyn Write,
@@ -673,14 +675,40 @@ fn forget_run(
         Ok(false) => return Ok(format!("zygo: {label} not forgotten")),
         Err(reason) => return Err(ForgetError::Line(format!("zygo: cannot forget {label}: {reason}"))),
     }
-    remove(paths, &store, &id, &label, op).map_err(ForgetError::Line)
+    // S§7.6 step 4, M§5 P1: held across the rename; `remove` releases it before `op.lock` (review F7).
+    let mail = mail_lock(&store, &label)?;
+    remove(paths, &store, &id, &label, op, mail).map_err(ForgetError::Line)
+}
+
+/// S§7.6 step 4 (FX-24; M§5 P1, the removal of every maildir): `mail/lock` taken exclusive, waiting at most
+/// [`MAIL_LOCK_WAIT`], after `before_remove` and before the state rename, so a delivery in flight links first and
+/// none starts until the state folder is gone (a later one finds no workspace). A missing `mail/` is made `0700` so
+/// the lock exists before the rename; `None` when `mail/` is a link or not a folder (no mail; nothing made through
+/// the link). `None` too when `mail/lock` is a link or not a regular file: no delivery can hold it, since every
+/// delivery refuses to open it, so the forget goes on without it (FX-24 review R2 F4). A lock held for the whole
+/// bound: `zygo: cannot forget <label>: mail is busy; try again` (exit 1); any other error refuses with its text.
+fn mail_lock(store: &Store, label: &str) -> Result<Option<fs::File>, ForgetError> {
+    let fail = |e: &dyn fmt::Display| ForgetError::Line(format!("zygo: cannot forget {label}: {e}"));
+    let mail = store.dir().join("mail");
+    if !real_dir(&mail).map_err(|e| fail(&e))? {
+        return Ok(None);
+    }
+    fire(store.dir(), "forget_before_mail_lock").map_err(|e| fail(&e))?;
+    match take_lock(&mail.join("lock"), MAIL_LOCK_WAIT, false) {
+        Ok(Taken::Held(f)) => Ok(Some(f)),
+        Ok(Taken::NotRegular) => Ok(None),
+        Ok(Taken::Busy) => Err(ForgetError::Line(format!("zygo: cannot forget {label}: mail is busy; try again"))),
+        Err(e) => Err(fail(&e)),
+    }
 }
 
 /// S§7.6 step 1 (MS-21): the lock of `mail/sync/lock` (the sync's lock, `SyncPaths::lock` of `zygo-mail-sync`),
 /// taken at once. `mail/`, `mail/sync/` (each `0700`) and the lock file (`0600`) are made when missing, and no link is
 /// followed, so a sync that starts meanwhile waits for this lock and then finds the workspace gone (review F1).
 /// `None` when `mail/` or `mail/sync/` is a link or not a folder: the workspace has no mail, and nothing is made
-/// through the link (review F3). Held by a sync: `zygo: a mail sync runs for <label>; try again` (exit 1).
+/// through the link (review F3). `None` too when `mail/sync/lock` is a link or not a regular file: no sync can hold
+/// it, since the sync refuses to open it, so the forget goes on without it (FX-24 review R2 F4). Held by a sync:
+/// `zygo: a mail sync runs for <label>; try again` (exit 1); any other error refuses with its text.
 fn sync_lock(paths: &Paths, id: &str, label: &str) -> Result<Option<fs::File>, ForgetError> {
     let fail = |e: std::io::Error| ForgetError::Line(format!("zygo: cannot forget {label}: {e}"));
     let mail = mail_dir(paths, id);
@@ -688,9 +716,10 @@ fn sync_lock(paths: &Paths, id: &str, label: &str) -> Result<Option<fs::File>, F
     if !real_dir(&mail).map_err(fail)? || !real_dir(&dir).map_err(fail)? {
         return Ok(None);
     }
-    match lock_file(&dir.join("lock"), Duration::ZERO) {
-        Ok(Some(f)) => Ok(Some(f)),
-        Ok(None) => Err(ForgetError::Line(format!("zygo: a mail sync runs for {label}; try again"))),
+    match take_lock(&dir.join("lock"), Duration::ZERO, false) {
+        Ok(Taken::Held(f)) => Ok(Some(f)),
+        Ok(Taken::NotRegular) => Ok(None),
+        Ok(Taken::Busy) => Err(ForgetError::Line(format!("zygo: a mail sync runs for {label}; try again"))),
         Err(e) => Err(fail(e)),
     }
 }
@@ -825,7 +854,15 @@ fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>)
 /// removed, then the renamed folder. A writer of the cache (`ws run`) that reads the state after it made a folder
 /// finds the state gone whenever the cache removal could have run before its folder, so it removes that folder
 /// itself (W§12). A cache that cannot be removed is reported after the rest; the next `forget` sweeps it (D26).
-fn remove(paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock) -> Result<String, String> {
+/// `mail` (`mail/lock` held exclusive, [`mail_lock`]) is released after `lock` and before `op` (FX-24 review F7), the
+/// reverse of the lock order. The rename moves the file that `mail` locks into the tombstone, so a taker of `mail/lock`
+/// that waited for it (a delivery, a read, a removal) then holds the lock of a file that is no longer at
+/// `<state>/mail/lock`; each taker checks that ([`crate::state::lock_is_at`]) and finds no workspace, whatever a
+/// `zygo up` of the same id wrote after `op` was released (FX-24 review R2 F3). On an early return the parameters drop
+/// in reverse order, `mail` before `op`, too.
+fn remove(
+    paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock, mail: Option<fs::File>,
+) -> Result<String, String> {
     let cannot = |e: &dyn fmt::Display| format!("zygo: cannot forget {label}: {e}");
     let lock = match lock_file(&store.dir().join("lock"), snapshot::OP_WAIT) {
         Ok(Some(f)) => f,
@@ -841,6 +878,7 @@ fn remove(paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock) -> Re
         .and_then(|()| remove_tree(&cache).map_err(|e| e.to_string()))
         .err();
     drop(lock);
+    drop(mail);
     drop(op);
     let gone = |e: &dyn fmt::Display| format!("zygo: {label} forgotten, but {} was not removed: {e}", tomb.display());
     fire(store.dir(), "forget_before_tombstone_remove").map_err(|e| gone(&e))?;

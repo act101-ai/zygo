@@ -253,6 +253,32 @@ fn lifecycle_send_to_a_key_with_no_record_creates_no_maildir() {
     assert!(gone(&p.workspaces_dir().join(OTHER)));
 }
 
+#[test] // FX-24 review R2 F2: Delivery::begin names its source: `mail/` (BadMail) apart from the state (BadState)
+fn lifecycle_delivery_begin_names_a_bad_mail_folder_apart_from_a_bad_state() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let id = THIRD;
+    let store = stored(&p, id, &[("kaaaaaaaa", None)]);
+    let mail = mail_dir(&p, id);
+    let _ = fs::remove_dir_all(&mail);
+    let outside = t.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, &mail).unwrap();
+    let e = Delivery::begin(&store, MAIL_LOCK_WAIT).err().unwrap();
+    assert!(matches!(e, MailError::BadMail(_)), "{e:?}");
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 0, "a lock was made through the link");
+    fs::remove_file(&mail).unwrap();
+    fs::write(&mail, b"").unwrap();
+    let e = Delivery::begin(&store, MAIL_LOCK_WAIT).err().unwrap();
+    assert!(matches!(e, MailError::BadMail(_)), "{e:?}");
+    fs::remove_file(&mail).unwrap();
+    fs::write(store.dir().join("workspace.json"), b"{not json").unwrap();
+    let e = Delivery::begin(&store, MAIL_LOCK_WAIT).err().unwrap();
+    assert!(matches!(e, MailError::BadState(_)), "{e:?}");
+}
+
 #[test] // F4: the report carries the read under the lock: a record added after the caller's read gets its label, and
 // the wake reads that record
 fn lifecycle_send_report_carries_the_read_under_the_lock() {
@@ -1030,4 +1056,25 @@ fn lifecycle_removal_waits_for_a_delivery_in_flight() {
         (0, "zygo: forgot pane kbbbbbbbb of app\n".to_string(), String::new())
     );
     assert!(gone(&mail.join("kbbbbbbbb")));
+}
+
+#[test] // FX-24: a staged file delivered under the shared lock goes only to a key with a record in that read
+fn lifecycle_delivery_deliver_staged_needs_a_record() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let p = paths(td.path());
+    let store = stored(&p, THIRD, &[("kaaaaaaaa", Some("lead"))]);
+    let mail = mail_dir(&p, THIRD);
+    let d = Delivery::begin(&store, MAIL_LOCK_WAIT).unwrap();
+    let msg = Message::new("cli", "lead", "s", "b", at(T0)).unwrap();
+    let bytes = serde_json::to_vec(&msg).unwrap();
+    let staged = mail.join("staged.json");
+    mail_store::write_synced(&staged, &bytes).unwrap();
+    let e = d.deliver_staged("kbbbbbbbb", &msg.id, &staged, 500).unwrap_err();
+    assert!(matches!(&e, MailError::NoRecord { key } if key == "kbbbbbbbb"), "{e:?}");
+    assert!(staged.is_file());
+    assert!(gone(&mail.join("kbbbbbbbb")));
+    assert!(d.deliver_staged("kaaaaaaaa", &msg.id, &staged, 500).unwrap());
+    assert!(gone(&staged));
+    assert_eq!(fs::read(mail.join("kaaaaaaaa/new").join(format!("{}.json", msg.id))).unwrap(), bytes);
 }

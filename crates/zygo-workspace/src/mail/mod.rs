@@ -15,7 +15,7 @@ use time::format_description::well_known::Rfc3339;
 use zygo_core::paths::Paths;
 
 use crate::identity::valid_pane_key;
-use crate::state::{Store, Workspace, lock_file_as};
+use crate::state::{Store, Workspace, lock_file_as, lock_is_at};
 
 /// The largest subject in bytes (M§5).
 pub const SUBJECT_MAX: usize = 200;
@@ -84,6 +84,11 @@ pub enum MailError {
     NoWorkspace,
     /// The key has no member record in the read under `mail/lock` (M§5 P1).
     NoRecord { key: String },
+    /// [`Delivery::begin`]: the state folder is a link or not a folder, or the state does not read as valid.
+    BadState(std::io::Error),
+    /// [`Delivery::begin`]: `mail/` cannot be made or checked: a link, an entry that is not a folder, or another error
+    /// of its `mkdir` or check (FX-24 review R2 F2).
+    BadMail(std::io::Error),
     Io(std::io::Error),
 }
 
@@ -105,7 +110,7 @@ impl fmt::Display for MailError {
             MailError::Busy => write!(f, "zygo: mail is busy; try again"),
             MailError::NoWorkspace => write!(f, "zygo: the workspace has no state; nothing sent"),
             MailError::NoRecord { key } => write!(f, "zygo: pane {key} has no member record; nothing delivered"),
-            MailError::Io(e) => write!(f, "zygo: mail: {e}"),
+            MailError::BadState(e) | MailError::BadMail(e) | MailError::Io(e) => write!(f, "zygo: mail: {e}"),
         }
     }
 }
@@ -152,19 +157,23 @@ impl fmt::Debug for Delivery {
 }
 
 impl Delivery {
-    /// Takes `mail/lock` of `store`'s workspace shared, waiting at most `bound`, then reads the state under it. It
-    /// makes `mail/` (`0700`) when the state folder exists, never the state folder itself. A missing state folder,
-    /// `mail/` that cannot be made because the folder went away, or no `workspace.json` is `NoWorkspace`; a lock held
-    /// for the whole bound is `Busy`; a state folder that is a link or not a folder, and every other error, is `Io`.
+    /// Takes `mail/lock` of `store`'s workspace shared, waiting at most `bound`, checks that the locked file is still
+    /// the file at `mail/lock` ([`lock_is_at`]), then reads the state under it. It makes `mail/` (`0700`) when the
+    /// state folder exists, never the state folder itself. A missing state folder, `mail/` that cannot be made because
+    /// the folder went away, a locked file that is no longer at `mail/lock` (a forget renamed the state folder while
+    /// this waited; FX-24 review R2 F3), or no `workspace.json` is `NoWorkspace`; a lock held
+    /// for the whole bound is `Busy`; a state folder that is a link or not a folder, and a state that does not read as
+    /// valid, is `BadState`; every other error of the make or check of `mail/` (a link or an entry that is not a
+    /// folder at `mail/`) is `BadMail` (FX-24 review R2 F2); every other error is `Io`.
     pub fn begin(store: &Store, bound: Duration) -> Result<Delivery, MailError> {
         match fs::symlink_metadata(store.dir()) {
             Ok(m) if m.file_type().is_symlink() => {
                 let text = format!("{} is a link; it is not followed", store.dir().display());
-                return Err(std::io::Error::new(ErrorKind::InvalidInput, text).into());
+                return Err(MailError::BadState(std::io::Error::new(ErrorKind::InvalidInput, text)));
             }
             Ok(m) if !m.is_dir() => {
                 let text = format!("{} is not a folder", store.dir().display());
-                return Err(std::io::Error::new(ErrorKind::InvalidInput, text).into());
+                return Err(MailError::BadState(std::io::Error::new(ErrorKind::InvalidInput, text)));
             }
             Ok(_) => {}
             Err(e) if e.kind() == ErrorKind::NotFound => return Err(MailError::NoWorkspace),
@@ -172,8 +181,9 @@ impl Delivery {
         }
         let mail = store.dir().join("mail");
         match store::make_dir_in_place(&mail) {
+            Ok(()) => {}
             Err(e) if e.kind() == ErrorKind::NotFound => return Err(MailError::NoWorkspace),
-            r => r?,
+            Err(e) => return Err(MailError::BadMail(e)),
         }
         let lock = match lock_file_as(&mail.join("lock"), bound, true) {
             Ok(Some(f)) => f,
@@ -181,10 +191,17 @@ impl Delivery {
             Err(e) if e.kind() == ErrorKind::NotFound => return Err(MailError::NoWorkspace),
             Err(e) => return Err(e.into()),
         };
+        crate::up::fire(store.dir(), "mail_delivery_after_lock").map_err(|e| std::io::Error::other(e.to_string()))?;
+        // FX-24 review R2 F3: a forget renamed the state folder (with the file this delivery locked) while it waited;
+        // the state at the path, if any, is another workspace's, and its `mail/lock` is not held.
+        if !lock_is_at(&lock, &mail.join("lock")) {
+            return Err(MailError::NoWorkspace);
+        }
         let ws = match store.read() {
             Ok(Some(ws)) => ws,
             Ok(None) => return Err(MailError::NoWorkspace),
-            Err(e) => return Err(std::io::Error::other(e.to_string()).into()),
+            Err(crate::state::StateError::Io(e)) => return Err(e.into()),
+            Err(e) => return Err(MailError::BadState(std::io::Error::new(ErrorKind::InvalidData, e.to_string()))),
         };
         crate::up::fire(store.dir(), "mail_delivery_after_read").map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(Delivery { mail_dir: mail, ws, _lock: lock })
@@ -195,6 +212,12 @@ impl Delivery {
         &self.ws
     }
 
+    /// Releases the lock and returns the state read under it, for the work after the last link that needs the member
+    /// records of the delivery (the wake, M§7.3).
+    pub fn into_workspace(self) -> Workspace {
+        self.ws
+    }
+
     /// [`store::deliver`] to `key` when `key` has a member record in the read under the lock; else `NoRecord`, and
     /// nothing is made.
     pub fn deliver(&self, key: &str, label: &str, msg: &Message, max_unread: u32) -> Result<(), MailError> {
@@ -202,6 +225,26 @@ impl Delivery {
             return Err(MailError::NoRecord { key: key.to_string() });
         }
         store::deliver(&self.mail_dir, key, label, msg, max_unread)
+    }
+
+    /// The M§5 P1 delivery of a staged file, as [`Delivery::deliver`]: [`store::deliver_staged`] to `key` when `key`
+    /// has a member record in the read under the lock; else `NoRecord`, nothing is made, and the staged file stays for
+    /// the caller.
+    pub fn deliver_staged(&self, key: &str, id: &str, staged: &Path, max_unread: u32) -> Result<bool, MailError> {
+        if !self.ws.members.contains_key(key) {
+            return Err(MailError::NoRecord { key: key.to_string() });
+        }
+        store::deliver_staged(&self.mail_dir, key, id, staged, max_unread)
+    }
+
+    /// Makes `mail/<key>/` and its three folders (`0700`, M-C4) when `key` has a member record in the read under the
+    /// lock; else `NoRecord`, and nothing is made. The mail sync makes it before it stages a file for `key` (mail sync
+    /// design S§8.5 step 1), so a staged file is kept while its maildir exists (S§8.5 step 5).
+    pub fn make_maildir(&self, key: &str) -> Result<(), MailError> {
+        if !self.ws.members.contains_key(key) {
+            return Err(MailError::NoRecord { key: key.to_string() });
+        }
+        store::make_maildir(&self.mail_dir, key)
     }
 }
 
@@ -212,13 +255,18 @@ fn checked_mail(store: &Store) -> std::io::Result<Option<PathBuf>> {
     Ok(store::real_dir(&mail)?.then_some(mail))
 }
 
-/// Takes `mail/lock` exclusive (at most `bound`) and reads the state under it; `Ok(None)` when the state is gone. A
-/// lock held for the whole bound is `WouldBlock`.
+/// Takes `mail/lock` exclusive (at most `bound`) and reads the state under it; `Ok(None)` when the state is gone, or
+/// when the locked file is no longer the file at `mail/lock` (a forget renamed the state folder while this waited;
+/// FX-24 review R2 F3). A lock held for the whole bound is `WouldBlock`.
 fn removal_lock(store: &Store, mail: &Path, bound: Duration) -> std::io::Result<Option<(fs::File, Workspace)>> {
     let Some(lock) = lock_file_as(&mail.join("lock"), bound, false)? else {
         let text = format!("{}/lock is held by another process", mail.display());
         return Err(std::io::Error::new(ErrorKind::WouldBlock, text));
     };
+    crate::up::fire(store.dir(), "mail_removal_after_lock").map_err(|e| std::io::Error::other(e.to_string()))?;
+    if !lock_is_at(&lock, &mail.join("lock")) {
+        return Ok(None);
+    }
     match store.read() {
         Ok(Some(ws)) => Ok(Some((lock, ws))),
         Ok(None) => Ok(None),
