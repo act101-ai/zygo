@@ -10,6 +10,7 @@ use zygo_work::repo::{Flow, RunError};
 use zygo_workspace::identity::valid_pane_key;
 use zygo_workspace::mail::store::{deliver_staged, unread, write_synced};
 use zygo_workspace::mail::{ensure_mail_dir, Message, BODY_MAX, SUBJECT_MAX};
+use zygo_workspace::state::Store;
 
 use crate::address::{self, ulid_file};
 use crate::branch::{self, BranchError, Entry};
@@ -90,7 +91,9 @@ pub fn check_message(folder: &str, file: &str, mode: &str, kind: &str, size: u64
 /// a message whose `id` is the file's ULID, it is deleted and not logged, and the next pass imports the branch copy
 /// again. A file whose ULID is in the log was synced before the append. Returns the count of files moved into `new/`. Other names and links are left alone; a file whose finish
 /// fails stays for the next pass. `Err` only when `incoming/` or the imported log cannot be read.
-pub fn finish_incoming(sp: &SyncPaths, mail_dir: &Path) -> std::io::Result<usize> {
+pub fn finish_incoming(sp: &SyncPaths, store: &Store) -> std::io::Result<usize> {
+    let mail_dir = store.dir().join("mail");
+    let mail_dir = mail_dir.as_path();
     let entries = match std::fs::read_dir(&sp.incoming) {
         Ok(r) => r,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
@@ -208,9 +211,11 @@ fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], ow
 /// `incoming/` (steps 1-4, with the seams `after_incoming`, `after_log`, `after_new`, `after_ack`). A full inbox
 /// leaves the message neither delivered nor acknowledged. `Err` only when a seam stops the run.
 #[allow(clippy::too_many_arguments)]
-pub fn run(sp: &SyncPaths, mail_dir: &Path, wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target],
+pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target],
     own_ack: &BTreeSet<Ulid>, max_unread: u32, deadline: Instant, seam: &dyn Seam, log: &mut dyn FnMut(&str))
     -> Result<Imported, Crash> {
+    let mail_dir = store.dir().join("mail");
+    let mail_dir = mail_dir.as_path();
     let mut out = Imported::default();
     let Ok(mut seen) = imported_load(sp) else {
         log("mail sync: import: imported");

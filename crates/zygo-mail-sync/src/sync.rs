@@ -430,7 +430,7 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
     // The same deadline on the injected clock (S-C9), checked before each secret check of the outbox step.
     let pass_end = env.clock.now() + PASS_DEADLINE;
     let mut log = |l: &str| c.log(l);
-    import::finish_incoming(sp, &sp.mail).map_err(|_| stop("incoming"))?;
+    import::finish_incoming(sp, &c.store).map_err(|_| stop("incoming"))?;
     if first {
         public_check(c, report, deadline)?;
     }
@@ -470,7 +470,7 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
         let targets: Vec<Target> = names::members(&c.ws).into_iter()
             .filter_map(|t| Some(Target { name: t.name?, pane_key: t.key }))
             .collect();
-        let imp = import::run(sp, &sp.mail, wt, &tip, &own, &targets, &own_ack, c.cfg.mail.max_unread, deadline,
+        let imp = import::run(sp, &c.store, wt, &tip, &own, &targets, &own_ack, c.cfg.mail.max_unread, deadline,
             &*env.seam, &mut log)?;
         report.delivered += imp.delivered.len();
         let mut keys: Vec<String> = imp.delivered.iter().map(|(k, _)| k.clone()).collect();

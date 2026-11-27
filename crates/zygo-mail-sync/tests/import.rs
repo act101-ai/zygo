@@ -10,10 +10,12 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 use ulid::Ulid;
 use zygo_core::paths::Paths;
+use zygo_core::Agent;
 use zygo_mail_sync::branch::ensure_worktree;
 use zygo_mail_sync::env::{Crash, NoSeam, Seam};
 use zygo_mail_sync::import::*;
 use zygo_mail_sync::state::{imported_append, imported_load, SyncPaths};
+use zygo_workspace::state::{MemberRecord, Phase, Store};
 
 const KEY: &str = "kbbbbbbbb"; // bob's pane key
 fn u(n: u64) -> Ulid { Ulid::from_parts(1_764_000_000_000 + n, n as u128) }
@@ -122,14 +124,38 @@ fn paths(p: &Path) -> Paths {
         usage_db: p.join("data/usage.db"),
     }
 }
-/// `sp` on a fresh TempDir (no git), with `mail/`, `mail/sync/` and `incoming/` made.
-fn local() -> (tempfile::TempDir, SyncPaths) {
+/// The state `app` of workspace [`WS_ID`] under `p` (identity fields as `Machine::workspace`), with exactly the member
+/// records `(pane key, name)` (M§5: a delivery needs one).
+fn record(p: &Paths, members: &[(&str, &str)]) {
+    Store::open(p, WS_ID).update(Duration::from_secs(10), &mut |ws| {
+        ws.name = "app".into();
+        ws.common_dir = "/srv/app/.git".into();
+        ws.main_root = "/srv/app".into();
+        ws.tmux_session = "zygo-app".into();
+        ws.loadout = "solo".into();
+        ws.phase = Phase::Up;
+        ws.members.clear();
+        for (key, name) in members {
+            let mut m = MemberRecord::new(Agent::ClaudeCode);
+            m.name = Some(name.to_string());
+            ws.members.insert(key.to_string(), m);
+        }
+        Ok(())
+    }).unwrap();
+}
+/// `sp` and the workspace store on a fresh TempDir (no git): bob's record, and `mail/`, `mail/sync/` and `incoming/`
+/// made.
+fn local() -> (tempfile::TempDir, SyncPaths, Store) {
     let t = tempfile::TempDir::new().unwrap();
-    let sp = SyncPaths::new(&paths(t.path()), WS_ID).unwrap();
+    let p = paths(t.path());
+    record(&p, &[(KEY, "bob")]);
+    let sp = SyncPaths::new(&p, WS_ID).unwrap();
     for d in [&sp.mail, &sp.sync, &sp.incoming] {
         zygo_workspace::mail::ensure_mail_root(d).unwrap();
     }
-    (t, sp)
+    let store = Store::open(&p, WS_ID);
+    assert_eq!(store.dir().join("mail"), sp.mail);
+    (t, sp, store)
 }
 fn staged(sp: &SyncPaths, name: &str, bytes: &[u8]) {
     zygo_workspace::mail::store::write_synced(&sp.incoming.join(name), bytes).unwrap();
@@ -149,9 +175,10 @@ fn blobs(m: &Machine, all: &[Vec<u8>]) -> Vec<String> {
 fn sync_paths(m: &Machine) -> SyncPaths {
     let p = paths(m.root.parent().unwrap());
     let sp = SyncPaths::new(&p, WS_ID).unwrap();
-    fs::create_dir_all(sp.mail.parent().unwrap()).unwrap(); // the workspace exists (MS-21 review R2-1)
+    m.workspace(&[(KEY, "bob"), ("kcccccccc", "carol")]); // the workspace exists (MS-21 review R2-1)
     assert_eq!(sp.worktree, m.wt);
     assert_eq!(sp.mail, zygo_workspace::mail::mail_dir(&p, WS_ID));
+    assert_eq!(sp.mail, Store::open(&m.paths, WS_ID).dir().join("mail"));
     sp
 }
 fn new_dir(sp: &SyncPaths) -> PathBuf { sp.mail.join(KEY).join("new") }
@@ -181,7 +208,7 @@ fn go(m: &Machine, sp: &SyncPaths, tip: &str, hosts: &[&str], ack: &BTreeSet<Uli
     -> (Result<Imported, Crash>, Vec<String>) {
     let hosts: Vec<String> = hosts.iter().map(|h| h.to_string()).collect();
     let mut lines = Vec::new();
-    let r = run(sp, &sp.mail, &m.wt, tip, &hosts, &bob(), ack, max, far(), seam, &mut |l| lines.push(l.to_string()));
+    let r = run(sp, &Store::open(&m.paths, WS_ID), &m.wt, tip, &hosts, &bob(), ack, max, far(), seam, &mut |l| lines.push(l.to_string()));
     (r, lines)
 }
 /// Every path under `dir`, links not followed.
@@ -317,7 +344,7 @@ fn a_crash_after_each_delivery_step_gives_one_file() { // S§19 #14 delivery par
         let b = msg(u(1), "bob@b");
         let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
         assert_eq!(go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &CrashAt(point)).0, Err(Crash(point)));
-        assert_eq!(finish_incoming(&sp, &sp.mail).unwrap(), finished, "{point}");
+        assert_eq!(finish_incoming(&sp, &Store::open(&m.paths, WS_ID)).unwrap(), finished, "{point}");
         let (res, _) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
         assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![u(1)], left: 0 }), "{point}");
         assert_eq!(names(&new_dir(&sp)), [file(u(1))], "{point}");
@@ -329,13 +356,13 @@ fn a_crash_after_each_delivery_step_gives_one_file() { // S§19 #14 delivery par
 
 #[test]
 fn finish_incoming_with_the_ulid_logged_and_the_target_present() { // review focus 17
-    let (_t, sp) = local();
+    let (_t, sp, store) = local();
     let b = msg(u(1), "bob@b");
     staged(&sp, &format!("{KEY}.{}.json", u(1)), &b);
     imported_append(&sp, u(1)).unwrap();
     fs::create_dir_all(new_dir(&sp)).unwrap();
     fs::write(new_dir(&sp).join(file(u(1))), &b).unwrap();
-    assert_eq!(finish_incoming(&sp, &sp.mail).unwrap(), 0);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
     assert_eq!(names(&sp.incoming), Vec::<String>::new());
     assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
     assert_eq!(fs::read_to_string(&sp.imported).unwrap(), format!("{}\n", u(1)));
@@ -343,21 +370,21 @@ fn finish_incoming_with_the_ulid_logged_and_the_target_present() { // review foc
 
 #[test]
 fn finish_incoming_after_a_torn_log() { // review focus 17, the MS-12 half
-    let (_t, sp) = local();
+    let (_t, sp, store) = local();
     fs::write(&sp.imported, &u(2).to_string()[..20]).unwrap();
     staged(&sp, &format!("{KEY}.{}.json", u(1)), &msg(u(1), "bob@b"));
-    assert_eq!(finish_incoming(&sp, &sp.mail).unwrap(), 1);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 1);
     assert_eq!(imported_load(&sp).unwrap(), HashSet::from([u(1)]));
     assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
 }
 
 #[test]
 fn incoming_is_never_swept() {
-    let (_t, sp) = local();
+    let (_t, sp, store) = local();
     for n in ["notes.txt".to_string(), format!("{KEY}.bad.json"), format!("KBBBBBBBB.{}.json", u(1))] {
         staged(&sp, &n, b"{}");
     }
-    assert_eq!(finish_incoming(&sp, &sp.mail).unwrap(), 0);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
     assert_eq!(names(&sp.incoming).len(), 3);
     zygo_workspace::mail::store::sweep(&sp.mail, Duration::ZERO, SystemTime::now() + Duration::from_secs(365 * 86400));
     assert_eq!(names(&sp.incoming).len(), 3);
@@ -388,13 +415,13 @@ fn a_passed_deadline_or_a_bad_target_reads_nothing() {
     let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
     let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
     let mut lines = Vec::new();
-    let res = run(&sp, &sp.mail, &m.wt, &t, &["b".into()], &bob(), &BTreeSet::new(), 5000, Instant::now(), &NoSeam,
+    let res = run(&sp, &Store::open(&m.paths, WS_ID), &m.wt, &t, &["b".into()], &bob(), &BTreeSet::new(), 5000, Instant::now(), &NoSeam,
         &mut |l| lines.push(l.to_string()));
     assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![], left: 1 }));
     assert!(lines.is_empty(), "{lines:?}"); // stopping at the deadline is normal: no error line
     for (targets, host) in [(vec![Target { name: "bob".into(), pane_key: "../x".into() }], "b"),
         (vec![Target { name: "cli".into(), pane_key: KEY.into() }], "b"), (bob(), "B!")] {
-        let res = run(&sp, &sp.mail, &m.wt, &t, &[host.into()], &targets, &BTreeSet::new(), 5000, far(), &NoSeam, &mut |_| {});
+        let res = run(&sp, &Store::open(&m.paths, WS_ID), &m.wt, &t, &[host.into()], &targets, &BTreeSet::new(), 5000, far(), &NoSeam, &mut |_| {});
         assert_eq!(res, Ok(Imported::default()));
     }
     assert!(!sp.mail.join(KEY).exists() && !sp.incoming.exists());
@@ -444,7 +471,7 @@ fn finish_incoming_deletes_a_torn_staged_file() {
             zygo_workspace::mail::ensure_mail_root(d).unwrap();
         }
         staged(&sp, &format!("{KEY}.{}.json", u(1)), &torn);
-        assert_eq!(finish_incoming(&sp, &sp.mail).unwrap(), 0, "{}", torn.len());
+        assert_eq!(finish_incoming(&sp, &Store::open(&m.paths, WS_ID)).unwrap(), 0, "{}", torn.len());
         assert_eq!(names(&sp.incoming), Vec::<String>::new());
         assert!(!imported_load(&sp).unwrap().contains(&u(1)));
         assert!(!new_dir(&sp).exists());
@@ -475,7 +502,7 @@ fn a_full_inbox_with_a_backlog_does_not_stop_the_others() {
             fs::write(new_dir(&sp).join(file(u(9000 + n))), b"{}").unwrap();
         }
         let mut lines = Vec::new();
-        let res = run(&sp, &sp.mail, &m.wt, &t, &["b".into()], &targets, &BTreeSet::new(), 3, far(), &NoSeam,
+        let res = run(&sp, &Store::open(&m.paths, WS_ID), &m.wt, &t, &["b".into()], &targets, &BTreeSet::new(), 3, far(), &NoSeam,
             &mut |l| lines.push(l.to_string())).unwrap();
         let mut want: Vec<(String, Ulid)> = (1..=bob_got).map(|n| (KEY.to_string(), u(n))).collect();
         want.extend(carol.iter().map(|id| (CAROL.to_string(), *id)));
