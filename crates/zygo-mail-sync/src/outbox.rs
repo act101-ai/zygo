@@ -10,7 +10,7 @@ use zygo_config::schema::{RedactionConfig, SyncOff, SyncSettings};
 use zygo_core::ids::valid_member_name;
 use zygo_redact::secret::DeadlinePolicy;
 use zygo_workspace::mail::store::{write_synced, FILE_MAX};
-use zygo_workspace::mail::{ensure_mail_root, MailError, Message};
+use zygo_workspace::mail::{ensure_mail_dir, MailError, Message};
 
 use crate::address::{ulid_file, Address};
 use crate::registry::read_cache;
@@ -112,7 +112,7 @@ pub fn send_remote_with(
     let id = msg.id.parse::<Ulid>().map_err(|e| io_err(io::Error::other(e)))?;
     let bytes = serde_json::to_vec(&msg).map_err(|e| io_err(io::Error::other(e)))?;
     for d in [&sp.mail, &sp.outbox, &sp.outbox_tmp] {
-        ensure_mail_root(d).map_err(io_err)?;
+        ensure_mail_dir(d).map_err(io_err)?;
     }
     let file = format!("{id}.json");
     let tmp = sp.outbox_tmp.join(&file);
@@ -268,7 +268,7 @@ pub fn refuse(
     let whole = bytes.len() as u64 <= FILE_MAX;
     let msg = if whole { serde_json::from_slice::<Message>(&bytes).ok() } else { None };
     for d in [&sp.mail, &sp.outbox, &sp.refused] {
-        ensure_mail_root(d)?;
+        ensure_mail_dir(d)?;
     }
     match fs::hard_link(&src, &dst) {
         Ok(()) => {}

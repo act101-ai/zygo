@@ -149,6 +149,7 @@ fn blobs(m: &Machine, all: &[Vec<u8>]) -> Vec<String> {
 fn sync_paths(m: &Machine) -> SyncPaths {
     let p = paths(m.root.parent().unwrap());
     let sp = SyncPaths::new(&p, WS_ID).unwrap();
+    fs::create_dir_all(sp.mail.parent().unwrap()).unwrap(); // the workspace exists (MS-21 review R2-1)
     assert_eq!(sp.worktree, m.wt);
     assert_eq!(sp.mail, zygo_workspace::mail::mail_dir(&p, WS_ID));
     sp

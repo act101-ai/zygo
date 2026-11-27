@@ -41,14 +41,27 @@ fn file_name(id: &str) -> String {
 /// Makes the missing parts of `dir` and its parents, `0700` on unix, then sets `dir` itself to `0700` when it is
 /// not (M-C4). A `dir` that is a symlink or not a folder is refused.
 pub(crate) fn make_dir(dir: &Path) -> std::io::Result<()> {
+    make_dir_with(dir, true)
+}
+
+/// [`make_dir`] that makes no parent: a missing parent is `NotFound` and nothing is made (mail sync design S§8.3
+/// step 2, MS-21 review R2-1).
+pub(crate) fn make_dir_in_place(dir: &Path) -> std::io::Result<()> {
+    make_dir_with(dir, false)
+}
+
+fn make_dir_with(dir: &Path, recursive: bool) -> std::io::Result<()> {
     let mut b = DirBuilder::new();
-    b.recursive(true);
+    b.recursive(recursive);
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
         b.mode(0o700);
     }
-    b.create(dir)?;
+    match b.create(dir) {
+        Err(e) if e.kind() != ErrorKind::AlreadyExists => return Err(e),
+        _ => {}
+    }
     let meta = fs::symlink_metadata(dir)?;
     if !meta.is_dir() {
         return Err(std::io::Error::new(ErrorKind::InvalidInput, format!("{} is not a folder", dir.display())));

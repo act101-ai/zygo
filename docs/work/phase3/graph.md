@@ -198,7 +198,7 @@ Session text (T, SX nodes):
 | OS-37 | On-demand latency test, ignored in CI | OS-35 | DONE | implementation | 98d82be5 · b5c27cbd · 77c6726f · acceptance pass (shaping_latency 5 ignored) · PR #200 |
 | WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | DONE | judgment | 1324716e^..e1276ac2 · acceptance pass (workspace_definition 23 passed with tmux) · PR #214 |
 | MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17, FX-15 | DONE | implementation | 5e2be987^..1de15e3e · acceptance pass (mail_remote_cli 20 passed) · PR #215 |
-| MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | TODO | implementation | — |
+| MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | DONE | implementation | e887478a^..a9ed0c7b · acceptance pass (mail_sync_forget 9 passed, admin 31 passed) · PR #217 |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | TODO | mechanical | — |
 | OS-45 | Bound the usage-store wait in elapsed time | — | DONE | judgment | fb717aba · aecf74d2 · a0378951 · acceptance pass (busy_wait 7, zygo-usage, zygo-hooks, readbacks) · PR #203 |
 | OS-47 | Runner view cost on large inputs, output unchanged | — | DONE | judgment | f1d69ae0 · d56988df · c37c66d4 · acceptance pass (runner_fast_path 5, zygo-results, shaping 36, shaping_fixtures 22, shaping_hook 29) · PR #206 |
@@ -231,7 +231,6 @@ Session text (T, SX nodes):
 | FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | DONE | implementation | 569e61a9^..9ac65902 · acceptance pass (shape_clean 35 passed) · PR #211 |
 | FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
 | FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | TODO | implementation | — |
-| DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
 
 ## Log
 
@@ -437,3 +436,5 @@ Session text (T, SX nodes):
 | 2026-11-26 | WD-19 DONE: scans, repo_def tripwire (test-hooks feature, test builds only), inotify watch and git output canary prove no .zygo/ read on hook, MCP and status-line paths; R1 F1-F7, R2 F1 F2 fixed, F3 recorded · PR #218 |
 | 2026-11-26 | FX-22 PLANNED: tag v2.9.2 moved 409b9da→9d82bd9 (rewritten history); author's call: re-pin v2.9.2 (tree, act-lite digest unchanged) not v2.9.5; tags lightweight, so acceptance reads plain ref line; act-lite not found = binary off PATH (§15.3), not pin |
 | 2026-11-26 | FX-22 DONE: built-in act101 v2.9.2 re-pinned to the tag's current commit 9d82bd97 (upstream rewrote history; same tree and act-lite 1.2.3 digest); Acceptance self-checking, author's call: lightweight tags have no ^{} line · PR #221 |
+| 2026-11-26 | MS-21 plan: premise drift: S§14 forget order (checks, sync lock, question, worktree, then state and cache); S§6.3 git runs only when the worktree folder and main_root exist |
+| 2026-11-26 | MS-21 DONE: ws forget asks for unsent and refused mail and removes the sync worktree; R1 F1 (a waiting sync rebuilt what forget deleted) F2-F5 fixed; R2 R2-1..R2-4 fixed, R2-5 refuted (OP5) · PR #217 |
