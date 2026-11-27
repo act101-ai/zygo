@@ -138,21 +138,14 @@ mod tests {
         verb(&ctx(&write(cfg).1), &args(a)).unwrap()
     }
 
-    fn run_err(cfg: &str, a: &[&str]) -> String {
-        verb(&ctx(&write(cfg).1), &args(a)).unwrap_err().to_string()
-    }
-
     fn default_of(file: &PathBuf) -> String {
         let t: toml::Table = std::fs::read_to_string(file).unwrap().parse().unwrap();
         t["user"]["default_profile"].as_str().unwrap().to_string()
     }
 
+    // The CLI `list` and `show` read the workspace files of the current folder, so their tests run the binary in a
+    // fixture repository (`tests/definition_surfaces.rs`, WD-16 review F5); the tests here run no read.
     const CFG: &str = "[user]\ndefault_profile = \"a\"\n[profile.a]\nprompt = \"A\"\n[profile.b]\nprompt = \"B\"\n";
-    #[test] fn list_marks_default_and_layer() { assert_eq!(run(CFG, &["list"]), "* a (user)\n  b (user)"); }
-    #[test] fn show_prints_toml_and_layer() {
-        let o = run(CFG, &["show", "b"]); assert!(o.starts_with("profile b (user)\n") && o.contains("prompt = \"B\""));
-        assert!(run_err(CFG, &["show", "zz"]).contains("profile zz: not found"));
-    }
     #[test] fn use_and_bare_name_write_default_and_keep_other_content() {
         let (_d, f) = write(CFG);
         assert_eq!(verb(&ctx(&f), &["use".into(), "b".into()]).unwrap(), "default profile: b (applies at next launch)");
@@ -172,12 +165,10 @@ mod tests {
         assert!(verb(&ctx(&f), &["use".into(), "Bad_Name".into()]).unwrap_err().to_string().contains("invalid profile name"));
         assert_eq!(default_of(&f), "a");
     }
-    #[test] fn verb_words_win_and_use_sets_a_profile_with_such_a_name() {
+    #[test] fn use_sets_a_profile_named_as_a_verb_word() {
         let (_d, f) = write("[profile.list]\nprompt = \"L\"\n");
-        assert_eq!(verb(&ctx(&f), &["list".into()]).unwrap(), "  list (user)");   // the verb, not `use list`
         verb(&ctx(&f), &["use".into(), "list".into()]).unwrap(); assert_eq!(default_of(&f), "list");
     }
-    #[test] fn list_without_profiles_says_so() { assert_eq!(run("[user]\n", &["list"]), "no profiles"); }
     #[test] fn use_refuses_when_config_does_not_load_and_writes_nothing() {
         let bad = "[user]\ndefault_profile = \"a\"\n[profile.a]\nprompt = 1\n";
         let (_d, f) = write(bad);
@@ -190,22 +181,7 @@ mod tests {
     }
 
     const ESC_CFG: &str = "[user]\ndefault_profile = \"x\\u001b[2K\"\n[profile.\"a.b\"]\nprompt = \"B\"\n[profile.\"x\\u001b[2K\\n* forged\"]\nprompt = \"A\"\n";
-    #[test] fn list_escapes_names_and_finds_the_layer_of_a_quoted_name() {
-        assert_eq!(run(ESC_CFG, &["list"]), "  a.b (user)\n  x\\u{1b}[2K\\n* forged (user)");
-    }
-    #[test] fn show_and_default_escape_config_text() {
-        assert!(run(ESC_CFG, &["show", "x\u{1b}[2K\n* forged"]).starts_with("profile x\\u{1b}[2K\\n* forged (user)\n"));
-        assert_eq!(run(ESC_CFG, &["show", "a.b"]).lines().next(), Some("profile a.b (user)"));
+    #[test] fn default_escapes_config_text() {
         assert_eq!(run(ESC_CFG, &[]), "default profile: x\\u{1b}[2K");
-        assert_eq!(run_err(ESC_CFG, &["show", "z\u{1b}"]), "profile z\\u{1b}: not found");
-    }
-    /// Round 2 F1: the TOML body is escaped line by line; its line breaks stay (§11.3).
-    #[test] fn show_escapes_the_toml_body() {
-        let cfg = "[profile.a]\nprompt = \"x\\u202e\"\n[profile.a.plugins]\n\"m:p\\u202e\\u001b[2K\" = true\n";
-        let o = run(cfg, &["show", "a"]);
-        assert!(!o.contains('\u{202e}') && !o.contains('\u{1b}'), "{o:?}");
-        assert!(o.lines().any(|l| l == "prompt = \"x\\u{202e}\""), "{o:?}");
-        assert!(o.contains("\"m:p\\u{202e}\\u001B[2K\" = true"), "{o:?}");
-        assert!(o.starts_with("profile a (user)\n") && o.lines().count() > 3, "{o:?}");
     }
 }

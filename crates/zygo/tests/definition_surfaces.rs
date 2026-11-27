@@ -149,6 +149,11 @@ fn appr(f: &Fx, home: &Path) {
 /// `zygo <args>` in `dir` with the scratch `home`, no session, no workspace, no tmux, no user or system git config and
 /// stdin null; then asserts that no marketplace sync ran.
 fn zygo(home: &Path, dir: &Path, args: &[&str]) -> Output {
+    zygo_env(home, dir, args, &[])
+}
+
+/// [`zygo`] with `env` added to the child's environment only (this process's environment is not changed).
+fn zygo_env(home: &Path, dir: &Path, args: &[&str], env: &[(&str, &std::ffi::OsStr)]) -> Output {
     let mut c = Command::new(env!("CARGO_BIN_EXE_zygo"));
     c.args(args).current_dir(dir);
     common::scratch_home(&mut c, home);
@@ -159,6 +164,9 @@ fn zygo(home: &Path, dir: &Path, args: &[&str]) -> Output {
         .env("GIT_CONFIG_GLOBAL", no_config())
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .stdin(Stdio::null());
+    for (k, v) in env {
+        c.env(k, v);
+    }
     let o = c.output().expect("zygo binary");
     common::assert_no_marketplace_sync(home);
     o
@@ -349,20 +357,202 @@ fn profile_show_prints_an_approved_repository_profile() {
 fn outside_a_repository_reads_nothing() { // plan call 7
     let f = fx(&[(WS, MIN), (PROF, RUST)]);
     let h = home(&f, "");
+    // Review F5: git looks for no repository above the temp folder, wherever `TMPDIR` is (child only).
+    let env = [("GIT_CEILING_DIRECTORIES", f.t.path().as_os_str())];
     for args in [&["config", "show"][..], &["config", "check"], &["profile", "list"]] {
-        let o = zygo(&h, &h, args);
+        let o = zygo_env(&h, &h, args, &env);
         let se = err(&o);
         assert_eq!(o.status.code(), Some(0), "{args:?}: {se}");
         assert!(def_lines(&se).is_empty(), "{args:?}: {se}");
     }
 }
 
-/// OP5: `zygo loadout` exits 2 on Windows before any read.
+/// The line of an unread read whose reason is `why`.
+fn unread_line(why: &str) -> String {
+    format!("zygo: this repository's workspace files were not read ({why}); not shown")
+}
+
+/// `origin/HEAD` set as a direct ref: the read refuses it, so the read is unread (R§6.1 step 2).
+fn unread_fx() -> Fx {
+    let f = fx(&[(WS, MIN), (PROF, RUST)]);
+    let oid = git(&f.c, &["rev-parse", "refs/remotes/origin/main"]);
+    git(&f.c, &["update-ref", "--no-deref", "refs/remotes/origin/HEAD", &oid]);
+    f
+}
+
+const REFUSED: &str = "origin/HEAD points outside refs/remotes/origin/";
+
+#[test]
+fn an_unread_read_is_one_line_and_shows_nothing() { // R§10 rows; review F5
+    let f = unread_fx();
+    let h = home(&f, "");
+    for args in [&["config", "show"][..], &["config", "show", "--layer", "workspace-files"], &["profile", "list"]] {
+        let o = zygo(&h, &f.c, args);
+        let (so, se) = (out(&o), err(&o));
+        assert_eq!(o.status.code(), Some(0), "{args:?}: {se}");
+        assert_eq!(def_lines(&se), [unread_line(REFUSED)], "{args:?}");
+        assert!(!so.contains("workspace-files"), "{args:?}: {so}");
+    }
+    let o = zygo(&h, &f.c, &["config", "check"]);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert_eq!(out(&o), "config ok\n");
+    assert_eq!(def_lines(&err(&o)), [unread_line(REFUSED)]);
+    let o = zygo(&h, &f.c, &["profile", "show", "rust"]);
+    let se = err(&o);
+    assert_eq!(o.status.code(), Some(1), "{se}");
+    assert!(se.contains("profile rust: not found"), "{se}");
+    assert_eq!(def_lines(&se), [unread_line(REFUSED)]);
+}
+
+#[test]
+fn profile_list_marks_a_repository_profile_that_a_team_preset_shadows() { // R§18 item 9; review F5
+    let f = fx(&[(WS, MIN), (PROF, RUST)]);
+    let h = home(&f, "");
+    appr(&f, &h);
+    let sd = f.t.path().join("session");
+    std::fs::create_dir_all(&sd).unwrap();
+    std::fs::write(sd.join("team.toml"), "[profile.rust]\ndisabled = [\"review\"]\n").unwrap();
+    let env = [("ZYGO_SESSION_DIR", sd.as_os_str())];
+    let o = zygo_env(&h, &f.c, &["profile", "list"], &env);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert_eq!(out(&o), "  rust (team)\n  rust (workspace-files, shadowed)\n");
+    let o = zygo_env(&h, &f.c, &["profile", "show", "rust"], &env);
+    let so = out(&o);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert_eq!(so.lines().next(), Some("profile rust (team)"), "{so}");
+    assert!(so.lines().any(|l| l == "disabled = [\"review\"]"), "{so}");
+    assert!(!so.contains("gpt-6-sol"), "{so}");
+}
+
+/// `zygo profile <args>` with the user config `cfg`, in a fixture repository with no `.zygo/` (review F5: the
+/// `list` and `show` tests that were `profile.rs` unit tests, where the read took the test process's folder).
+fn profile(cfg: &str, args: &[&str]) -> Output {
+    let f = fx(&[]);
+    let h = home(&f, cfg);
+    zygo(&h, &f.c, &[&["profile"][..], args].concat())
+}
+
+const PROFILES: &str = "[user]\ndefault_profile = \"a\"\n[profile.a]\nprompt = \"A\"\n[profile.b]\nprompt = \"B\"\n";
+const ESC_PROFILES: &str =
+    "[user]\ndefault_profile = \"x\\u001b[2K\"\n[profile.\"a.b\"]\nprompt = \"B\"\n[profile.\"x\\u001b[2K\\n* forged\"]\nprompt = \"A\"\n";
+
+#[test]
+fn profile_list_marks_the_default_and_the_layer() {
+    assert_eq!(out(&profile(PROFILES, &["list"])), "* a (user)\n  b (user)\n");
+    assert_eq!(out(&profile("[user]\n", &["list"])), "no profiles\n");
+    // The verb word, not `use list`.
+    assert_eq!(out(&profile("[profile.list]\nprompt = \"L\"\n", &["list"])), "  list (user)\n");
+}
+
+#[test]
+fn profile_show_prints_the_toml_and_the_layer() {
+    let o = profile(PROFILES, &["show", "b"]);
+    let so = out(&o);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert!(so.starts_with("profile b (user)\n") && so.contains("prompt = \"B\""), "{so}");
+    let o = profile(PROFILES, &["show", "zz"]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(err(&o).contains("profile zz: not found"), "{}", err(&o));
+}
+
+#[test]
+fn profile_list_and_show_escape_config_text() { // §11.3
+    assert_eq!(out(&profile(ESC_PROFILES, &["list"])), "  a.b (user)\n  x\\u{1b}[2K\\n* forged (user)\n");
+    let so = out(&profile(ESC_PROFILES, &["show", "x\u{1b}[2K\n* forged"]));
+    assert!(so.starts_with("profile x\\u{1b}[2K\\n* forged (user)\n"), "{so:?}");
+    assert_eq!(out(&profile(ESC_PROFILES, &["show", "a.b"])).lines().next(), Some("profile a.b (user)"));
+    let se = err(&profile(ESC_PROFILES, &["show", "z\u{1b}"]));
+    assert!(se.contains("profile z\\u{1b}: not found") && !se.contains('\u{1b}'), "{se:?}");
+    // Round 2 F1: the TOML body is escaped line by line; its line breaks stay.
+    let cfg = "[profile.a]\nprompt = \"x\\u202e\"\n[profile.a.plugins]\n\"m:p\\u202e\\u001b[2K\" = true\n";
+    let o = out(&profile(cfg, &["show", "a"]));
+    assert!(!o.contains('\u{202e}') && !o.contains('\u{1b}'), "{o:?}");
+    assert!(o.lines().any(|l| l == "prompt = \"x\\u{202e}\""), "{o:?}");
+    assert!(o.contains("\"m:p\\u{202e}\\u001B[2K\" = true"), "{o:?}");
+    assert!(o.starts_with("profile a (user)\n") && o.lines().count() > 3, "{o:?}");
+}
+
+/// OP5: `zygo loadout` exits 2 on Windows before any read. The stub `git` tests are here too: the stub is a `sh` script.
 #[cfg(unix)]
 mod unix {
     use super::*;
+    use std::ffi::OsString;
 
     const USER_REPOSITORY: &str = "[[loadout.repository.window]]\n[[loadout.repository.window.pane]]\nkind = \"claude-code\"\n";
+
+    /// `<f.t>/stub/git`: a `sh` script that runs `body` (`$@`: the git arguments), then the real `git` with the same
+    /// arguments. Returns the `PATH` with that folder first, for a child's environment only.
+    fn stub_git(f: &Fx, body: &str) -> OsString {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::var_os("PATH").expect("PATH");
+        let real = std::env::split_paths(&path).map(|d| d.join("git")).find(|p| p.is_file()).expect("git on PATH");
+        let dir = f.t.path().join("stub");
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = format!("#!/bin/sh\n{body}\nexec '{}' \"$@\"\n", real.display());
+        std::fs::write(dir.join("git"), script).unwrap();
+        std::fs::set_permissions(dir.join("git"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::join_paths(std::iter::once(dir).chain(std::env::split_paths(&path))).unwrap()
+    }
+
+    /// The `git` subcommands of a definition read that no other lookup of these verbs runs (`read_default`).
+    const READ_CALLS: [&str; 4] = ["symbolic-ref", "show-ref", "ls-tree", "cat-file"];
+
+    #[test]
+    fn config_show_layer_runs_no_read() { // R§10 `config show --layer <layer>`; review F5
+        let f = fx(&[(WS, MIN), (PROF, RUST)]);
+        let h = home(&f, "");
+        appr(&f, &h);
+        let path = stub_git(&f, "for a in \"$@\"; do case \"$a\" in ls-tree|show) echo stub >&2; exit 1;; esac; done");
+        let env = [("PATH", path.as_os_str())];
+        // Control: a read through the stub fails, and `config show` prints the unread line.
+        let se = err(&zygo_env(&h, &f.c, &["config", "show"], &env));
+        assert_eq!(def_lines(&se), [unread_line("git ls-tree: failed")], "{se}");
+        for layer in ["builtin", "team", "user", "repository", "profile", "flags", "session"] {
+            let o = zygo_env(&h, &f.c, &["config", "show", "--layer", layer], &env);
+            let se = err(&o);
+            assert_eq!(o.status.code(), Some(0), "{layer}: {se}");
+            assert!(def_lines(&se).is_empty(), "{layer}: {se}");
+            assert!(!out(&o).contains("workspace-files"), "{layer}");
+        }
+    }
+
+    #[test]
+    fn loadout_show_repository_with_a_user_loadout_runs_no_read() { // R§10 `loadout show repository`; review F5
+        let f = fx(&[(WS, MIN)]);
+        let log = f.t.path().join("git.log");
+        let path = stub_git(&f, &format!("echo \"$*\" >> '{}'", log.display()));
+        let env = [("PATH", path.as_os_str())];
+        let read_calls = || -> Vec<String> {
+            let text = std::fs::read_to_string(&log).unwrap_or_default();
+            std::fs::write(&log, "").unwrap();
+            text.lines().filter(|l| l.split(' ').any(|a| READ_CALLS.contains(&a))).map(str::to_owned).collect()
+        };
+        // Control: with no user `[loadout.repository]`, the stub logs the read.
+        let h = home(&f, "");
+        appr(&f, &h);
+        let o = zygo_env(&h, &f.c, &["loadout", "show", "repository"], &env);
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        assert!(!read_calls().is_empty());
+        let h = home(&f, USER_REPOSITORY);
+        let o = zygo_env(&h, &f.c, &["loadout", "show", "repository"], &env);
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        assert!(out(&o).lines().any(|l| l == "kind = \"claude-code\""), "{}", out(&o));
+        assert_eq!(read_calls(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn loadout_list_and_show_print_the_unread_line() { // R§10 `loadout` row: unread; review F5
+        let f = unread_fx();
+        let h = home(&f, "");
+        let o = zygo(&h, &f.c, &["loadout", "list"]);
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        assert_eq!(out(&o), "solo  built-in\n");
+        assert_eq!(err(&o), format!("{}\n", unread_line(REFUSED)));
+        let o = zygo(&h, &f.c, &["loadout", "show", "repository"]);
+        assert_eq!(o.status.code(), Some(1));
+        assert_eq!(out(&o), "");
+        assert_eq!(err(&o), format!("{}\n", unread_line(REFUSED)));
+    }
 
     /// `zygo loadout list` in `f.c` with the user config `user`, approved or not: (stdout, stderr), exit 0 asserted.
     fn list(f: &Fx, user: &str, approve: bool) -> (String, String) {
