@@ -229,9 +229,8 @@ Session text (T, SX nodes):
 | FX-19 | PO2 row states what its run observed | OS-34 | DONE | mechanical | plan b2c8ca97 · node b5fa4c27, efbcccae · acceptance pass (check-premises ok; po2_ 3 passed) · PR #188 |
 | FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | DONE | mechanical | 96868305 · c98ea5fa · cc948a96 · acceptance pass (live selftest: ok (85)) · PR #194 |
 | FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | DONE | implementation | 569e61a9^..9ac65902 · acceptance pass (shape_clean 35 passed) · PR #211 |
-| FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | TODO | implementation | — |
+| FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
 | FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | TODO | implementation | — |
-| DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
 
 ## Log
 
@@ -435,5 +434,7 @@ Session text (T, SX nodes):
 | 2026-11-26 | MS-18 DONE: CLI send/read/ls/watch with addresses, ls sync line, doctor twin line; review R1 F1/F3 (watch synced in process, a hang blocked it) → watch starts the child; R2 F1 per-workspace rate limit, F2 F3 fixed, F4 F5 recorded · PR #215 |
 | 2026-11-26 | WD-19 plan: premise held: hooks, MCP and status line read nothing from .zygo/; node adds tests only; R§8 and R§18 item 20 restated against the code |
 | 2026-11-26 | WD-19 DONE: scans, repo_def tripwire (test-hooks feature, test builds only), inotify watch and git output canary prove no .zygo/ read on hook, MCP and status-line paths; R1 F1-F7, R2 F1 F2 fixed, F3 recorded · PR #218 |
+| 2026-11-26 | FX-22 PLANNED: tag v2.9.2 moved 409b9da→9d82bd9 (rewritten history); author's call: re-pin v2.9.2 (tree, act-lite digest unchanged) not v2.9.5; tags lightweight, so acceptance reads plain ref line; act-lite not found = binary off PATH (§15.3), not pin |
+| 2026-11-26 | FX-22 DONE: built-in act101 v2.9.2 re-pinned to the tag's current commit 9d82bd97 (upstream rewrote history; same tree and act-lite 1.2.3 digest); Acceptance self-checking, author's call: lightweight tags have no ^{} line · PR #221 |
 | 2026-11-26 | MS-21 plan: premise drift: S§14 forget order (checks, sync lock, question, worktree, then state and cache); S§6.3 git runs only when the worktree folder and main_root exist |
 | 2026-11-26 | MS-21 DONE: ws forget asks for unsent and refused mail and removes the sync worktree; R1 F1 (a waiting sync rebuilt what forget deleted) F2-F5 fixed; R2 R2-1..R2-4 fixed, R2-5 refuted (OP5) · PR #217 |
