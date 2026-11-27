@@ -140,6 +140,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | FX-10 | HUD spec lists the member name and unread mail segments and the ✉ glyph | ML-15, RT-3 | DONE | mechanical | 8b19ed30, daf5faed · ✉ 4 ; floor green · PR #123 |
 | FX-12 | HUD unread count uses the store's definition (regular <ULID>.json files; missing new/ is 0) | ML-15, ML-2, FX-11 | DONE | implementation | 233290fe, 9335d48e · statusline_mail 9/0 ; floor green · PR #124 |
 | FX-15 | `zygo doctor` pool lines skip the members `zygo up` skips | WD-12 | DONE | implementation | 0b4ee021, f046b2b7 · definition_doctor 17/0 ; floor green · PR #129 |
+| FX-14 | `zygo up` team read: CLI test of `with_team`, team-layer warnings only, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code | WD-11, WD-12, ML-12 | DONE | implementation | 64d9685c, 3dc62442, 34467d50 · up_definition, workspace_restore, serve_cli, cmd::up all pass ; floor green · PR #162 |
 
 ## Log
 
