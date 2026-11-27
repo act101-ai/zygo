@@ -8,7 +8,7 @@ use std::ffi::OsStr;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use ulid::Ulid;
@@ -349,4 +349,94 @@ fn remote_send_during_forget_is_never_lost_uncounted() {
         (0, "zygo: forgot app\n".to_string(), String::new(), "zygo: 2 unsent messages and 0 refused messages will be deleted. Forget the workspace? [y/N] y (--yes)\n".to_string())
     );
     assert!(std::fs::symlink_metadata(&dir).is_err());
+}
+
+/// What the threads of [`remote_send_holds_mail_lock_until_its_link`] report to the test thread.
+#[derive(Debug)]
+enum Step {
+    /// The send stopped at `remote_send_before_link`: under `mail/lock`, before its link.
+    Paused,
+    /// The forget is at `forget_before_mail_lock`: right before it takes `mail/lock` exclusive.
+    AtLock,
+    /// The send returned.
+    Sent(Result<Ulid, SendError>),
+    /// The forget returned: (exit code, question, stdout, stderr).
+    Forgot(i32, String, String, String),
+}
+
+#[test] // S§7.6 step 4, S§8.1 (FX-28 review round 1 F1): the remote send holds mail/lock shared from Delivery::begin to
+        // its link, so no exclusive taker gets the lock first, and the forget counts the linked file and refuses
+fn remote_send_holds_mail_lock_until_its_link() {
+    let h = Harness::no_tmux();
+    seed_down(&h, &[(ALICE, "alice")]);
+    unsynced(&h);
+    send(&h, "a", "alice", ("bob", "b"));
+    let dir = h.paths.workspaces_dir().join(WS_ID);
+    let (tx, rx) = mpsc::channel::<Step>();
+    let (resume, resumed) = mpsc::channel::<()>();
+    let resumed = Mutex::new(resumed);
+    let paused = tx.clone();
+    hook(&dir, "remote_send_before_link", Some(Box::new(move || {
+        let _ = paused.send(Step::Paused);
+        resumed.lock().unwrap().recv().map_err(|_| "the test ended before it resumed the send".to_string())
+    })));
+    let (st, ssp, srepo) = (tx.clone(), sp(&h), h.repo());
+    let sender = std::thread::spawn(move || {
+        let _ = st.send(Step::Sent(send_at(&ssp, &srepo, "a", "alice", ("bob", "b"))));
+    });
+    match rx.recv().unwrap() {
+        Step::Paused => {}
+        other => panic!("the send did not stop at remote_send_before_link: {other:?}"),
+    }
+    // Paused before the link: the outbox holds only the first message, and mail/lock is held.
+    assert_eq!(count(&sp(&h)).unwrap(), 1);
+    let lock = std::fs::OpenOptions::new().read(true).write(true).open(dir.join("mail/lock")).unwrap();
+    assert!(
+        matches!(fs4::FileExt::try_lock(&lock), Err(fs4::TryLockError::WouldBlock)),
+        "an exclusive taker got mail/lock while the send was before its link"
+    );
+    drop(lock);
+    let at_lock = tx.clone();
+    hook(&dir, "forget_before_mail_lock", Some(Box::new(move || {
+        let _ = at_lock.send(Step::AtLock);
+        Ok(())
+    })));
+    let (ft, fpaths, fnone) = (tx.clone(), h.paths.clone(), h.root().join("none"));
+    let forget = std::thread::spawn(move || {
+        let (mut ask, mut out, mut err) = (Vec::new(), Vec::new(), Vec::new());
+        let code = forget_cmd(&fpaths, &fnone, None, "app", true, &mut std::io::empty(), &mut ask, &mut out, &mut err);
+        let text = |b: Vec<u8>| String::from_utf8(b).unwrap();
+        let _ = ft.send(Step::Forgot(code, text(ask), text(out), text(err)));
+    });
+    drop(tx);
+    match rx.recv().unwrap() {
+        Step::AtLock => {}
+        other => panic!("the forget did not come to mail/lock: {other:?}"),
+    }
+    resume.send(()).unwrap();
+    let (mut sent, mut forgot) = (None, None);
+    for _ in 0..2 {
+        match rx.recv().unwrap() {
+            Step::Sent(r) => sent = Some(r),
+            Step::Forgot(code, ask, out, err) => forgot = Some((code, ask, out, err)),
+            other => panic!("one more stop: {other:?}"),
+        }
+    }
+    sender.join().unwrap();
+    forget.join().unwrap();
+    hook(&dir, "remote_send_before_link", None);
+    hook(&dir, "forget_before_mail_lock", None);
+    let id = sent.expect("the send returned").expect("the send linked its file");
+    assert_eq!(
+        forgot.expect("the forget returned"),
+        (
+            1,
+            "zygo: 1 unsent messages and 0 refused messages will be deleted. Forget the workspace? [y/N] y (--yes)\n".to_string(),
+            String::new(),
+            "zygo: cannot forget app: the outbox changed after the count: 2 unsent messages and 0 refused messages now; try again\n".to_string()
+        )
+    );
+    assert!(sp(&h).outbox.join(format!("{id}.json")).is_file());
+    assert_eq!(count(&sp(&h)).unwrap(), 2);
+    assert!(dir.join("workspace.json").is_file());
 }

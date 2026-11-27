@@ -101,6 +101,68 @@ fn send_writes_nothing_while_mail_lock_is_held_exclusive() {
     assert!(fs::symlink_metadata(&f.sp.outbox).is_err());
 }
 
+#[cfg(unix)]
+fn mkfifo(p: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(p.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo {}", p.display());
+}
+
+/// The refusal line of one remote send of `f`, after which `outbox/` does not exist.
+fn refused_line(f: &Fx) -> String {
+    let line = send(f, Some("alice"), &addr("bob", "b"), "hi").unwrap_err().line();
+    assert!(fs::symlink_metadata(&f.sp.outbox).is_err(), "{line}");
+    line
+}
+
+#[cfg(unix)]
+#[test] // S§8.1 row 1 (FX-28 review round 1 F3): each other Delivery::begin refusal of a remote send, its line, and what
+        // it leaves: never an outbox file; mail/ and mail/lock only where the state folder is a real folder
+fn send_refusals_under_mail_lock_name_the_cause_and_write_no_outbox_file() {
+    // A corrupt or newer workspace.json (BadState): mail/ and mail/lock are made, and stay.
+    for (bytes, want) in [
+        (&b"x"[..], None),
+        (&br#"{"version": 2}"#[..], Some("zygo: mail: workspace state is from a newer zygo; run zygo update".to_string())),
+    ] {
+        let f = fx();
+        let file = f.sp.store.dir().join("workspace.json");
+        fs::write(&file, bytes).unwrap();
+        let reason = serde_json::from_slice::<serde_json::Value>(b"x").unwrap_err();
+        let want = want.unwrap_or_else(|| format!("zygo: mail: {}: {reason}", file.display()));
+        assert_eq!(refused_line(&f), want);
+        assert!(f.sp.mail.join("lock").is_file());
+    }
+    // A state folder that is a link (BadState): nothing is made through it.
+    let f = fx();
+    let (dir, real) = (f.sp.store.dir().to_path_buf(), f._t.path().join("real-state"));
+    fs::rename(&dir, &real).unwrap();
+    std::os::unix::fs::symlink(&real, &dir).unwrap();
+    assert_eq!(refused_line(&f), format!("zygo: mail: {} is a link; it is not followed", dir.display()));
+    assert!(fs::symlink_metadata(real.join("mail/lock")).is_err());
+    assert!(fs::symlink_metadata(real.join("mail/outbox")).is_err());
+    // A mail/ that is a link (BadMail): nothing is made through it.
+    let f = fx();
+    let real = f._t.path().join("real-mail");
+    fs::rename(&f.sp.mail, &real).unwrap();
+    std::os::unix::fs::symlink(&real, &f.sp.mail).unwrap();
+    assert_eq!(refused_line(&f), format!("zygo: mail: {} is not a folder", f.sp.mail.display()));
+    assert!(fs::symlink_metadata(real.join("lock")).is_err());
+    assert!(fs::symlink_metadata(real.join("outbox")).is_err());
+    // A mail/lock that is not a regular file (Io): a link, a FIFO, a folder. The entry stays as it was.
+    let f = fx();
+    let lock = f.sp.mail.join("lock");
+    std::os::unix::fs::symlink(f._t.path().join("elsewhere"), &lock).unwrap();
+    assert_eq!(refused_line(&f), format!("zygo: mail: {}: is a link; it is not followed", lock.display()));
+    assert!(fs::symlink_metadata(f._t.path().join("elsewhere")).is_err());
+    let f = fx();
+    let lock = f.sp.mail.join("lock");
+    mkfifo(&lock);
+    assert_eq!(refused_line(&f), format!("zygo: mail: {}: is not a regular file", lock.display()));
+    let f = fx();
+    fs::create_dir(f.sp.mail.join("lock")).unwrap();
+    assert_eq!(refused_line(&f), "zygo: mail: Is a directory (os error 21)");
+}
+
 /// One message file in `outbox/`, as `send_remote` writes it.
 fn outbox_file(f: &Fx, from: &str) -> Ulid {
     let m = Message::new(from, "bob@b", "status", "hello", now()).unwrap();

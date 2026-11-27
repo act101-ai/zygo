@@ -11,6 +11,7 @@ use zygo_core::ids::valid_member_name;
 use zygo_redact::secret::DeadlinePolicy;
 use zygo_workspace::mail::store::{write_synced, FILE_MAX};
 use zygo_workspace::mail::{ensure_mail_dir, Delivery, MailError, Message, MAIL_LOCK_WAIT};
+use zygo_workspace::up::fire_point;
 
 use crate::address::{ulid_file, Address};
 use crate::registry::read_cache;
@@ -78,9 +79,23 @@ pub fn send_remote(
 /// name, sync off, public, unknown address), then the M§5 limits, then the secret pass; a refusal writes nothing.
 /// The file is written in `outbox/tmp/` and linked into `outbox/` (M§5, M-C3).
 ///
-/// `mail/lock` is held shared from before the first folder is made until the link (S§7.6 step 4, FX-28). These cases
-/// refuse with the `MailError` line, write nothing and make no state folder: a lock not taken in `MAIL_LOCK_WAIT`; a
-/// workspace that is gone, or that was forgotten while this send waited (`lock_is_at`); no `workspace.json`.
+/// `mail/lock` is held shared ([`Delivery::begin`]) from before the first outbox folder is made until the link (S§7.6
+/// step 4, FX-28). Each refusal of `Delivery::begin` is `SendError::Io` with the `MailError` line (S§8.1 row 1):
+/// - `Busy`, the lock not taken in `MAIL_LOCK_WAIT`: `zygo: mail is busy; try again`;
+/// - `NoWorkspace`, no `workspace.json`, no state folder, or a locked file that is no longer `mail/lock` (a forget
+///   renamed the state folder while this send waited): `zygo: the workspace has no state; nothing sent`;
+/// - `BadState`, a corrupt `workspace.json` (`zygo: mail: <state>/workspace.json: <reason>`), a newer one (`zygo: mail:
+///   workspace state is from a newer zygo; run zygo update`), or a state folder that is a link (`zygo: mail: <state>
+///   is a link; it is not followed`);
+/// - `BadMail`, a `mail/` that is a link or not a folder: `zygo: mail: <state>/mail is not a folder`;
+/// - `Io`, a `mail/lock` that is not a regular file: `zygo: mail: <state>/mail/lock: is a link; it is not followed`,
+///   `zygo: mail: <state>/mail/lock: is not a regular file`, or, for a folder, the text of the open error (`zygo:
+///   mail: Is a directory (os error 21)` on Linux).
+///
+/// A refusal makes no state folder, no `mail/outbox/` folder and no outbox file. When the state folder is a real
+/// folder and `mail/` is not a link, `Delivery::begin` makes `mail/` (`0700`) and `mail/lock` (`0600`) when they are
+/// missing, before it reads the state, and they stay after a `NoWorkspace` or `BadState` refusal.
+/// The hook point `remote_send_before_link` (test hooks only) runs under the lock, right before the link.
 #[allow(clippy::too_many_arguments)]
 pub fn send_remote_with(
     sp: &SyncPaths,
@@ -123,6 +138,11 @@ pub fn send_remote_with(
     let file = format!("{id}.json");
     let tmp = sp.outbox_tmp.join(&file);
     write_synced(&tmp, &bytes).map_err(io_err)?;
+    // The test hook between the lock and the link (FX-28 review round 1 F1); nothing without `test-hooks`.
+    fire_point(sp.store.dir(), "remote_send_before_link").map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        io_err(io::Error::other(e))
+    })?;
     publish(&tmp, &sp.outbox.join(&file)).map_err(io_err)?;
     // The message is in the outbox now: an error here would make the sender send it again. A left tmp/ name is a
     // second name of the same file, swept after 1 h.

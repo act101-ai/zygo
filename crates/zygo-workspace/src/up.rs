@@ -160,7 +160,10 @@ pub mod testing {
     /// before it makes `cur/`; the state folder is the parent of `mail/`; an error there is the read's `Io` error) and
     /// `mail_removal_after_lock` (in `mail::remove_maildir` and `mail::prune`, after `mail/lock` is taken exclusive and
     /// before the check that the locked file is still `mail/lock`; FX-24 review R3 F2; an error there is the removal's
-    /// error).
+    /// error); the point of another crate, fired through `up::fire_point`: `remote_send_before_link` (in
+    /// `zygo_mail_sync::outbox::send_remote_with`, under `mail/lock` shared, after the write in `outbox/tmp/` and right
+    /// before the link into `outbox/`; FX-28 review round 1 F1; an error there removes the `tmp/` name and is the
+    /// send's `Io` error, `zygo: mail: <text>`).
     /// An `Err(text)` of the hook becomes `MuxError::Failed { message: text }` at that point; at `before_undo` it is
     /// the undo's write error.
     pub fn hook(dir: &Path, point: &'static str, f: Option<Box<dyn Fn() -> Result<(), String> + Send + Sync>>) {
@@ -229,6 +232,22 @@ pub(crate) fn fire(dir: &Path, point: &'static str) -> Result<(), MuxError> {
     #[cfg(feature = "test-hooks")]
     {
         testing::fire(dir, point).map_err(|message| MuxError::Failed { message })
+    }
+    #[cfg(not(feature = "test-hooks"))]
+    {
+        let _ = (dir, point);
+        Ok(())
+    }
+}
+
+/// The test hook of `point` for the state folder `dir`, for a hook point in another crate (D33; the points are listed
+/// at `testing::hook`, which the feature builds): `Err(text)` is the hook's error. Without the `test-hooks` feature
+/// it does nothing and is `Ok`. Production code of this crate uses `fire`.
+#[doc(hidden)]
+pub fn fire_point(dir: &Path, point: &'static str) -> Result<(), String> {
+    #[cfg(feature = "test-hooks")]
+    {
+        testing::fire(dir, point)
     }
     #[cfg(not(feature = "test-hooks"))]
     {
