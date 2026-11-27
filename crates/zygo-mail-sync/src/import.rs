@@ -8,7 +8,7 @@ use std::time::Instant;
 use ulid::Ulid;
 use zygo_work::repo::{Flow, RunError};
 use zygo_workspace::identity::valid_pane_key;
-use zygo_workspace::mail::store::{deliver_staged, unread, write_synced};
+use zygo_workspace::mail::store::{unread, write_synced};
 use zygo_workspace::mail::{ensure_mail_dir, Delivery, Message, BODY_MAX, MAIL_LOCK_WAIT, SUBJECT_MAX};
 use zygo_workspace::state::Store;
 
@@ -90,10 +90,11 @@ pub fn check_message(folder: &str, file: &str, mode: &str, kind: &str, size: u64
 /// staged). A file whose ULID is not in the log may be torn by a crash during its write: unless its bytes parse as
 /// a message whose `id` is the file's ULID, it is deleted and not logged, and the next pass imports the branch copy
 /// again. A file whose ULID is in the log was synced before the append. Returns the count of files moved into `new/`. Other names and links are left alone; a file whose finish
-/// fails stays for the next pass. `Err` only when `incoming/` or the imported log cannot be read.
+/// fails stays for the next pass. Each file is one M§5 P1 delivery under `mail/lock` of `store`'s workspace held
+/// shared: a file whose key has no record in the read under that lock is deleted with the log unchanged (the branch
+/// copy stays); a lock not taken in [`MAIL_LOCK_WAIT`] ends the finish for this pass, and the file stays. `Err` only
+/// when `incoming/` or the imported log cannot be read.
 pub fn finish_incoming(sp: &SyncPaths, store: &Store) -> std::io::Result<usize> {
-    let mail_dir = store.dir().join("mail");
-    let mail_dir = mail_dir.as_path();
     let entries = match std::fs::read_dir(&sp.incoming) {
         Ok(r) => r,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
@@ -107,6 +108,11 @@ pub fn finish_incoming(sp: &SyncPaths, store: &Store) -> std::io::Result<usize> 
         let Some((key, rest)) = name.to_str().and_then(|n| n.split_once('.')) else { continue };
         let Some(id) = ulid_file(rest).filter(|_| valid_pane_key(key)) else { continue };
         if !e.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        let Ok(d) = Delivery::begin(store, MAIL_LOCK_WAIT) else { break }; // S§8.5 step 5: the file stays
+        if !d.workspace().members.contains_key(key) {
+            let _ = std::fs::remove_file(e.path()); // author's call 3: M§5 deletes a member's mail with its record
             continue;
         }
         if !seen.contains(&id) {
@@ -124,7 +130,7 @@ pub fn finish_incoming(sp: &SyncPaths, store: &Store) -> std::io::Result<usize> 
             }
             seen.insert(id);
         }
-        if let Ok(true) = deliver_staged(mail_dir, key, &id.to_string(), &e.path(), u32::MAX) {
+        if let Ok(true) = d.deliver_staged(key, &id.to_string(), &e.path(), u32::MAX) {
             moved += 1;
         }
     }

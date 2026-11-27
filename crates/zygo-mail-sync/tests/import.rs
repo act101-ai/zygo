@@ -567,3 +567,33 @@ fn import_stops_at_a_held_mail_lock() {
     let (res, _) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
     assert_eq!(res.unwrap().delivered, [(KEY.to_string(), u(1)), (KEY.to_string(), u(2))]);
 }
+
+#[test] // d2, author's call 3: a staged file whose key has no record is deleted, the log unchanged, no maildir made
+fn finish_incoming_deletes_a_staged_file_of_a_key_with_no_record() {
+    for logged in [false, true] {
+        let (_t, sp, store) = local(); // record: bob only
+        staged(&sp, &format!("kcccccccc.{}.json", u(1)), &msg(u(1), "carol@b"));
+        if logged {
+            imported_append(&sp, u(1)).unwrap();
+        }
+        assert_eq!(finish_incoming(&sp, &store).unwrap(), 0, "logged {logged}");
+        assert_eq!(names(&sp.incoming), Vec::<String>::new(), "logged {logged}");
+        assert!(!sp.mail.join("kcccccccc").exists(), "logged {logged}");
+        assert_eq!(imported_load(&sp).unwrap().contains(&u(1)), logged, "logged {logged}");
+    }
+}
+
+#[test] // d2, author's call 7: a mail/lock held for the whole bound ends the finish; the staged file stays
+fn finish_incoming_stops_at_a_held_mail_lock() {
+    let (_t, sp, store) = local();
+    let name = format!("{KEY}.{}.json", u(1));
+    staged(&sp, &name, &msg(u(1), "bob@b"));
+    let held = hold_mail_lock(&sp);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
+    assert_eq!(names(&sp.incoming), [name]);
+    assert!(!new_dir(&sp).exists());
+    assert!(imported_load(&sp).unwrap().is_empty());
+    drop(held);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 1);
+    assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
+}
