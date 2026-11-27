@@ -227,7 +227,7 @@ Session text (T, SX nodes):
 | FX-24 | Mail sync deliveries and ws forget take the M§5 mail lock | FX-13, MS-21 | DONE | judgment | f1661e09^..f20d5502 · acceptance pass (import 32, sync_pass 57, admin 40) · PR #224 |
 | FX-25 | `zygo up` reads the definition at the current checkout; `find_checkout` keeps a failed or timed-out `git worktree list` (exit 1) | WD-15 | TODO | implementation | — |
 | FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | TODO | implementation | — |
-| FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | TODO | judgment | — |
+| FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | PLANNED | judgment | — |
 | FX-28 | A remote send during `ws forget` is lost uncounted | FX-24 | TODO | judgment | — |
 
 ## Log
@@ -450,3 +450,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | SX-7 DONE: base spec §8.5, §8.6 item 7 and last paragraph, §8.7 N33, §10.6 state what the merged session-text code does (effective role, ST4-conditional OpenCode delivery, trim after compaction); T§13 rewritten to the code; W§9.1 aligned · PR #227 |
 | 2026-11-26 | FX-24 PLANNED: d1-d4 hold at 6b283c74; import, incoming finish, notice under mail/lock per delivery; forget holds it excl across rename, after before_remove; order op<sync<mail<state; S§8.5/8.6/7.6, M§5 rewritten; author's calls in node |
 | 2026-11-26 | FX-24 DONE: mail-sync import, staged retry, refusal notice and ws forget take mail/lock in the lock order; every taker checks the lock inode; R1–R3 fixed (no lost staged mail, notice only to the same key); FX-28 added · PR #224 |
+| 2026-11-26 | FX-27 PLANNED: e1-e4 hold at f6a0b578 (probe: ack/b.json kept, b stays own host); rule (a): an acked *@<old>/ entry no prune removes no longer keeps the old ack, the entry stays (MS-14 F6); S§7.6, S§8.3 step 12, S§9 Tree, S§13 limit 2 rewritten; calls in node |
