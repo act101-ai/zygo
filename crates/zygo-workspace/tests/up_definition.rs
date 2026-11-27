@@ -20,6 +20,7 @@ use zygo_config::repo_def::{approve_workspace_in, check_default, GitRunner, Pin,
 use zygo_config::{Config, Loadout, LoadoutPane, LoadoutWindow};
 use zygo_core::paths::Paths;
 use zygo_core::{esc, Agent};
+use zygo_workspace::down::{self, DownOpts, DownTarget};
 use zygo_workspace::identity::workspace_id;
 use zygo_workspace::state::{BuildPlan, MemberRecord, MemberState, Pane, PaneKind, Phase, Store, Window, Workspace};
 use zygo_workspace::up::{self, UpOpts};
@@ -1227,37 +1228,111 @@ fn saved_main_root_wins_while_valid_by_name_and_from_any_checkout() {
     assert!(named.panes.iter().chain(&here.panes).all(|p| p.cwd == two), "{:?} {:?}", named.panes, here.panes);
 }
 
-#[test] // FX-25 review R2 F4, D4, W§8.1 step 3: by name, with no valid worktree left, `up` exits 1, reads nothing and saves
-        // nothing; it plans no pane in a folder that is gone
-fn by_name_with_no_valid_worktree_exits_1_and_saves_nothing() {
-    let _g = serial();
-    let mut f = fx(&[(WS, b"version = 1\n")]);
-    let (_b, one, two, store) = two_worktrees(&f);
+/// A workspace of `two_worktrees` that an `up` from `two` saved (`main_root` = `one`), then both worktree folders
+/// deleted (git marks both `prunable`), its state set to `phase = down` with the tmux socket `<t>/sock/s` (a folder of
+/// mode 0700), and `f.o` set to `up <name>` with `--reset` from a folder outside the repository. Returns the store,
+/// the saved state and `one`.
+fn every_worktree_folder_gone(f: &mut Fx) -> (Store, Workspace, PathBuf) {
+    let (_b, one, two, store) = two_worktrees(f);
     f.o.cwd = two.clone();
     assert_eq!(f.up(), gone());
     let first = f.planned();
     assert_eq!(first.main_root, one);
     fs::remove_dir_all(&one).unwrap();
     fs::remove_dir_all(&two).unwrap();
+    let sock = f.t.join("sock");
+    fs::create_dir_all(&sock).unwrap();
+    fs::set_permissions(&sock, fs::Permissions::from_mode(0o700)).unwrap();
     set(&store, |w| {
         *w = first.clone();
         w.phase = Phase::Down;
+        w.tmux_socket = Some(sock.join("s"));
     });
+    f.o.reset = true;
+    f.o.cwd = f.t.clone();
+    f.o.name = Some(first.name.clone());
+    (store, first, one)
+}
+
+/// The D4 line of `up <name>` for the saved `main_root` `one`.
+fn no_checkout_line(one: &Path) -> String { format!("zygo: no checkout at the main worktree {}", esc(&one.to_string_lossy())) }
+
+/// The tmux calls of the stand-in log of `f` that check the session on the saved socket `<t>/sock/s`.
+fn session_checks(f: &Fx) -> usize {
+    let sock = format!("-S {}", f.t.join("sock/s").display());
+    tmux_log(&f.t).iter().filter(|l| l.contains(&sock) && l.contains("has-session")).count()
+}
+
+#[test] // FX-25 review R2 F4, D4, W§8.1 step 3: by name, with no valid worktree left, `up` exits 1, reads nothing and saves
+        // nothing; it plans no pane in a folder that is gone
+fn by_name_with_no_valid_worktree_exits_1_and_saves_nothing() {
+    let _g = serial();
+    let mut f = fx(&[(WS, b"version = 1\n")]);
+    let (store, _first, one) = every_worktree_folder_gone(&mut f);
     let state = store.dir().join("workspace.json");
     let before = fs::read(&state).unwrap();
     let reads = f.git.reads();
     let sessions_before = tmux_log(&f.t).iter().filter(|l| l.contains("new-session")).count();
-    f.o.reset = true;
-    f.o.cwd = f.t.clone();
-    f.o.name = Some(first.name.clone());
     let got = f.up();
-    assert_eq!(got, (1, String::new(), format!("zygo: no checkout at the main worktree {}\n", esc(&one.to_string_lossy()))));
+    assert_eq!(got, (1, String::new(), format!("{}\n", no_checkout_line(&one))));
     assert!(!got.2.contains("symbolic-ref"), "{got:?}");
     assert_eq!(fs::read(&state).unwrap(), before);
     assert_eq!(f.git.reads(), reads);
     assert!(!f.t.join("planned.json").exists());
     let sessions = |log: Vec<String>| log.iter().filter(|l| l.contains("new-session")).count();
     assert_eq!(sessions(tmux_log(&f.t)), sessions_before);
+}
+
+#[test] // FX-25 close, D4 (W§8.1 step 3): D4 is for `zygo up` only; `zygo down <name>` of a workspace whose every worktree
+        // folder is gone uses the saved state, reads no definition and reaches its tmux step
+fn down_by_name_with_no_valid_worktree_reaches_its_tmux_step() {
+    let _g = serial();
+    let mut f = fx(&[(WS, b"version = 1\n")]);
+    let (store, first, one) = every_worktree_folder_gone(&mut f);
+    let before = fs::read(store.dir().join("workspace.json")).unwrap();
+    let reads = f.git.reads();
+    let checks = session_checks(&f);
+    let o = DownOpts {
+        target: DownTarget::Name(first.name.clone()),
+        now: false,
+        timeout: None,
+        wait: false,
+        cwd: f.t.clone(),
+        zygo: f.t.join("zygo"),
+        tmux: f.o.tmux.clone(),
+        tmux_env: None,
+        tmux_pane: None,
+        zygo_session: None,
+        proc_probe: |_| None,
+        paths: f.o.paths.clone(),
+        config: Config::default(),
+    };
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = down::run(&o, &mut out, &mut err);
+    let got = (code, text(out), text(err));
+    assert!(!got.2.contains(&no_checkout_line(&one)), "{got:?}");
+    assert_eq!(got, (0, format!("zygo: {} is not running\n", first.name), String::new()));
+    assert!(session_checks(&f) > checks, "{:?}", tmux_log(&f.t));
+    assert_eq!(f.git.reads(), reads);
+    assert_eq!(fs::read(store.dir().join("workspace.json")).unwrap(), before);
+}
+
+#[test] // FX-25 close, D4 (W§8.1 step 3): `zygo attach <name>` of a workspace whose every worktree folder is gone uses the
+        // saved state and reaches its tmux session check
+fn attach_by_name_with_no_valid_worktree_reaches_its_tmux_step() {
+    let _g = serial();
+    let mut f = fx(&[(WS, b"version = 1\n")]);
+    let (_store, first, one) = every_worktree_folder_gone(&mut f);
+    let reads = f.git.reads();
+    let checks = session_checks(&f);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = up::testing::attach_with(&f.o.paths, &f.o.tmux, None, Some(&first.name), &f.t, &mut out, &mut err);
+    let got = (code, text(out), text(err));
+    assert!(!got.2.contains(&no_checkout_line(&one)), "{got:?}");
+    let n = &first.name;
+    assert_eq!(got, (1, String::new(), format!("zygo: {n} is down; run zygo up -- {n}\n")));
+    assert!(session_checks(&f) > checks, "{:?}", tmux_log(&f.t));
+    assert_eq!(f.git.reads(), reads);
 }
 
 /// The main worktree that `up::find_checkout` gives from `cwd` with the cache folder of `f` (D1).
