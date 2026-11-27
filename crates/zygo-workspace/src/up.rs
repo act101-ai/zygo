@@ -116,11 +116,6 @@ pub struct Target {
     pub top: PathBuf,
     pub worktrees: Vec<Worktree>,
     pub state: Result<Option<Workspace>, String>,
-    /// D4, for `zygo up` only (FX-25 close): a workspace found by name whose saved `common_dir` lists no valid worktree
-    /// gets exit 1 `zygo: no checkout at the main worktree <saved main_root>` from `zygo up` and `zygo up --all`
-    /// ([`refuse_no_checkout`]); `zygo down` and `zygo attach` ignore it and use the saved state (`main_root` is then
-    /// the saved `main_root`), so a workspace whose folders are gone can still be stopped.
-    pub no_checkout: Option<Exit>,
 }
 
 /// Test hooks (D33). Only the `test-hooks` feature builds them.
@@ -179,7 +174,14 @@ pub mod testing {
     }
 
     /// [`super::up`] with the given writers.
-    pub fn run_with(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 { super::run(opts, out, err) }
+    pub fn run_with(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+        super::run(opts, OsStr::new("git"), out, err)
+    }
+
+    /// [`run_with`] with `git` as the program of each `git worktree list` of `preflight` (FX-25 close).
+    pub fn run_git_with(opts: &UpOpts, git: &OsStr, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+        super::run(opts, git, out, err)
+    }
 
     /// [`super::up_all`] with the given writers.
     pub fn run_all_with(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 { super::run_all(opts, out, err) }
@@ -201,7 +203,16 @@ pub mod testing {
         paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path, out: &mut dyn Write,
         err: &mut dyn Write,
     ) -> i32 {
-        super::attach_to(paths, tmux, tmux_env, name, cwd, out, err)
+        super::attach_to(paths, tmux, tmux_env, name, cwd, OsStr::new("git"), out, err)
+    }
+
+    /// [`attach_with`] with `git` as the program of each `git worktree list` of the lookup (FX-25 close).
+    #[allow(clippy::too_many_arguments)]
+    pub fn attach_git_with(
+        paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path, git: &OsStr,
+        out: &mut dyn Write, err: &mut dyn Write,
+    ) -> i32 {
+        super::attach_to(paths, tmux, tmux_env, name, cwd, git, out, err)
     }
 }
 
@@ -493,41 +504,34 @@ struct ByName {
     main_root: PathBuf,
     worktrees: Vec<Worktree>,
     moved_from: Option<PathBuf>,
-    /// The D4 refusal of `zygo up` ([`Target::no_checkout`]).
-    no_checkout: Option<Exit>,
+}
+
+/// Whether the lookup of a workspace found by name reads the worktree list of its saved `common_dir` (FX-25 close).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ByNameList {
+    /// `zygo up` and `zygo up --all`: the list gives the main worktree (D2, D3) and D4.
+    Read,
+    /// `zygo down` and `zygo attach`: the saved state only, so a user can always stop a workspace, also when its
+    /// folders are gone or the list fails or times out.
+    Skip,
 }
 
 /// The main worktree, the worktree list and the replaced `main_root` (D3) of a workspace found by name (W§8.1 step 3,
 /// AU20), from the list that git gives in the saved `common_dir` ([`keep_saved`], D2). D4: with no valid worktree in
-/// that list, the saved `main_root` and the D4 refusal `zygo: no checkout at the main worktree <saved main_root>`,
-/// which only `zygo up` applies; a list that fails or times out exits 1 with its reason, as from the cwd. Only a saved
-/// `common_dir` that does not exist keeps the saved `main_root` with no list (the fallback of FX-25 review round 1,
-/// kept for states whose repository is not on this machine).
-fn main_by_name(git: &OsStr, common_dir: &Path, main_root: &Path, cache: &Path) -> Result<ByName, Exit> {
-    let saved = |worktrees: Vec<Worktree>, no_checkout: Option<Exit>| ByName {
-        main_root: main_root.to_path_buf(),
-        worktrees,
-        moved_from: None,
-        no_checkout,
-    };
-    if !common_dir.exists() {
-        return Ok(saved(Vec::new(), None));
+/// that list, exit 1 `zygo: no checkout at the main worktree <saved main_root>`; a list that fails or times out exits
+/// 1 with its reason, as from the cwd. With [`ByNameList::Skip`], or a saved `common_dir` that does not exist (the
+/// fallback of FX-25 review round 1, kept for states whose repository is not on this machine): the saved `main_root`
+/// and no list.
+fn main_by_name(git: &OsStr, common_dir: &Path, main_root: &Path, cache: &Path, list: ByNameList) -> Result<ByName, Exit> {
+    if list == ByNameList::Skip || !common_dir.exists() {
+        return Ok(ByName { main_root: main_root.to_path_buf(), worktrees: Vec::new(), moved_from: None });
     }
     let deadline = Instant::now() + GIT_BOUND;
     let co = Checkout { top: common_dir.to_path_buf(), common_dir: common_dir.to_path_buf(), main_root: main_root.to_path_buf(), deadline };
     let list = worktrees_with(git, &co).map_err(|e| prefixed(fail(e.to_string())))?;
-    Ok(match keep_saved(Some(main_root), &list, cache) {
-        Some((main, moved_from)) => ByName { main_root: main, worktrees: list, moved_from, no_checkout: None },
-        None => saved(list, Some(prefixed(no_checkout_at(main_root)))),
-    })
-}
-
-/// D4 for `zygo up` and `zygo up --all` (FX-25 close): the [`Target::no_checkout`] refusal of `t`, before any read or
-/// write; else `t`.
-fn refuse_no_checkout(mut t: Target) -> Result<Target, Exit> {
-    match t.no_checkout.take() {
-        Some(e) => Err(e),
-        None => Ok(t),
+    match keep_saved(Some(main_root), &list, cache) {
+        Some((main, moved_from)) => Ok(ByName { main_root: main, worktrees: list, moved_from }),
+        None => Err(prefixed(no_checkout_at(main_root))),
     }
 }
 
@@ -552,11 +556,22 @@ pub fn preflight(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path) -> 
 /// calls go through [`preflight`].
 #[doc(hidden)]
 pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, git: &OsStr) -> Result<Target, Exit> {
+    preflight_by(paths, tmux, name, cwd, git, ByNameList::Read)
+}
+
+/// The lookup of `zygo down` and `zygo attach` (FX-25 close): as [`preflight_with`], but a workspace found by name
+/// uses its saved state and runs no `git worktree list` (`main_root` and `top` are the saved `main_root`, `worktrees`
+/// is empty), so neither a list that fails or times out nor D4 stops it. From the cwd, as [`preflight_with`].
+pub(crate) fn preflight_saved(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, git: &OsStr) -> Result<Target, Exit> {
+    preflight_by(paths, tmux, name, cwd, git, ByNameList::Skip)
+}
+
+fn preflight_by(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, git: &OsStr, by_name: ByNameList) -> Result<Target, Exit> {
     tmux_check(tmux)?;
     let all = list_all(paths);
     if let Some(n) = name {
         if let Some(ws) = all.iter().find_map(|(_, r)| r.as_ref().ok().filter(|ws| ws.name == n)) {
-            let b = main_by_name(git, &ws.common_dir, &ws.main_root, &paths.workspace_cache_dir())?;
+            let b = main_by_name(git, &ws.common_dir, &ws.main_root, &paths.workspace_cache_dir(), by_name)?;
             return Ok(Target {
                 id: ws.id.clone(),
                 name: ws.name.clone(),
@@ -566,7 +581,6 @@ pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path
                 moved_from: b.moved_from,
                 worktrees: b.worktrees,
                 state: Ok(Some(ws.clone())),
-                no_checkout: b.no_checkout,
             });
         }
         // Round 2 M5: a state that cannot be read still names its workspace in its JSON `name`: a newer state exits 1
@@ -605,7 +619,8 @@ pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path
             [(_, StateError::Newer { .. }, _, _)] => return Err(fail(NEWER.into())),
             [(id, e, _, v)] => {
                 let common_dir = PathBuf::from(text_of(v, "common_dir"));
-                let b = main_by_name(git, &common_dir, Path::new(&text_of(v, "main_root")), &paths.workspace_cache_dir())?;
+                let main_root = text_of(v, "main_root");
+                let b = main_by_name(git, &common_dir, Path::new(&main_root), &paths.workspace_cache_dir(), by_name)?;
                 return Ok(Target {
                     id: (*id).clone(),
                     name: n.to_string(),
@@ -615,7 +630,6 @@ pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path
                     main_root: b.main_root,
                     moved_from: b.moved_from,
                     state: Err(e.to_string()),
-                    no_checkout: b.no_checkout,
                 });
             }
             many => {
@@ -642,7 +656,7 @@ pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path
     // D2: a saved `main_root` wins while it is valid, from any checkout of the repository (the same workspace id).
     let saved = state.as_ref().ok().and_then(|s| s.as_ref()).map(|ws| ws.main_root.as_path());
     let (main_root, moved_from) = keep_saved(saved, &list, &cache).unwrap_or((first, None));
-    Ok(Target { id, name, common_dir: co.common_dir, main_root, moved_from, top: co.top, worktrees: list, state, no_checkout: None })
+    Ok(Target { id, name, common_dir: co.common_dir, main_root, moved_from, top: co.top, worktrees: list, state })
 }
 
 /// `<zygo> ws run --ws-id <id> --pane <key>`, then `--shell` for a shell pane (AU15, AU46).
@@ -1853,8 +1867,8 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
     Ok(if attach { attach_step(&mux, &name, &socket, opts.tmux_env.as_deref(), quiet, out, err) } else { 0 })
 }
 
-fn run(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    match preflight(&opts.paths, &opts.tmux, opts.name.as_deref(), &opts.cwd).and_then(refuse_no_checkout) {
+fn run(opts: &UpOpts, git: &OsStr, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    match preflight_with(&opts.paths, &opts.tmux, opts.name.as_deref(), &opts.cwd, git) {
         Err(e) => {
             say(err, &e.message);
             e.code
@@ -1866,7 +1880,7 @@ fn run(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
 /// `zygo up` for one workspace (W§8.1 steps 2-13), on the process stdout and stderr.
 pub fn up(opts: &UpOpts) -> i32 {
     let (stdout, stderr) = (std::io::stdout(), std::io::stderr());
-    run(opts, &mut stdout.lock(), &mut stderr.lock())
+    run(opts, OsStr::new("git"), &mut stdout.lock(), &mut stderr.lock())
 }
 
 const ALL_FLAGS: &str = "zygo: up --all takes no workspace name, --loadout or --reset";
@@ -1933,7 +1947,7 @@ fn run_all(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             }
         }
         chosen = true;
-        let target = match preflight(&opts.paths, &opts.tmux, Some(&name), &opts.cwd).and_then(refuse_no_checkout) {
+        let target = match preflight(&opts.paths, &opts.tmux, Some(&name), &opts.cwd) {
             Ok(t) => t,
             Err(e) if e.code == 2 => {
                 say(err, &e.message);
@@ -2041,14 +2055,15 @@ fn clear_down_all(opts: &UpOpts, ws: &Workspace, mux: &dyn Multiplexer, err: &mu
 /// `zygo attach` (W§12, D21), on the process stdout and stderr.
 pub fn attach(paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path) -> i32 {
     let (stdout, stderr) = (std::io::stdout(), std::io::stderr());
-    attach_to(paths, tmux, tmux_env, name, cwd, &mut stdout.lock(), &mut stderr.lock())
+    attach_to(paths, tmux, tmux_env, name, cwd, OsStr::new("git"), &mut stdout.lock(), &mut stderr.lock())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn attach_to(
-    paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path, out: &mut dyn Write,
-    err: &mut dyn Write,
+    paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path, git: &OsStr,
+    out: &mut dyn Write, err: &mut dyn Write,
 ) -> i32 {
-    let t = match preflight(paths, tmux, name, cwd) {
+    let t = match preflight_saved(paths, tmux, name, cwd, git) {
         Ok(t) => t,
         Err(e) => {
             say(err, &e.message);

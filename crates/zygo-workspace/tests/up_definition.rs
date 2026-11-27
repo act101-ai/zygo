@@ -1233,13 +1233,21 @@ fn saved_main_root_wins_while_valid_by_name_and_from_any_checkout() {
 /// mode 0700), and `f.o` set to `up <name>` with `--reset` from a folder outside the repository. Returns the store,
 /// the saved state and `one`.
 fn every_worktree_folder_gone(f: &mut Fx) -> (Store, Workspace, PathBuf) {
+    let (store, first, one, two) = saved_down_by_name(f);
+    fs::remove_dir_all(&one).unwrap();
+    fs::remove_dir_all(&two).unwrap();
+    (store, first, one)
+}
+
+/// A workspace of `two_worktrees` that an `up` from `two` saved (`main_root` = `one`), its state set to `phase = down`
+/// with the tmux socket `<t>/sock/s` (a folder of mode 0700), and `f.o` set to `up <name>` with `--reset` from a folder
+/// outside the repository. Returns the store, the saved state, `one` and `two`.
+fn saved_down_by_name(f: &mut Fx) -> (Store, Workspace, PathBuf, PathBuf) {
     let (_b, one, two, store) = two_worktrees(f);
     f.o.cwd = two.clone();
     assert_eq!(f.up(), gone());
     let first = f.planned();
     assert_eq!(first.main_root, one);
-    fs::remove_dir_all(&one).unwrap();
-    fs::remove_dir_all(&two).unwrap();
     let sock = f.t.join("sock");
     fs::create_dir_all(&sock).unwrap();
     fs::set_permissions(&sock, fs::Permissions::from_mode(0o700)).unwrap();
@@ -1251,7 +1259,7 @@ fn every_worktree_folder_gone(f: &mut Fx) -> (Store, Workspace, PathBuf) {
     f.o.reset = true;
     f.o.cwd = f.t.clone();
     f.o.name = Some(first.name.clone());
-    (store, first, one)
+    (store, first, one, two)
 }
 
 /// The D4 line of `up <name>` for the saved `main_root` `one`.
@@ -1333,6 +1341,97 @@ fn attach_by_name_with_no_valid_worktree_reaches_its_tmux_step() {
     assert_eq!(got, (1, String::new(), format!("zygo: {n} is down; run zygo up -- {n}\n")));
     assert!(session_checks(&f) > checks, "{:?}", tmux_log(&f.t));
     assert_eq!(f.git.reads(), reads);
+}
+
+/// The first `git` file on the `PATH` of the test process (read only: no test changes that `PATH`).
+fn real_git() -> PathBuf {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&path).map(|d| d.join("git")).find(|g| g.is_file()).expect("git on PATH")
+}
+
+/// `<dir>/<sub>/git`: a call whose arguments hold `worktree list` adds its arguments as one line to `<dir>/<sub>/list.log`,
+/// then runs the shell code `list`; every other call is `exec '<real_git()>' "$@"`. Returns the program and the log.
+fn list_git(dir: &Path, sub: &str, list: &str) -> (PathBuf, PathBuf) {
+    let bin = dir.join(sub);
+    fs::create_dir_all(&bin).unwrap();
+    let log = bin.join("list.log");
+    let body = format!(
+        "case \" $* \" in *\" worktree list \"*) printf '%s\\n' \"$*\" >> '{}'; {list};; esac\nexec '{}' \"$@\"",
+        log.display(),
+        real_git().display()
+    );
+    (script(&bin, "git", &body), log)
+}
+
+/// The `worktree list` calls that the stub of [`list_git`] logged.
+fn list_calls(log: &Path) -> usize { fs::read_to_string(log).unwrap_or_default().lines().count() }
+
+/// FX-25 close (W§8.1 step 3, R§10 `zygo up` row): with the stub `git`, whose `worktree list` in the saved `common_dir`
+/// fails or does not end, `zygo down <name>` and `zygo attach <name>` use the saved state, run no list and reach their
+/// tmux step; `zygo up <name>` exits 1 with the reason `want`, saves nothing and runs the list once.
+fn down_and_attach_by_name_need_no_worktree_list(f: &mut Fx, git: &Path, log: &Path, want: &str) {
+    let (store, first, _one, _two) = saved_down_by_name(f);
+    let state = store.dir().join("workspace.json");
+    let before = fs::read(&state).unwrap();
+    let n = first.name.clone();
+    // `zygo down <name>`: exit 0, `not running`, `has-session` on the saved socket.
+    let checks = session_checks(f);
+    let o = DownOpts {
+        target: DownTarget::Name(n.clone()),
+        now: false,
+        timeout: None,
+        wait: false,
+        cwd: f.t.clone(),
+        zygo: f.t.join("zygo"),
+        tmux: f.o.tmux.clone(),
+        tmux_env: None,
+        tmux_pane: None,
+        zygo_session: None,
+        proc_probe: |_| None,
+        paths: f.o.paths.clone(),
+        config: Config::default(),
+    };
+    let mut hooks = down::testing::Hooks::new(std::time::SystemTime::now());
+    hooks.git = Some(git.as_os_str().to_os_string());
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = down::testing::run_with(&o, &hooks, &mut out, &mut err);
+    assert_eq!((code, text(out), text(err)), (0, format!("zygo: {n} is not running\n"), String::new()));
+    assert!(session_checks(f) > checks, "{:?}", tmux_log(&f.t));
+    assert_eq!(fs::read(&state).unwrap(), before);
+    // `zygo attach <name>`: its session check on the saved socket, then the `is down` line.
+    let checks = session_checks(f);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = up::testing::attach_git_with(&f.o.paths, &f.o.tmux, None, Some(&n), &f.t, git.as_os_str(), &mut out, &mut err);
+    assert_eq!((code, text(out), text(err)), (1, String::new(), format!("zygo: {n} is down; run zygo up -- {n}\n")));
+    assert!(session_checks(f) > checks, "{:?}", tmux_log(&f.t));
+    assert_eq!(list_calls(log), 0);
+    // `zygo up <name>`: exit 1 with the reason of the list, before any read or write.
+    let reads = f.git.reads();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = up::testing::run_git_with(&f.o, git.as_os_str(), &mut out, &mut err);
+    assert_eq!((code, text(out), text(err)), (1, String::new(), format!("{want}\n")));
+    assert_eq!(list_calls(log), 1);
+    assert_eq!(f.git.reads(), reads);
+    assert_eq!(fs::read(&state).unwrap(), before);
+}
+
+#[test] // FX-25 close, W§8.1 step 3: a worktree list that fails in the saved `common_dir` stops only `zygo up <name>`
+fn down_and_attach_by_name_reach_tmux_when_the_worktree_list_fails() {
+    let _g = serial();
+    let mut f = fx(&[(WS, b"version = 1\n")]);
+    let (git, log) = list_git(&f.t, "failing", "echo 'fatal: stub' >&2; exit 1");
+    down_and_attach_by_name_need_no_worktree_list(&mut f, &git, &log, "zygo: git worktree list failed: fatal: stub");
+}
+
+#[test] // FX-25 close, W§8.1 step 3: a worktree list that times out in the saved `common_dir` stops only `zygo up <name>`;
+        // the list opens a FIFO that no one writes, so only `up::GIT_BOUND` ends it
+fn down_and_attach_by_name_reach_tmux_when_the_worktree_list_times_out() {
+    let _g = serial();
+    let mut f = fx(&[(WS, b"version = 1\n")]);
+    let fifo = f.t.join("list.fifo");
+    assert!(Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    let (git, log) = list_git(&f.t, "blocking", &format!("exec cat '{}'", fifo.display()));
+    down_and_attach_by_name_need_no_worktree_list(&mut f, &git, &log, "zygo: git worktree list timed out");
 }
 
 /// The main worktree that `up::find_checkout` gives from `cwd` with the cache folder of `f` (D1).
