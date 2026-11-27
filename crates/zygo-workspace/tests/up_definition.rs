@@ -1173,7 +1173,9 @@ fn by_name_and_from_the_checkout_plan_the_same_after_the_main_worktree_is_delete
     f.o.name = None;
     let from_two = f.up();
     let here = f.planned();
-    assert_eq!(by_name, gone());
+    // FX-25 review R2 D3: the move from the saved `main_root`, which git now marks prunable, is one line.
+    let moved = format!("zygo: the main worktree {} is gone; panes start in {}\n", esc(&one.to_string_lossy()), esc(&two.to_string_lossy()));
+    assert_eq!(by_name, (1, String::new(), format!("{moved}{GONE}")));
     assert_eq!(by_name, from_two);
     assert_eq!(plan_of(&named), plan_of(&here));
     for ws in [&named, &here] {
@@ -1183,6 +1185,46 @@ fn by_name_and_from_the_checkout_plan_the_same_after_the_main_worktree_is_delete
             assert!(p.cwd.is_dir(), "{:?}", p.cwd);
         }
     }
+}
+
+#[test] // FX-25 review R2 F1, D2, W§8.1 step 3, AU77: the saved main_root wins while it is valid. The first worktree is
+        // away during the first `up`, so `two` is saved; when `one` is back, `up <name>` and `up` from `one` keep `two`
+fn saved_main_root_wins_while_valid_by_name_and_from_any_checkout() {
+    let _g = serial();
+    let mut f = fx(&[(WS, b"version = 1\n")]);
+    let (_b, one, two, store) = two_worktrees(&f);
+    let off = f.t.join("one.off");
+    fs::rename(&one, &off).unwrap();
+    f.o.cwd = two.clone();
+    assert_eq!(f.up(), gone());
+    let first = f.planned();
+    assert_eq!((first.main_root.clone(), first.name.as_str()), (two.clone(), "two"));
+    fs::rename(&off, &one).unwrap();
+    let down = |ws: &Workspace| {
+        set(&store, |w| {
+            *w = ws.clone();
+            w.phase = Phase::Down;
+        })
+    };
+    f.o.reset = true;
+    // By name, from a folder outside the repository.
+    down(&first);
+    f.o.cwd = f.t.clone();
+    f.o.name = Some("two".into());
+    let by_name = f.up();
+    let named = f.planned();
+    // From the checkout `one`, which is again the first worktree of the list.
+    down(&first);
+    f.o.cwd = one.clone();
+    f.o.name = None;
+    let from_one = f.up();
+    let here = f.planned();
+    // No move line: the saved `main_root` is still valid.
+    assert_eq!((by_name, from_one), (gone(), gone()));
+    assert_eq!((named.main_root.clone(), here.main_root.clone()), (two.clone(), two.clone()));
+    assert_eq!((named.name.as_str(), here.name.as_str()), ("two", "two"));
+    assert_eq!(plan_of(&named), plan_of(&here));
+    assert!(named.panes.iter().chain(&here.panes).all(|p| p.cwd == two), "{:?} {:?}", named.panes, here.panes);
 }
 
 /// The main worktree that `up::find_checkout` gives from `cwd` with the cache folder of `f` (D1).

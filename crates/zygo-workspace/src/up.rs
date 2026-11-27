@@ -20,7 +20,8 @@ use zygo_work::repo::{checkout, Checkout};
 use crate::args::{bypass_flags, filter_from, has_user_info};
 use crate::env::{cleaned, REMOVE_ALWAYS, REMOVE_INSIDE_AGENT};
 use crate::identity::{
-    first_user_worktree, main_worktree, new_pane_key, slug, unique_name, valid_name, valid_pane_key, workspace_id, worktrees_with, ListError, Worktree,
+    first_user_worktree, main_worktree, new_pane_key, slug, unique_name, valid_name, valid_pane_key, valid_worktree, workspace_id, worktrees_with,
+    ListError, Worktree,
 };
 use crate::loadout::{self, LoadoutError, PaneKind as PlanKind, PlanPane};
 use crate::mail::{self, MAIL_LOCK_WAIT, mail_dir, not_pruned_line, store as mail_store};
@@ -103,9 +104,13 @@ pub struct Target {
     pub id: String,
     pub name: String,
     pub common_dir: PathBuf,
-    /// The main worktree (AU77), the base of the pane folders (W§11). By name: the saved `main_root` while its folder
-    /// exists, else the main worktree found again from `common_dir` (FX-25 review F2).
+    /// The main worktree (AU77), the base of the pane folders (W§11). For a workspace with a saved state, by name or
+    /// from any checkout of its repository: the saved `main_root` while it is a valid worktree
+    /// ([`crate::identity::valid_worktree`]), else the first valid worktree of the list (FX-25 review round 2 D2).
     pub main_root: PathBuf,
+    /// The saved `main_root` that is no longer a valid worktree, when `main_root` replaced it (D3): `zygo up` prints
+    /// `zygo: the main worktree <old> is gone; panes start in <new>`.
+    pub moved_from: Option<PathBuf>,
     /// The folder of the definition read (workspace definition design R§10, `zygo up` row): `Checkout.top` of the
     /// checkout found from the cwd; `main_root` for a workspace found by name.
     pub top: PathBuf,
@@ -421,21 +426,35 @@ fn main_of(list: &[Worktree], cache: &Path) -> Result<PathBuf, Exit> {
     }
 }
 
-/// The main worktree and worktree list of a workspace found by name (W§8.1 step 3, AU20). The saved `main_root` while
-/// its folder exists; else the main worktree ([`main_worktree`]) of the list that git gives in the saved `common_dir`
-/// (FX-25 review F2). When that list has no main worktree, or git fails, the saved `main_root` stays.
-fn main_by_name(git: &OsStr, common_dir: &Path, main_root: &Path, cache: &Path) -> (PathBuf, Vec<Worktree>) {
-    let list_in = |top: &Path| {
-        let deadline = Instant::now() + GIT_BOUND;
-        let co = Checkout { top: top.to_path_buf(), common_dir: common_dir.to_path_buf(), main_root: main_root.to_path_buf(), deadline };
-        worktrees_with(git, &co).unwrap_or_default()
-    };
-    if main_root.is_dir() {
-        return (main_root.to_path_buf(), list_in(main_root));
+/// The main worktree of a workspace (D2): the saved `main_root` while it is a valid worktree of `list`
+/// ([`valid_worktree`]); else the first valid worktree ([`main_worktree`]), with the saved `main_root` that it replaces
+/// (D3). None when `list` has no valid worktree.
+fn keep_saved(saved: Option<&Path>, list: &[Worktree], cache: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
+    if let Some(s) = saved
+        && list.iter().any(|w| w.path == s && valid_worktree(w, cache))
+    {
+        return Some((s.to_path_buf(), None));
     }
-    let list = list_in(common_dir);
-    let main = main_worktree(&list, cache).map_or_else(|| main_root.to_path_buf(), |w| w.path.clone());
-    (main, list)
+    let first = main_worktree(list, cache)?.path.clone();
+    Some((first, saved.map(Path::to_path_buf)))
+}
+
+/// The D3 line of a saved `main_root` that is no longer a valid worktree; paths escaped.
+fn moved_line(old: &Path, new: &Path) -> String {
+    format!("zygo: the main worktree {} is gone; panes start in {}", esc(&old.to_string_lossy()), esc(&new.to_string_lossy()))
+}
+
+/// The main worktree, the worktree list and the replaced `main_root` (D3) of a workspace found by name (W§8.1 step 3,
+/// AU20), from the list that git gives in the saved `common_dir` ([`keep_saved`], D2). When that list has no valid
+/// worktree, or git fails, the saved `main_root` stays.
+fn main_by_name(git: &OsStr, common_dir: &Path, main_root: &Path, cache: &Path) -> (PathBuf, Vec<Worktree>, Option<PathBuf>) {
+    let deadline = Instant::now() + GIT_BOUND;
+    let co = Checkout { top: common_dir.to_path_buf(), common_dir: common_dir.to_path_buf(), main_root: main_root.to_path_buf(), deadline };
+    let list = worktrees_with(git, &co).unwrap_or_default();
+    match keep_saved(Some(main_root), &list, cache) {
+        Some((main, moved_from)) => (main, list, moved_from),
+        None => (main_root.to_path_buf(), list, None),
+    }
 }
 
 /// The tmux version check of W§8.1 step 2 (code 2): tmux missing, older than 3.2, or a version that cannot be read
@@ -463,13 +482,14 @@ pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path
     let all = list_all(paths);
     if let Some(n) = name {
         if let Some(ws) = all.iter().find_map(|(_, r)| r.as_ref().ok().filter(|ws| ws.name == n)) {
-            let (main_root, worktrees) = main_by_name(git, &ws.common_dir, &ws.main_root, &paths.workspace_cache_dir());
+            let (main_root, worktrees, moved_from) = main_by_name(git, &ws.common_dir, &ws.main_root, &paths.workspace_cache_dir());
             return Ok(Target {
                 id: ws.id.clone(),
                 name: ws.name.clone(),
                 common_dir: ws.common_dir.clone(),
                 top: main_root.clone(),
                 main_root,
+                moved_from,
                 worktrees,
                 state: Ok(Some(ws.clone())),
             });
@@ -510,7 +530,8 @@ pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path
             [(_, StateError::Newer { .. }, _, _)] => return Err(fail(NEWER.into())),
             [(id, e, _, v)] => {
                 let common_dir = PathBuf::from(text_of(v, "common_dir"));
-                let (main_root, worktrees) = main_by_name(git, &common_dir, Path::new(&text_of(v, "main_root")), &paths.workspace_cache_dir());
+                let (main_root, worktrees, moved_from) =
+                    main_by_name(git, &common_dir, Path::new(&text_of(v, "main_root")), &paths.workspace_cache_dir());
                 return Ok(Target {
                     id: (*id).clone(),
                     name: n.to_string(),
@@ -518,6 +539,7 @@ pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path
                     common_dir,
                     top: main_root.clone(),
                     main_root,
+                    moved_from,
                     state: Err(e.to_string()),
                 });
             }
@@ -527,12 +549,14 @@ pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path
             }
         }
     }
-    let (co, list, main_root) = find_checkout_with(cwd, GIT_BOUND, git, &paths.workspace_cache_dir())
+    let cache = paths.workspace_cache_dir();
+    let (co, list, first) = find_checkout_with(cwd, GIT_BOUND, git, &cache)
         .map_err(|e| if e.code == 1 { fail(format!("zygo: {}", esc(&e.message))) } else { e })?;
     let id = workspace_id(&co.common_dir);
     let taken: BTreeSet<String> =
         all.iter().filter(|(i, _)| *i != id).filter_map(|(_, r)| r.as_ref().ok().map(|w| w.name.clone())).collect();
-    let folder = main_root.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+    // A new workspace is named after its main worktree, the first valid one (AU2); a name, once given, does not change.
+    let folder = first.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
     let fresh_name = || unique_name(&slug(&folder), &|n| taken.contains(n));
     let (name, state) = match Store::open(paths, &id).read() {
         Ok(Some(ws)) => (ws.name.clone(), Ok(Some(ws))),
@@ -541,7 +565,10 @@ pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path
         Err(e @ StateError::Invalid { .. }) => (fresh_name(), Err(e.to_string())),
         Err(e) => return Err(fail(format!("zygo: {e}"))),
     };
-    Ok(Target { id, name, common_dir: co.common_dir, main_root, top: co.top, worktrees: list, state })
+    // D2: a saved `main_root` wins while it is valid, from any checkout of the repository (the same workspace id).
+    let saved = state.as_ref().ok().and_then(|s| s.as_ref()).map(|ws| ws.main_root.as_path());
+    let (main_root, moved_from) = keep_saved(saved, &list, &cache).unwrap_or((first, None));
+    Ok(Target { id, name, common_dir: co.common_dir, main_root, moved_from, top: co.top, worktrees: list, state })
 }
 
 /// `<zygo> ws run --ws-id <id> --pane <key>`, then `--shell` for a shell pane (AU15, AU46).
@@ -1236,6 +1263,10 @@ fn attach_step(
 pub(crate) fn up_target(
     opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write, attach: bool, repo_read: bool,
 ) -> i32 {
+    // D3: one line when the saved `main_root` is no longer a valid worktree and this `up` replaces it.
+    if let Some(old) = &target.moved_from {
+        say(err, &moved_line(old, &target.main_root));
+    }
     match build(opts, target, out, err, attach, repo_read) {
         Ok(code) => code,
         Err(e) => {
