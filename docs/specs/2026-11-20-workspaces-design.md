@@ -431,7 +431,7 @@ Claude Code, registered only for members, in `ClaudeCode::hooks` (`crates/zygo-l
 | `Stop` | — | `workspace --event stop` | Main loop: `busy = false` (AU85), `tools_running = 0`. |
 | `SessionEnd` | — | `workspace --event session-end` | Main loop: `tools_running = 0`. |
 | `StopFailure` | — | `workspace --event stop` | As `Stop` (AU57). |
-| `SubagentStart` | — | `workspace --event subagent-start` | Adds `agent_id`, `agent_type` to the running set. |
+| `SubagentStart` | — | existing `session-start`; for members also `workspace --event subagent-start` | `session-start`: the mechanics text for a subagent whose type does not start with `zygo-` (session text design T§6.3). `workspace --event subagent-start`: adds `agent_id`, `agent_type` to the running set. |
 | `SubagentStop` | — | `workspace --event subagent-stop` | Removes `agent_id`. |
 
 `activity.json` schema (version 1), changed only under `activity.lock` (AU56):
@@ -1082,3 +1082,4 @@ None. The operator decided OP11 (slash commands), OP12 (saved overrides) and OP1
 | 2026-11-26 | W§12 | author's call (lead) (node MS-21) | Mail sync design S§16 row W§12: `zygo ws forget` takes the sync lock, asks for the outbox (`--yes`) and removes the sync worktree before it deletes anything. |
 | 2026-11-26 | W§12 | author's call (lead) (MS-21 review F1, F3-F5) | The `zygo ws forget` sentence follows mail sync design S§6.3 and S§7.6 as rewritten: the sync lock is made when missing, a `mail/` link is not followed, the question counts refused messages too, and what git does not remove goes by the filesystem. |
 | 2026-11-26 | W§12 | operator (workspace definition design R§14 row W§12); author's call (node WD-15) for the text | Row `zygo workspace approve`: R§7.1; not subject to OP5. |
+| 2026-11-26 | W§9.1 (`SubagentStart` row) | author's call (SX-7 review F9) | The row names the existing `session-start` entry first, then `workspace --event subagent-start`, as the `SessionStart` and `UserPromptSubmit` rows do and as `hooks` in `crates/zygo-launch/src/claude_code.rs` registers them. |
