@@ -946,6 +946,19 @@ fn drop_count_leaves_out_a_gitlink_and_a_tree() {
     assert_eq!(waiting_for(&env(&b), WS_ID, "b"), Ok(0));
 }
 
+#[test] // S§7.6 --drop-host, S§9 Tree (FX-27 review round 2): a listed non-member message file is counted, as no prune
+// removes it
+fn drop_count_holds_a_non_member_message_file_whose_ulid_is_acked() {
+    let (r, _a, b) = pair();
+    let u = Ulid::from_parts(T0 * 1000, 28);
+    let link = blob(&r.bare, b"../ZYGO-MAIL");
+    let msg = blob(&r.bare, b"not delivered");
+    put_entries(&r, &[("120000", &link, &format!("bob@b/{u}.json")), ("100644", &msg, &format!("carol@b/{u}.json"))]);
+    sync(&b);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([u.to_string()]));
+    assert_eq!(waiting_for(&env(&b), WS_ID, "b"), Ok(1));
+}
+
 #[test] // S§7.6 --drop-host, S§9 Tree (FX-27 review round 2): a blob of mode 100755 is a message file and is counted
 fn drop_count_holds_a_100755_blob() {
     let (r, _a, b) = pair();

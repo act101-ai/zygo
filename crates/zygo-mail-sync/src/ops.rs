@@ -136,20 +136,25 @@ fn host_folders(wt: &Path, tip: &str, host: &str, deadline: Instant) -> Result<V
     Ok(folders)
 }
 
-/// D3: the paths `<addr>/<ULID>.json` directly under the folders of `host` at `tip` that are message files (S§9
-/// "Tree", [`prune::removable`]) and that the valid `ack/<host>.json` does not list (an invalid or missing ack lists
-/// none). A link, a submodule or a tree is not counted: it is no message (FX-27 review F3).
+/// D3: the paths `<name>@<host>/<ULID>.json` directly under the folders of `host` at `tip` that are message files
+/// (S§9 "Tree", [`prune::removable`]) and that no prune removes: the valid `ack/<host>.json` does not list the ULID
+/// (an invalid or missing ack lists none), or `<name>` is not a member name of that ack's identity
+/// ([`prune::member_names`], FX-27 review round 2). A link, a submodule or a tree is not counted: it is no message
+/// (FX-27 review F3).
 fn waiting(wt: &Path, tip: &str, meta: &TipMeta, host: &str, deadline: Instant)
     -> Result<BTreeSet<String>, BranchError> {
-    let acked: BTreeSet<Ulid> = meta.acks.get(host).and_then(|r| r.value.as_ref().ok())
-        .map(|a| a.imported.clone()).unwrap_or_default();
+    let ack = meta.acks.get(host).and_then(|r| r.value.as_ref().ok());
+    let empty = BTreeSet::new();
+    let acked: &BTreeSet<Ulid> = ack.map_or(&empty, |a| &a.imported);
+    let names = ack.map(|a| prune::member_names(meta, &a.identity)).unwrap_or_default();
     let mut out = BTreeSet::new();
     for folder in host_folders(wt, tip, host, deadline)? {
+        let member = address::parse(&folder).is_some_and(|a| names.contains(a.name.as_str()));
         let prefix = format!("{folder}/");
         branch::ls(wt, tip, Some(&prefix), deadline, &mut |e| {
-            let unlisted = e.path.strip_prefix(&prefix).and_then(address::ulid_file)
-                .is_some_and(|u| !acked.contains(&u));
-            if prune::removable(&e) && unlisted {
+            let kept = e.path.strip_prefix(&prefix).and_then(address::ulid_file)
+                .is_some_and(|u| !(member && acked.contains(&u)));
+            if prune::removable(&e) && kept {
                 out.insert(e.path);
             }
             Flow::Go
