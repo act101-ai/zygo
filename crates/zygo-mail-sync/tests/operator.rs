@@ -7,13 +7,14 @@ use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use common::{blob, commit_tree, git, git_in, plain, tip_file, ForgetClock, Machine, Remote, ALICE, BOB, WS_ID};
+use common::{blob, commit_tree, far, git, git_in, plain, tip_file, ForgetClock, Machine, Remote, ALICE, BOB, WS_ID};
 use serde_json::Value;
 use ulid::Ulid;
 use zygo_config::{LoadContext, MailConfig};
 use zygo_core::paths::Paths;
 use zygo_mail_sync::address::Address;
 use zygo_mail_sync::env::{self, Env, Spawner, Verdict, Wake};
+use zygo_mail_sync::identity::{own_hosts, read_meta};
 use zygo_mail_sync::ops::{drop_host, drop_prompt, new_identity, take_host, waiting_for};
 use zygo_mail_sync::outbox::SendError;
 use zygo_mail_sync::state;
@@ -672,4 +673,91 @@ fn take_host_forgets_the_keys_of_the_old_host() {
     take_host(&env(&b), WS_ID).unwrap();
     assert_eq!(file(&r, "ack/b.json"), None);
     assert_eq!(state_keys(&b), (own_keys(&["a"]), BTreeSet::new()));
+}
+
+/// FX-27: a gitlink target; a gitlink names a commit that need not be in the repository.
+const GITLINK: &str = "0123456789abcdef0123456789abcdef01234567";
+
+/// A new remote tip with each `(mode, object id, path)` of `entries` put in, on a scratch index of the bare
+/// repository (as `rewrite`, with `--index-info` lines `<mode> <id>\t<path>` and nothing removed).
+fn put_entries(r: &Remote, entries: &[(&str, &str, &str)]) {
+    use std::io::Write;
+    let tip = r.tip(BRANCH).unwrap();
+    let idx = r.dir.path().join("put-entries-index");
+    let info: String = entries.iter().map(|(mode, id, path)| format!("{mode} {id}\t{path}\n")).collect();
+    assert!(plain(&r.bare).env("GIT_INDEX_FILE", &idx).args(["read-tree", &tip]).status().unwrap().success());
+    let mut ch = plain(&r.bare).env("GIT_INDEX_FILE", &idx).args(["update-index", "--index-info"])
+        .stdin(std::process::Stdio::piped()).spawn().unwrap();
+    ch.stdin.take().unwrap().write_all(info.as_bytes()).unwrap();
+    assert!(ch.wait().unwrap().success());
+    let out = plain(&r.bare).env("GIT_INDEX_FILE", &idx).arg("write-tree").output().unwrap();
+    let tree = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    let c = commit_tree(&r.bare, &tree, Some(&tip));
+    git(&r.bare, &["update-ref", &format!("refs/heads/{BRANCH}"), &c]);
+}
+
+/// The S§7.5 own hosts of `m`, with current host `host`, at the remote tip, read in `m`'s sync worktree.
+fn own_at_tip(r: &Remote, m: &Machine, host: &str) -> Vec<String> {
+    let meta = read_meta(&m.wt, &r.tip(BRANCH).unwrap(), far(), &mut |_| {}).unwrap();
+    own_hosts(&meta, &ident(m), host)
+}
+
+#[test] // S§7.6 Rename, S§9 Tree, S§7.5 Own hosts and Twin, MS-14 review F6 (FX-27): acked links only let the old ack go
+fn renamed_host_ack_goes_with_only_acked_link_and_gitlink_entries() {
+    let (r, a, b) = pair();
+    let (u1, u2) = (Ulid::from_parts(T0 * 1000, 1), Ulid::from_parts(T0 * 1000, 2));
+    let (link, gitlink) = (format!("bob@b/{u1}.json"), format!("bob@b/{u2}.json"));
+    let target = blob(&r.bare, b"../ZYGO-MAIL");
+    put_entries(&r, &[("120000", &target, &link), ("160000", GITLINK, &gitlink)]);
+    assert_eq!(sync(&b).delivered, 0);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([u1.to_string(), u2.to_string()]));
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    let paths = tip_paths(&r);
+    assert!(paths.contains(&link) && paths.contains(&gitlink), "{paths:?}"); // MS-14 review F6: they stay
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+    assert_eq!(state_keys(&b), (own_keys(&["b2"]), BTreeSet::new()));
+    assert!(prune_now(&b).notes.contains(&"pruned 0 files".to_string()));
+    let paths = tip_paths(&r);
+    assert!(paths.contains(&link) && paths.contains(&gitlink), "{paths:?}");
+    assert_eq!(file(&r, "ack/b.json"), None);
+    sync(&b); // no twin, no collision
+    sync(&a);
+    assert_eq!(file(&r, "ack/b.json"), None);
+}
+
+#[test] // S§7.6 Rename, S§13 limit 2 (FX-27): an entry that the old ack does not list keeps the old ack
+fn renamed_host_ack_stays_while_an_entry_is_not_acknowledged() {
+    let (r, _a, b) = pair();
+    let (u1, u2) = (Ulid::from_parts(T0 * 1000, 3), Ulid::from_parts(T0 * 1000, 4));
+    let target = blob(&r.bare, b"../ZYGO-MAIL");
+    put_entries(&r, &[("120000", &target, &format!("bob@b/{u1}.json")), ("120000", &target, &format!("carol@b/{u2}.json"))]);
+    sync(&b);
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([u1.to_string()]));
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string(), "b".to_string()]);
+}
+
+#[test] // S§7.6 Rename, S§9 Tree (FX-27): a message file keeps the old ack until a prune removes it; a link does not
+fn renamed_host_ack_goes_after_the_prune_takes_the_message_file() {
+    let (r, a, b) = pair();
+    let m = send(&a, "alice", ("bob", "b"));
+    sync(&a);
+    let u = Ulid::from_parts(T0 * 1000, 5);
+    let link = format!("bob@b/{u}.json");
+    put_entries(&r, &[("120000", &blob(&r.bare, b"../ZYGO-MAIL"), &link)]);
+    assert_eq!(sync(&b).delivered, 1);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([m.to_string(), u.to_string()]));
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert!(file(&r, "ack/b.json").is_some()); // the message file waits for a prune
+    assert!(prune_now(&b).notes.contains(&"pruned 1 files".to_string()));
+    sync(&b);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert!(tip_paths(&r).contains(&link));
+    assert_eq!(state_keys(&b), (own_keys(&["b2"]), BTreeSet::new()));
 }

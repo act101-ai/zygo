@@ -852,9 +852,18 @@ pub(crate) fn forget_old_hosts(st: &mut State, meta: &TipMeta, identity: &str, h
     state::forget_hosts(st, &hosts, &files)
 }
 
-/// S§7.4: the ULIDs of the message files in the `*@<h>/` folders at the tip, for each own host `h`.
+/// S§7.4, S§9 Tree: the `<ULID>.json` entries of the `*@<h>/` folders of one own host at the tip.
+#[derive(Debug, Default)]
+struct HostFiles {
+    /// The ULID of each entry, of any mode or kind: the ack keeps only these (S§7.4).
+    all: BTreeSet<Ulid>,
+    /// The ULID of each entry that a prune can remove ([`prune::removable`]).
+    removable: BTreeSet<Ulid>,
+}
+
+/// S§7.4, S§9 Tree: for each own host `h`, the entries of the `*@<h>/` folders at the tip ([`HostFiles`]).
 fn own_files(wt: &Path, tip: &str, own: &[String], deadline: Instant)
-    -> Result<BTreeMap<String, BTreeSet<Ulid>>, BranchError> {
+    -> Result<BTreeMap<String, HostFiles>, BranchError> {
     let mut folders = Vec::new();
     branch::ls(wt, tip, None, deadline, &mut |e| {
         if e.kind == "tree" && let Some(a) = address::parse(&e.path) && own.contains(&a.host) {
@@ -862,13 +871,16 @@ fn own_files(wt: &Path, tip: &str, own: &[String], deadline: Instant)
         }
         Flow::Go
     })?;
-    let mut out: BTreeMap<String, BTreeSet<Ulid>> = own.iter().map(|h| (h.clone(), BTreeSet::new())).collect();
+    let mut out: BTreeMap<String, HostFiles> = own.iter().map(|h| (h.clone(), HostFiles::default())).collect();
     for (h, folder) in folders {
         let prefix = format!("{folder}/");
         let set = out.entry(h).or_default();
         branch::ls(wt, tip, Some(&prefix), deadline, &mut |e| {
             if let Some(u) = e.path.strip_prefix(&prefix).and_then(address::ulid_file) {
-                set.insert(u);
+                set.all.insert(u);
+                if prune::removable(&e) {
+                    set.removable.insert(u);
+                }
             }
             Flow::Go
         })?;
@@ -888,8 +900,9 @@ pub(crate) fn own_names(ws: &Workspace) -> Vec<String> {
 /// changes: (old ∪ the acknowledged ULIDs) ∩ the files of that host at the tip. The current host's ack is written
 /// when the tip has none of this identity (S§7.6). A file over its limit is not written; one line is logged (O3).
 /// After a rename (S§7.6 "Rename") it deletes the registry of an old own host, unless the new one is over its limit,
-/// and the ack of an old own host with no file left at the tip whose registry it deletes or that has none.
-fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &BTreeMap<String, BTreeSet<Ulid>>,
+/// and the ack of an old own host whose entries at the tip are none, or are all entries that no prune removes and
+/// that the ack lists, when it deletes that host's registry or the host has none.
+fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &BTreeMap<String, HostFiles>,
     acked: &[Ulid]) -> Vec<Change> {
     let host = c.s.host.as_str();
     let names = own_names(&c.ws);
@@ -911,19 +924,20 @@ fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &
         }
     }
     let acked: BTreeSet<Ulid> = acked.iter().copied().collect();
-    let none = BTreeSet::new();
+    let none = HostFiles::default();
     for h in own {
         let tip_ack = own_ack(meta, h, identity);
         let old = tip_ack.map(|a| a.imported.clone()).unwrap_or_default();
         let at = files.get(h).unwrap_or(&none);
+        let new: BTreeSet<Ulid> = old.union(&acked).filter(|u| at.all.contains(u)).copied().collect();
         // The old ack goes only with or after the old registry: `own_hosts` finds an old host by its ack (S-G5).
         let reg_stays = over
             && meta.registries.get(h).is_some_and(|r| r.value.as_ref().is_ok_and(|v| v.identity == identity));
-        if h != host && at.is_empty() && !reg_stays {
+        // S§7.6 "Rename": no entry that a prune can remove, and every entry in the ack (MS-14 review F6 keeps them).
+        if h != host && at.removable.is_empty() && new == at.all && !reg_stays {
             out.push(Change::Remove { path: format!("ack/{h}.json") });
             continue;
         }
-        let new: BTreeSet<Ulid> = old.union(&acked).filter(|u| at.contains(u)).copied().collect();
         if new == old && !(h == host && tip_ack.is_none()) {
             continue;
         }
