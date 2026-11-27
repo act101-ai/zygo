@@ -18,6 +18,7 @@ use crate::branch::{self, BranchError, Change, Fetched, Pushed};
 use crate::env::{Clock, Crash, Env, Verdict};
 use crate::identity::{self, own_hosts, read_meta, TipMeta};
 use crate::import::{self, Target};
+use crate::outbox::NoticeError;
 use crate::prune::{self, Pruned};
 use crate::public;
 use crate::secret::{self, Outcome};
@@ -666,30 +667,22 @@ fn host_of(to: &str) -> &str { to.split_once('@').map_or("", |(_, h)| h) }
 /// moves the file to `refused/` (FX-24 review F5: in that order); `body` replaces the secret-pass notice body
 /// (`ids`) for another reason. The notice is one M§5 P1 delivery (S§8.6): `mail/lock` held shared for at most
 /// [`MAIL_LOCK_WAIT`], the sender resolved on the member records read under it (not the gate's read), and the lock
-/// dropped before the next git call. A notice not delivered (a lock not taken, or another error) writes the log line
-/// `notice` and leaves the file in the outbox for the next pass. A sender with no record in that read gets no notice
-/// and no maildir: the file moves, with the log line `notice`. A failed move writes the line `notice` too.
+/// dropped before the next git call. A notice that a later pass can deliver (a lock not taken, an I/O error) writes
+/// the log line `notice` and leaves the file in the outbox for the next pass. A notice that no pass can deliver
+/// (FX-24 review R2 F1: [`notice_error`]) moves the file all the same, with the log line `notice: <reason>`: `full`
+/// (the sender's `new/` is at `max_unread`) or `no-record` (the sender has no record in that read: no notice and no
+/// maildir, as `cli`). A failed move writes the line `notice` too.
 fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut Notified) {
     let now = c.env.clock.now();
-    let mut no_sender = false;
-    let mut notify = |sender: &str, subject: &str, secret_body: &str| -> std::io::Result<()> {
-        let fail = |_| std::io::Error::other("notice not delivered");
-        let d = Delivery::begin(&c.store, MAIL_LOCK_WAIT).map_err(fail)?;
-        let targets = match names::resolve(d.workspace(), sender, None) {
-            Ok(t) => t,
-            // The sender went for good during the pass: no inbox, as `cli`; the message is still refused.
-            Err(MailError::UnknownTarget { .. }) => {
-                no_sender = true;
-                return Ok(());
-            }
-            Err(e) => return Err(fail(e)),
-        };
+    let mut notify = |sender: &str, subject: &str, secret_body: &str| -> Result<(), NoticeError> {
+        let d = Delivery::begin(&c.store, MAIL_LOCK_WAIT).map_err(notice_error)?;
+        let targets = names::resolve(d.workspace(), sender, None).map_err(notice_error)?;
         let mut sent = false;
-        let each = || -> std::io::Result<()> {
+        let each = || -> Result<(), NoticeError> {
             for t in targets {
                 let label = t.name.clone().unwrap_or_else(|| t.key.clone());
-                let msg = Message::new("zygo", &label, subject, body.unwrap_or(secret_body), now).map_err(fail)?;
-                d.deliver(&t.key, &label, &msg, c.cfg.mail.max_unread).map_err(fail)?;
+                let msg = Message::new("zygo", &label, subject, body.unwrap_or(secret_body), now).map_err(notice_error)?;
+                d.deliver(&t.key, &label, &msg, c.cfg.mail.max_unread).map_err(notice_error)?;
                 notified.keys.push(t.key);
                 sent = true;
             }
@@ -701,8 +694,22 @@ fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut 
         }
         r
     };
-    if crate::outbox::refuse(&c.sp, id, ids, &mut notify, now).is_err() || no_sender {
-        c.log(&format!("mail sync: outbox {id}: notice"));
+    match crate::outbox::refuse(&c.sp, id, ids, &mut notify, now) {
+        Ok(None) => {}
+        Ok(Some(why)) => c.log(&format!("mail sync: outbox {id}: notice: {why}")),
+        Err(_) => c.log(&format!("mail sync: outbox {id}: notice")),
+    }
+}
+
+/// S§8.6 (FX-24 review R2 F1): a notice delivery error as a [`NoticeError`]. Lasting, so the message moves with no
+/// notice: `Full` (`full`: the sender's inbox is at `max_unread`, and only the sender's reads can clear it) and a
+/// sender with no record in the read under `mail/lock` (`no-record`: `UnknownTarget` or `NoRecord`). Every other
+/// error (a busy lock, an I/O error, no workspace) is one that a later pass can clear, so the message stays.
+fn notice_error(e: MailError) -> NoticeError {
+    match e {
+        MailError::Full { .. } => NoticeError::Never("full"),
+        MailError::UnknownTarget { .. } | MailError::NoRecord { .. } => NoticeError::Never("no-record"),
+        e => NoticeError::Later(std::io::Error::other(e.to_string())),
     }
 }
 

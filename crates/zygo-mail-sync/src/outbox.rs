@@ -246,22 +246,38 @@ fn set_mtime(path: &Path, t: SystemTime) -> io::Result<()> {
     o.open(path)?.set_modified(t)
 }
 
+/// Why the notice of a refusal (S§8.6) was not delivered.
+#[derive(Debug)]
+pub enum NoticeError {
+    /// A later pass can deliver it (a busy `mail/lock`, an I/O error): the message stays in the outbox.
+    Later(io::Error),
+    /// No later pass can deliver it (FX-24 review R2 F1): the message moves to `refused/` with no notice. The text
+    /// is the reason of the `errors.log` line: `full`, `no-record` or `moved`.
+    Never(&'static str),
+}
+
+impl From<io::Error> for NoticeError {
+    fn from(e: io::Error) -> NoticeError { NoticeError::Later(e) }
+}
+
 /// Calls `notify(sender, subject, body)` once when the sender is a member name (S§8.6 "At commit"; `cli` and `zygo`
 /// have no inbox), then moves `outbox/<id>.json` to `outbox/refused/` without rewriting it. The order (FX-24 review
 /// F5): notify; then M§5's move: link into `refused/`, set its time to `now` (the `refused/` age counts from the
-/// refusal, S§9), `fsync` `refused/`, remove the `outbox/` name, `fsync` `outbox/`. A `notify` error is returned and
-/// the outbox file stays, for the next pass; a move that fails after a delivered notice leaves the file too, and
-/// the next pass sends a second notice (the accepted cost). No source file is `NotFound`. A `refused/<id>.json` left
-/// by an earlier call that stopped partway is finished when it holds the same bytes; other bytes are
-/// `AlreadyExists` before any notice, and the outbox file stays. A file that does not parse, or is larger than
-/// `FILE_MAX`, is moved and gets no notice.
+/// refusal, S§9), `fsync` `refused/`, remove the `outbox/` name, `fsync` `outbox/`. A `NoticeError::Later` of `notify`
+/// is returned as its error and the outbox file stays, for the next pass; a `NoticeError::Never` moves the file all
+/// the same, and its reason is the `Ok` value (FX-24 review R2 F1: a notice that no pass can deliver must not keep
+/// the message, nor log it again, on every pass). `Ok(None)`: the notice was delivered, or none was due. A move
+/// that fails after a delivered notice leaves the file too, and the next pass sends a second notice (the accepted
+/// cost). No source file is `NotFound`. A `refused/<id>.json` left by an earlier call that stopped partway is
+/// finished when it holds the same bytes; other bytes are `AlreadyExists` before any notice, and the outbox file
+/// stays. A file that does not parse, or is larger than `FILE_MAX`, is moved and gets no notice.
 pub fn refuse(
     sp: &SyncPaths,
     id: Ulid,
     ids: &[String],
-    notify: &mut dyn FnMut(&str, &str, &str) -> io::Result<()>,
+    notify: &mut dyn FnMut(&str, &str, &str) -> Result<(), NoticeError>,
     now: SystemTime,
-) -> io::Result<()> {
+) -> io::Result<Option<&'static str>> {
     let file = format!("{id}.json");
     let (src, dst) = (sp.outbox.join(&file), sp.refused.join(&file));
     let Some(bytes) = read_capped(&src)? else {
@@ -277,12 +293,14 @@ pub fn refuse(
     if read_capped(&dst)?.is_some_and(|d| !(whole && d == bytes)) {
         return Err(another());
     }
-    // S§8.6 (FX-24 review F5): the notice first. A notice not delivered (a busy `mail/lock`, or any other error)
-    // leaves the message in the outbox, and the next pass refuses it and sends the notice again.
+    // S§8.6 (FX-24 review F5): the notice first. A notice that a later pass can deliver (a busy `mail/lock`, an I/O
+    // error) leaves the message in the outbox, and the next pass refuses it and sends the notice again. One that no
+    // pass can deliver moves the message now (review R2 F1).
+    let mut lost = None;
     if let Some(m) = &msg {
         let sender = m.from.split_once('@').map_or(m.from.as_str(), |(n, _)| n);
         if valid_member_name(sender) {
-            notify(
+            let sent = notify(
                 sender,
                 &format!("not sent: {id}"),
                 &format!(
@@ -290,7 +308,12 @@ pub fn refuse(
                     m.to,
                     ids.join(", ")
                 ),
-            )?;
+            );
+            match sent {
+                Ok(()) => {}
+                Err(NoticeError::Later(e)) => return Err(e),
+                Err(NoticeError::Never(why)) => lost = Some(why),
+            }
         }
     }
     match fs::hard_link(&src, &dst) {
@@ -308,7 +331,7 @@ pub fn refuse(
     fs::remove_file(&src)?;
     // The file is in refused/ now: a failed fsync here is no error.
     let _ = sync_dir(&sp.outbox);
-    Ok(())
+    Ok(lost)
 }
 
 /// Deletes `outbox/refused/` files older than `keep` and `outbox/tmp/` files older than 1 h by `now` (S§9 last

@@ -1280,7 +1280,7 @@ fn notice_to_a_sender_whose_record_went_makes_no_maildir() {
     assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none());
     assert!(fs::symlink_metadata(a.sp().mail.join(ALICE)).is_err(), "the notice made mail/<alice>/");
     let log = a.errors();
-    assert!(log.lines().any(|l| l.ends_with(&format!("mail sync: outbox {id}: notice"))), "{log}");
+    assert!(log.lines().any(|l| l.ends_with(&format!("mail sync: outbox {id}: notice: no-record"))), "{log}");
 }
 
 #[test] // d1 (FX-24), review F5, S§8.6 "At commit": a notice that cannot take mail/lock keeps the message for the next pass
@@ -1364,4 +1364,32 @@ fn notice_wakes_the_sender_from_the_read_under_the_lock() {
     assert!(a.sp().refused.join(format!("{id}.json")).is_file());
     assert_eq!(fs::read_dir(a.sp().mail.join(NEW_ALICE).join("new")).unwrap().count(), 1);
     assert_eq!(*typed.lock().unwrap(), vec![("%3".to_string(), WAKE_TEXT.to_string())]);
+}
+
+#[test] // FX-24 review R2 F1, S§8.6: a full sender inbox is a lasting refusal of the notice: the message moves once
+fn notice_to_a_full_sender_inbox_moves_the_message_to_refused() {
+    let _g = exclusive();
+    let (r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "say zz-forbidden-zz now");
+    a.config(Some("a\"\nmax_unread = 2\n#"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
+    let new = a.sp().mail.join(ALICE).join("new");
+    fs::create_dir_all(&new).unwrap();
+    for n in 0..2u64 {
+        let u = ulid::Ulid::from_parts(1_764_000_000_000 + n, n as u128);
+        fs::write(new.join(format!("{u}.json")), b"{}").unwrap();
+    }
+    let (queued, refused) = (a.sp().outbox.join(format!("{id}.json")), a.sp().refused.join(format!("{id}.json")));
+    sync(&a);
+    assert!(refused.is_file(), "the message is not in refused/ after one pass");
+    assert!(fs::symlink_metadata(&queued).is_err(), "the message is still in the outbox");
+    assert_eq!(fs::read_dir(&new).unwrap().count(), 2, "a notice went past max_unread");
+    let lines = |log: String| log.lines().filter(|l| l.contains(&id.to_string())).map(String::from).collect::<Vec<_>>();
+    let once = lines(a.errors());
+    assert_eq!(once.len(), 2, "{once:?}");
+    assert!(once[0].ends_with(&format!("mail sync: outbox {id}: refused: ship_word")), "{once:?}");
+    assert!(once[1].ends_with(&format!("mail sync: outbox {id}: notice: full")), "{once:?}");
+    sync(&a);
+    sync(&a);
+    assert_eq!(lines(a.errors()), once, "a later pass wrote about the moved message");
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none());
 }
