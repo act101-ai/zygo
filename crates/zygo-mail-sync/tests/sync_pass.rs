@@ -1112,6 +1112,23 @@ fn lock_failure_is_logged_for_a_child() {
     assert!(a.errors().contains("mail sync: stopped: lock"));
 }
 
+#[test] // FX-24 review R3 F2 (c), S§8.3 step 3, S§7.6 step 1: a FIFO at mail/sync/lock is never taken as the lock: the
+// sync refuses with the lock stop and runs no pass
+fn fifo_at_the_sync_lock_is_the_lock_stop_and_no_pass_runs() {
+    let _g = exclusive();
+    let (r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "one");
+    let sp = a.sp();
+    fs::remove_file(&sp.lock).unwrap();
+    let fifo = std::ffi::CString::new(sp.lock.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    let e = run(&plain_env(&a), WS_ID, Mode::Cli).unwrap_err();
+    assert!(matches!(e, SyncError::Stopped { check: "lock", .. }), "{e:?}");
+    assert!(a.errors().contains("mail sync: stopped: lock"));
+    assert!(sp.outbox.join(format!("{id}.json")).is_file(), "a pass sent the queued message");
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none(), "a pass pushed the queued message");
+}
+
 #[test] // R4 (review F5), S§8.3 step 1
 fn missing_workspace_record_is_a_gate_failure() {
     let _g = shared();
@@ -1259,4 +1276,220 @@ fn every_test_holds_the_spawn_guard() {
             assert_eq!(guard, "let _g = exclusive();", "{name}");
         }
     }
+}
+
+#[test] // d1 (FX-24), S§8.6 "At commit": the notice resolves its sender on the read under mail/lock, not the gate's
+fn notice_to_a_sender_whose_record_went_makes_no_maildir() {
+    let _g = exclusive();
+    let (r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "say zz-forbidden-zz now");
+    a.config(Some("a"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
+    let w = Store::open(&a.paths, WS_ID);
+    let h = after_gate(move || {
+        w.update(Duration::from_secs(10), &mut |ws| {
+            ws.members.remove(ALICE);
+            Ok(())
+        })
+        .unwrap();
+    });
+    run(&hook_env(&a, h), WS_ID, Mode::Cli).unwrap();
+    assert!(a.sp().refused.join(format!("{id}.json")).is_file());
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none());
+    assert!(fs::symlink_metadata(a.sp().mail.join(ALICE)).is_err(), "the notice made mail/<alice>/");
+    let log = a.errors();
+    assert!(log.lines().any(|l| l.ends_with(&format!("mail sync: outbox {id}: notice: no-record"))), "{log}");
+}
+
+#[test] // d1 (FX-24), review F5, S§8.6 "At commit": a notice that cannot take mail/lock keeps the message for the next pass
+fn notice_that_cannot_take_mail_lock_keeps_the_message_for_the_next_pass() {
+    let _g = exclusive();
+    let (r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "say zz-forbidden-zz now");
+    a.config(Some("a"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
+    let held = {
+        use std::os::unix::fs::OpenOptionsExt;
+        let f = fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).mode(0o600)
+            .open(a.sp().mail.join("lock")).unwrap();
+        fs4::FileExt::try_lock(&f).unwrap();
+        f
+    };
+    sync(&a);
+    drop(held);
+    let (queued, refused) = (a.sp().outbox.join(format!("{id}.json")), a.sp().refused.join(format!("{id}.json")));
+    assert!(queued.is_file(), "the message left the outbox with no notice");
+    assert!(fs::symlink_metadata(&refused).is_err());
+    assert!(fs::symlink_metadata(a.sp().mail.join(ALICE)).is_err(), "a notice was delivered under a held lock");
+    assert!(a.errors().lines().any(|l| l.ends_with(&format!("mail sync: outbox {id}: notice"))));
+    // The lock is free: the next pass sends the notice, then moves the message to refused/, once.
+    sync(&a);
+    sync(&a);
+    assert!(fs::symlink_metadata(&queued).is_err());
+    assert!(refused.is_file());
+    assert_eq!(fs::read_dir(a.sp().mail.join(ALICE).join("new")).unwrap().count(), 1);
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none());
+}
+
+/// The new pane key of `bob` and of `alice` in the FX-24 review F2 tests.
+const NEW_BOB: &str = "kbobnew22";
+const NEW_ALICE: &str = "kalicenew";
+
+/// Renames the member `key` to `renamed` (session `s<renamed>`) and adds `new_key` named `name` (session `s<name>`),
+/// as `zygo ws name` and a new pane do between the gate's read and a delivery.
+fn moved_name(w: &Store, key: &str, renamed: &str, new_key: &str, name: &str) {
+    w.update(Duration::from_secs(10), &mut |ws| {
+        let m = ws.members.get_mut(key).unwrap();
+        m.name = Some(renamed.into());
+        m.zygo_session = Some(format!("s{renamed}"));
+        let mut n = zygo_workspace::state::MemberRecord::new(zygo_core::Agent::ClaudeCode);
+        n.name = Some(name.into());
+        n.zygo_session = Some(format!("s{name}"));
+        ws.members.insert(new_key.into(), n);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test] // FX-24 review F2, S§8.5, S§10.1: the import maps the folder name to a key, and wakes, on the read under the lock
+fn import_delivers_and_wakes_by_the_read_under_the_lock() {
+    let _g = exclusive();
+    let (_r, a, b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "one");
+    sync(&a);
+    let _s = live(&b.paths, "sbob");
+    let typed = Typed::default();
+    let w = Store::open(&b.paths, WS_ID);
+    let h = after_gate(move || moved_name(&w, BOB, "robert", NEW_BOB, "bob"));
+    let e = env(&b, h, Clock::at(T0), Verdict::Local, StubWake { idle: true, typed: typed.clone() }, far_policy());
+    assert_eq!(run(&e, WS_ID, Mode::Cli).unwrap().delivered, 1);
+    assert!(b.sp().mail.join(NEW_BOB).join("new").join(format!("{id}.json")).is_file(), "not in bob's new maildir");
+    assert!(fs::symlink_metadata(b.sp().mail.join(BOB).join("new").join(format!("{id}.json"))).is_err());
+    assert_eq!(*typed.lock().unwrap(), vec![("%3".to_string(), WAKE_TEXT.to_string())]);
+}
+
+#[test] // FX-24 review F2, R2 F5, S§8.6, S§10.1: the notice goes to the sender's key of the pass's first read, and wakes
+// it from the read under the lock (here: a new session of the same member, live only in that read)
+fn notice_wakes_the_sender_from_the_read_under_the_lock() {
+    let _g = exclusive();
+    let (_r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "say zz-forbidden-zz now");
+    a.config(Some("a"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
+    let _s = live(&a.paths, "salice2");
+    let typed = Typed::default();
+    let w = Store::open(&a.paths, WS_ID);
+    let h = after_gate(move || {
+        w.update(Duration::from_secs(10), &mut |ws| {
+            ws.members.get_mut(ALICE).unwrap().zygo_session = Some("salice2".into());
+            Ok(())
+        })
+        .unwrap();
+    });
+    let e = env(&a, h, Clock::at(T0), Verdict::Local, StubWake { idle: true, typed: typed.clone() }, far_policy());
+    run(&e, WS_ID, Mode::Cli).unwrap();
+    assert!(a.sp().refused.join(format!("{id}.json")).is_file());
+    assert_eq!(fs::read_dir(a.sp().mail.join(ALICE).join("new")).unwrap().count(), 1);
+    assert_eq!(*typed.lock().unwrap(), vec![("%3".to_string(), WAKE_TEXT.to_string())]);
+}
+
+#[test] // FX-24 review R2 F5, S§8.6: a sender name that maps to another key under the lock gets no notice: `moved`
+fn notice_to_a_renamed_sender_whose_name_another_member_took_is_moved() {
+    let _g = exclusive();
+    let (r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "say zz-forbidden-zz now");
+    a.config(Some("a"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
+    let _s = live(&a.paths, "salice");
+    let typed = Typed::default();
+    let w = Store::open(&a.paths, WS_ID);
+    let h = after_gate(move || moved_name(&w, ALICE, "alicia", NEW_ALICE, "alice"));
+    let e = env(&a, h, Clock::at(T0), Verdict::Local, StubWake { idle: true, typed: typed.clone() }, far_policy());
+    run(&e, WS_ID, Mode::Cli).unwrap();
+    assert!(a.sp().refused.join(format!("{id}.json")).is_file());
+    assert!(fs::symlink_metadata(a.sp().outbox.join(format!("{id}.json"))).is_err());
+    assert!(fs::symlink_metadata(a.sp().mail.join(NEW_ALICE)).is_err(), "the new alice got the notice");
+    assert_eq!(new_count(&a, ALICE), 0, "alicia got a notice for a name she no longer has");
+    assert!(typed.lock().unwrap().is_empty(), "a member was woken");
+    let log = a.errors();
+    assert!(log.lines().any(|l| l.ends_with(&format!("mail sync: outbox {id}: notice: moved"))), "{log}");
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none());
+}
+
+#[test] // FX-24 review R2 F1, S§8.6: a full sender inbox is a lasting refusal of the notice: the message moves once
+fn notice_to_a_full_sender_inbox_moves_the_message_to_refused() {
+    let _g = exclusive();
+    let (r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "say zz-forbidden-zz now");
+    a.config(Some("a\"\nmax_unread = 2\n#"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
+    let new = a.sp().mail.join(ALICE).join("new");
+    fs::create_dir_all(&new).unwrap();
+    for n in 0..2u64 {
+        let u = ulid::Ulid::from_parts(1_764_000_000_000 + n, n as u128);
+        fs::write(new.join(format!("{u}.json")), b"{}").unwrap();
+    }
+    let (queued, refused) = (a.sp().outbox.join(format!("{id}.json")), a.sp().refused.join(format!("{id}.json")));
+    sync(&a);
+    assert!(refused.is_file(), "the message is not in refused/ after one pass");
+    assert!(fs::symlink_metadata(&queued).is_err(), "the message is still in the outbox");
+    assert_eq!(fs::read_dir(&new).unwrap().count(), 2, "a notice went past max_unread");
+    let lines = |log: String| log.lines().filter(|l| l.contains(&id.to_string())).map(String::from).collect::<Vec<_>>();
+    let once = lines(a.errors());
+    assert_eq!(once.len(), 2, "{once:?}");
+    assert!(once[0].ends_with(&format!("mail sync: outbox {id}: refused: ship_word")), "{once:?}");
+    assert!(once[1].ends_with(&format!("mail sync: outbox {id}: notice: full")), "{once:?}");
+    sync(&a);
+    sync(&a);
+    assert_eq!(lines(a.errors()), once, "a later pass wrote about the moved message");
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none());
+}
+
+#[test] // FX-24 review R3 F1, S§8.6: a sender whose name the pass's first read does not have (here: alice renamed herself
+// to alicia after the gate and kept her key) is notified at the key of the read under the lock
+fn notice_to_a_sender_renamed_after_the_gate_with_the_same_key_is_sent() {
+    let _g = exclusive();
+    let (r, a, _b) = pair();
+    let id = send(&a, "alicia", ("bob", "b"), "say zz-forbidden-zz now");
+    a.config(Some("a"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
+    let w = Store::open(&a.paths, WS_ID);
+    let h = after_gate(move || {
+        w.update(Duration::from_secs(10), &mut |ws| {
+            ws.members.get_mut(ALICE).unwrap().name = Some("alicia".into());
+            Ok(())
+        })
+        .unwrap();
+    });
+    let e = env(&a, h, Clock::at(T0), Verdict::Local, StubWake { idle: true, typed: Typed::default() }, far_policy());
+    run(&e, WS_ID, Mode::Cli).unwrap();
+    let log = a.errors();
+    assert_eq!(new_count(&a, ALICE), 1, "the same member (same key) got no notice; log: {log}");
+    assert!(a.sp().refused.join(format!("{id}.json")).is_file(), "{log}");
+    assert!(fs::symlink_metadata(a.sp().outbox.join(format!("{id}.json"))).is_err(), "{log}");
+    assert!(!log.lines().any(|l| l.contains(&format!("mail sync: outbox {id}: notice"))), "{log}");
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none());
+}
+
+#[test] // FX-24 review R3 F3, S§8.6: a write into the sender's maildir that fails (a link at mail/<sender>/new) is a lasting
+// refusal of the notice: the message moves to refused/ once, with `notice: maildir`, and later passes write nothing
+fn notice_whose_maildir_write_fails_moves_the_message_to_refused() {
+    let _g = exclusive();
+    let (r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "say zz-forbidden-zz now");
+    a.config(Some("a"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
+    let md = a.sp().mail.join(ALICE);
+    fs::create_dir_all(&md).unwrap();
+    let elsewhere = a.dir.path().join("elsewhere");
+    fs::create_dir(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, md.join("new")).unwrap();
+    let (queued, refused) = (a.sp().outbox.join(format!("{id}.json")), a.sp().refused.join(format!("{id}.json")));
+    sync(&a);
+    let lines = |log: String| log.lines().filter(|l| l.contains(&id.to_string())).map(String::from).collect::<Vec<_>>();
+    let once = lines(a.errors());
+    assert!(refused.is_file(), "the message is not in refused/ after one pass: {once:?}");
+    assert!(fs::symlink_metadata(&queued).is_err(), "the message is still in the outbox: {once:?}");
+    assert_eq!(once.len(), 2, "{once:?}");
+    assert!(once[0].ends_with(&format!("mail sync: outbox {id}: refused: ship_word")), "{once:?}");
+    assert!(once[1].ends_with(&format!("mail sync: outbox {id}: notice: maildir")), "{once:?}");
+    sync(&a);
+    sync(&a);
+    assert_eq!(lines(a.errors()), once, "a later pass wrote about the moved message");
+    assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0, "a notice was written through the link");
+    assert!(fs::symlink_metadata(md.join("new")).unwrap().file_type().is_symlink());
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none());
 }
