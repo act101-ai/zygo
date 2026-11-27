@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use semver::Version;
 use zygo_config::keys::{default_store, error_kind, resolve_with, SecretStore};
 use zygo_config::repo_def::{
-    check_default, repository_loadout, short, GitRunner, SystemGit, Use, REPOSITORY_LOADOUT,
+    repository_loadout, short, GitRunner, SystemGit, Use, REPOSITORY_LOADOUT,
 };
 use zygo_config::{load, KeyRef, Layer, LoadContext, LoadoutPane, Merged, BUILTIN_LOADOUT};
 use zygo_core::exit::ExitCode;
@@ -24,12 +24,11 @@ use zygo_plugins::snapshot::missing_commands;
 use zygo_plugins::store::{state, ManifestState};
 use zygo_work::policy::Policy;
 use zygo_workspace::args::has_user_info;
-use zygo_workspace::identity::workspace_id;
 use zygo_workspace::loadout::builtin_solo;
 use zygo_workspace::mux::tmux::Tmux;
 use zygo_workspace::mux::{Multiplexer, MuxError, MIN_VERSION};
 use zygo_workspace::pool;
-use zygo_workspace::up::{find_checkout, GIT_BOUND};
+use zygo_workspace::up::GIT_BOUND;
 
 use super::status::repo_top;
 use super::verbs::VerbCtx;
@@ -258,9 +257,7 @@ pub fn definition_lines(cwd: &Path, merged: &Merged, approvals: &Path, git: &dyn
     let mut out = Vec::new();
     // The checkout of `zygo up` (a bare repository's folder and `.git` give the main worktree); an `Err` is up's
     // "not a repository": no workspace-files line.
-    let found = find_checkout(cwd, GIT_BOUND)
-        .ok()
-        .map(|(co, ..)| check_default(&co.top, &workspace_id(&co.common_dir), approvals, git));
+    let found = super::workspace_files::read_here(cwd, approvals, git).ok();
     // R§10 `up` row: `[workspace] default_loadout` chooses only when the user config file sets it.
     let user_default =
         (merged.source_of("workspace.default_loadout") == Layer::User).then_some(&merged.config.workspace.default_loadout);
