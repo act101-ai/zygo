@@ -40,3 +40,23 @@ zygo claude --passthrough --config-dir ~/.claude-interns/<name>
 ```
 
 The directory must exist. Run `/login` once in each directory. The flag wins over an inherited `CLAUDE_CONFIG_DIR`.
+
+## A pool of logins for workspace members
+
+A pool is a folder in user config whose subdirectories are Claude Code config directories, each with its own login. Workspace members that take a directory from the pool run in passthrough, each on the login of its directory.
+
+```toml
+[workspace]
+pool = "~/.claude-interns"   # user config only; `~` expands as for --config-dir; must be absolute after that
+```
+
+Each entry of the pool folder whose name does not start with `.` and that is a directory (links followed) is one config directory. Run `/login` once in each, for example with `zygo claude --passthrough --config-dir ~/.claude-interns/<name>`.
+
+- **Which members.** A `claude-code` pane with `pool = true`, in `.zygo/workspace.toml` or in a user loadout. Defining the pool is your consent to passthrough for these members; there is no other key. A member without `pool = true` is a normal zygo member with role routing. With no pool configured, `pool = true` has no effect. OpenCode has no pool: `pool` on an `opencode` pane is invalid, and `zygo config check` also refuses `pool` together with `config_dir`.
+- **Assignment.** At a fresh build (`zygo up` of a new workspace, or `zygo up --reset`), the pool members in name order (members with no name after them, in pane order) take the directories in name order, in turn: with directories `alice` and `bob`, members `ana`, `ben` and `cy` get `alice`, `bob`, `alice`. Each member saves its directory and passthrough, so a resume or a restore keeps them, even after the pool changes or is removed. The next `zygo up --reset` assigns again.
+- **Shown to you.** `zygo up` prints, once per fresh build: `zygo: ana, ben run in passthrough on pool /home/me/.claude-interns; profile rust of ana does not apply in passthrough` (a member with no name is `pane <n>`). `zygo workspace approve` shows the same text in its summary.
+- **Profiles.** A profile, from any source, does not apply in passthrough: passthrough sends no role names. `zygo claude --passthrough --profile <n>` prints `zygo: profile <n> does not apply in passthrough`.
+- **Local mode only.** With `[server] url` set, `zygo up` refuses a plan with a pool member.
+- **Refusals.** When the plan has a pool member and the pool does not work, `zygo up` exits 1 and starts nothing: `zygo: pool <dir>: <reason>; nothing started`, where `<reason>` is `must be absolute after ~ expansion`, `not a directory`, `no subdirectory`, `not readable (<kind>)` or `passthrough is local mode only, and [server] url is set`. A plan with no pool member does not read the pool.
+- **`zygo doctor`.** `pool: <dir>: <k> directories`, or `pool: <dir>: <reason>`. With fewer directories than members, one line per shared directory for the loadout that `zygo up` would choose, for example `pool: /home/me/.claude-interns/alice is shared by ana, ben`.
+- **What zygo reads.** zygo reads the names and types of the pool's entries only, and sets `CLAUDE_CONFIG_DIR` for the member. As for any config directory, the launch check reads its `settings.json`: a credential key or a provider switch there stops that member's launch.
