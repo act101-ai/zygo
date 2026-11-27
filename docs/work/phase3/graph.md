@@ -230,7 +230,7 @@ Session text (T, SX nodes):
 | FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | DONE | implementation | 569e61a9^..9ac65902 · acceptance pass (shape_clean 35 passed) · PR #211 |
 | FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
 | FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | TODO | implementation | — |
-| FX-24 | Mail sync deliveries and ws forget take the M§5 mail lock | FX-13, MS-21 | TODO | judgment | — |
+| FX-24 | Mail sync deliveries and ws forget take the M§5 mail lock | FX-13, MS-21 | PLANNED | judgment | — |
 
 ## Log
 
@@ -441,3 +441,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-13: agent-written operator gate in the node contract deleted (no operator citation; same kind as FX-16's, PR #208); P1 mail/lock and P2 split taken as author's call (lead) for operator review |
 | 2026-11-26 | FX-13 DONE: deliveries, reads and maildir removals take mail/lock (shared/exclusive) and read records under it; no maildir without a record; R1 F1-F5, R2 R1-2..R1-5 fixed, R1-1 recorded · PR #219 |
 | 2026-11-26 | FX-24 added: FX-13 P2: mail-sync deliveries (sync.rs, import.rs) and ws forget take the M§5 mail lock |
+| 2026-11-26 | FX-24 PLANNED: d1-d4 hold at 6b283c74; import, incoming finish, notice under mail/lock per delivery; forget holds it excl across rename, after before_remove; order op<sync<mail<state; S§8.5/8.6/7.6, M§5 rewritten; author's calls in node |
