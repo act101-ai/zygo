@@ -229,7 +229,7 @@ Session text (T, SX nodes):
 | FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
 | FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | DONE | implementation | bb21eadf^..c99eeb95 · acceptance pass (offline: 7 test files, 0 failed) · PR #220 |
 | FX-24 | Mail sync deliveries and ws forget take the M§5 mail lock | FX-13, MS-21 | TODO | judgment | — |
-| FX-25 | `zygo up` reads the definition at the current checkout; `find_checkout` keeps a failed or timed-out `git worktree list` (exit 1) | WD-15 | TODO | implementation | — |
+| FX-25 | `zygo up` reads the definition at the current checkout; `find_checkout` keeps a failed or timed-out `git worktree list` (exit 1) | WD-15 | PLANNED | implementation | — |
 
 ## Log
 
@@ -443,3 +443,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-23 DONE: shared harness turns the built-in marketplace off by default (NO_MARKETPLACE) and fails any run that syncs; 90 tests in 6 files had synced; R1 F1 F2 F4 F5 fixed, F3 DNS leak of the offline form recorded · PR #220 |
 | 2026-11-26 | WD-15 PLANNED: R§18 item 7 rewritten (ESC/lone CR invalid in TOML comments; checked via ignored names); R§6.5: R§7.1 lines show the full digest; read moved to cmd/workspace_approve.rs (definition_hooks p2); no pool listing in approve |
 | 2026-11-26 | WD-15 DONE: zygo workspace approve lists the repository files escaped, stores the digest of what was shown; R1 F1–F6 and R2 1–4 fixed (--digest checked first, quoted free text, read at the current checkout); FX-25 added · PR #223 |
+| 2026-11-26 | FX-25 PLANNED: R§10 up row and W§8.1 step 3 rewritten; author's calls: up reads at Target.top (by name: main_root); worktrees returns ListError, git's "not a git repository" alone is exit 2; failed/timed-out list, no git, gone main worktree exit 1 |
