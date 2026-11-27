@@ -1,7 +1,8 @@
 //! WD-15: `zygo workspace approve [--yes] [--digest <hex>]` (workspace definition design R§7.1, R§7.2, R§9.5
 //! "Shown to the operator", R§10, R§11; R§18 items 4, 5, 7, 15 and 24). Not `cfg(unix)`: the subverb starts nothing,
 //! needs no tmux and the OP5 check is not applied to it. No network: the user config turns the built-in marketplace off
-//! (`NO_MARKETPLACE`). No agent starts, so no stub agent.
+//! (`common::NO_MARKETPLACE`), and each run asserts that no marketplace sync ran (`common::assert_no_marketplace_sync`,
+//! FX-23). No agent starts, so no stub agent.
 mod common;
 
 use std::ffi::OsStr;
@@ -25,7 +26,6 @@ const REFUSED: &str =
     "zygo: approval is not available inside an agent session; run it in your own shell: zygo workspace approve";
 const SLASH: &str = "run in your shell: zygo workspace approve";
 const USAGE: &str = "zygo workspace: usage: workspace approve [--yes] [--digest <hex>]";
-const NO_MARKETPLACE: &str = "[[marketplace]]\nname = \"act101\"\nref = \"\"\n";
 
 /// The file that turns user and system git config off.
 fn no_config() -> &'static str {
@@ -114,11 +114,12 @@ fn fx(ents: &[(&str, &[u8])]) -> Fx {
     Fx { t, c }
 }
 
-/// `f.t/home` with `config.toml` = `NO_MARKETPLACE` + `user_toml`.
+/// `f.t/home` with `config.toml` = `user_toml`, a newline, then [`common::NO_MARKETPLACE`] (its `[[marketplace]]`
+/// header closes any open table, so it goes after the other keys).
 fn home(f: &Fx, user_toml: &str) -> PathBuf {
     let h = f.t.path().join("home");
     std::fs::create_dir_all(&h).unwrap();
-    std::fs::write(h.join("config.toml"), format!("{NO_MARKETPLACE}{user_toml}")).unwrap();
+    std::fs::write(h.join("config.toml"), format!("{user_toml}\n{}", common::NO_MARKETPLACE)).unwrap();
     h
 }
 
@@ -167,7 +168,9 @@ fn run_in(home: &Path, dir: &Path, args: &[&str], stdin: Option<&[u8]>, extra: &
     if let Some(b) = stdin {
         common::feed_stdin(child.stdin.take().unwrap(), b);
     }
-    child.wait_with_output().unwrap()
+    let o = child.wait_with_output().unwrap();
+    common::assert_no_marketplace_sync(home);
+    o
 }
 
 fn approve(f: &Fx, home: &Path, args: &[&str], stdin: Option<&[u8]>, extra: &[(&str, &OsStr)]) -> Output {
@@ -356,6 +359,7 @@ fn two_approvals_store_one_entry() {
     };
     let (c1, c2) = (spawn(), spawn());
     let (o1, o2) = (c1.wait_with_output().unwrap(), c2.wait_with_output().unwrap());
+    common::assert_no_marketplace_sync(&h);
     let (out1, out2) = (text(&o1.stdout), text(&o2.stdout));
     for out in [&out1, &out2] {
         assert!(
