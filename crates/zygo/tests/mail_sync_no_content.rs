@@ -90,9 +90,6 @@ const COLLISION: &str = "zygo: the mail host name is taken on the side branch by
 const TWIN: &str = "zygo: another workspace writes with this mail identity (copied state?); run zygo mail sync --new-identity here, and set another [mail] host";
 /// The S§8.2 `public` line (`crates/zygo-mail-sync/src/sync.rs:85`, `outbox.rs:43`), byte for byte.
 const PUBLIC: &str = "zygo: the remote can be read without a login; mail sync refused";
-/// The start of the S§8.2 `unknown` note: `sync::public_check` (`crates/zygo-mail-sync/src/sync.rs:579`) adds it to
-/// `Report.notes`, and `print_report` (`crates/zygo/src/cmd/mail.rs:572-574`) writes each note on stderr.
-const UNKNOWN_NOTE: &str = "zygo: cannot check if the remote is public";
 
 /// Author's call 7: both tests hold it, so no in-process lock meets a child that another test thread forks.
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -2535,11 +2532,15 @@ fn no_mail_content_after_the_hook_wake_and_text_scenarios() {
     // FX-26 re-plan review round 2 F1: the answer runs in a subshell, and the stub then logs `done <exit code>`, so the
     // record of a probe that the 10 s probe limit killed (its process group) has no `done` line.
     let refused = a.root().join("refused-calls");
+    // FX-26 re-plan 2 c: the stub also logs to `subs` the subcommand of each `push`, `fetch` or `ls-remote` call, before
+    // it answers, refuses or runs the real git, so a run's network calls can be asserted whole.
+    let subs = a.root().join("network-calls");
     const STUB: &str = r#"#!/bin/sh
 sub=
 for x in "$@"; do
   case "$x" in push|fetch|ls-remote) sub=$x; break ;; esac
 done
+if [ -n "$sub" ]; then printf '%s\n' "$sub" >> '@SUBS@'; fi
 if [ "$sub" = push ] || [ "$sub" = fetch ]; then
   remote= after=
   for x in "$@"; do
@@ -2578,6 +2579,7 @@ exec '@REAL@' "$@"
         let body = STUB.replace("@REAL@", &real_git.display().to_string())
             .replace("@REFUSED@", &refused.display().to_string())
             .replace("@CALLS@", &calls.display().to_string())
+            .replace("@SUBS@", &subs.display().to_string())
             .replace("@ENV@", &env_lines)
             .replace("@ANSWER@", answer);
         std::fs::remove_file(a.bin.join("git")).unwrap();
@@ -2596,21 +2598,29 @@ exec '@REAL@' "$@"
         zygo_at(&a, a.root(), &["mail", "sync"], &extra)
     };
     let refs0 = git(&r.bare, &["for-each-ref"]);
-    // `public`: a ref line and exit 0. The sync stops before any fetch.
+    // `public`: a ref line and exit 0. The sync stops at `sync::public_check`, before `branch::fetch`: its one network
+    // call is the probe (FX-26 re-plan 2 c: `subs` holds `ls-remote` only, no `fetch`).
     git(&a.repo(), &["remote", "set-url", "--push", "origin", "https://u:p@example.invalid/p.git"]);
     stub("printf 'deadbeef\\trefs/heads/main\\n'; exit 0");
     let o = probe_run();
     assert_eq!((o.status.code(), out_of(&o), err_of(&o)), (Some(1), String::new(), format!("{PUBLIC}\n")));
     assert_eq!(git(&r.bare, &["for-each-ref"]), refs0);
     let public_log = std::fs::read_to_string(&calls).unwrap();
+    let public_subs = std::fs::read_to_string(&subs).unwrap();
+    assert_eq!(public_subs, "ls-remote\n");
     // `private`: the S§8.2 step 4 text and exit 128. The sync goes on. FX-26 re-plan review round 2 F1: an `Unknown`
     // verdict also lets the sync go on (`sync::public_check` only adds a note), so the run's whole result is asserted:
-    // exit 0, the summary line as the only stdout, no `unknown` note on stderr, and one probe that ran to its end.
+    // exit 0, the summary line as the only stdout, and one probe that ran to its end. FX-26 re-plan 2 c: stderr is
+    // exactly empty. `sync_cli` (`cmd/mail.rs`) gives an `Ok` report to `print_report`, which writes each of
+    // `Report.notes` on stderr and nothing else there; the `Private` verdict adds no note (`sync::public_check`), and
+    // a pass with nothing to send or prune adds none either. After the probe the sync fetches (`branch::fetch`).
     git(&a.repo(), &["remote", "set-url", "--push", "origin", "https://example.invalid/q.git"]);
     stub("echo 'remote: Repository not found.' >&2; exit 128");
     let o = probe_run();
-    assert_eq!((o.status.code(), out_of(&o)), (Some(0), "zygo: mail sync: 0 sent, 0 delivered\n".to_string()), "{}", err_of(&o));
-    assert!(!err_of(&o).contains(UNKNOWN_NOTE), "{}", err_of(&o));
+    assert_eq!((o.status.code(), out_of(&o), err_of(&o)), (Some(0), "zygo: mail sync: 0 sent, 0 delivered\n".to_string(), String::new()));
+    let all_subs = std::fs::read_to_string(&subs).unwrap();
+    let private_subs = all_subs.strip_prefix(&public_subs).unwrap_or_else(|| panic!("{all_subs}"));
+    assert_eq!(private_subs, "ls-remote\nfetch\n");
     // Each run asked once, and that probe ran to its end (its `done` line), with the arguments that `probe_command`
     // builds for the `https` form (no user info) and the S§8.2 step 3 environment: no ask-pass, no prompt, no global or
     // system config, `HOME` an empty folder.
