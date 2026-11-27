@@ -554,6 +554,31 @@ mod unix {
         assert_eq!(err(&o), format!("{}\n", unread_line(REFUSED)));
     }
 
+    #[test]
+    fn a_failed_worktree_list_is_the_unread_line_with_its_reason() { // WD-16 review F1 binary form; FX-25 f6
+        let f = fx(&[(WS, MIN), (PROF, RUST)]);
+        let h = home(&f, "");
+        appr(&f, &h);
+        // A git that fails only `worktree list`, on the child's `PATH` only.
+        let path = stub_git(&f, "case \" $* \" in *\" worktree list \"*) echo 'fatal: stub' >&2; exit 1;; esac");
+        let env = [("PATH", path.as_os_str())];
+        let line = unread_line("git worktree list failed: fatal: stub");
+        for args in [&["config", "show"][..], &["profile", "list"]] {
+            let o = zygo_env(&h, &f.c, args, &env);
+            let (so, se) = (out(&o), err(&o));
+            assert_eq!(o.status.code(), Some(0), "{args:?}: {se}");
+            assert_eq!(def_lines(&se), [line.as_str()], "{args:?}");
+            assert!(!so.contains("workspace-files"), "{args:?}: {so}");
+        }
+        let o = zygo_env(&h, &f.c, &["loadout", "show", "repository"], &env);
+        assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+        assert_eq!(out(&o), "");
+        assert_eq!(err(&o), format!("{line}\n"));
+        // Control: with the real git, the approved files apply.
+        let o = zygo(&h, &f.c, &["loadout", "show", "repository"]);
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    }
+
     /// `zygo loadout list` in `f.c` with the user config `user`, approved or not: (stdout, stderr), exit 0 asserted.
     fn list(f: &Fx, user: &str, approve: bool) -> (String, String) {
         let h = home(f, user);
