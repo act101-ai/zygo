@@ -10,7 +10,8 @@ use zygo_work::repo::{Flow, RunError};
 use zygo_workspace::identity::valid_pane_key;
 use zygo_workspace::mail::store::{unread, write_synced};
 use zygo_workspace::mail::{ensure_mail_dir, Delivery, Message, BODY_MAX, MAIL_LOCK_WAIT, SUBJECT_MAX};
-use zygo_workspace::state::Store;
+use zygo_workspace::mail::names;
+use zygo_workspace::state::{Store, Workspace};
 
 use crate::address::{self, ulid_file};
 use crate::branch::{self, BranchError, Entry};
@@ -23,7 +24,9 @@ pub const CANDIDATE_CAP: usize = 500;
 /// S§8.5: the largest message blob read, the 8 MiB limit of the maildir reader.
 pub const MESSAGE_MAX: u64 = zygo_workspace::mail::store::FILE_MAX;
 
-/// A local member that can receive mail: its name (the folder `<name>@<own host>`) and its pane key.
+/// A local member that can receive mail: its name (the folder `<name>@<own host>`) and its pane key. The pane key is
+/// that of the pass's first read; it sets the folder's inbox room only, and each delivery maps the name to a key
+/// again on the read under `mail/lock` (FX-24 review F2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target {
     pub name: String,
@@ -31,12 +34,15 @@ pub struct Target {
 }
 
 /// What one import pass did. `delivered` holds `(pane key, ULID)`; `acked` each ULID once, in reading order;
-/// `left` the seen candidates not finished, plus 1 when the reading stopped early.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// `left` the seen candidates not finished, plus 1 when the reading stopped early; `read` the state read under
+/// `mail/lock` at the last delivery, which holds the record of each key in `delivered` that still has one (the wake
+/// uses it, S§10.1).
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Imported {
     pub delivered: Vec<(String, ulid::Ulid)>,
     pub acked: Vec<ulid::Ulid>,
     pub left: usize,
+    pub read: Option<Workspace>,
 }
 
 /// The `json` check: `bytes` parse as the maildir reader's message type, so every value, unknown keys included, is
@@ -165,10 +171,10 @@ fn staged_ids(sp: &SyncPaths) -> std::io::Result<HashSet<Ulid>> {
     Ok(out)
 }
 
-/// One candidate of a pass: its ULID, the pane key it goes to, its folder and its tree entry.
+/// One candidate of a pass: its ULID, the member name of its folder, its folder and its tree entry.
 struct Candidate {
     id: Ulid,
-    key: String,
+    name: String,
     folder: String,
     entry: Entry,
 }
@@ -219,7 +225,7 @@ fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], ow
                     *room -= 1;
                 }
                 ids.insert(id);
-                out.push(Candidate { id, key: t.pane_key.clone(), folder: folder.clone(), entry: e });
+                out.push(Candidate { id, name: t.name.clone(), folder: folder.clone(), entry: e });
                 Flow::Go
             });
             match r {
@@ -244,9 +250,10 @@ fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], ow
 /// one is logged (one line with its ULID and check name) and acknowledged, a passing one is delivered through
 /// `incoming/` (steps 1-4, with the seams `after_incoming`, `after_log`, `after_new`, `after_ack`). A full inbox
 /// leaves the message neither delivered nor acknowledged. Steps 1-3 of each candidate run under `mail/lock` of
-/// `store`'s workspace held shared (M§5 P1), taken after the candidate's git reads and dropped before the next: a
-/// candidate whose key has no record in the read under that lock is left on the branch (not staged, logged or
-/// acknowledged; no line); a lock not taken in [`MAIL_LOCK_WAIT`] writes `mail sync: import <ULID>: lock` and stops
+/// `store`'s workspace held shared (M§5 P1), taken after the candidate's git reads and dropped before the next. The
+/// folder's member name maps to its pane key, and the inbox check runs, on the read under that lock (`targets` gives
+/// the names and each folder's inbox room only); a name with no record in that read is left on the branch (not
+/// staged, logged or acknowledged; no line), and [`Imported::read`] keeps the read of the last delivery. A lock not taken in [`MAIL_LOCK_WAIT`] writes `mail sync: import <ULID>: lock` and stops
 /// the run. Step 1 makes the target's maildir before it writes the staged file. A candidate whose ULID is in the
 /// imported log is acknowledged, unless its staged file is still in `incoming/`: then it is left until step 5 of a
 /// later pass moves that file (S§8.5). `incoming/` that cannot be read writes `mail sync: import: incoming` and
@@ -314,10 +321,6 @@ pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[Str
                 continue;
             }
         };
-        if !unread(mail_dir, &c.key).is_ok_and(|n| n < max_unread as usize) {
-            out.left += 1;
-            continue;
-        }
         // S§8.5 "Delivery, crash-safe": steps 1-3 of this one candidate under `mail/lock` shared (M§5 P1), taken after
         // every git call of the candidate and dropped before the next one (author's call 1).
         let Ok(d) = Delivery::begin(store, MAIL_LOCK_WAIT) else {
@@ -325,12 +328,21 @@ pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[Str
             out.left += 1;
             break;
         };
-        if !d.workspace().members.contains_key(&c.key) {
-            continue; // not staged, logged or acked: it waits on the branch (S§13 limit 2)
+        // FX-24 review F2: the folder name maps to a pane key on the read under the lock, not on the pass's first
+        // read. A name with no record there is not staged, logged or acked: it waits on the branch (S§13 limit 2).
+        let Some(key) = names::members(d.workspace()).into_iter()
+            .find(|t| t.name.as_deref() == Some(c.name.as_str()) && valid_pane_key(&t.key))
+            .map(|t| t.key)
+        else {
+            continue;
+        };
+        if !unread(mail_dir, &key).is_ok_and(|n| n < max_unread as usize) {
+            out.left += 1;
+            continue;
         }
-        let staged = sp.incoming.join(format!("{}.{id}.json", c.key));
+        let staged = sp.incoming.join(format!("{key}.{id}.json"));
         // Step 1 makes the maildir first (FX-24 review F1): a staged file is kept while its maildir exists.
-        let wrote = d.make_maildir(&c.key).map_err(|e| std::io::Error::other(e.to_string()))
+        let wrote = d.make_maildir(&key).map_err(|e| std::io::Error::other(e.to_string()))
             .and_then(|()| [&sp.mail, &sp.sync, &sp.incoming].into_iter().try_for_each(|d| ensure_mail_dir(d)))
             .and_then(|()| write_synced(&staged, &bytes));
         if wrote.is_err() {
@@ -346,14 +358,15 @@ pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[Str
         }
         seen.insert(id);
         seam.at("after_log")?;
-        let Ok(moved) = d.deliver_staged(&c.key, &id.to_string(), &staged, max_unread) else {
+        let Ok(moved) = d.deliver_staged(&key, &id.to_string(), &staged, max_unread) else {
             out.left += 1;
             continue;
         };
-        drop(d);
+        let read = d.into_workspace(); // the lock is released here
         seam.at("after_new")?;
         if moved {
-            out.delivered.push((c.key.clone(), id));
+            out.delivered.push((key, id));
+            out.read = Some(read);
         }
         out.acked.push(id);
         seam.at("after_ack")?;

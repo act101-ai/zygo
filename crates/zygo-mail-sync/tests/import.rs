@@ -203,12 +203,22 @@ struct CrashAt(&'static str);
 impl Seam for CrashAt {
     fn at(&self, p: &'static str) -> Result<(), Crash> { if p == self.0 { Err(Crash(p)) } else { Ok(()) } }
 }
-/// `run` with host list `hosts`, targets `bob()`, deadline `far()`; returns the result and the log lines.
+/// `run` with host list `hosts`, targets `bob()`, deadline `far()`; returns the result and the log lines. It checks
+/// that `read` is there exactly when a message was delivered and holds the record of each delivered key (no test
+/// changes the records during a run), then sets it to `None` so a test compares the rest.
 fn go(m: &Machine, sp: &SyncPaths, tip: &str, hosts: &[&str], ack: &BTreeSet<Ulid>, max: u32, seam: &dyn Seam)
     -> (Result<Imported, Crash>, Vec<String>) {
     let hosts: Vec<String> = hosts.iter().map(|h| h.to_string()).collect();
     let mut lines = Vec::new();
     let r = run(sp, &Store::open(&m.paths, WS_ID), &m.wt, tip, &hosts, &bob(), ack, max, far(), seam, &mut |l| lines.push(l.to_string()));
+    let r = r.map(|mut i| {
+        let read = i.read.take();
+        assert_eq!(read.is_some(), !i.delivered.is_empty(), "read {read:?}");
+        for (k, _) in &i.delivered {
+            assert!(read.as_ref().is_some_and(|ws| ws.members.contains_key(k)), "{k} not in the read");
+        }
+        i
+    });
     (r, lines)
 }
 /// Every path under `dir`, links not followed.
@@ -232,7 +242,7 @@ fn delivers_the_blob_bytes_unchanged() { // S§6.2, S§19 #1 delivery part
     let f = tree_literally(&m.root, &[("100644", file(u(1)).as_bytes(), &blob(&m.root, &b))]);
     let t = tip(&m, &[("bob@b", f)]);
     let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![(KEY.into(), u(1))], acked: vec![u(1)], left: 0 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![(KEY.into(), u(1))], acked: vec![u(1)], left: 0 }));
     assert_eq!(fs::read(new_dir(&sp).join(file(u(1)))).unwrap(), b);
     assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
     assert_eq!(names(&sp.incoming), Vec::<String>::new());
@@ -256,7 +266,7 @@ fn hostile_entries_are_acked_not_delivered() { // S§19 #12 delivery part, S-C5
     let t = tip(&m, &[("bob@b", f)]);
     let before = all_files(m.root.parent().unwrap());
     let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![], acked: (1..=6).map(u).collect(), left: 0 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: (1..=6).map(u).collect(), left: 0 }));
     assert_eq!(lines, [log_line(u(1), "mode"), log_line(u(2), "mode"), log_line(u(3), "size"),
         log_line(u(4), "id"), log_line(u(5), "to"), log_line(u(6), "json")]);
     assert!(!sp.mail.join(KEY).exists());
@@ -278,7 +288,7 @@ fn hostile_names_never_reach_a_path() { // review focus 8
     let t = tip(&m, &[("bob@b", f)]);
     let before = all_files(m.root.parent().unwrap());
     let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![(KEY.into(), u(1))], acked: vec![u(1), u(2)], left: 0 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![(KEY.into(), u(1))], acked: vec![u(1), u(2)], left: 0 }));
     assert_eq!(lines, [log_line(u(2), "mode")]);
     assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
     for p in all_files(m.root.parent().unwrap()).difference(&before) {
@@ -317,7 +327,7 @@ fn a_ulid_in_the_imported_log_is_acked_not_delivered() {
     let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
     imported_append(&sp, u(1)).unwrap();
     let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![u(1)], left: 0 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![u(1)], left: 0 }));
     assert!(lines.is_empty());
     assert!(!new_dir(&sp).exists());
 }
@@ -330,7 +340,7 @@ fn a_full_inbox_leaves_the_message_unacked() { // S§19 #15
     fs::write(new_dir(&sp).join(file(u(90))), b"{}").unwrap();
     fs::write(new_dir(&sp).join(file(u(91))), b"{}").unwrap();
     let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 2, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![], left: 1 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![], left: 1 }));
     assert!(lines.is_empty());
     assert!(!imported_load(&sp).unwrap().contains(&u(1)));
     assert!(!sp.incoming.exists() || names(&sp.incoming).is_empty());
@@ -348,7 +358,7 @@ fn a_crash_after_each_delivery_step_gives_one_file() { // S§19 #14 delivery par
         assert_eq!(go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &CrashAt(point)).0, Err(Crash(point)));
         assert_eq!(finish_incoming(&sp, &Store::open(&m.paths, WS_ID)).unwrap(), finished, "{point}");
         let (res, _) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-        assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![u(1)], left: 0 }), "{point}");
+        assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![u(1)], left: 0 }), "{point}");
         assert_eq!(names(&new_dir(&sp)), [file(u(1))], "{point}");
         assert_eq!(fs::read(new_dir(&sp).join(file(u(1)))).unwrap(), b, "{point}");
         assert_eq!(names(&sp.incoming), Vec::<String>::new(), "{point}");
@@ -398,7 +408,7 @@ fn own_hosts_dedupe_and_unknown_names() { // S§7.5 own hosts, S§13 limit 2, on
     let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)])), ("bob@b2", folder(&m, "bob@b2", &[u(1), u(2)])),
         ("carol@b", folder(&m, "carol@b", &[u(3)]))]);
     let (res, lines) = go(&m, &sp, &t, &["b", "b2"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![(KEY.into(), u(1)), (KEY.into(), u(2))], acked: vec![u(1), u(2)], left: 0 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![(KEY.into(), u(1)), (KEY.into(), u(2))], acked: vec![u(1), u(2)], left: 0 }));
     assert!(lines.is_empty());
     assert_eq!(names(&new_dir(&sp)), [file(u(1)), file(u(2))]);
 }
@@ -419,7 +429,7 @@ fn a_passed_deadline_or_a_bad_target_reads_nothing() {
     let mut lines = Vec::new();
     let res = run(&sp, &Store::open(&m.paths, WS_ID), &m.wt, &t, &["b".into()], &bob(), &BTreeSet::new(), 5000, Instant::now(), &NoSeam,
         &mut |l| lines.push(l.to_string()));
-    assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![], left: 1 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![], left: 1 }));
     assert!(lines.is_empty(), "{lines:?}"); // stopping at the deadline is normal: no error line
     for (targets, host) in [(vec![Target { name: "bob".into(), pane_key: "../x".into() }], "b"),
         (vec![Target { name: "cli".into(), pane_key: KEY.into() }], "b"), (bob(), "B!")] {
@@ -478,7 +488,7 @@ fn finish_incoming_deletes_a_torn_staged_file() {
         assert!(!imported_load(&sp).unwrap().contains(&u(1)));
         assert!(!new_dir(&sp).exists());
         let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-        assert_eq!(res, Ok(Imported { delivered: vec![(KEY.into(), u(1))], acked: vec![u(1)], left: 0 }));
+        assert_eq!(res, Ok(Imported { read: None, delivered: vec![(KEY.into(), u(1))], acked: vec![u(1)], left: 0 }));
         assert!(lines.is_empty());
         assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
         assert_eq!(fs::read(new_dir(&sp).join(file(u(1)))).unwrap(), full);
@@ -522,7 +532,7 @@ fn a_failed_ls_tree_is_logged() {
     tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
     let missing = "0123456789abcdef0123456789abcdef01234567";
     let (res, lines) = go(&m, &sp, missing, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![], left: 1 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![], left: 1 }));
     assert_eq!(lines, ["mail sync: import: ls-tree"]);
 }
 
@@ -550,7 +560,7 @@ fn import_to_a_key_with_no_record_stages_nothing() {
     assert!(!imported_load(&sp).unwrap().contains(&u(1)));
     m.workspace(&[(KEY, "bob")]); // the message waited on the branch
     let (res, _) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![(KEY.into(), u(1))], acked: vec![u(1)], left: 0 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![(KEY.into(), u(1))], acked: vec![u(1)], left: 0 }));
 }
 
 #[test] // d3, author's calls 4 and 7: a mail/lock held for the whole bound stops the import for this pass
@@ -559,7 +569,7 @@ fn import_stops_at_a_held_mail_lock() {
     let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1), u(2)]))]);
     let held = hold_mail_lock(&sp);
     let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![], left: 1 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![], left: 1 }));
     assert_eq!(lines, [log_line(u(1), "lock")]);
     assert!(!sp.mail.join(KEY).exists() && !sp.incoming.exists());
     assert!(imported_load(&sp).unwrap().is_empty());
@@ -614,7 +624,7 @@ fn a_short_record_gap_keeps_a_logged_staged_message() {
     assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
     assert_eq!(names(&sp.incoming), staged, "the staged file stays while bob's maildir exists");
     let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![], left: 1 }), "a logged ULID with a staged file waits");
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![], left: 1 }), "a logged ULID with a staged file waits");
     assert!(lines.is_empty(), "{lines:?}");
     // the undo write of up puts bob's record back: the next pass delivers to bob, then acknowledges
     m.workspace(&[(KEY, "bob"), ("kcccccccc", "carol")]);
@@ -622,7 +632,20 @@ fn a_short_record_gap_keeps_a_logged_staged_message() {
     assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
     assert_eq!(names(&sp.incoming), Vec::<String>::new());
     let (res, _) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
-    assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![u(1)], left: 0 }));
+    assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![u(1)], left: 0 }));
+}
+
+#[test] // FX-24 review F2: the folder name maps to the key of the read under mail/lock, not of the pass's first read
+fn import_delivers_by_the_name_to_key_map_under_the_lock() {
+    let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+    let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
+    m.workspace(&[(KEY, "robert"), ("kcccccccc", "bob")]); // bob() is the older read: bob was KEY
+    let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    let res = res.unwrap();
+    assert!(lines.is_empty(), "{lines:?}");
+    assert_eq!((res.delivered, res.acked, res.left), (vec![("kcccccccc".to_string(), u(1))], vec![u(1)], 0));
+    assert!(sp.mail.join("kcccccccc").join("new").join(file(u(1))).is_file());
+    assert!(!new_dir(&sp).join(file(u(1))).exists(), "robert got bob's message");
 }
 
 #[test] // FX-24 review F1: no record and no maildir (M§5 removed it after the record went) is the only delete

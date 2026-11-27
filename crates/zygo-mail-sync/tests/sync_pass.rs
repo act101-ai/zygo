@@ -1302,3 +1302,57 @@ fn notice_that_cannot_take_mail_lock_is_not_sent() {
     assert!(fs::symlink_metadata(a.sp().mail.join(ALICE)).is_err());
     assert!(a.errors().lines().any(|l| l.ends_with(&format!("mail sync: outbox {id}: notice"))));
 }
+
+/// The new pane key of `bob` and of `alice` in the FX-24 review F2 tests.
+const NEW_BOB: &str = "kbobnew22";
+const NEW_ALICE: &str = "kalicenew";
+
+/// Renames the member `key` to `renamed` (session `s<renamed>`) and adds `new_key` named `name` (session `s<name>`),
+/// as `zygo ws name` and a new pane do between the gate's read and a delivery.
+fn moved_name(w: &Store, key: &str, renamed: &str, new_key: &str, name: &str) {
+    w.update(Duration::from_secs(10), &mut |ws| {
+        let m = ws.members.get_mut(key).unwrap();
+        m.name = Some(renamed.into());
+        m.zygo_session = Some(format!("s{renamed}"));
+        let mut n = zygo_workspace::state::MemberRecord::new(zygo_core::Agent::ClaudeCode);
+        n.name = Some(name.into());
+        n.zygo_session = Some(format!("s{name}"));
+        ws.members.insert(new_key.into(), n);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test] // FX-24 review F2, S§8.5, S§10.1: the import maps the folder name to a key, and wakes, on the read under the lock
+fn import_delivers_and_wakes_by_the_read_under_the_lock() {
+    let _g = exclusive();
+    let (_r, a, b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "one");
+    sync(&a);
+    let _s = live(&b.paths, "sbob");
+    let typed = Typed::default();
+    let w = Store::open(&b.paths, WS_ID);
+    let h = after_gate(move || moved_name(&w, BOB, "robert", NEW_BOB, "bob"));
+    let e = env(&b, h, Clock::at(T0), Verdict::Local, StubWake { idle: true, typed: typed.clone() }, far_policy());
+    assert_eq!(run(&e, WS_ID, Mode::Cli).unwrap().delivered, 1);
+    assert!(b.sp().mail.join(NEW_BOB).join("new").join(format!("{id}.json")).is_file(), "not in bob's new maildir");
+    assert!(fs::symlink_metadata(b.sp().mail.join(BOB).join("new").join(format!("{id}.json"))).is_err());
+    assert_eq!(*typed.lock().unwrap(), vec![("%3".to_string(), WAKE_TEXT.to_string())]);
+}
+
+#[test] // FX-24 review F2, S§8.6, S§10.1: the refused-message notice wakes its sender from the read under the lock
+fn notice_wakes_the_sender_from_the_read_under_the_lock() {
+    let _g = exclusive();
+    let (_r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "say zz-forbidden-zz now");
+    a.config(Some("a"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
+    let _s = live(&a.paths, "salice");
+    let typed = Typed::default();
+    let w = Store::open(&a.paths, WS_ID);
+    let h = after_gate(move || moved_name(&w, ALICE, "alicia", NEW_ALICE, "alice"));
+    let e = env(&a, h, Clock::at(T0), Verdict::Local, StubWake { idle: true, typed: typed.clone() }, far_policy());
+    run(&e, WS_ID, Mode::Cli).unwrap();
+    assert!(a.sp().refused.join(format!("{id}.json")).is_file());
+    assert_eq!(fs::read_dir(a.sp().mail.join(NEW_ALICE).join("new")).unwrap().count(), 1);
+    assert_eq!(*typed.lock().unwrap(), vec![("%3".to_string(), WAKE_TEXT.to_string())]);
+}

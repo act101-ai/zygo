@@ -195,6 +195,12 @@ impl Delivery {
         &self.ws
     }
 
+    /// Releases the lock and returns the state read under it, for the work after the last link that needs the member
+    /// records of the delivery (the wake, M§7.3).
+    pub fn into_workspace(self) -> Workspace {
+        self.ws
+    }
+
     /// [`store::deliver`] to `key` when `key` has a member record in the read under the lock; else `NoRecord`, and
     /// nothing is made.
     pub fn deliver(&self, key: &str, label: &str, msg: &Message, max_unread: u32) -> Result<(), MailError> {

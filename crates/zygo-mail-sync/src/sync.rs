@@ -476,12 +476,12 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
         let mut keys: Vec<String> = imp.delivered.iter().map(|(k, _)| k.clone()).collect();
         keys.sort();
         keys.dedup();
-        wake(c, &keys);
-        let mut notified = Vec::new();
+        wake(c, imp.read.as_ref(), &keys);
+        let mut notified = Notified::default();
         let (mut changes, sent) = outbox(c, &tip, fetched.then_some(&meta), (deadline, pass_end), &mut notified)?;
-        notified.sort();
-        notified.dedup();
-        wake(c, &notified);
+        notified.keys.sort();
+        notified.keys.dedup();
+        wake(c, notified.read.as_ref(), &notified.keys);
         let files = own_files(wt, &tip, &own, deadline)?;
         changes.extend(own_changes(c, &meta, &identity, &own, &files, &imp.acked));
         if changes.is_empty() {
@@ -587,7 +587,7 @@ pub(crate) fn public_check(c: &Ctx, report: &mut Report, deadline: Instant) -> R
 /// the push); a finding, the move to `refused/` and the notice to the sender, whose keys go into `notified`; could
 /// not run, the file stays.
 fn outbox(c: &Ctx, tip: &str, meta: Option<&TipMeta>, (deadline, pass_end): (Instant, SystemTime),
-    notified: &mut Vec<String>) -> Result<(Vec<Change>, Vec<PathBuf>), Fail> {
+    notified: &mut Notified) -> Result<(Vec<Change>, Vec<PathBuf>), Fail> {
     let (sp, wt) = (&c.sp, &c.sp.worktree);
     let (mut items, mut no_host) = (Vec::new(), Vec::new());
     for (id, p) in outbox_entries(sp).map_err(|_| stop("outbox"))? {
@@ -667,18 +667,27 @@ fn host_of(to: &str) -> &str { to.split_once('@').map_or("", |(_, h)| h) }
 /// writes the log line `notice`. The notice is one M§5 P1 delivery (S§8.6): `mail/lock` held shared for at most
 /// [`MAIL_LOCK_WAIT`], the sender resolved on the member records read under it (not the gate's read), and the lock
 /// dropped before the next git call; a lock not taken, or a sender with no record in that read, sends no notice.
-fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut Vec<String>) {
+fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut Notified) {
     let now = c.env.clock.now();
     let mut notify = |sender: &str, subject: &str, secret_body: &str| -> std::io::Result<()> {
         let fail = |_| std::io::Error::other("notice not delivered");
         let d = Delivery::begin(&c.store, MAIL_LOCK_WAIT).map_err(fail)?;
-        for t in names::resolve(d.workspace(), sender, None).map_err(fail)? {
-            let label = t.name.clone().unwrap_or_else(|| t.key.clone());
-            let msg = Message::new("zygo", &label, subject, body.unwrap_or(secret_body), now).map_err(fail)?;
-            d.deliver(&t.key, &label, &msg, c.cfg.mail.max_unread).map_err(fail)?;
-            notified.push(t.key);
+        let mut sent = false;
+        let mut each = || -> std::io::Result<()> {
+            for t in names::resolve(d.workspace(), sender, None).map_err(fail)? {
+                let label = t.name.clone().unwrap_or_else(|| t.key.clone());
+                let msg = Message::new("zygo", &label, subject, body.unwrap_or(secret_body), now).map_err(fail)?;
+                d.deliver(&t.key, &label, &msg, c.cfg.mail.max_unread).map_err(fail)?;
+                notified.keys.push(t.key);
+                sent = true;
+            }
+            Ok(())
+        };
+        let r = each();
+        if sent {
+            notified.read = Some(d.into_workspace()); // FX-24 review F2: the wake uses this read
         }
-        Ok(())
+        r
     };
     if crate::outbox::refuse(&c.sp, id, ids, &mut notify, now).is_err() {
         c.log(&format!("mail sync: outbox {id}: notice"));
@@ -755,11 +764,22 @@ fn read_message(p: &Path) -> Option<(Vec<u8>, serde_json::Value, String)> {
     Some((bytes, value, to))
 }
 
-/// S§10.1: the wake of `keys`, when there are any, at the injected time.
-fn wake(c: &Ctx, keys: &[String]) {
-    if !keys.is_empty() {
-        c.env.wake.wake(&c.env.paths, &c.ws, keys, &c.cfg.mail, c.env.clock.now());
+/// S§10.1: the wake of `keys`, when there are any, at the injected time, with the member records `read` that the
+/// deliveries read under `mail/lock` (FX-24 review F2; not the gate's read). No read: nothing was delivered.
+fn wake(c: &Ctx, read: Option<&Workspace>, keys: &[String]) {
+    if let Some(ws) = read
+        && !keys.is_empty()
+    {
+        c.env.wake.wake(&c.env.paths, ws, keys, &c.cfg.mail, c.env.clock.now());
     }
+}
+
+/// The members that the notices of a pass went to, and the state read under `mail/lock` at the last notice that was
+/// delivered (the wake uses it, S§10.1; FX-24 review F2).
+#[derive(Default)]
+struct Notified {
+    keys: Vec<String>,
+    read: Option<Workspace>,
 }
 
 /// The valid ack of host `h` with this identity at the tip.
