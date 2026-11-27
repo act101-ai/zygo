@@ -138,6 +138,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | FX-8 | zygo usage reads summary and savings from one snapshot | OS-8 | DONE | implementation | 4636d2ee, 73cffb55 · report_snapshot 1/0, usage_doctor 45/0 ; floor green · PR #105 |
 | FX-11 | zygo doctor icon line shows the ✉ mail glyph | ML-15, RT-3 | DONE | implementation | 1921d4ca, a7ac8924 · usage_doctor 45/0, statusline_render 37/0 ; floor green · PR #122 |
 | FX-10 | HUD spec lists the member name and unread mail segments and the ✉ glyph | ML-15, RT-3 | DONE | mechanical | 8b19ed30, daf5faed · ✉ 4 ; floor green · PR #123 |
+| FX-12 | HUD unread count uses the store's definition (regular <ULID>.json files; missing new/ is 0) | ML-15, ML-2, FX-11 | DONE | implementation | 233290fe, 9335d48e · statusline_mail 9/0 ; floor green · PR #124 |
 
 ## Log
 

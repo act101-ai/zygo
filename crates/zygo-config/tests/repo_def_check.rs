@@ -145,11 +145,15 @@ fn absent_unread_invalid() {
     assert_eq!(repo_def::check_default(&f.c, ID, &s, &fail), Use::Unread { why: "git symbolic-ref: tool not found".into() });
     let f = fx(&[(".zygo", b"x")]);
     assert_eq!(repo_def::check_default(&f.c, ID, &s, &Cnt::default()),
-               Use::Invalid { full_ref: Some(MAIN.into()), commit: head(&f.c), why: ".zygo is not a directory".into() });
+               Use::Invalid { full_ref: Some(MAIN.into()), commit: head(&f.c), why: ".zygo is not a directory".into(), workspace: false });
     let f = fx(&[(".zygo/workspace.toml", b"version = 2\n")]);
     let why = repo_def::parse(&ws("version = 2\n")).unwrap_err();
     assert_eq!(repo_def::check_default(&f.c, ID, &store(&f), &Cnt::default()),
-               Use::Invalid { full_ref: Some(MAIN.into()), commit: head(&f.c), why });
+               Use::Invalid { full_ref: Some(MAIN.into()), commit: head(&f.c), why, workspace: true });
+    // WD-16 review F4: an invalid profile with no `.zygo/workspace.toml` is an invalid read without one.
+    let f = fx(&[(".zygo/profiles/rust.toml", b"prompt = \"x\"\n")]);
+    let u = repo_def::check_default(&f.c, ID, &store(&f), &Cnt::default());
+    assert!(matches!(u, Use::Invalid { workspace: false, .. }), "{u:?}");
 }
 
 #[test] // R§18 item 6; R§7.3: one read, one digest, one lookup; the def applied is the read checked

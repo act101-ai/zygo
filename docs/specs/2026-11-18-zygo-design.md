@@ -116,7 +116,7 @@ In serve mode the server's catalog and provider set are authoritative: a client'
 
 `[statusline] style = "compact" | "verbose"` (default `compact`) selects the status line style (§17; HUD design H§8). `[update] check = true | false` (default `true`) turns the start check of `zygo update` on or off (§3, §17; auto-update design). Only user config may set these two tables: the repository file ignores them (layer 4, one stderr line), and the team layer drops them with one warning, `config: [statusline] in team config ignored; only user config may set them` (the warning names each dropped table, `[statusline], [update]` when both are present). `zygo statusline` changes the style for a session (layer 7). *(2026-11-22, HUD design, auto-update design)*
 
-`zygo config show [--layer <name>]` prints the merged config with each key's source layer; secrets are shown as `<set>`/`<unset>`.
+`zygo config show [--layer <name>]` prints the merged config with each key's source layer; secrets are shown as `<set>`/`<unset>`. In a repository whose workspace files are approved on this machine, each key that they add (the repository profiles and `loadout.repository`) shows the source `workspace-files` and its file, for example `# workspace-files .zygo/profiles/rust.toml`. `workspace-files` is a source, not a layer: `--layer workspace-files` shows only those keys, and `--layer repository` shows only the keys of `.zygo.toml` (workspace definition design R§10).
 
 ### 6.2 Provider keys
 
@@ -1147,3 +1147,4 @@ Each item is a test or a command whose output decides it. "Mock upstream" = an H
 | 2026-11-26 | §12.1 | operator (workspace definition design R§9.5, R§14 row §12) | A pool member starts with --passthrough; §12.3 and §12.4 do not change. |
 | 2026-11-26 | §15.7 | workspace definition design R§14 row §15.7; author's call (node WD-15) for the text | approvals.toml also holds [[workspace]] entries. |
 | 2026-11-26 | §17 | workspace definition design R§14 row §17; author's call (node WD-15) for the text | Row zygo workspace approve. |
+| 2026-11-26 | §6.1 | workspace definition design R§14 row §6.1; author's call (node WD-16) for the text | config show names the source workspace-files and the file for the keys the repository files add. |

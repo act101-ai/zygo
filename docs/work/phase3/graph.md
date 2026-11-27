@@ -208,14 +208,13 @@ Session text (T, SX nodes):
 | WD-22 | PR2 live check (operator): per-session settings act the same on a pool directory | WD-14, WD-21 | TODO | mechanical | — |
 | MS-22 | No mail content in logs, state, usage rows, commits or refs | MS-18, MS-19, MS-21 | DONE | judgment | e2b744fe^..91edeada · acceptance pass (mail_sync_no_content 2 passed) · PR #222 |
 | WD-15 | `zygo workspace approve [--yes] [--digest <hex>]` | WD-14, DR-3, MS-21 | DONE | judgment | a923b915^..fe86a15d · acceptance pass (workspace_approve 28 passed) · PR #223 |
-| WD-16 | `config show/check`, `profile list/show`, `loadout list/show` show the repository files | WD-15, WD-24 | TODO | implementation | — |
+| WD-16 | `config show/check`, `profile list/show`, `loadout list/show` show the repository files | WD-15, WD-24 | DONE | implementation | 4e0686e5^..b5991ee0 · acceptance pass (definition_surfaces 22 passed) · PR #225 |
 | WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | TODO | mechanical | — |
 | SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | TODO | implementation | — |
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
 | OS-46 | Bound the hook's usage-store wait per Bash call | — | DONE | judgment | 75339a21 · d6be5653 · c727ff0e · 68f8e48c · acceptance pass (busy_wait_total/open_bounded_total 7, rollback_journal 1, zygo-usage, zygo-hooks, readbacks) · PR #205 |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
-| FX-12 | HUD unread count uses the store's definition (regular <ULID>.json files; missing new/ is 0) | ML-15, ML-2, FX-11 | DONE | implementation | 233290fe, 9335d48e · statusline_mail 9/0 ; floor green · PR #124 |
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | DONE | judgment | 87a292d6^..da0207f1 · acceptance pass (mail_lifecycle 23 passed) · PR #219 |
 | FX-14 | `zygo up` team read: CLI test of `with_team`, team-layer warnings only, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code | WD-11, WD-12, ML-12 | DONE | implementation | 64d9685c, 3dc62442, 34467d50 · up_definition, workspace_restore, serve_cli, cmd::up all pass ; floor green · PR #162 |
 | FX-15 | `zygo doctor` pool lines skip the members `zygo up` skips | WD-12 | DONE | implementation | 0b4ee021, f046b2b7 · definition_doctor 17/0 ; floor green · PR #129 |
@@ -446,3 +445,5 @@ Session text (T, SX nodes):
 | 2026-11-26 | WD-15 DONE: zygo workspace approve lists the repository files escaped, stores the digest of what was shown; R1 F1–F6 and R2 1–4 fixed (--digest checked first, quoted free text, read at the current checkout); FX-25 added · PR #223 |
 | 2026-11-26 | MS-22 PLANNED: drift: own member names in workspace.json, own hosts in state.json keys (S-C2, S§19 #24 rewritten); author's calls: sends in process (no detached child), binary syncs empty outbox only, trim hook writes the usage row |
 | 2026-11-26 | MS-22 DONE: no mail content in any store, log, commit or ref after the walked S§19 scenarios on three machines; R1 fixed stale host keys in state.json (forget_hosts); S-C2, S§7.5, S§19 #24 rewritten; FX-26, FX-27 added · PR #222 |
+| 2026-11-26 | WD-16 PLANNED: R§10 loadout row follows the `<name>  <source>` format; /zygo:profile reads nothing (R-C8); one CLI-only read module for config, profile, loadout and doctor; workspace_approve.rs left to FX-25 (shared file) |
+| 2026-11-26 | WD-16 DONE: config show/check, profile list/show and loadout list/show show the repository files through one CLI-only read (workspace_files.rs); unapproved files show only ref, digest and state; R1 F1–F5 fixed · PR #225 |
