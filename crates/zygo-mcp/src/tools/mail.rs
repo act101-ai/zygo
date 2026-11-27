@@ -277,14 +277,11 @@ impl Tool for MailSend {
         if report.sent.is_empty() && !refused.is_empty() {
             return Err(ToolError::Failed(refused.join("\n")));
         }
-        let targets = names::members(&ws);
-        let label = |key: &str| {
-            targets.iter().find(|t| t.key == key).and_then(|t| t.name.clone()).unwrap_or_else(|| key.to_string())
-        };
-        let sent: Vec<Value> = report.sent.iter().map(|s| json!({"id": s.id, "to": label(&s.key)})).collect();
-        let keys: Vec<String> = report.sent.into_iter().map(|s| s.key).collect();
+        // The labels and the wake use the state `send` read under `mail/lock` (M§5 P1), not `ws`.
+        let sent: Vec<Value> = report.sent.iter().map(|s| json!({"id": s.id, "to": s.label})).collect();
+        let keys: Vec<String> = report.sent.iter().map(|s| s.key.clone()).collect();
         if !keys.is_empty() {
-            (m.wake)(&m.paths, &ws, &keys, &m.cfg);
+            (m.wake)(&m.paths, &report.workspace, &keys, &m.cfg);
         }
         Ok(json!({"sent": sent, "refused": refused}))
     }

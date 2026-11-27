@@ -163,6 +163,18 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
         });
         match r {
             Ok(Some(ws)) => {
+                // M§5 P1 (FX-13): the undo of a hand start that dropped the record removes its maildir, under
+                // mail/lock and the state read there.
+                if !ws.members.contains_key(&m.pane)
+                    && let Err(e) =
+                        zygo_workspace::mail::remove_maildir(&m.store, &m.pane, zygo_workspace::mail::MAIL_LOCK_WAIT)
+                {
+                    print_err(&format!(
+                        "zygo: mail of pane {} not removed: {}\n",
+                        m.pane,
+                        zygo_core::esc(&e.to_string())
+                    ));
+                }
                 after_exit = ws.members.get(&m.pane).cloned();
                 kept = after_exit.as_ref().and_then(|r| r.agent_session.clone());
                 // W§7.3 writer check, then the snapshot at agent exit (W§7.4, PW6 option A).

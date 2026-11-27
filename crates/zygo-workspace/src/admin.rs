@@ -18,7 +18,7 @@ use zygo_core::ids::valid_member_name;
 use zygo_core::paths::Paths;
 
 use crate::identity::{valid_name, valid_pane_key, valid_ws_id, workspace_id};
-use crate::mail::{mail_dir, names, store as mail_store};
+use crate::mail::{self, MAIL_LOCK_WAIT, mail_dir, names, store as mail_store};
 use crate::mux::tmux::Tmux;
 use crate::mux::{check_path, session_target, Multiplexer, MuxError, SessionAnswer, BOUND, UNSAFE_PATH_MESSAGE};
 use crate::repair::check_saved_socket;
@@ -1054,18 +1054,13 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
             first.get_or_insert(cannot(&e));
         }
     }
-    // M§5: mail/<key>/ after the record and after the caches; tried also after a cache error. The record goes first, so
-    // a send that reads the state after it cannot resolve the key. A send that read the state earlier can still deliver
-    // (that race is tracked as its own node). A folder or a link is removed by `remove_pane` (a link as a link); any
-    // other entry, such as a regular file, is removed as itself, as `remove_tree` does.
-    let removed = pane_maildir(paths, &id, key).and_then(|entry| match entry {
-        Some(entry) => {
-            let plain = fs::symlink_metadata(&entry).is_ok_and(|m| !m.is_dir() && !m.file_type().is_symlink());
-            let gone = if plain { fs::remove_file(&entry) } else { mail_store::remove_pane(&mail_dir(paths, &id), key) };
-            gone.map_err(|e| format!("{}: {e}", entry.display()))
-        }
-        None => Ok(()),
-    });
+    // M§5 P1: mail/<key>/ after the record and after the caches; tried also after a cache error. `remove_maildir` takes
+    // mail/lock exclusive and reads the records under it, so a delivery that read the records before the record
+    // removal has finished its last link, and a later one cannot resolve the key. It runs also when mail/<key> does not
+    // exist yet (a delivery in flight can still make it). A folder is removed with its contents, a link as a link and
+    // any other entry as itself. A lock held for the whole bound leaves the maildir for the next run (exit 1).
+    let removed = pane_maildir(paths, &id, key)
+        .and_then(|_| mail::remove_maildir(&store, key, MAIL_LOCK_WAIT).map(|_| ()).map_err(|e| e.to_string()));
     if let Err(e) = removed {
         first.get_or_insert(cannot(&e));
     }
