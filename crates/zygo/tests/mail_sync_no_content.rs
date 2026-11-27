@@ -511,6 +511,12 @@ fn state_findings(path: &Path, own_hosts: &[&str]) -> Vec<String> {
 fn commit_findings(repo: &Path, test_made: &BTreeSet<String>) -> Vec<String> {
     let all = git(repo, &["cat-file", "--batch-all-objects", "--batch-check=%(objecttype) %(objectname)"]);
     let mut found = Vec::new();
+    // MS-22 review F3: a tag object (zygo writes none) is scanned whole for every marker.
+    for id in all.lines().filter_map(|l| l.strip_prefix("tag ")) {
+        let o = git_cmd().args(["cat-file", "tag", id]).current_dir(repo).output().unwrap();
+        assert!(o.status.success(), "cat-file tag {id}: {}", err_of(&o));
+        found.extend(text_findings(&format!("{} tag {id}", repo.display()), &o.stdout, &MARKERS));
+    }
     for id in all.lines().filter_map(|l| l.strip_prefix("commit ")) {
         let o = git_cmd().args(["cat-file", "commit", id]).current_dir(repo).output().unwrap();
         assert!(o.status.success(), "cat-file commit {id}: {}", err_of(&o));
@@ -534,11 +540,88 @@ fn commit_findings(repo: &Path, test_made: &BTreeSet<String>) -> Vec<String> {
     found
 }
 
-/// Every ref name of `repo`, scanned for every marker.
-fn ref_findings(repo: &Path) -> Vec<String> {
-    git(repo, &["for-each-ref", "--format=%(refname)"]).lines()
+/// The `session.log` of each session folder of `h`: the zygo sessions, and the folders `sess-*` that the test makes
+/// for the MCP tools and the trim hook.
+fn session_logs(h: &Harness) -> Vec<PathBuf> {
+    let mut logs = Vec::new();
+    for (dir, every) in [(h.paths.sessions_dir.clone(), true), (h.root().to_path_buf(), false)] {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.map(|e| e.unwrap()) {
+            if every || e.file_name().to_string_lossy().starts_with("sess-") {
+                logs.push(e.path().join("session.log"));
+            }
+        }
+    }
+    logs
+}
+
+/// `mail/sync/imported`, `identity`, `last_start` and `incoming/` of `h` (MS-22 review F3).
+fn sync_files(h: &Harness) -> Vec<PathBuf> {
+    let s = sp(h);
+    vec![s.imported, s.identity, s.last_start, s.incoming]
+}
+
+/// The content markers: the text of a message. S-C2: the sync worktree and its index hold paths with host and member
+/// names by design (they are the synced tree), so its index is scanned for these only.
+const CONTENT: [&str; 2] = [SUBJ, BODY];
+
+/// The git folder of `repo`: `repo/.git` for a checkout, `repo` for a bare repository.
+fn git_dir(repo: &Path) -> PathBuf {
+    let g = repo.join(".git");
+    if g.is_dir() { g } else { repo.to_path_buf() }
+}
+
+/// Each file of `paths` that exists, and each file under each folder of `paths` (links not followed): its path below
+/// the scanned path, then its bytes, scanned for `markers`. Returns the count of files read and the findings.
+fn files_findings(paths: &[PathBuf], markers: &[&str]) -> (usize, Vec<String>) {
+    let (mut n, mut found) = (0, Vec::new());
+    for root in paths {
+        for e in walkdir::WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok) {
+            if !e.file_type().is_file() {
+                continue;
+            }
+            let mut bytes = e.path().strip_prefix(root).unwrap().as_os_str().as_encoded_bytes().to_vec();
+            bytes.push(b'\n');
+            bytes.extend(std::fs::read(e.path()).unwrap());
+            n += 1;
+            found.extend(text_findings(&e.path().display().to_string(), &bytes, markers));
+        }
+    }
+    (n, found)
+}
+
+/// S-C2 (MS-22 review F3): the reflogs of `repo` (`logs/**`) and the admin files of each of its linked worktrees
+/// (`worktrees/<name>/**`, its reflogs among them), for every marker, but the index of a linked worktree for the
+/// [`CONTENT`] markers only. Returns the count of files under `logs/` and the findings.
+fn git_meta_findings(repo: &Path) -> (usize, Vec<String>) {
+    let gd = git_dir(repo);
+    let (logs, mut found) = files_findings(&[gd.join("logs")], &MARKERS);
+    let Ok(rd) = std::fs::read_dir(gd.join("worktrees")) else { return (logs, found) };
+    for w in rd.map(|e| e.unwrap().path()) {
+        let index = w.join("index");
+        if index.is_file() {
+            found.extend(text_findings(&index.display().to_string(), &std::fs::read(&index).unwrap(), &CONTENT));
+        }
+        let rest: Vec<PathBuf> = walkdir::WalkDir::new(&w).follow_links(false).into_iter().filter_map(Result::ok)
+            .filter(|e| e.file_type().is_file() && e.path() != index)
+            .map(|e| e.into_path())
+            .collect();
+        found.extend(files_findings(&rest, &MARKERS).1);
+    }
+    (logs, found)
+}
+
+/// Every ref name that `git for-each-ref` lists from the worktree (or bare repository) `dir`, its per-worktree refs
+/// among them, and the ref that its `HEAD` names (MS-22 review F3), scanned for every marker. A detached `HEAD` names
+/// none.
+fn ref_findings(dir: &Path) -> Vec<String> {
+    let mut found: Vec<String> = git(dir, &["for-each-ref", "--format=%(refname)"]).lines()
         .flat_map(|r| text_findings(&format!("ref {r}"), r.as_bytes(), &MARKERS))
-        .collect()
+        .collect();
+    let o = git_cmd().args(["symbolic-ref", "-q", "HEAD"]).current_dir(dir).output().unwrap();
+    let head = out_of(&o);
+    found.extend(text_findings(&format!("HEAD {}", head.trim_end()), head.as_bytes(), &MARKERS));
+    found
 }
 
 /// The usage store at `db`: the row count over all tables, and the findings of every text or blob value of every
@@ -613,6 +696,46 @@ fn scanners_find_a_planted_marker() {
     zygo_usage::Store::open(&db).unwrap().insert_trim(&zygo_usage::TrimRow { session: BODY.into(), ..Default::default() }).unwrap();
     let (rows, f) = usage_findings(&db);
     assert!(rows >= 1 && f.iter().any(|l| l.ends_with(&format!("holds {BODY}"))), "{rows} {f:?}");
+
+    // MS-22 review F3: a reflog message, a tag object, a linked worktree whose index holds a path with a content
+    // marker and a path with names, and a per-worktree ref.
+    let r2 = d.path().join("r2");
+    git(d.path(), &["init", "-q", "--initial-branch=main", "r2"]);
+    std::fs::write(r2.join("f"), "x").unwrap();
+    git(&r2, &["add", "f"]);
+    git(&r2, &["commit", "-q", "-m", "zygo mail [skip ci]"]);
+    let head = git(&r2, &["rev-parse", "HEAD"]);
+    git(&r2, &["update-ref", "-m", &format!("{BODY} moved"), "refs/heads/main", &head]);
+    git(&r2, &["tag", "-a", "-m", &format!("{SUBJ} tag"), "t1", &head]);
+    let wt = d.path().join("wt");
+    git(&r2, &["worktree", "add", "-q", "--detach", wt.to_str().unwrap()]);
+    for name in [format!("{B_NAME}@{HOST_B}"), format!("{SUBJ}.json")] {
+        std::fs::write(wt.join(&name), "x").unwrap();
+        git(&wt, &["add", &name]);
+    }
+    git(&wt, &["update-ref", &format!("refs/worktree/{HOST_A}"), &head]);
+    let (logs, f) = git_meta_findings(&r2);
+    assert!(logs >= 1, "{f:?}");
+    assert!(f.iter().any(|l| l.contains("/logs/") && l.ends_with(&format!("holds {BODY}"))), "{f:?}");
+    assert!(f.iter().any(|l| l.ends_with(&format!("/index holds {SUBJ}"))), "{f:?}");
+    assert!(!f.iter().any(|l| l.contains("/index holds ") && !l.ends_with(&format!("holds {SUBJ}"))), "{f:?}");
+    let f = commit_findings(&r2, &BTreeSet::new());
+    assert!(f.iter().any(|l| l.contains(" tag ") && l.ends_with(&format!("holds {SUBJ}"))), "{f:?}");
+    assert!(ref_findings(&wt).contains(&format!("ref refs/worktree/{HOST_A} holds {HOST_A}")));
+    git(&r2, &["symbolic-ref", "HEAD", &format!("refs/heads/zygo/{HOST_B2}")]); // unborn: no ref lists it
+    assert!(ref_findings(&r2).contains(&format!("HEAD refs/heads/zygo/{HOST_B2} holds {HOST_B2}")), "{:?}", ref_findings(&r2));
+    // The session logs and the sync files: each file of a folder is read, with its name.
+    let sess = d.path().join("sessions/s1");
+    std::fs::create_dir_all(&sess).unwrap();
+    std::fs::write(sess.join("session.log"), format!("x {B_NAME}\n")).unwrap();
+    std::fs::create_dir_all(d.path().join("incoming")).unwrap();
+    std::fs::write(d.path().join("incoming").join(format!("{HOST_B2}.json")), "x").unwrap();
+    std::fs::write(d.path().join("imported"), format!("{SUBJ}\n")).unwrap();
+    let (n, f) = files_findings(&[sess.join("session.log"), d.path().join("incoming"), d.path().join("imported"), d.path().join("absent")], &MARKERS);
+    assert_eq!(n, 3);
+    for m in [B_NAME, HOST_B2, SUBJ] {
+        assert!(f.iter().any(|l| l.ends_with(&format!("holds {m}"))), "{m}: {f:?}");
+    }
 }
 
 #[test] // S-C2, S§6.5, S§19 #24 (as rewritten): after #1, #3, #4, #5, #12, #15, #19, #9, #20, #11, #6, #22, #23 and a
@@ -900,6 +1023,9 @@ fn no_mail_content_after_the_scenarios() {
     let own_c = own_hosts_at_tip(&r, &c, HOST_A2);
     assert_eq!(own_c, vec![HOST_A2.to_string()]);
     mid.extend(state_findings(&sp(&c).state, &[HOST_A2]));
+    mid.extend(ref_findings(&sp(&c).worktree));
+    mid.extend(files_findings(&session_logs(&c), &MARKERS).1);
+    mid.extend(files_findings(&sync_files(&c), &MARKERS).1);
     for n in [24, 25] {
         send_ok(&c, ALICE, &format!("{B_NAME}@{HOST_A}"), n);
     }
@@ -949,6 +1075,17 @@ fn no_mail_content_after_the_scenarios() {
     for repo in [r.bare.clone(), a.repo(), b.repo(), c.repo()] {
         found.extend(commit_findings(&repo, &made));
         found.extend(ref_findings(&repo));
+        // MS-22 review F3: the reflogs (the sync worktree's among them) and the linked worktrees' admin files.
+        let (logs, f) = git_meta_findings(&repo);
+        assert!(repo == r.bare || logs >= 1, "{}: no reflog", repo.display());
+        found.extend(f);
+    }
+    for h in [&a, &b] {
+        found.extend(ref_findings(&sp(h).worktree));
+        found.extend(files_findings(&session_logs(h), &MARKERS).1);
+        let (n, f) = files_findings(&sync_files(h), &MARKERS);
+        assert!(n >= 2, "{}: imported and identity", h.root().display());
+        found.extend(f);
     }
     found.extend(mid);
     let (rows, f) = usage_findings(&b.paths.usage_db);
