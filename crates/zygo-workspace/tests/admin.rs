@@ -2307,6 +2307,38 @@ fn forget_refuses_when_mail_lock_stays_held() {
     assert!(fs::symlink_metadata(&dir).is_err());
 }
 
+#[test] // review F7: mail/lock is released before op.lock, so it is free when op.lock is (before the tombstone removal)
+fn forget_releases_mail_lock_before_op_lock() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let _store = ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    let seen: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let (wd, hs) = (p.workspaces_dir(), Arc::clone(&seen));
+    up::testing::hook(
+        &dir,
+        "forget_before_tombstone_remove",
+        Some(Box::new(move || {
+            // The state folder is renamed to its tombstone `.forget-<id>-<pid>` by now.
+            let tomb = fs::read_dir(&wd).map_err(|e| e.to_string())?.filter_map(Result::ok).map(|e| e.path())
+                .find(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(".forget-")))
+                .ok_or("no tombstone")?;
+            let f = fs::OpenOptions::new().read(true).write(true).open(tomb.join("mail/lock")).map_err(|e| e.to_string())?;
+            *hs.lock().unwrap() = Some(match fs4::FileExt::try_lock_shared(&f) {
+                Ok(()) => "free".to_string(),
+                Err(e) => format!("held: {e}"),
+            });
+            Ok(())
+        })),
+    );
+    let forgot = forget_run(&p, &t.join("none"), None, "app");
+    up::testing::hook(&dir, "forget_before_tombstone_remove", None);
+    assert_eq!(forgot, (0, "zygo: forgot app\n".to_string(), String::new()));
+    assert_eq!(seen.lock().unwrap().as_deref(), Some("free"), "mail/lock was still held after op.lock");
+}
+
 #[test] // S§7.6 last paragraph: a state that cannot be read gets before_remove with its raw absolute main_root
 fn forget_of_an_invalid_state_passes_its_raw_main_root() {
     let _s = serial();

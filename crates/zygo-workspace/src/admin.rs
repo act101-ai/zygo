@@ -675,9 +675,9 @@ fn forget_run(
         Ok(false) => return Ok(format!("zygo: {label} not forgotten")),
         Err(reason) => return Err(ForgetError::Line(format!("zygo: cannot forget {label}: {reason}"))),
     }
-    // S§7.6 step 4, M§5 P1: held until this function returns, so no delivery runs between the rename and the end.
-    let _mail = mail_lock(&store, &label)?;
-    remove(paths, &store, &id, &label, op).map_err(ForgetError::Line)
+    // S§7.6 step 4, M§5 P1: held across the rename; `remove` releases it before `op.lock` (review F7).
+    let mail = mail_lock(&store, &label)?;
+    remove(paths, &store, &id, &label, op, mail).map_err(ForgetError::Line)
 }
 
 /// S§7.6 step 4 (FX-24; M§5 P1, the removal of every maildir): `mail/lock` taken exclusive, waiting at most
@@ -848,7 +848,13 @@ fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>)
 /// removed, then the renamed folder. A writer of the cache (`ws run`) that reads the state after it made a folder
 /// finds the state gone whenever the cache removal could have run before its folder, so it removes that folder
 /// itself (W§12). A cache that cannot be removed is reported after the rest; the next `forget` sweeps it (D26).
-fn remove(paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock) -> Result<String, String> {
+/// `mail` (`mail/lock` held exclusive, [`mail_lock`]) is released after `lock` and before `op` (FX-24 review F7): a
+/// delivery that waited for it then reads the state while `op.lock` still keeps a `zygo up` of the same id from
+/// writing a new one, so it finds no workspace. On an early return the parameters drop in reverse order, `mail`
+/// before `op`, too.
+fn remove(
+    paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock, mail: Option<fs::File>,
+) -> Result<String, String> {
     let cannot = |e: &dyn fmt::Display| format!("zygo: cannot forget {label}: {e}");
     let lock = match lock_file(&store.dir().join("lock"), snapshot::OP_WAIT) {
         Ok(Some(f)) => f,
@@ -864,6 +870,7 @@ fn remove(paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock) -> Re
         .and_then(|()| remove_tree(&cache).map_err(|e| e.to_string()))
         .err();
     drop(lock);
+    drop(mail);
     drop(op);
     let gone = |e: &dyn fmt::Display| format!("zygo: {label} forgotten, but {} was not removed: {e}", tomb.display());
     fire(store.dir(), "forget_before_tombstone_remove").map_err(|e| gone(&e))?;
