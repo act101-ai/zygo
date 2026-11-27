@@ -51,7 +51,7 @@ Workspace mail (M):
 
 Mail sync (S):
 
-- No subject, body, address, host name, member name or path that holds one in a log, `workspace.json`, a usage row, a commit message or a ref name; a log line names ULIDs, pattern ids, check names, blob ids and counts only — S§4 S-C2
+- No subject, body, address, host name, member name or path that holds one in a log, a usage row, a commit message or a ref name; `workspace.json` holds none of them but its own members' M§6 names; a log line names ULIDs, pattern ids, check names, blob ids and counts only — S§4 S-C2
 - zygo writes only `refs/heads/zygo/<x>` on the remote; a force push only to that branch, only with the S§9 lease; branch form `^zygo/[a-z0-9][a-z0-9-]{0,31}$` — S§4 S-C3, S§11
 - Every git call is `git_command` (`crates/zygo-plugins/src/sync.rs:32`) plus `-c gc.auto=0 -c maintenance.auto=false`, under the S§8.7 runner, with a deadline; never `git worktree prune`, `git merge` or `rebase` — S§4 S-C4, S§6.3, S§12
 - All remote content is untrusted and validated before use; zygo never writes a file at a path the remote chose; no checkout of the side branch — S§4 S-C5, S§6.3
@@ -206,7 +206,7 @@ Session text (T, SX nodes):
 | WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | DONE | implementation | 15ea1e5b^..9a264b0a · acceptance pass (definition_hooks 11 passed) · PR #218 |
 | WD-21 | PR1 live check (operator): two pool members send two logins | WD-14, ML-19 | TODO | mechanical | — |
 | WD-22 | PR2 live check (operator): per-session settings act the same on a pool directory | WD-14, WD-21 | TODO | mechanical | — |
-| MS-22 | No mail content in logs, state, usage rows, commits or refs | MS-18, MS-19, MS-21 | TODO | implementation | — |
+| MS-22 | No mail content in logs, state, usage rows, commits or refs | MS-18, MS-19, MS-21 | PLANNED | implementation | — |
 | WD-15 | `zygo workspace approve [--yes] [--digest <hex>]` | WD-14, DR-3, MS-21 | TODO | judgment | — |
 | WD-16 | `config show/check`, `profile list/show`, `loadout list/show` show the repository files | WD-15, WD-24 | TODO | implementation | — |
 | WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | TODO | mechanical | — |
@@ -438,3 +438,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-22 DONE: built-in act101 v2.9.2 re-pinned to the tag's current commit 9d82bd97 (upstream rewrote history; same tree and act-lite 1.2.3 digest); Acceptance self-checking, author's call: lightweight tags have no ^{} line · PR #221 |
 | 2026-11-26 | MS-21 plan: premise drift: S§14 forget order (checks, sync lock, question, worktree, then state and cache); S§6.3 git runs only when the worktree folder and main_root exist |
 | 2026-11-26 | MS-21 DONE: ws forget asks for unsent and refused mail and removes the sync worktree; R1 F1 (a waiting sync rebuilt what forget deleted) F2-F5 fixed; R2 R2-1..R2-4 fixed, R2-5 refuted (OP5) · PR #217 |
+| 2026-11-26 | MS-22 PLANNED: drift: own member names in workspace.json, own hosts in state.json keys (S-C2, S§19 #24 rewritten); author's calls: sends in process (no detached child), binary syncs empty outbox only, trim hook writes the usage row |
