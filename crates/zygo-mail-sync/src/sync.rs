@@ -151,15 +151,22 @@ pub fn run(env: &Env, ws_id: &str, mode: Mode) -> Result<Report, SyncError> {
 
 /// [`run`] with `opts`: `prune` forces the prune of the first pass (S§9 When).
 pub fn run_with(env: &Env, ws_id: &str, mode: Mode, opts: &Opts) -> Result<Report, SyncError> {
-    run_with_deadline(env, ws_id, mode, opts, PASS_DEADLINE)
+    sync_passes(env, ws_id, mode, opts, PASS_DEADLINE)
 }
 
-/// Test seam (S-C9; FX-26 review round 2 F-3): [`run_with`] with `pass_deadline` in place of [`PASS_DEADLINE`] as the
-/// deadline of each pass (S§8.3 step 4), so that a test whose result must not depend on how fast the machine runs git
-/// can give a far deadline, as the secret pass takes `Env::secret_policy`. Production code calls [`run_with`].
+/// Test seam (S-C9; FX-26 review round 2 F-3, R3-5): [`run_with`] with `pass_deadline` in place of [`PASS_DEADLINE`] as
+/// the deadline of each pass (S§8.3 step 4), on the `Instant` and on the injected clock, so that a test whose result
+/// must not depend on how fast the machine runs git can give a far deadline, as the secret pass takes
+/// `Env::secret_policy`. Only the `test-hooks` feature builds it; production code calls [`run_with`].
+#[cfg(feature = "test-hooks")]
 #[doc(hidden)]
 pub fn run_with_deadline(env: &Env, ws_id: &str, mode: Mode, opts: &Opts, pass_deadline: Duration)
     -> Result<Report, SyncError> {
+    sync_passes(env, ws_id, mode, opts, pass_deadline)
+}
+
+/// [`run_with`] with the deadline of each pass as an argument ([`PASS_DEADLINE`] in production).
+fn sync_passes(env: &Env, ws_id: &str, mode: Mode, opts: &Opts, pass_deadline: Duration) -> Result<Report, SyncError> {
     let c = gate(env, ws_id)?;
     env.seam.at("after_gate").map_err(|e| c.stopped(e.into(), false))?;
     if state::mark_again(&c.sp).is_err() {

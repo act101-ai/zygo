@@ -294,6 +294,31 @@ fn pass_deadline_seam_bounds_the_pass() {
     assert!(a.sp().outbox.join(format!("{id}.json")).is_file());
     assert_eq!(run_with(&plain_env(&a), WS_ID, Mode::Cli, &Opts::default()).unwrap().pushed, 1);
     assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_some());
+    // FX-26 R3-4: the injected-clock half. The seam gives a far deadline, so the `Instant` bound never ends the pass;
+    // the injected clock moves at `after_fetch` (after `pass_end` is set, before the outbox step). Moved past the seam's
+    // deadline, the pass stops at the `pass_end` check of the outbox step, before the secret check: the outbox is kept
+    // and the tip does not move. Moved past `PASS_DEADLINE` but not past the seam's deadline, the pass goes on and pushes.
+    const FAR: Duration = Duration::from_secs(3600);
+    let jump = |to: u64| {
+        let now = Arc::new(AtomicU64::new(T0));
+        let n = Arc::clone(&now);
+        let h = Hook::new(move |p| {
+            if p == "after_fetch" {
+                n.store(to, Ordering::SeqCst);
+            }
+            Ok(())
+        });
+        env(&a, h, Clock(now, 0), Verdict::Local, StubWake::busy(), far_policy())
+    };
+    let id2 = send(&a, "alice", ("bob", "b"), "hello again");
+    let tip1 = git(&r.bare, &["rev-parse", &format!("refs/heads/{BRANCH}")]);
+    let e = run_with_deadline(&jump(T0 + FAR.as_secs() + 1), WS_ID, Mode::Cli, &Opts::default(), FAR).unwrap_err();
+    assert_eq!(e, SyncError::Stopped { line: "zygo: mail sync stopped (deadline); the outbox is kept".into(), check: "deadline" });
+    assert_eq!(git(&r.bare, &["rev-parse", &format!("refs/heads/{BRANCH}")]), tip1);
+    assert!(a.sp().outbox.join(format!("{id2}.json")).is_file());
+    let rep = run_with_deadline(&jump(T0 + PASS_DEADLINE.as_secs() + 1), WS_ID, Mode::Cli, &Opts::default(), FAR).unwrap();
+    assert_eq!(rep.pushed, 1);
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id2}.json")).is_some());
 }
 
 #[test] // S§19 #1, S-G1, S§7.3, S§14 Normal, S-C4
