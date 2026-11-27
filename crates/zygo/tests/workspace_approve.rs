@@ -445,7 +445,7 @@ fn listing_escapes_terminal_and_bidi_characters() {
         assert!(!out.contains(raw), "{raw:?} in {out:?}");
     }
     assert!(out.contains("\n    version = 1\\u{d}\n    # caf\\u{e9} \\u{202e}evil\\u{d}\n"), "{out}");
-    assert!(out.contains("\nignored: .zygo/a\\u{1b}[2Jb\\u{d}c\n"), "{out}");
+    assert!(out.contains("\nignored: \".zygo/a\\u{1b}[2Jb\\u{d}c\"\n"), "{out}");
 
     // A comment with ESC is invalid, and the violation shows no ESC.
     let f = fx(&[(WS, "version = 1\n# a\u{1b}[2Jb\n".as_bytes())]);
@@ -615,6 +615,17 @@ fn summary_with_a_user_repository_loadout_counts_what_zygo_up_starts() {
         assert!(out.lines().any(|l| l == line), "{line:?} not in {out}");
     }
     assert!(!out.contains("  member w:") && !out.contains("w run in passthrough"), "{out}");
+}
+
+#[test] // R§7.1 step 6 (WD-15 review round 2, finding 3): each ignored entry is quoted, so a `, ` in a name cannot split it
+fn ignored_entries_are_quoted() {
+    let f = fx(&[(WS, MIN.as_bytes()), (".zygo/a, .zygo/b", b"x"), (".zygo/profiles/c (1 bytes):", b"x")]);
+    let h = home(&f, "");
+    let o = approve(&f, &h, &["--yes"], None, &[]);
+    let out = text(&o.stdout);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let want = r#"ignored: ".zygo/a, .zygo", ".zygo/profiles/c (1 bytes):""#;
+    assert!(out.lines().any(|l| l == want), "{want:?} not in {out}");
 }
 
 #[test] // R§11 "Approvals file invalid"

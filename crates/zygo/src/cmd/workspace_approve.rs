@@ -127,7 +127,14 @@ fn shown(s: &str) -> String {
 /// A free-text value of the summary (plan call 9, WD-15 review F2): `esc`, then `\` and `"` escaped with `\`, in double
 /// quotes, so a `,` `;` `=` or space in it cannot fake the structure of the line.
 fn quoted(s: &str) -> String {
-    format!("\"{}\"", esc(s).replace('\\', "\\\\").replace('"', "\\\""))
+    in_quotes(&esc(s))
+}
+
+/// `text` in double quotes with `\` and `"` escaped with `\`: the quoting of `quoted`, also used for each ignored entry
+/// (WD-15 review round 2 finding 3), which then passes the character rule of the listing (`shown`), so an ESC or a
+/// carriage return in its name is still shown as `\u{…}` (R§18 item 7).
+fn in_quotes(text: &str) -> String {
+    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// The summary of R§7.1 step 6 and R§9.5 "Shown to the operator" (plan call 9): each member of the repository loadout
@@ -228,7 +235,7 @@ fn show(folder: &Path, full_ref: &str, files: &Files, digest: &str, def: &Defini
     out.push(if files.ignored.is_empty() {
         "ignored: none".to_string()
     } else {
-        format!("ignored: {}", files.ignored.iter().map(|e| shown(e)).collect::<Vec<_>>().join(", "))
+        format!("ignored: {}", files.ignored.iter().map(|e| shown(&in_quotes(e))).collect::<Vec<_>>().join(", "))
     });
     out.extend(summary(def, cfg, home));
     out.join("\n")
