@@ -400,14 +400,46 @@ fn real_git() -> PathBuf {
 /// `<dir>/<sub>/git` (by `script`): a call whose arguments hold `worktree list` prints `line` (no `'`) to stderr and
 /// exits 1; every other call is `exec '<real_git()>' "$@"`. Returns the program, for the `git` seam of
 /// `up::find_checkout_with` and `up::preflight_with`.
-fn failing_list_git(dir: &Path, sub: &str, line: &str) -> PathBuf {
+fn failing_list_git(dir: &Path, sub: &str, line: &str) -> PathBuf { list_git(dir, sub, &format!("echo '{line}' >&2; exit 1")) }
+
+/// `<dir>/<sub>/git` (by `script`): a call whose arguments hold `worktree list` runs the shell code `list`; every other
+/// call is `exec '<real_git()>' "$@"`. Returns the program.
+fn list_git(dir: &Path, sub: &str, list: &str) -> PathBuf {
     let bin = dir.join(sub);
     fs::create_dir_all(&bin).unwrap();
-    let body = format!(
-        "case \" $* \" in *\" worktree list \"*) echo '{line}' >&2; exit 1;; esac\nexec '{}' \"$@\"",
-        real_git().display()
-    );
+    let body = format!("case \" $* \" in *\" worktree list \"*) {list};; esac\nexec '{}' \"$@\"", real_git().display());
     script(&bin, "git", &body)
+}
+
+#[test] // FX-25 review R2 F7, W§8.1 step 3: a failed list shows only git's first non-empty stderr line, cut to 200
+        // characters and `…`; here from 64 KiB of stderr in many lines, at both list sites
+fn failed_list_shows_the_first_stderr_line_cut_to_200_characters() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let r = repo(t, "app");
+    repo(t, "w");
+    git(t, &["clone", "-q", "--bare", "w", "repo.git"]);
+    // An empty line, then one line of 250 two-byte characters, then lines of `y` past 64 KiB in all.
+    let first = "\u{e4}".repeat(250);
+    let mut text = format!("\n  \n  {first}  \n");
+    while text.len() <= 64 * 1024 {
+        text.push_str(&format!("{}\n", "y".repeat(99)));
+    }
+    let err = t.join("stderr.txt");
+    fs::write(&err, &text).unwrap();
+    let stub = list_git(t, "long", &format!("cat '{}' >&2; exit 1", err.display()));
+    let want = Some(Exit { code: 1, message: format!("git worktree list failed: {}\u{2026}", "\u{e4}".repeat(200)) });
+    let far = Duration::from_secs(3600);
+    assert_eq!(up::find_checkout_with(&r, far, stub.as_os_str(), &cache(t)).err(), want);
+    assert_eq!(up::find_checkout_with(&t.join("repo.git"), far, stub.as_os_str(), &cache(t)).err(), want);
+    // A line of 200 characters or less is kept whole, with no `…`.
+    let short = "\u{e4}".repeat(200);
+    let stub = failing_list_git(t, "short", &format!("{short}\nsecond line"));
+    assert_eq!(
+        up::find_checkout_with(&r, far, stub.as_os_str(), &cache(t)).err(),
+        Some(Exit { code: 1, message: format!("git worktree list failed: {short}") })
+    );
 }
 
 #[test] // FX-25 review F6, W§8.1 step 3: only git's "not a git repository" is "not a repository"; another phrase of

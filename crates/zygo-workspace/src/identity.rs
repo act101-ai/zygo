@@ -136,7 +136,8 @@ pub enum ListError {
     /// No program `git` to start (`io::ErrorKind::NotFound`).
     NotFound,
     /// Any other start error (text `cannot start git: <error>`), any other non-zero exit, a read error, a missing pipe
-    /// or output that is not UTF-8. The text is empty when there is none.
+    /// or output that is not UTF-8. The text is empty when there is none. It is only the first non-empty line, trimmed
+    /// and cut to 200 characters with `…` after a cut ([`first_line`]; FX-25 review round 2 F7); not escaped.
     Failed(String),
     /// The deadline of the checkout passed.
     TimedOut,
@@ -164,6 +165,20 @@ const NOT_A_REPOSITORY: &str = "not a git repository";
 /// pipe.
 const STDERR_CAP: u64 = 64 * 1024;
 
+/// The most characters of a failure text that a [`ListError`] keeps (FX-25 review round 2 F7).
+const LINE_MAX: usize = 200;
+
+/// The text that a [`ListError`] keeps of `text`: its first non-empty line, trimmed, cut to [`LINE_MAX`] characters with
+/// `…` after a cut; empty when every line is empty. The caller escapes it.
+fn first_line(text: &str) -> String {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let mut kept: String = line.chars().take(LINE_MAX).collect();
+    if line.chars().nth(LINE_MAX).is_some() {
+        kept.push('\u{2026}');
+    }
+    kept
+}
+
 /// The worktrees of `checkout`, in git's order (the main worktree or the bare entry first). Runs
 /// `git -c core.fsmonitor=false -C <checkout.top> worktree list --porcelain` on `zygo_config::repo_file::git_command`
 /// with `GIT_OPTIONAL_LOCKS=0` and `GIT_TERMINAL_PROMPT=0`, stdin null, stdout and stderr piped (stderr drained in its
@@ -173,7 +188,7 @@ const STDERR_CAP: u64 = 64 * 1024;
 /// stderr passes `zygo_config::repo_file::git_absent` and holds git's "not a git repository" answer is
 /// [`ListError::NotARepository`]; that stderr is taken only on a non-zero exit, within the time left to the deadline
 /// (else `TimedOut`). Every other non-zero exit (also one with another `GIT_ABSENT` phrase) is [`ListError::Failed`]
-/// with its stderr, trimmed; a read error, a missing pipe and output that is not UTF-8 are [`ListError::Failed`] with
+/// with the first non-empty line of its stderr, cut to 200 characters ([`first_line`]); a read error, a missing pipe and output that is not UTF-8 are [`ListError::Failed`] with
 /// no text.
 pub fn worktrees(checkout: &Checkout) -> Result<Vec<Worktree>, ListError> { worktrees_with(OsStr::new("git"), checkout) }
 
@@ -198,7 +213,7 @@ pub fn worktrees_by(mut cmd: Command, checkout: &Checkout) -> Result<Vec<Worktre
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => ListError::NotFound,
-        _ => ListError::Failed(format!("cannot start git: {e}")),
+        _ => ListError::Failed(first_line(&format!("cannot start git: {e}"))),
     })?;
     let stop = |child: &mut Child, why: ListError| {
         let _ = child.kill();
@@ -245,7 +260,7 @@ pub fn worktrees_by(mut cmd: Command, checkout: &Checkout) -> Result<Vec<Worktre
         let text = String::from_utf8_lossy(&stderr);
         let text = text.trim();
         let absent = zygo_config::repo_file::git_absent(text) && text.contains(NOT_A_REPOSITORY);
-        return Err(if absent { ListError::NotARepository(text.to_string()) } else { ListError::Failed(text.to_string()) });
+        return Err(if absent { ListError::NotARepository(first_line(text)) } else { ListError::Failed(first_line(text)) });
     }
     let text = read.ok().and_then(|bytes| String::from_utf8(bytes).ok());
     text.map(|text| parse(&text)).ok_or(ListError::Failed(String::new()))
