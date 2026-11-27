@@ -332,6 +332,21 @@ fn hostile(bare: &Path, host: &str) -> ([String; 6], String) {
     (ids, test_commit(bare, &tree))
 }
 
+/// S§7.5 Own hosts of `h` at the tip of `r`: `host` (its current host), then each other host whose ack at the tip
+/// holds the mail identity of `h`, in path order.
+fn own_hosts_at_tip(r: &Remote, h: &Harness, host: &str) -> Vec<String> {
+    let id = zygo_mail_sync::state::identity(&sp(h)).unwrap().unwrap();
+    let mut own = vec![host.to_string()];
+    for p in tip_paths(r) {
+        let Some(k) = p.strip_prefix("ack/").and_then(|x| x.strip_suffix(".json")) else { continue };
+        let ack: Value = serde_json::from_slice(&tip_blob(r, &p).unwrap()).unwrap();
+        if k != host && ack["identity"] == id.as_str() {
+            own.push(k.to_string());
+        }
+    }
+    own
+}
+
 /// The unread count of member `key` of `h`.
 fn new_count(h: &Harness, key: &str) -> usize { store::unread(&mail_dir(&h.paths, WS_ID), key).unwrap() }
 
@@ -708,10 +723,17 @@ fn no_mail_content_after_the_scenarios() {
     found.extend(text_findings("B errors.log", eb.as_bytes(), &MARKERS));
     found.extend(workspace_findings(&a.store(WS_ID).dir().join("workspace.json"), &[A_NAME]));
     found.extend(workspace_findings(&b.store(WS_ID).dir().join("workspace.json"), &[B_NAME]));
-    for (h, own) in [(&a, &[HOST_A, HOST_A2][..]), (&b, &[HOST_B, HOST_B2, HOST_A][..])] {
+    // S§7.5 own hosts at the end of the walk (MS-22 review F1): A has its current host only; B has its current host
+    // and each old host whose ack still holds its identity.
+    let (own_a, own_b) = (own_hosts_at_tip(&r, &a, HOST_A2), own_hosts_at_tip(&r, &b, HOST_A));
+    assert_eq!(own_a, vec![HOST_A2.to_string()]);
+    assert_eq!(own_b[0], HOST_A);
+    assert!(!own_b.iter().any(|h| h == HOST_B), "{own_b:?}");
+    for (h, own) in [(&a, &own_a), (&b, &own_b)] {
         let st: Value = serde_json::from_slice(&std::fs::read(sp(h).state).unwrap()).unwrap();
         assert!(!st["pushed"].as_object().unwrap().is_empty());
-        found.extend(state_findings(&sp(h).state, own));
+        let own: Vec<&str> = own.iter().map(String::as_str).collect();
+        found.extend(state_findings(&sp(h).state, &own));
     }
     for repo in [r.bare.clone(), a.repo(), b.repo()] {
         found.extend(commit_findings(&repo, &made));
