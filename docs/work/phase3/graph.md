@@ -216,7 +216,6 @@ Session text (T, SX nodes):
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | DONE | judgment | 87a292d6^..da0207f1 · acceptance pass (mail_lifecycle 23 passed) · PR #219 |
 | FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | DONE | implementation | 19fbf580^..b0212f6c · acceptance pass (shape_clean 29 passed) · PR #209 |
-| FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | DONE | mechanical | 96868305 · c98ea5fa · cc948a96 · acceptance pass (live selftest: ok (85)) · PR #194 |
 | FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | DONE | implementation | 569e61a9^..9ac65902 · acceptance pass (shape_clean 35 passed) · PR #211 |
 | FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
 | FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | DONE | implementation | bb21eadf^..c99eeb95 · acceptance pass (offline: 7 test files, 0 failed) · PR #220 |
@@ -225,7 +224,7 @@ Session text (T, SX nodes):
 | FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | TODO | implementation | — |
 | FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | DONE | judgment | 343897e2^..a9b6f61c · acceptance pass (renamed_host_ack_goes_with_only_acked_link_and_gitlink_entries 1 passed) · PR #231 |
 | FX-28 | A remote send during `ws forget` is lost uncounted | FX-24 | TODO | judgment | — |
-| FX-29 | config check rejects default_loadout = "repository" that zygo up accepts | WD-20 | PLANNED | implementation | wt .worktrees/phase3/FX-29 · PR #237 |
+| FX-29 | config check rejects default_loadout = "repository" that zygo up accepts | WD-20 | DONE | implementation | cf92636c^..2f28c271 · acceptance pass (config_check_default_loadout_repository_follows_zygo_up 1 passed, zygo-config all pass) · PR #237 |
 | FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | TODO | judgment | — |
 
 ## Log
@@ -458,3 +457,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-27 DONE: ULID-keyed re-plan R1–R4; review rounds 1–2 fixed tests and spec text; author's calls: non-address folders are documented as operator-only removal; planner's call: non-ULID names do not keep the ack. |
 | 2026-11-27 | WD-20 DONE: user docs for workspace files, approval, members, pool, passthrough; R1 fixed H1-H2, M1-M4, L1-L9; C6 (L9 split into docs/workspace-files.md); FX-29 and FX-31 created from the found issues; MS-15 row archived · PR #228 |
 | 2026-11-27 | FX-29 PLANNED: config check reads as up does; check_with(cfg, RepositoryLoadout); approved files with workspace.toml accept, other read states keep the error; author's call: no read (outside, unread) is a warning, not an error; R§10, W§11, workspace-files.md rewritten |
+| 2026-11-27 | FX-29 DONE: config check decides default_loadout = "repository" from the read, as up does; review F1-F4 fixed; author's calls: no read (outside, unread) is a warning, not an error; zygo serve reads no files and checks with NotRead at start and reload; FX-20 row archived · PR #237 |
