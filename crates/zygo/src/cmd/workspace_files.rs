@@ -13,7 +13,7 @@ use zygo_workspace::up::{find_checkout, Exit, GIT_BOUND};
 /// What one R§10 read found, for `zygo config`, `zygo profile` and `zygo loadout`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum State {
-    /// No folder, or no checkout at it (`find_checkout` failed): no read.
+    /// No folder, or no checkout at it (`find_checkout` exited 2): no read.
     Outside,
     Absent,
     Unread,
@@ -39,12 +39,29 @@ pub(crate) fn read_here(cwd: &Path, approvals: &Path, git: &dyn GitRunner) -> Re
     Ok(check_default(&co.top, &workspace_id(&co.common_dir), approvals, git))
 }
 
-/// The R§10 view of `merged` at `cwd`; `None` or an `Err` of `read_here` gives `State::Outside` (plan call 7).
+/// The read of `read_here` as the verbs and `zygo doctor` show it (WD-16 review F1). `None` only for the exit 2 of
+/// `find_checkout`, `zygo up`'s "not a repository" (also a bare repository with no checkout): outside, no line. Any
+/// other lookup error (a git that fails, times out or cannot start) is `Use::Unread` with its reason. Decided by the
+/// exit code, not the message.
+pub(crate) fn found(r: Result<Use, Exit>) -> Option<Use> {
+    match r {
+        Ok(u) => Some(u),
+        Err(e) if e.code == 2 => None,
+        Err(e) => Some(Use::Unread { why: e.message }),
+    }
+}
+
+/// The R§10 view of `merged` at `cwd`: [`view_of`] of [`found`] of `read_here`; no folder gives `State::Outside`.
+pub(crate) fn view(merged: &Merged, cwd: Option<&Path>, approvals: &Path, git: &dyn GitRunner) -> View {
+    view_of(merged, cwd.and_then(|d| found(read_here(d, approvals, git))))
+}
+
+/// The R§10 view of `merged` for one read; `None` gives `State::Outside` (plan call 7).
 /// Only an approved read changes `merged` (R-C2); the other states show the full ref, the short digest and the
 /// violation, each through `esc` (R-C7, R§6.4), and no key or value of the files.
-pub(crate) fn view(merged: &Merged, cwd: Option<&Path>, approvals: &Path, git: &dyn GitRunner) -> View {
+pub(crate) fn view_of(merged: &Merged, found: Option<Use>) -> View {
     let unchanged = |state: State, line: Option<String>| View { merged: merged.clone(), state, line };
-    let Some(found) = cwd.and_then(|d| read_here(d, approvals, git).ok()) else {
+    let Some(found) = found else {
         return unchanged(State::Outside, None);
     };
     match found {
@@ -171,6 +188,25 @@ mod tests {
         let line = v.line.expect("an unread line");
         assert!(line.starts_with("zygo: this repository's workspace files were not read ("), "{line}");
         assert!(line.ends_with("); not shown"), "{line}");
+    }
+
+    /// WD-16 review F1: only `find_checkout`'s exit 2 (not a repository; a bare repository with no checkout) is
+    /// outside; any other lookup error is an unread read with its reason, escaped, decided by the exit code alone.
+    #[test]
+    fn only_a_lookup_exit_2_is_outside() {
+        let t = tempfile::tempdir().unwrap();
+        let m = merged(t.path());
+        let exit = |code: i32, message: &str| Exit { code, message: message.to_string() };
+        assert_eq!(found(Err(exit(2, zygo_workspace::up::NOT_A_REPO))), None);
+        assert_eq!(found(Err(exit(2, "git worktree list: failed"))), None);
+        let v = view_of(&m, found(Err(exit(1, "git worktree list: failed\u{1b}[2J"))));
+        assert_eq!(v.state, State::Unread);
+        assert_eq!(
+            v.line.as_deref(),
+            Some("zygo: this repository's workspace files were not read (git worktree list: failed\\u{1b}[2J); not shown")
+        );
+        let v = view_of(&m, found(Err(exit(1, zygo_workspace::up::NOT_A_REPO))));
+        assert_eq!(v.state, State::Unread, "decided by the exit code, not the message");
     }
 
     #[test]
