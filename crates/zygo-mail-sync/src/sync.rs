@@ -473,7 +473,7 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
         notified.keys.dedup();
         wake(c, notified.read.as_ref(), &notified.keys);
         let files = own_files(wt, &tip, &own, deadline)?;
-        changes.extend(own_changes(c, &meta, &identity, &own, &files, &imp.acked));
+        changes.extend(own_changes(c, &meta, &identity, &own, &files, &imp.acked, &own_ack));
         if changes.is_empty() {
             break (tip, meta);
         }
@@ -852,9 +852,19 @@ pub(crate) fn forget_old_hosts(st: &mut State, meta: &TipMeta, identity: &str, h
     state::forget_hosts(st, &hosts, &files)
 }
 
-/// S§7.4: the ULIDs of the message files in the `*@<h>/` folders at the tip, for each own host `h`.
+/// The `<ULID>.json` entries of one own host's `*@<h>/` folders at the tip.
+#[derive(Debug, Default)]
+struct HostFiles {
+    /// The ULID of every `<ULID>.json` entry, of any mode or kind.
+    ulids: BTreeSet<Ulid>,
+    /// Whether one of them is a message file ([`prune::removable`], S§9 Tree).
+    message: bool,
+}
+
+/// S§7.4, S§9 Tree: for each own host `h`, the `<ULID>.json` entries of the `*@<h>/` folders at the tip
+/// ([`HostFiles`]).
 fn own_files(wt: &Path, tip: &str, own: &[String], deadline: Instant)
-    -> Result<BTreeMap<String, BTreeSet<Ulid>>, BranchError> {
+    -> Result<BTreeMap<String, HostFiles>, BranchError> {
     let mut folders = Vec::new();
     branch::ls(wt, tip, None, deadline, &mut |e| {
         if e.kind == "tree" && let Some(a) = address::parse(&e.path) && own.contains(&a.host) {
@@ -862,13 +872,14 @@ fn own_files(wt: &Path, tip: &str, own: &[String], deadline: Instant)
         }
         Flow::Go
     })?;
-    let mut out: BTreeMap<String, BTreeSet<Ulid>> = own.iter().map(|h| (h.clone(), BTreeSet::new())).collect();
+    let mut out: BTreeMap<String, HostFiles> = own.iter().map(|h| (h.clone(), HostFiles::default())).collect();
     for (h, folder) in folders {
         let prefix = format!("{folder}/");
-        let set = out.entry(h).or_default();
+        let at = out.entry(h).or_default();
         branch::ls(wt, tip, Some(&prefix), deadline, &mut |e| {
             if let Some(u) = e.path.strip_prefix(&prefix).and_then(address::ulid_file) {
-                set.insert(u);
+                at.ulids.insert(u);
+                at.message |= prune::removable(&e);
             }
             Flow::Go
         })?;
@@ -885,12 +896,13 @@ pub(crate) fn own_names(ws: &Workspace) -> Vec<String> {
 }
 
 /// S§8.3 step 12, S§7.3, S§7.4: the own registry when the tip's differs, and the ack of each own host when it
-/// changes: (old ∪ the acknowledged ULIDs) ∩ the files of that host at the tip. The current host's ack is written
-/// when the tip has none of this identity (S§7.6). A file over its limit is not written; one line is logged (O3).
-/// After a rename (S§7.6 "Rename") it deletes the registry of an old own host, unless the new one is over its limit,
-/// and the ack of an old own host with no file left at the tip whose registry it deletes or that has none.
-fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &BTreeMap<String, BTreeSet<Ulid>>,
-    acked: &[Ulid]) -> Vec<Change> {
+/// changes: (old ∪ the ULIDs acknowledged in this pass ∪ the own acks) ∩ the ULIDs of that host's folders at the tip
+/// (S§7.4 "Owner"). The current host's ack is written when the tip has none of this identity (S§7.6). A file over
+/// its limit is not written; one line is logged (O3). After a rename (S§7.6 "Rename") it deletes the registry of an
+/// old own host, unless the new one is over its limit, and the ack of an old own host whose folders hold no message
+/// file and whose ULIDs the new list all holds, when it deletes that host's registry or the host has none.
+fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &BTreeMap<String, HostFiles>,
+    acked: &[Ulid], own_ack: &BTreeSet<Ulid>) -> Vec<Change> {
     let host = c.s.host.as_str();
     let names = own_names(&c.ws);
     let over = names.len() > MEMBERS_MAX;
@@ -910,20 +922,21 @@ fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &
             out.push(Change::Remove { path: format!("registry/{h}.json") });
         }
     }
-    let acked: BTreeSet<Ulid> = acked.iter().copied().collect();
-    let none = BTreeSet::new();
+    let add: BTreeSet<Ulid> = acked.iter().chain(own_ack).copied().collect();
+    let none = HostFiles::default();
     for h in own {
-        let tip_ack = own_ack(meta, h, identity);
+        let tip_ack = self::own_ack(meta, h, identity); // the function; the parameter `own_ack` is the union
         let old = tip_ack.map(|a| a.imported.clone()).unwrap_or_default();
         let at = files.get(h).unwrap_or(&none);
         // The old ack goes only with or after the old registry: `own_hosts` finds an old host by its ack (S-G5).
         let reg_stays = over
             && meta.registries.get(h).is_some_and(|r| r.value.as_ref().is_ok_and(|v| v.identity == identity));
-        if h != host && at.is_empty() && !reg_stays {
+        let new: BTreeSet<Ulid> = old.union(&add).filter(|u| at.ulids.contains(u)).copied().collect();
+        // S§7.6 "Rename": (a) no message file, (b) the new list holds every ULID, (c) the registry goes or is none.
+        if h != host && !at.message && new == at.ulids && !reg_stays {
             out.push(Change::Remove { path: format!("ack/{h}.json") });
             continue;
         }
-        let new: BTreeSet<Ulid> = old.union(&acked).filter(|u| at.contains(u)).copied().collect();
         if new == old && !(h == host && tip_ack.is_none()) {
             continue;
         }

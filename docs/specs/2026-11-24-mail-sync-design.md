@@ -174,8 +174,8 @@ A member with no name has no address and gets no remote mail. The sender of `zyg
 { "version": 1, "host": "studio", "identity": "<32 hex>", "imported": ["<ULID>", "…"] }
 ```
 
-- **Owner.** The workspace whose identity is in it. A pass adds each ULID that it delivered (S§8.5) and removes each ULID whose file is no longer under `*@<host>/` at the tip (a prune removed it). Thus the list holds only messages that are still on the branch.
-- **Meaning.** "This host imported this message; a prune may remove it." It is the only input that lets a prune remove a message (S§9).
+- **Owner.** The workspace whose identity is in it. The list holds ULIDs, while an entry on the branch is a path `<name>@<host>/<ULID>.json`, and two folders (two names, or an old and a new host) can hold one ULID. The ack is keyed by ULID by design. For each own host `<h>` (S§7.5), a pass writes the list (the ULIDs it lists ∪ each ULID that this pass acknowledged in the folders of any own host ∪ each ULID of the acks of all own hosts at the tip) ∩ the ULIDs of the `<ULID>.json` entries at the tip in the folders of `<h>` (`sync::own_changes`). The folders of a host are the top-level folders `<name>@<h>/` whose name is an address that `address::parse` accepts; the member name is not checked, so it need not be a member of this workspace (`sync::own_files`). Thus a ULID with no entry left in those folders (a prune removed it) goes out, and the list holds only ULIDs that are still on the branch under that host.
+- **Meaning.** The list holds the ULIDs of the entries in that host's folders that this identity acknowledged: it imported them (delivered or refused, S§8.5), or found them already in the imported log. After a `--take-host` (S§7.6) it can also hold ULIDs that another identity acknowledged, because the command keeps the old owner's list. A ULID leaves the list when no entry with that ULID is left in that host's folders ("Owner"). The ack is the only input that lets a prune remove a message file (S§9 "Tree"). Two things stop a second delivery of a ULID. First, the own-ack filter: `import::candidates` skips each entry whose ULID is in the ack of any own host (the union of their lists) or that the pass already took (S§8.5 "Candidates"). Second, the imported log: `import::run` does not deliver a candidate whose ULID is in the log (`seen`); it only acknowledges it, or leaves it while its staged file is still in `mail/sync/incoming/`. Thus an identity delivers each ULID at most once, and an entry in a folder of an own host ("Owner": a folder whose name is an address that `address::parse` accepts) whose ULID this identity acknowledged in any own host can never be delivered, whatever its member name, sender or kind. An entry in a top-level folder whose name `address::parse` refuses is in no folder of a host: no pass reads it (S§7.6 "Rename", S§13 limit 2).
 - **Validation.** As the registry: mode, size at most 8 MiB, `version` 1, `host` equals the file name, a valid identity, each entry a valid ULID, at most 200 000 entries. An invalid ack counts as empty: the prune removes nothing for that host.
 - **Size.** When this workspace's own ack would pass 100 000 entries, the pass runs a prune after its push (S§9), which takes the acknowledged files and so the entries off.
 
@@ -203,8 +203,44 @@ In a twin state (S§7.5) `--take-host` and `--drop-host` stop with the twin line
 
 - **`zygo mail sync --take-host`.** For the collision line. It writes `registry/<host>.json` and `ack/<host>.json` with this identity. It keeps the ack's entries, so no message that the old owner acknowledged is imported again. No mail is lost; it does not ask. If the old owner still runs, its next pass stops with the collision line.
 - **`zygo mail sync --new-identity`.** For a twin. It makes a new identity and clears the recorded blob ids. Then the pass runs as a first sync: with a new host (the old one belongs to the twin) it registers; with the same host it stops with the collision line. It deletes nothing.
-- **Rename.** A changed `host` in config. The old registry file (this identity) is deleted at the next pass, so no new mail goes to the old addresses. The old `ack/<old>.json` stays, so the old host stays an own host: the pass still imports mail that waits under `*@<old>/`. When the new registry would pass 256 members, the pass does not write it and does not delete the old registry; while the old registry stays, the old ack stays too, so the mail that senders push to the old addresses is imported. When the tip has no `*@<old>/` file and the pass deletes the old registry in the same commit, or the tip has no old registry of this identity, the pass deletes `ack/<old>.json`. A sender whose member cache still lists `<name>@<old>` pushes new mail there while `ack/<old>.json` stays, and the pass imports it; after the ack is deleted, the sender's pass moves that mail to `mail/outbox/refused/` and sends it a notice (S§8.3 step 11). No mail is lost.
-- **`zygo mail sync --drop-host <host>`.** For a host that will never sync again. It counts the files under `*@<host>/` that its ack does not list, prints `zygo: <n> messages wait for host <host>; they will be deleted. Delete them? [y/N]`, and on yes deletes `registry/<host>.json`, `ack/<host>.json` and each `*@<host>/` file in one commit. A dropped host that runs again registers again at its next pass; the deleted mail is gone. This is the only path by which a machine deletes another host's files without that host's ack (S-C8).
+- **Rename.** A changed `host` in config. The old registry file (this identity) is deleted at the next pass, so no new
+  mail goes to the old addresses. The old `ack/<old>.json` stays, so the old host stays an own host: the pass still
+  imports mail that waits under `*@<old>/`. When the new registry would pass 256 members, the pass does not write it and
+  does not delete the old registry; while the old registry stays, the old ack stays too, so the mail that senders push
+  to the old addresses is imported. The pass deletes `ack/<old>.json` when all of these hold: (a) no
+  `*@<old>/<ULID>.json` entry at the tip is a message file (S§9 "Tree"): the folders never held one, or a prune has
+  taken each one; (b) the list that this pass computes for `<old>` (S§7.4 "Owner") holds the ULID of every
+  `*@<old>/<ULID>.json` entry at the tip (when the ack stays, the pass writes this list; when it deletes the ack, it
+  writes no ack); (c) the pass deletes the old registry in the same commit, or the tip has no old registry of this
+  identity. (a) and (b) look only at an entry with a canonical `<ULID>.json` name (`address::ulid_file`: 26 upper-case
+  Crockford characters, then `.json`) directly in a top-level folder whose name is an address (`address::parse`: a
+  member name that is not reserved, then `@`, then a host in the S§5 form), as every reader does: the own files
+  (`sync::own_files`), import (`import::candidates`), the prune (`prune::run`) and `--drop-host` (`ops::host_folders`,
+  `ops::waiting`). So an entry that (a) and (b) leave is of one of three kinds. (1) A link, a submodule or a tree in an
+  address folder, at a `<ULID>.json` name whose ULID this identity acknowledged: it can never be delivered (S§7.4
+  "Meaning") and no prune removes it. (2) An entry in an address folder with any other name, such as a regular file with
+  another name or a `<ULID>.json` name in lower case: it is never delivered, never pruned and never counted by
+  `--drop-host`. (3) An entry of any name or kind in a top-level folder `<x>@<old>/` whose name is not an address, such
+  as a reserved name (`all@<old>/`) or a name with upper case (`Bob@<old>/`): it is never delivered, never pruned and
+  never counted, and no `--take-host` or `--drop-host` touches it. No kind keeps the old ack, so no kind keeps the old
+  host an own host. Kinds (1) and (2) stay on the branch until the operator removes them, or until a `--drop-host <old>`
+  deletes the address folders of `<old>` with every entry in them. Kind (3) stays until the operator removes it with
+  git: no mail-sync command removes it (S§13 limit 2). An entry in an address folder whose ULID no pass acknowledged (a
+  full inbox, a name this workspace does not have) keeps the old ack. A sender whose member cache still lists
+  `<name>@<old>` pushes new mail there while `ack/<old>.json` stays, and the pass imports it; after the ack is deleted,
+  the sender's pass moves that mail to `mail/outbox/refused/` and sends it a notice (S§8.3 step 11). No mail is lost.
+- **`zygo mail sync --drop-host <host>`.** For a host that will never sync again. The folders of the host
+  (`ops::host_folders`) are the top-level trees of the tip whose name is an address of that host (`address::parse`: a
+  member name that is not reserved, then `@`, then a host in the S§5 form). It counts the message files (S§9 "Tree")
+  with a canonical `<ULID>.json` name directly in those folders whose ULID the valid `ack/<host>.json` does not list (a
+  missing or invalid ack lists none); a link, a submodule, a tree or an entry with another name is not a message and is
+  not counted (`ops::waiting`). It prints `zygo: <n> messages wait for host <host>; they will be deleted. Delete them?
+  [y/N]`, and on yes deletes `registry/<host>.json`, `ack/<host>.json` and each of those folders with every entry in it,
+  at any depth and of any name or kind (`ops::drop_host`), in one commit. A top-level folder `<x>@<host>/` whose name is
+  not an address, such as `all@<host>/` or `Bob@<host>/`, is not a folder of the host: it is not counted and not
+  deleted; only the operator can remove it, with git (S§13 limit 2). A dropped host that runs again registers again at
+  its next pass; the deleted mail is gone. This is the only path by which a machine deletes another host's files without
+  that host's ack (S-C8).
 - **`zygo ws forget [--yes]`.** These steps come after the W§12 checks (`op.lock`, live launcher, session) and before anything is deleted, in this order:
   1. `forget` takes `mail/sync/lock` at once (no wait). When `mail/`, `mail/sync/` or the lock file is missing, `forget` makes it (folders `0700`, the file `0600`) and follows no link, so a sync that starts meanwhile waits for this lock and then finds the workspace gone (S§8.3 step 3). When `mail/` or `mail/sync/` is a link or not a folder, the workspace has no mail: `forget` takes no lock and makes nothing through the link. When the lock file is a link or not a regular file, no sync can hold it (a sync opens it with no link followed and refuses an entry that is not a regular file, with the stop `lock`), so `forget` takes no lock and goes on. `Taken::NotRegular` assumes a lock file does not become non-regular while it is held; no zygo path replaces a lock file, and only a same-uid actor can, which is outside the threat model (same-uid limit, M§5 R1-1) **(author)**. Any other error of the lock refuses with `zygo: cannot forget <name>: <error>` (exit 1, nothing deleted). A lock that a sync holds refuses with `zygo: a mail sync runs for <name>; try again` (exit 1, nothing deleted). `forget` keeps the lock until the state and the cache are gone, so no pass uses the worktree meanwhile.
   2. It counts the messages in `mail/outbox/` (`<n>`) and in `mail/outbox/refused/` (`<r>`). A `mail/` that is a link or not a folder is not followed and counts 0 for both (step 1: no mail). An outbox or refused folder that cannot be read refuses with `zygo: cannot forget <name>: the outbox cannot be read: <error>` (exit 1, nothing deleted): unsent mail is never taken for none. When either count is not 0, it asks on stderr, on one line, `zygo: <n> unsent messages and <r> refused messages will be deleted. Forget the workspace? [y/N]`; `--yes` answers yes and prints the question followed by ` y (--yes)`. Any answer but `y` or `yes`, and the end of input, prints `zygo: <name> not forgotten` and exits 0 with nothing deleted. An empty outbox with no refused message asks nothing.
@@ -263,7 +299,7 @@ One sync of one workspace. The lock rule closes the lost-wakeup race **(lead)**:
     - no machine reads its `to` host at the tip: the tip has neither a valid `registry/<host>.json` (S§7.3) nor a valid `ack/<host>.json` (S§7.4; an ack keeps an old host an own host of its renamed workspace, S§7.6 "Rename", S§8.5). This is a sender whose member cache is older than a rename. It takes no place in the 1000. If its path `<to>/<ULID>.json` is at the tip, it was pushed before (a crash after a push): delete it from the outbox. Else write one `errors.log` line that names its ULID and the check `no-host`, and refuse it as S§8.6 "At commit" does (the notice first, then the move to `mail/outbox/refused/` as it is; a notice that a later pass can deliver and that was not delivered leaves it in the outbox for the next pass, and a notice that no pass can deliver moves it with the line `notice: <reason>`), with the notice body `zygo did not send message <ULID> to <address>: host <host> has no registry on the side branch. The message is kept on this machine in mail/outbox/refused/.` As for the secret pass, the pass deadline (step 4) is checked before each such move: past it, the pass stops (`deadline`) and the files not reached stay in the outbox. The check uses the tip that this attempt fetched in step 6; a refusal stays when a rejected push (step 15) leads to a new fetch, as a secret-pass refusal does. A tip made by bootstrap in step 6 is not fetched and holds no registry yet: this check does not run (S§19 #8). Reason: no machine reads or deletes a file under an address folder of such a host, so a push would strand it (S-G5);
     - its path `<to>/<ULID>.json` is at the tip: it was pushed before (a crash after a push); delete it from the outbox;
     - else run the secret pass (S§8.6): clear, add the blob at that path; a finding, send the notice and then move it to `mail/outbox/refused/` (S§8.6 "At commit"); could not run, leave it in the outbox.
-12. **Own files.** Write the own registry (S§7.3) and the own acks (S§7.4) when they change; delete an old own registry or an empty old ack (S§7.6 "Rename").
+12. **Own files.** Write the own registry (S§7.3) and the ack of each own host (S§7.4 "Owner") when they change; delete an old own registry, and the ack of an old own host whose folders hold no message file and only ULIDs that its new list holds, when the pass deletes that host's registry in the same commit or the tip has no registry of this identity for that host (S§7.6 "Rename" (a) to (c)).
 13. **Commit.** No change: go to step 16. Else `read-tree` the tip, apply the adds and deletes, `write-tree`, `commit-tree` with the tip as parent (S§6.5). Record the blob ids of the own files that it holds as "about to push" (S§7.5).
 14. **Push** `<commit>:refs/heads/<branch>` with `--porcelain`, no force.
 15. **Result.**
@@ -292,7 +328,7 @@ Reasons **(author)**:
 
 **(lead, author)** Each message is delivered once, by ULID. Two records say "delivered": the imported log (local, this workspace) and the own ack (on the branch).
 
-**Candidates.** For each own host (S§7.5) and each local member with a name: stream `git ls-tree -z -l <tip> -- <name>@<host>/` (a literal path; the address form has no glob character). An entry is a candidate when its ULID is not in the own ack. A candidate whose ULID is already in the imported log (a sender added it again after a prune, S§14) is not delivered; it is only added to the own ack, so a prune removes it again. When its staged file `mail/sync/incoming/<pane key>.<ULID>.json` is still there (a crash after step 2, or a record that was out, see step 5), it is not acknowledged in this pass: step 5 of a later pass delivers that file, and the pass after that acknowledges the ULID. Reading a folder also stops at its target's inbox room: `[mail] max_unread` less the files in the target's `new/`, shared by the target's folders on all own hosts. A candidate already in the imported log takes no room, and the folder of a target with no room is not read. Thus one full inbox does not stop import for the other members. Reading stops at 500 candidates in the pass, or at the deadline; git is then killed (S§8.7). The rest waits for the next pass. Thus a large or hostile backlog still gives 500 deliveries per pass **(lead)**.
+**Candidates.** For each own host (S§7.5) and each local member with a name: stream `git ls-tree -z -l <tip> -- <name>@<host>/` (a literal path; the address form has no glob character). An entry is a candidate when its ULID is in no ack of an own host of this identity (the own ack: the union of their lists) and the pass has not taken that ULID already, in any own host or folder. Thus each ULID is a candidate at most once, and an identity delivers each ULID at most once (S§7.4 "Meaning"). Each ULID that the pass acknowledges goes into the ack of every own host whose folders (S§7.4 "Owner": the folder name is an address that `address::parse` accepts; the member name is not checked) hold an entry with that ULID, and so does each ULID of the own ack (S§7.4 "Owner"). A candidate whose ULID is already in the imported log (a sender added it again after a prune, S§14) is not delivered; it is only added to the own ack, so a prune removes it again. When its staged file `mail/sync/incoming/<pane key>.<ULID>.json` is still there (a crash after step 2, or a record that was out, see step 5), it is not acknowledged in this pass: step 5 of a later pass delivers that file, and the pass after that acknowledges the ULID. Reading a folder also stops at its target's inbox room: `[mail] max_unread` less the files in the target's `new/`, shared by the target's folders on all own hosts. A candidate already in the imported log takes no room, and the folder of a target with no room is not read. Thus one full inbox does not stop import for the other members. Reading stops at 500 candidates in the pass, or at the deadline; git is then killed (S§8.7). The rest waits for the next pass. Thus a large or hostile backlog still gives 500 deliveries per pass **(lead)**.
 
 **Checks (S-C5).** A candidate is delivered only when:
 
@@ -348,7 +384,15 @@ The imported log grows by 27 bytes per delivered message and is never trimmed wh
 
 - **When.** At step 16 of a pass, when `git rev-list --count <tip>` is 1000 or more, when the own ack has more than 100 000 entries (S§7.4), or when `zygo mail sync --prune` runs.
 - **Base.** The tip of this pass: the commit of this pass's accepted push, if there was one, else the fetched tip **(lead)**. A prune never uses a fetch from before this pass's own push.
-- **Tree.** The base tree, less each message file `<name>@<host>/<ULID>.json` whose ULID is in the valid `ack/<host>.json` of the base tree. Nothing else is removed: no registry, no ack, no message that its host has not acknowledged. No clock and no `keep` is used (S-C8).
+- **Tree.** The base tree, less each message file `<name>@<host>/<ULID>.json` whose ULID is in the valid
+  `ack/<host>.json` of the base tree. A message file is a blob of mode `100644` or `100755` (`prune::removable`); a link
+  (`120000`), a submodule (`160000`) or a tree at such a path is not one and stays. The prune looks only at a canonical
+  `<ULID>.json` name (`address::ulid_file`) directly in a top-level folder whose name is an address (`address::parse`: a
+  member name that is not reserved, then `@`, then a host in the S§5 form). A folder whose name is not an address, such
+  as `all@<host>/` or `Bob@<host>/`, is not looked in, so no entry in it is removed (S§13 limit 2). The member name is
+  not checked against the host's registry: an entry whose ULID the ack lists can never be delivered (S§7.4 "Meaning").
+  Nothing else is removed: no registry, no ack, no message that its host has not acknowledged. No clock and no `keep` is
+  used (S-C8).
 - **Commit.** `commit-tree` with no parent, message `zygo mail [skip ci]`.
 - **Push.** `git push --porcelain --force-with-lease=refs/heads/<branch>:<base> <remote> <commit>:refs/heads/<branch>`. The lease is the base. A push from another machine after the base makes the lease fail; the prune is then skipped in this pass; the next pass tries again. Any other failure of the prune's git work (the commit count, the tree and commit, or the push: a rejection other than the lease, a git error or the deadline) also skips the prune and does not fail the pass: the pass ends as without a prune, and the sync report gets the note `prune skipped (<check>)`; the next pass tries again. A failed check of "Only its own branch" stops the pass. Thus a prune never removes a message that it did not see in its base, and the messages of this pass's own push are in its base and are not acknowledged yet, so they stay.
 - **Only its own branch.** The branch name must pass the `sync` form of S§11 (prefix `zygo/`), and the base must have `ZYGO-MAIL`. Both are checked again just before the force push.
@@ -429,7 +473,20 @@ host = "studio-2"        # optional; overrides [mail] host for this workspace
 ## 13. Accepted limits
 
 1. **No proof of the sender.** A person with write access to the remote can write any `from`, forge an ack (and so make a prune remove mail), or delete the branch (S-C7). Commit signing is not checked.
-2. **Idle host and unknown names.** Mail for a host that does not sync, or for a name that its host does not have, stays on the branch until the host imports it or the operator drops the host (S§7.6). The branch grows by that mail.
+2. **Idle host, unknown names and entries that are not messages.** Mail for a host that does not sync, or for a name
+   that its host does not have, stays on the branch until the host imports it or the operator drops the host (S§7.6). A
+   message file in such an address folder whose ULID the host acknowledged in another folder goes with the next prune
+   (S§9 "Tree"); this holds only for a folder whose name is an address (`address::parse`). A link, a submodule or a tree
+   at a message path stays until the operator drops its host: no prune removes it, and after a rename it does not keep
+   the old ack once its ULID is acknowledged (S§7.6 "Rename"). An entry in an address folder `*@<host>/` with no
+   canonical `<ULID>.json` name (`address::ulid_file`), such as a regular file with another name or a `<ULID>.json` name
+   in lower case, is never delivered, never pruned and never counted by `--drop-host`, and after a rename it does not
+   keep the old ack. It stays until the operator removes it, or until `--drop-host` deletes its folder with every entry
+   in it. An entry of any name or kind in a top-level folder `<x>@<host>/` whose name is not an address, such as a
+   reserved name (`all@<host>/`) or a name with upper case (`Bob@<host>/`), is never delivered, never pruned and never
+   counted, and after a rename it does not keep the old ack. No prune, `--take-host` or `--drop-host` touches it, and no
+   mail-sync command removes it: only the operator can remove it, with git. The branch grows by that mail and those
+   entries.
 3. **Local copies.** The fetched blobs, including mail to other hosts, are in the repository's object store with the repository's own file modes. M-C4 (`0700`/`0600`) holds for `mail/`, not for the object store.
 4. **Branch deleted on the remote.** The mail on it is gone. The next pass makes the branch again (S§6.4).
 5. **Twin window.** Two copies of one workspace state can deliver one message on two machines until the first pass after one of them writes its registry or ack (S§7.5).
@@ -630,3 +687,28 @@ Each check is a test or a command. A "machine" in a test is one `HOME` with its 
 - 2026-11-26 · S§8.6 · author's call · FX-24 review R3 F1: a sender that renamed itself after the pass gate and kept its key got no notice, because a name missing from the record of step 1 counted as `moved`; the target is now the name resolved in the read under `mail/lock`, `moved` only when both reads have the name and the keys differ, and `no-record` when that read does not have it.
 - 2026-11-26 · S§8.6 · author's call · FX-24 review R3 F3: a write error in the sender's maildir (a link at `mail/<sender>/new`) kept the message in the outbox for ever and logged it on every pass; only an error of the delivery's begin now keeps it, and a write error moves it to `refused/` with `notice: maildir` or `notice: io`.
 - 2026-11-26 · S§7.6 step 1 · author's call · FX-24 review R3 F4: the forget's `Taken::NotRegular` path rests on an unstated premise, that a lock file does not become non-regular while it is held; the step now states it and why it holds (no zygo path replaces a lock file; only a same-uid actor can, outside the threat model, M§5 R1-1). No code change.
+- 2026-11-26 · S§7.4 Owner and Meaning, S§7.6 Rename and `--drop-host`, S§8.3 step 12, S§8.5 Candidates, S§9 Tree, S§13 limit 2 · author's call (FX-27 re-plan) · FX-27: an acknowledged link, submodule or tree in a renamed host's old folder kept `ack/<old>.json` for ever, as no prune removes it and the ack went only when no `*@<old>/` entry was left. The ack is keyed by ULID: import skips each ULID of the acks of all own hosts and each ULID it took in the pass, so an identity delivers each ULID at most once, and an entry in an own host's folder whose ULID it acknowledged can never be delivered, whatever its sender or kind. So: each own ack is (old ∪ acknowledged in this pass ∪ the own acks) ∩ the ULIDs in its folders (R1); the old ack goes when its folders hold no message file, its new list holds every ULID there, and its registry goes (R2); the prune is unchanged (R3); `--drop-host` counts only message files that the ack does not list (R4). S§9 now states MS-14 review F6: a message file is a blob of mode `100644` or `100755` (`prune::removable`). For the same reason, these earlier review findings are not defects: "a non-member file that shares an acked ULID is pruned without delivery" and "a ULID acked in another folder lets the ack list it" (such an entry can never be delivered), and "a non-member link that shares an acked ULID lets the old ack go" (a link is not a message).
+- 2026-11-26 · S§7.4 Meaning, S§7.6 Rename and `--drop-host`, S§8.3 step 12, S§13 limit 2 · author's call
+  (FX-27 re-plan review F3–F5) · FX-27 review round 1. F3: S§7.6 "Rename" named only links, submodules and trees
+  as the entries that stay, but every reader (`sync::own_files`, `import::candidates`, `prune::run`,
+  `ops::waiting`) looks only at canonical `<ULID>.json` names (`address::ulid_file`), so an entry with any other
+  name is never delivered, pruned or counted and does not keep the old ack either; the text and S§13 limit 2 now
+  state it, and `--drop-host` states what `ops::drop_host` does: it deletes each `*@<host>/` folder with every
+  entry in it. F4: step 12 said "when its registry goes too", which did not cover an old host that has no registry
+  of this identity at the tip; it now states S§7.6 (c) as the code does (`reg_stays`). F5: "Meaning" stated the ack
+  only as "imported once" and the own-ack filter as the only guard; it now states what the list holds (also the
+  ULIDs found in the imported log, and after `--take-host` the old owner's), when a ULID leaves it, and both guards
+  against a second delivery: the own-ack filter of `import::candidates` and the imported log (`seen`) of
+  `import::run`.
+- 2026-11-26 · S§7.6 Rename and `--drop-host`, S§9 Tree, S§13 limit 2 · author's call (FX-27 re-plan review round 2
+  F1–F2) · FX-27 review round 2. F1: every reader (`sync::own_files`, `prune::run`, `import::candidates`,
+  `ops::host_folders`) skips a top-level folder whose name `address::parse` refuses (a reserved name such as
+  `all@<host>/`, upper case such as `Bob@<host>/`), so "Rename" named two kinds of entries that stay where there are
+  three, and `--drop-host` said it deletes each `*@<host>/` folder; the code stays (author's call: change the spec, not
+  the code, as such a folder holds no mail a sender can address), and the text now states the third kind: it does not
+  keep the old ack, no prune, `--take-host` or `--drop-host` touches it, and only the operator removes it, with git;
+  `--drop-host` states the folders that `ops::host_folders` selects. F2: S§9 "Tree" said "the folder name is not
+  checked", but the prune checks it with `address::parse`; it does not check the member name, and S§13 limit 2 says that
+  a duplicate goes with the next prune only from a folder whose name is an address. Rename (a) now also covers folders
+  that never held a message file, and (b) names the list the pass computes, as in the delete case the pass writes no
+  ack.

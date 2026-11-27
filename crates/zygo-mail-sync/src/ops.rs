@@ -11,6 +11,7 @@ use crate::address;
 use crate::branch::{self, BranchError, Change, Fetched, Pushed};
 use crate::env::Env;
 use crate::identity::{self, read_meta, TipMeta};
+use crate::prune;
 use crate::registry::{Ack, Registry, MEMBERS_MAX};
 use crate::state;
 use crate::sync::{self, forget_old_hosts, own_blobs, own_names, promote, stop, Ctx, Fail, Mode, Opts, Report, SyncError, MARKER_LINE,
@@ -135,8 +136,9 @@ fn host_folders(wt: &Path, tip: &str, host: &str, deadline: Instant) -> Result<V
     Ok(folders)
 }
 
-/// D3: the paths `<addr>/<ULID>.json` directly under the folders of `host` at `tip` that the valid
-/// `ack/<host>.json` does not list (an invalid or missing ack lists none).
+/// D3, S§7.6 `--drop-host`: the message files (S§9 "Tree", [`prune::removable`]) `<addr>/<ULID>.json` directly
+/// under the folders of `host` at `tip` that the valid `ack/<host>.json` does not list (an invalid or missing ack
+/// lists none). A link, a submodule or a tree is not counted.
 fn waiting(wt: &Path, tip: &str, meta: &TipMeta, host: &str, deadline: Instant)
     -> Result<BTreeSet<String>, BranchError> {
     let acked: BTreeSet<Ulid> = meta.acks.get(host).and_then(|r| r.value.as_ref().ok())
@@ -145,7 +147,9 @@ fn waiting(wt: &Path, tip: &str, meta: &TipMeta, host: &str, deadline: Instant)
     for folder in host_folders(wt, tip, host, deadline)? {
         let prefix = format!("{folder}/");
         branch::ls(wt, tip, Some(&prefix), deadline, &mut |e| {
-            if e.path.strip_prefix(&prefix).and_then(address::ulid_file).is_some_and(|u| !acked.contains(&u)) {
+            let unlisted = e.path.strip_prefix(&prefix).and_then(address::ulid_file)
+                .is_some_and(|u| !acked.contains(&u));
+            if prune::removable(&e) && unlisted {
                 out.insert(e.path);
             }
             Flow::Go
@@ -205,8 +209,9 @@ fn waiting_set(env: &Env, ws_id: &str, host: &str) -> Result<BTreeSet<String>, S
     })
 }
 
-/// S§7.6, S§7.4 (D3): after the public check (D7), the message files `<addr>/<ULID>.json` at the tip of the folders
-/// of `host` that its valid ack does not list (an invalid or missing ack lists none); 0 when there is no branch.
+/// S§7.6, S§7.4 (D3): after the public check (D7), the message files (S§9 "Tree", [`prune::removable`])
+/// `<addr>/<ULID>.json` at the tip of the folders of `host` that its valid ack does not list (an invalid or missing
+/// ack lists none); a link, a submodule or a tree is not counted; 0 when there is no branch.
 pub fn waiting_for(env: &Env, ws_id: &str, host: &str) -> Result<usize, SyncError> {
     Ok(waiting_set(env, ws_id, host)?.len())
 }
