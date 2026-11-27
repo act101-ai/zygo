@@ -20,7 +20,7 @@ use zygo_hooks::{
 };
 
 /// The §10.6 text with no open unit (`docs/specs/2026-11-18-zygo-design.md` §10.6), byte for byte as
-/// `tests/session_text.rs:31`.
+/// `KEEP_NO_UNIT` in `tests/session_text.rs`.
 const KEEP_NO_UNIT: &str = "Keep in the summary: the plan or tracker path and the current step; the pending briefs and what each subagent reported; the result ids zygo stored (result_view reads them again). Drop: tool output that is in the result store; file contents already edited and committed.";
 const ID: &str = "a1a80dd100f197242";
 const CHILD: &str = "ZYGO_SX3_C6_CHILD";
