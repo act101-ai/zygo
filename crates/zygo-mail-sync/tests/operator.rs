@@ -788,7 +788,7 @@ fn renamed_host_ack_goes_with_a_link_whose_ulid_another_host_acked() {
     assert!(tip_paths(&r).contains(&p));
 }
 
-#[test] // S§7.6 Rename, S§7.4 Owner, S§9 Tree (FX-27): a duplicate message file of an acked ULID is pruned, not delivered
+#[test] // S§7.6 Rename, S§7.4 Owner, S§9 Tree (FX-27): a duplicate file of an acked ULID is pruned, not delivered
 fn renamed_host_ack_goes_after_the_prune_takes_a_duplicate_message_file() {
     let (r, a, b) = pair();
     let m = send(&a, "alice", ("bob", "b"));
@@ -857,4 +857,29 @@ fn renamed_host_ack_gone_leaves_no_twin_and_no_old_keys() {
     sync(&a);
     assert_eq!(sync(&b).delivered, 1);
     assert!(new_ids(&b, BOB).contains(&format!("{id}.json")));
+}
+
+#[test] // S§7.6 --drop-host, S§9 Tree (R4, FX-27): the count holds only message files that the ack does not list
+fn drop_host_counts_only_message_files_the_ack_does_not_list() {
+    let (r, a, b) = pair();
+    let u = |n: u128| Ulid::from_parts(T0 * 1000, n);
+    put_entries(&r, &[("120000", &link(&r), &format!("bob@b/{}.json", u(20))),
+        ("160000", GITLINK, &format!("bob@b/{}.json", u(21)))]);
+    sync(&b);
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(waiting_for(&env(&b), WS_ID, "b"), Ok(0)); // only acked links are left
+    let doc = blob(&r.bare, b"{}");
+    put_entries(&r, &[
+        ("160000", GITLINK, &format!("carol@c/{}.json", u(22))),
+        ("100644", &doc, &format!("carol@c/{}.json/x", u(23))),
+        ("100755", &doc, &format!("carol@c/{}.json", u(24))),
+        ("120000", &link(&r), &format!("carol@c/{}.json", u(25))),
+        ("100644", &doc, &format!("carol@c/{}.json", u(26))),
+    ]);
+    // The 100755 and the 100644 blob; the gitlink, the tree and the link are not counted.
+    assert_eq!(waiting_for(&env(&a), WS_ID, "c"), Ok(2));
+    assert_eq!(drop_host(&env(&a), WS_ID, "c", &mut |_| true), Ok(Some(2)));
+    assert!(!under(&tip_paths(&r), "carol@c/"));
 }
