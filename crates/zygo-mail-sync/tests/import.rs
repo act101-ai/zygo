@@ -570,12 +570,31 @@ fn import_stops_at_a_held_mail_lock() {
     let held = hold_mail_lock(&sp);
     let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
     assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![], left: 1 }));
-    assert_eq!(lines, [log_line(u(1), "lock")]);
+    assert_eq!(lines, [log_line(u(1), "busy")]); // review F6: the error kind
     assert!(!sp.mail.join(KEY).exists() && !sp.incoming.exists());
     assert!(imported_load(&sp).unwrap().is_empty());
     drop(held);
     let (res, _) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
     assert_eq!(res.unwrap().delivered, [(KEY.to_string(), u(1)), (KEY.to_string(), u(2))]);
+}
+
+#[test] // FX-24 review F6: a delivery that cannot begin logs its error kind, not `lock`, and stops the import
+fn import_logs_the_kind_of_a_delivery_that_cannot_begin() {
+    let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+    let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1), u(2)]))]);
+    let state = Store::open(&m.paths, WS_ID).dir().join("workspace.json");
+    let good = fs::read(&state).unwrap();
+    for (bytes, kind) in [(None, "no-workspace"), (Some(b"{".to_vec()), "state")] {
+        match &bytes {
+            None => fs::remove_file(&state).unwrap(),
+            Some(b) => fs::write(&state, b).unwrap(),
+        }
+        let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+        assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![], left: 1 }), "{kind}");
+        assert_eq!(lines, [log_line(u(1), kind)]);
+        assert!(!sp.mail.join(KEY).exists() && imported_load(&sp).unwrap().is_empty(), "{kind}");
+        fs::write(&state, &good).unwrap();
+    }
 }
 
 #[test] // d2, author's call 3: a staged file whose key has no record is deleted, the log unchanged, no maildir made

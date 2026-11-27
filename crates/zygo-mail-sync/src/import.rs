@@ -9,7 +9,7 @@ use ulid::Ulid;
 use zygo_work::repo::{Flow, RunError};
 use zygo_workspace::identity::valid_pane_key;
 use zygo_workspace::mail::store::{unread, write_synced};
-use zygo_workspace::mail::{ensure_mail_dir, Delivery, Message, BODY_MAX, MAIL_LOCK_WAIT, SUBJECT_MAX};
+use zygo_workspace::mail::{ensure_mail_dir, Delivery, MailError, Message, BODY_MAX, MAIL_LOCK_WAIT, SUBJECT_MAX};
 use zygo_workspace::mail::names;
 use zygo_workspace::state::{Store, Workspace};
 
@@ -149,6 +149,20 @@ pub fn finish_incoming(sp: &SyncPaths, store: &Store) -> std::io::Result<usize> 
     Ok(moved)
 }
 
+/// S§8.5 (FX-24 review F6): the check name of the log line of a delivery that could not begin: `busy` (`mail/lock`
+/// held for the whole bound), `no-workspace` (no state folder or no `workspace.json`), `state` (a state folder that
+/// is a link or not a folder, or a state that does not read as valid), `io` (any other error).
+fn begin_error(e: &MailError) -> &'static str {
+    match e {
+        MailError::Busy => "busy",
+        MailError::NoWorkspace => "no-workspace",
+        MailError::Io(e) if matches!(e.kind(), std::io::ErrorKind::InvalidInput | std::io::ErrorKind::InvalidData) => {
+            "state"
+        }
+        _ => "io",
+    }
+}
+
 /// The ULIDs of the staged files in `incoming/` (`<pane key>.<ULID>.json`, regular files; links and other names are
 /// left out); none when `incoming/` is missing.
 fn staged_ids(sp: &SyncPaths) -> std::io::Result<HashSet<Ulid>> {
@@ -253,8 +267,9 @@ fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], ow
 /// `store`'s workspace held shared (M§5 P1), taken after the candidate's git reads and dropped before the next. The
 /// folder's member name maps to its pane key, and the inbox check runs, on the read under that lock (`targets` gives
 /// the names and each folder's inbox room only); a name with no record in that read is left on the branch (not
-/// staged, logged or acknowledged; no line), and [`Imported::read`] keeps the read of the last delivery. A lock not taken in [`MAIL_LOCK_WAIT`] writes `mail sync: import <ULID>: lock` and stops
-/// the run. Step 1 makes the target's maildir before it writes the staged file. A candidate whose ULID is in the
+/// staged, logged or acknowledged; no line), and [`Imported::read`] keeps the read of the last delivery. A delivery
+/// that cannot begin (a lock not taken in [`MAIL_LOCK_WAIT`], no workspace, an invalid state, an I/O error) writes
+/// `mail sync: import <ULID>: <kind>` ([`begin_error`]) and stops the run. Step 1 makes the target's maildir before it writes the staged file. A candidate whose ULID is in the
 /// imported log is acknowledged, unless its staged file is still in `incoming/`: then it is left until step 5 of a
 /// later pass moves that file (S§8.5). `incoming/` that cannot be read writes `mail sync: import: incoming` and
 /// imports nothing. `Err` only when a seam stops the run.
@@ -323,10 +338,13 @@ pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[Str
         };
         // S§8.5 "Delivery, crash-safe": steps 1-3 of this one candidate under `mail/lock` shared (M§5 P1), taken after
         // every git call of the candidate and dropped before the next one (author's call 1).
-        let Ok(d) = Delivery::begin(store, MAIL_LOCK_WAIT) else {
-            log(&format!("mail sync: import {id}: lock"));
-            out.left += 1;
-            break;
+        let d = match Delivery::begin(store, MAIL_LOCK_WAIT) {
+            Ok(d) => d,
+            Err(e) => {
+                log(&format!("mail sync: import {id}: {}", begin_error(&e)));
+                out.left += 1;
+                break;
+            }
         };
         // FX-24 review F2: the folder name maps to a pane key on the read under the lock, not on the pass's first
         // read. A name with no record there is not staged, logged or acked: it waits on the branch (S§13 limit 2).

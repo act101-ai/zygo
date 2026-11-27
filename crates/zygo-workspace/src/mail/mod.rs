@@ -155,7 +155,8 @@ impl Delivery {
     /// Takes `mail/lock` of `store`'s workspace shared, waiting at most `bound`, then reads the state under it. It
     /// makes `mail/` (`0700`) when the state folder exists, never the state folder itself. A missing state folder,
     /// `mail/` that cannot be made because the folder went away, or no `workspace.json` is `NoWorkspace`; a lock held
-    /// for the whole bound is `Busy`; a state folder that is a link or not a folder, and every other error, is `Io`.
+    /// for the whole bound is `Busy`; a state folder that is a link or not a folder (`InvalidInput`), a state that
+    /// does not read as valid (`InvalidData`), and every other error is `Io`.
     pub fn begin(store: &Store, bound: Duration) -> Result<Delivery, MailError> {
         match fs::symlink_metadata(store.dir()) {
             Ok(m) if m.file_type().is_symlink() => {
@@ -184,7 +185,8 @@ impl Delivery {
         let ws = match store.read() {
             Ok(Some(ws)) => ws,
             Ok(None) => return Err(MailError::NoWorkspace),
-            Err(e) => return Err(std::io::Error::other(e.to_string()).into()),
+            Err(crate::state::StateError::Io(e)) => return Err(e.into()),
+            Err(e) => return Err(std::io::Error::new(ErrorKind::InvalidData, e.to_string()).into()),
         };
         crate::up::fire(store.dir(), "mail_delivery_after_read").map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(Delivery { mail_dir: mail, ws, _lock: lock })
