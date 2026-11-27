@@ -16,6 +16,7 @@ use zygo_redact::DeadlinePolicy;
 use zygo_workspace::mail::store::{deliver, list, FILE_MAX};
 use zygo_workspace::mail::{Message, BODY_MAX};
 use zygo_workspace::state::{Phase, Store};
+use zygo_workspace::up::testing::hook;
 
 const ID: &str = "0123456789abcdef";
 const KEY: &str = "kaaaaaaaa";
@@ -110,15 +111,64 @@ fn mkfifo(p: &Path) {
 
 /// The refusal line of one remote send of `f`, after which `outbox/` does not exist.
 fn refused_line(f: &Fx) -> String {
-    let line = send(f, Some("alice"), &addr("bob", "b"), "hi").unwrap_err().line();
+    refused_line_with(f, &f.sp)
+}
+
+/// [`refused_line`] with the paths `sp` (the member cache and the outbox of `f`, and the state that `sp.store` names).
+fn refused_line_with(f: &Fx, sp: &SyncPaths) -> String {
+    let line = send_remote_with(sp, Ok(&on()), Some("alice"), &addr("bob", "b"), "status", "hi", &builtin(), &f.root, now(), &far())
+        .unwrap_err()
+        .line();
     assert!(fs::symlink_metadata(&f.sp.outbox).is_err(), "{line}");
     line
 }
 
+/// Clears the hook of `point` for the state folder `dir` when dropped, also when the test panics, so no hook (and
+/// nothing that it holds) outlives its test.
+struct HookGuard<'a> {
+    dir: &'a Path,
+    point: &'static str,
+}
+
+impl Drop for HookGuard<'_> {
+    fn drop(&mut self) {
+        hook(self.dir, self.point, None);
+    }
+}
+
 #[cfg(unix)]
-#[test] // S§8.1 row 1 (FX-28 review round 1 F3): each other Delivery::begin refusal of a remote send, its line, and what
-        // it leaves: never an outbox file; mail/ and mail/lock only where the state folder is a real folder
+#[test] // S§8.1 row 1 (FX-28 review rounds 1 F3 and 2 F2, F3): each other Delivery::begin refusal of a remote send, its
+        // line, and what it leaves: never an outbox file; mail/ and mail/lock only where the state folder is a real folder
 fn send_refusals_under_mail_lock_name_the_cause_and_write_no_outbox_file() {
+    // No state folder, and a state path that is not a folder. The sync state and the member cache are in the state
+    // folder, so their reads refuse such a send first (an unknown address, or the error of the sync state read) unless
+    // the state goes after those reads and before Delivery::begin (a forget that ends in that window). send_remote_with has no hook point there, so the send gets
+    // a SyncPaths whose `store` (the state in which Delivery::begin takes mail/lock) is another workspace's: none,
+    // then a file. Nothing is made at that path.
+    let f = fx();
+    let other = paths(f._t.path()).workspaces_dir().join("fedcba9876543210");
+    let mut sp = f.sp.clone();
+    sp.store = Store::open(&paths(f._t.path()), "fedcba9876543210");
+    assert_eq!(sp.store.dir(), other);
+    assert_eq!(refused_line_with(&f, &sp), "zygo: the workspace has no state; nothing sent");
+    assert!(fs::symlink_metadata(&other).is_err());
+    fs::write(&other, b"x").unwrap();
+    assert_eq!(refused_line_with(&f, &sp), format!("zygo: mail: {} is not a folder", other.display()));
+    assert_eq!(fs::read(&other).unwrap(), b"x");
+    // The locked file is no longer mail/lock: a forget renamed it away while the send waited for the lock. The hook
+    // point mail_delivery_after_lock runs right after the lock is taken and before the inode check; there the test
+    // moves the locked file away and puts a new file at mail/lock. No wait is in play.
+    let f = fx();
+    let (lock, moved) = (f.sp.mail.join("lock"), f.sp.mail.join("lock.forgotten"));
+    let dir = f.sp.store.dir().to_path_buf();
+    let _clear = HookGuard { dir: &dir, point: "mail_delivery_after_lock" };
+    let (hl, hm) = (lock.clone(), moved.clone());
+    hook(&dir, "mail_delivery_after_lock", Some(Box::new(move || {
+        fs::rename(&hl, &hm).map_err(|e| e.to_string())?;
+        fs::write(&hl, b"").map_err(|e| e.to_string())
+    })));
+    assert_eq!(refused_line(&f), "zygo: the workspace has no state; nothing sent");
+    assert!(lock.is_file() && moved.is_file());
     // A corrupt or newer workspace.json (BadState): mail/ and mail/lock are made, and stay.
     for (bytes, want) in [
         (&b"x"[..], None),
@@ -159,8 +209,10 @@ fn send_refusals_under_mail_lock_name_the_cause_and_write_no_outbox_file() {
     mkfifo(&lock);
     assert_eq!(refused_line(&f), format!("zygo: mail: {}: is not a regular file", lock.display()));
     let f = fx();
-    fs::create_dir(f.sp.mail.join("lock")).unwrap();
-    assert_eq!(refused_line(&f), "zygo: mail: Is a directory (os error 21)");
+    let lock = f.sp.mail.join("lock");
+    fs::create_dir(&lock).unwrap();
+    assert_eq!(refused_line(&f), format!("zygo: mail: {}: is not a regular file", lock.display()));
+    assert!(lock.is_dir());
 }
 
 /// One message file in `outbox/`, as `send_remote` writes it.

@@ -23,3 +23,8 @@ tempfile.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
+
+[dev-dependencies]
+# The test hooks of zygo-workspace (`up::testing::hook`) for the tests of this crate only: the outbox tests drive the
+# `mail_delivery_after_lock` point of `Delivery::begin` (FX-28 review round 2 F3). Production builds do not get them.
+zygo-workspace = { workspace = true, features = ["test-hooks"] }

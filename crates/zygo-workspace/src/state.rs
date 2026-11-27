@@ -747,12 +747,22 @@ pub(crate) fn open_nofollow(o: &mut fs::OpenOptions, path: &Path) -> std::io::Re
 }
 
 /// [`open_nofollow`] for a file the store locks or writes: a link or an entry that is not a regular file is an error
-/// whose text names the path.
+/// whose text names the path (`<path>: is a link; it is not followed`, `<path>: is not a regular file`). A folder is
+/// such an entry too: an open for write fails on it (`EISDIR`) before the handle can be checked, so a failed open is
+/// looked at again by the path, no link followed, as [`take_lock`] does (FX-28 review round 2 F2). Every other error
+/// of the open is returned as it is (its kind is kept, so a missing parent stays `NotFound`).
 fn open_regular(o: &mut fs::OpenOptions, path: &Path) -> std::io::Result<File> {
-    match open_nofollow(o, path)? {
-        Opened::File(f) => Ok(f),
-        Opened::Link => Err(std::io::Error::other(format!("{}: is a link; it is not followed", path.display()))),
-        Opened::NotFile => Err(std::io::Error::other(format!("{}: is not a regular file", path.display()))),
+    let link = || std::io::Error::other(format!("{}: is a link; it is not followed", path.display()));
+    let not_file = || std::io::Error::other(format!("{}: is not a regular file", path.display()));
+    match open_nofollow(o, path) {
+        Ok(Opened::File(f)) => Ok(f),
+        Ok(Opened::Link) => Err(link()),
+        Ok(Opened::NotFile) => Err(not_file()),
+        Err(e) => match fs::symlink_metadata(path) {
+            Ok(m) if m.file_type().is_symlink() => Err(link()),
+            Ok(m) if !m.is_file() => Err(not_file()),
+            _ => Err(e),
+        },
     }
 }
 

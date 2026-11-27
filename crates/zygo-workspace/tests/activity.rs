@@ -468,9 +468,10 @@ fn update_errors_of_the_files_are_file_conditions_and_the_others_are_not() {
     assert_eq!(fs::read_to_string(&outside).unwrap(), "x");
     assert!(!d.activity_json().exists());
     fs::remove_file(d.activity_lock()).unwrap();
-    // `activity.lock` as a folder: the open for writing fails (EISDIR).
+    // `activity.lock` as a folder: the open for writing fails (EISDIR); the error names the path (FX-28 review
+    // round 2 F2).
     fs::create_dir(d.activity_lock()).unwrap();
-    assert_eq!(condition(&d), (true, format!("{lock}: open lock file: Is a directory (os error 21)")));
+    assert_eq!(condition(&d), (true, format!("{lock}: open lock file: {lock}: is not a regular file")));
     fs::remove_dir(d.activity_lock()).unwrap();
     // One-off: a refused over-limit result and the lock timeout.
     let id = "x".repeat(2 << 20);

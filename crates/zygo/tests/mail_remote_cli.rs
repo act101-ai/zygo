@@ -276,6 +276,12 @@ fn remote_send_with_no_workspace_state_is_refused_and_starts_no_child() {
     refused(send(&x, Some(ALICE), "bob@b", BODY), "zygo: the workspace has no state; nothing sent");
     nothing_sent(&x);
     assert!(std::fs::symlink_metadata(&state).is_err());
+    // The binary reads the state first (`workspace_of`), so it refuses with its own line before the send (FX-28 review
+    // round 2 F3); with no ZYGO_WORKSPACE the line is `no workspace for this session or folder`.
+    let o = zygo(&x.h, &["mail", "send", "bob@b", "--subject", SUBJECT], &[]);
+    assert_eq!((o.status.code(), out(&o), err(&o)), (Some(1), String::new(), format!("no workspace with id {WS_ID}\n")));
+    nothing_sent(&x);
+    assert!(std::fs::symlink_metadata(&state).is_err());
 }
 
 #[test] // R1: S§7.2 (rewritten): a value with `@` that is not local is refused in read, ls and watch

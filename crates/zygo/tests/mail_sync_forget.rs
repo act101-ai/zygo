@@ -362,29 +362,119 @@ enum Step {
     Sent(Result<Ulid, SendError>),
     /// The forget returned: (exit code, question, stdout, stderr).
     Forgot(i32, String, String, String),
+    /// The named thread panicked before it reported; its panic comes out at its join.
+    Panicked(&'static str),
 }
 
-#[test] // S§7.6 step 4, S§8.1 (FX-28 review round 1 F1): the remote send holds mail/lock shared from Delivery::begin to
-        // its link, so no exclusive taker gets the lock first, and the forget counts the linked file and refuses
+/// The fail-safe bound of each wait in [`remote_send_holds_mail_lock_until_its_link`]. The order of the test comes
+/// from its hooks and channels, never from this bound: the bound only turns a lost report into a failure that names
+/// the step, in place of a hang (FX-28 review round 2 F1).
+const STEP_BOUND: Duration = Duration::from_secs(60);
+
+/// The body of a hook that holds its thread at its point until the test sends the go on `rx`, within
+/// [`STEP_BOUND`]. An error (no go in time, or the test ended) is the hook's error at `point`.
+fn wait_go(rx: &Mutex<mpsc::Receiver<()>>, point: &str) -> Result<(), String> {
+    let rx = rx.lock().map_err(|_| format!("{point}: the go channel is poisoned"))?;
+    rx.recv_timeout(STEP_BOUND).map_err(|e| format!("{point}: no go from the test within {STEP_BOUND:?} ({e})"))
+}
+
+/// Sends `Step::Panicked(name)` when it is dropped while its thread panics, so the test thread stops its wait at once.
+struct PanicReport {
+    tx: mpsc::Sender<Step>,
+    name: &'static str,
+}
+
+impl Drop for PanicReport {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            let _ = self.tx.send(Step::Panicked(self.name));
+        }
+    }
+}
+
+/// Clears the hooks of `points` for the state folder `dir` when dropped, also when the test panics: no hook, and no
+/// sender that a hook holds, outlives the test in the static hook table of this test binary.
+struct ClearHooks<'a> {
+    dir: &'a Path,
+    points: &'static [&'static str],
+}
+
+impl Drop for ClearHooks<'_> {
+    fn drop(&mut self) {
+        for point in self.points {
+            hook(self.dir, point, None);
+        }
+    }
+}
+
+/// The named threads of a test. A thread's panic is the test's panic, with the thread's own payload.
+#[derive(Default)]
+struct Threads(Vec<(&'static str, std::thread::JoinHandle<()>)>);
+
+impl Threads {
+    /// Starts `f` as the thread `name`; a panic in it sends `Step::Panicked(name)` on `tx`.
+    fn spawn(&mut self, name: &'static str, tx: &mpsc::Sender<Step>, f: impl FnOnce() + Send + 'static) {
+        let report = PanicReport { tx: tx.clone(), name };
+        self.0.push((name, std::thread::spawn(move || {
+            let _report = report;
+            f();
+        })));
+    }
+
+    /// The next report on `rx`. `Step::Panicked` joins that thread and resumes its panic; no report within
+    /// [`STEP_BOUND`] is a panic that names `step`.
+    fn next(&mut self, rx: &mpsc::Receiver<Step>, step: &str) -> Step {
+        match rx.recv_timeout(STEP_BOUND) {
+            Ok(Step::Panicked(name)) => {
+                self.join(name);
+                panic!("{step}: the {name} thread reported a panic, but its join gave none");
+            }
+            Ok(s) => s,
+            Err(e) => panic!("{step}: no report within {STEP_BOUND:?} ({e})"),
+        }
+    }
+
+    /// Joins the thread `name`; its panic is resumed here.
+    fn join(&mut self, name: &str) {
+        let i = self.0.iter().position(|(n, _)| *n == name).unwrap_or_else(|| panic!("no thread {name}"));
+        let (_, t) = self.0.remove(i);
+        if let Err(payload) = t.join() {
+            std::panic::resume_unwind(payload);
+        }
+    }
+
+    /// Joins every thread, in start order; the first panic is resumed here.
+    fn join_all(&mut self) {
+        while let Some(&(name, _)) = self.0.first() {
+            self.join(name);
+        }
+    }
+}
+
+#[test] // S§7.6 step 4, S§8.1 (FX-28 review rounds 1 F1 and 2 F1): the remote send holds mail/lock shared from
+        // Delivery::begin to its link, so no exclusive taker gets the lock first, and the forget counts the linked file
+        // and refuses. Each wait is bounded, and the order comes from hooks and channels, not from a lock wait.
 fn remote_send_holds_mail_lock_until_its_link() {
     let h = Harness::no_tmux();
     seed_down(&h, &[(ALICE, "alice")]);
     unsynced(&h);
     send(&h, "a", "alice", ("bob", "b"));
     let dir = h.paths.workspaces_dir().join(WS_ID);
+    let _clear = ClearHooks { dir: &dir, points: &["remote_send_before_link", "forget_before_mail_lock"] };
     let (tx, rx) = mpsc::channel::<Step>();
+    let mut threads = Threads::default();
+    // The send stops under mail/lock, right before its link, until the test resumes it.
     let (resume, resumed) = mpsc::channel::<()>();
-    let resumed = Mutex::new(resumed);
-    let paused = tx.clone();
+    let (resumed, paused) = (Mutex::new(resumed), tx.clone());
     hook(&dir, "remote_send_before_link", Some(Box::new(move || {
         let _ = paused.send(Step::Paused);
-        resumed.lock().unwrap().recv().map_err(|_| "the test ended before it resumed the send".to_string())
+        wait_go(&resumed, "remote_send_before_link")
     })));
     let (st, ssp, srepo) = (tx.clone(), sp(&h), h.repo());
-    let sender = std::thread::spawn(move || {
+    threads.spawn("send", &tx, move || {
         let _ = st.send(Step::Sent(send_at(&ssp, &srepo, "a", "alice", ("bob", "b"))));
     });
-    match rx.recv().unwrap() {
+    match threads.next(&rx, "the send stops at remote_send_before_link") {
         Step::Paused => {}
         other => panic!("the send did not stop at remote_send_before_link: {other:?}"),
     }
@@ -396,39 +486,39 @@ fn remote_send_holds_mail_lock_until_its_link() {
         "an exclusive taker got mail/lock while the send was before its link"
     );
     drop(lock);
-    let at_lock = tx.clone();
+    // The forget stops right before it takes mail/lock exclusive, until the test lets it go on. The test does that only
+    // after the send thread has reported that the send returned, so the forget takes the lock after the send released
+    // it, and its 2 s lock wait (MAIL_LOCK_WAIT) is not in play.
+    let (go, gone) = mpsc::channel::<()>();
+    let (gone, at_lock) = (Mutex::new(gone), tx.clone());
     hook(&dir, "forget_before_mail_lock", Some(Box::new(move || {
         let _ = at_lock.send(Step::AtLock);
-        Ok(())
+        wait_go(&gone, "forget_before_mail_lock")
     })));
     let (ft, fpaths, fnone) = (tx.clone(), h.paths.clone(), h.root().join("none"));
-    let forget = std::thread::spawn(move || {
+    threads.spawn("forget", &tx, move || {
         let (mut ask, mut out, mut err) = (Vec::new(), Vec::new(), Vec::new());
         let code = forget_cmd(&fpaths, &fnone, None, "app", true, &mut std::io::empty(), &mut ask, &mut out, &mut err);
         let text = |b: Vec<u8>| String::from_utf8(b).unwrap();
         let _ = ft.send(Step::Forgot(code, text(ask), text(out), text(err)));
     });
-    drop(tx);
-    match rx.recv().unwrap() {
+    match threads.next(&rx, "the forget comes to forget_before_mail_lock") {
         Step::AtLock => {}
-        other => panic!("the forget did not come to mail/lock: {other:?}"),
+        other => panic!("the forget did not come to forget_before_mail_lock: {other:?}"),
     }
-    resume.send(()).unwrap();
-    let (mut sent, mut forgot) = (None, None);
-    for _ in 0..2 {
-        match rx.recv().unwrap() {
-            Step::Sent(r) => sent = Some(r),
-            Step::Forgot(code, ask, out, err) => forgot = Some((code, ask, out, err)),
-            other => panic!("one more stop: {other:?}"),
-        }
-    }
-    sender.join().unwrap();
-    forget.join().unwrap();
-    hook(&dir, "remote_send_before_link", None);
-    hook(&dir, "forget_before_mail_lock", None);
-    let id = sent.expect("the send returned").expect("the send linked its file");
+    resume.send(()).expect("the send waits at remote_send_before_link");
+    let id = match threads.next(&rx, "the send returns") {
+        Step::Sent(r) => r.expect("the send linked its file"),
+        other => panic!("the send did not return while the forget waited: {other:?}"),
+    };
+    go.send(()).expect("the forget waits at forget_before_mail_lock");
+    let forgot = match threads.next(&rx, "the forget returns") {
+        Step::Forgot(code, ask, out, err) => (code, ask, out, err),
+        other => panic!("the forget did not return: {other:?}"),
+    };
+    threads.join_all();
     assert_eq!(
-        forgot.expect("the forget returned"),
+        forgot,
         (
             1,
             "zygo: 1 unsent messages and 0 refused messages will be deleted. Forget the workspace? [y/N] y (--yes)\n".to_string(),

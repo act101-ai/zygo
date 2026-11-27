@@ -294,6 +294,12 @@ fn remote_send_with_no_workspace_state_is_refused_and_starts_no_child() {
     assert_eq!(send(&tools(&x), "bob@b", BODY), Err(ToolError::Failed(format!("zygo: workspace {ID} has no state"))));
     nothing_sent(&x);
     // The state is gone after the tool's read: the outbox send finds no workspace.json under mail/lock.
+    // The clock seam is the place to remove it because of the call order in `Mail::route`: the tool reads the state
+    // (`Mail::workspace`) first, then reads the clock once, as the `now` argument of `send_remote_with`, and only
+    // inside that call does `Delivery::begin` read workspace.json under mail/lock. So the clock runs between the two
+    // reads. A change of that order fails this test loudly: a clock read before the tool's read gives
+    // `workspace <id> has no state`, a clock read after `Delivery::begin` lets the send succeed, and a second clock
+    // read panics at the `remove_file` of a file that is gone. Each differs from the line asserted below.
     fs::write(&state, &saved).unwrap();
     let gone = state.clone();
     let t = tools_c(&x, false, far(), Arc::new(move || {

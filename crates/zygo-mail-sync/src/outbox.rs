@@ -85,12 +85,16 @@ pub fn send_remote(
 /// - `NoWorkspace`, no `workspace.json`, no state folder, or a locked file that is no longer `mail/lock` (a forget
 ///   renamed the state folder while this send waited): `zygo: the workspace has no state; nothing sent`;
 /// - `BadState`, a corrupt `workspace.json` (`zygo: mail: <state>/workspace.json: <reason>`), a newer one (`zygo: mail:
-///   workspace state is from a newer zygo; run zygo update`), or a state folder that is a link (`zygo: mail: <state>
-///   is a link; it is not followed`);
+///   workspace state is from a newer zygo; run zygo update`), a state folder that is a link (`zygo: mail: <state>
+///   is a link; it is not followed`), or a state path that is not a folder (`zygo: mail: <state> is not a folder`);
 /// - `BadMail`, a `mail/` that is a link or not a folder: `zygo: mail: <state>/mail is not a folder`;
-/// - `Io`, a `mail/lock` that is not a regular file: `zygo: mail: <state>/mail/lock: is a link; it is not followed`,
-///   `zygo: mail: <state>/mail/lock: is not a regular file`, or, for a folder, the text of the open error (`zygo:
-///   mail: Is a directory (os error 21)` on Linux).
+/// - `Io`, a `mail/lock` that is not a regular file: `zygo: mail: <state>/mail/lock: is a link; it is not followed`
+///   for a link, and `zygo: mail: <state>/mail/lock: is not a regular file` for a folder, a FIFO or another entry.
+///
+/// The sync state and the member cache are in the state folder, so a state folder that is missing or not a folder
+/// when they are read refuses first (an unknown address, or the error of the sync state read); the `NoWorkspace` and
+/// `BadState` lines of those two cases come when the state goes after those reads and before `Delivery::begin`. `zygo mail send` and `mail_send` read the state before they call this function, so a state that
+/// is missing then refuses with their own line (S§8.1 row 1).
 ///
 /// A refusal makes no state folder, no `mail/outbox/` folder and no outbox file. When the state folder is a real
 /// folder and `mail/` is not a link, `Delivery::begin` makes `mail/` (`0700`) and `mail/lock` (`0600`) when they are

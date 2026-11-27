@@ -1042,6 +1042,34 @@ fn a_fifo_in_the_state_folder_never_blocks() {
     assert!(fs::symlink_metadata(dir.join("errors.log")).unwrap().file_type().is_fifo());
 }
 
+#[cfg(unix)]
+#[test] // FX-28 review round 2 F2: a folder at `lock`, `op.lock` or `mail/lock` is refused with a line that names the
+        // path, as a FIFO is; the open for write fails with EISDIR before the handle can be checked
+fn a_folder_at_a_lock_file_is_refused_with_its_path() {
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    let store = Store::open(&p, ID);
+    store.update(S5, &mut identity).unwrap();
+    let dir = store.dir().to_path_buf();
+    let not_regular = |name: &str| format!("{}: is not a regular file", dir.join(name).display());
+    // `lock` (`Store::update`)
+    fs::remove_file(dir.join("lock")).unwrap();
+    fs::create_dir(dir.join("lock")).unwrap();
+    assert_eq!(store.update(S5, &mut identity).unwrap_err().to_string(), not_regular("lock"));
+    // `op.lock` (`Store::op_lock`); `op_lock_free` gives `true` with no wait, as for a FIFO
+    assert!(fs::symlink_metadata(dir.join("op.lock")).is_err());
+    fs::create_dir(dir.join("op.lock")).unwrap();
+    assert_eq!(store.op_lock().unwrap_err().to_string(), not_regular("op.lock"));
+    assert!(store.op_lock_free());
+    // `mail/lock` (`mail::Delivery::begin`, through `lock_file_as`)
+    fs::create_dir_all(dir.join("mail/lock")).unwrap();
+    let e = zygo_workspace::mail::Delivery::begin(&store, Duration::ZERO).unwrap_err();
+    assert_eq!(e.to_string(), format!("zygo: mail: {}", not_regular("mail/lock")));
+    for name in ["lock", "op.lock", "mail/lock"] {
+        assert!(dir.join(name).is_dir(), "{name}");
+    }
+}
+
 /// M4: `update_existing` makes no folder and no state when none exists. With no state folder it creates nothing,
 /// not even the folder above it. With a state folder and no `workspace.json` (the case that `update` would fill with
 /// `Workspace::new`), it gives `Ok(None)`, runs no closure and writes no `workspace.json`; the only file it leaves is
