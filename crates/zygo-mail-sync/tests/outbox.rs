@@ -55,6 +55,7 @@ struct Fx { _t: TempDir, sp: SyncPaths, root: PathBuf }
 fn fx() -> Fx {
     let t = TempDir::new().unwrap();
     let sp = SyncPaths::new(&paths(t.path()), ID).unwrap();
+    fs::create_dir_all(sp.mail.parent().unwrap()).unwrap(); // the workspace exists (MS-21 review R2-1)
     let mut c = MemberCache::default();
     c.hosts.insert("b".into(), vec!["bob".into()]);
     c.hosts.insert("c".into(), vec!["carol".into()]);

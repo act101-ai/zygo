@@ -128,6 +128,14 @@ pub fn ensure_mail_root(mail_dir: &std::path::Path) -> std::io::Result<()> {
     store::make_dir(mail_dir)
 }
 
+/// [`ensure_mail_root`] that makes no parent: `dir`'s parent must exist, else `NotFound` and nothing is made. The
+/// mail sync makes `mail/` and its folders with it, each in the one before it, so a sync that `zygo ws forget` ran
+/// under never makes the workspace state folder `<workspaces_dir>/<id>/` again (mail sync design S§8.3 step 2,
+/// MS-21 review R2-1).
+pub fn ensure_mail_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    store::make_dir_in_place(dir)
+}
+
 /// A delivery under `mail/lock` held shared (M§5 P1): the member records are read under the lock, and the lock is held
 /// until the value is dropped, so no removal of `mail/<key>/` runs between that read and the last link into `new/`.
 /// Deliveries do not wait for each other.
@@ -163,7 +171,7 @@ impl Delivery {
             Err(e) => return Err(e.into()),
         }
         let mail = store.dir().join("mail");
-        match store::make_leaf(&mail) {
+        match store::make_dir_in_place(&mail) {
             Err(e) if e.kind() == ErrorKind::NotFound => return Err(MailError::NoWorkspace),
             r => r?,
         }

@@ -7,8 +7,9 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 use zygo_core::paths::Paths;
 use zygo_core::Agent;
@@ -29,6 +30,24 @@ const CLEARED: &[&str] = &[
     "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME",
     "GIT_COMMITTER_EMAIL", "ACT_CONFIG_DIR",
 ];
+
+/// The injected clock of a CLI sync that waits for the lock that `zygo ws forget` holds (MS-21 review F1): the
+/// second `now()` (the first look after the lock was busy) runs `forget` once; the time stays at `secs`, so the wait
+/// ends only when the lock is free.
+pub struct ForgetClock(u64, Mutex<Option<Box<dyn FnOnce() + Send>>>, AtomicU64);
+impl ForgetClock {
+    pub fn new(secs: u64, forget: Box<dyn FnOnce() + Send>) -> ForgetClock {
+        ForgetClock(secs, Mutex::new(Some(forget)), AtomicU64::new(0))
+    }
+}
+impl zygo_mail_sync::env::Clock for ForgetClock {
+    fn now(&self) -> SystemTime {
+        if self.2.fetch_add(1, Ordering::SeqCst) == 1 && let Some(f) = self.1.lock().unwrap().take() {
+            f();
+        }
+        UNIX_EPOCH + Duration::from_secs(self.0)
+    }
+}
 
 /// A deadline one hour away: a test not about time never times out under machine load.
 pub fn far() -> Instant { Instant::now() + Duration::from_secs(3600) }

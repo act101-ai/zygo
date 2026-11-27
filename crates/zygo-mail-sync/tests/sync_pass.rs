@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use common::{advance, blob, commit_tree, git, live, plain, tip_file, tree_literally, Machine, Remote, ALICE, BOB, WS_ID};
+use common::{advance, blob, commit_tree, git, live, plain, tip_file, tree_literally, ForgetClock, Machine, Remote, ALICE, BOB, WS_ID};
 use serde_json::{json, Value};
 use ulid::Ulid;
 use zygo_config::{Config, LoadContext, MailConfig, SyncOff};
@@ -25,7 +25,7 @@ use zygo_mail_sync::sync::{run, run_with, Mode, Opts, SyncError, LOCK_WAIT, MAX_
 use zygo_redact::DeadlinePolicy;
 use zygo_workspace::mail::wake::{after_send_with, Probe as IdleProbe, WAKE_TEXT};
 use zygo_workspace::mux::{HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split};
-use zygo_workspace::state::Workspace;
+use zygo_workspace::state::{Phase, Store, Workspace};
 
 /// Every test holds this lock: a lock-sensitive test for writing, every other test for reading. A child that another
 /// thread of this process starts holds a copy of each open file description from its fork to its exec (O_CLOEXEC
@@ -474,6 +474,7 @@ fn collision_line_goes_to_the_caller_only() {
     let _g = exclusive();
     let (r, a, _b) = pair();
     let other = SyncPaths::new(&a.paths, "fedcba9876543210").unwrap();
+    fs::create_dir_all(other.mail.parent().unwrap()).unwrap(); // the workspace exists (MS-21 review R2-1)
     let x = make_identity(&other).unwrap();
     edit_tip(&r, &[("registry/a.json", &registry_json("a", &x, &["alice"]))], &[]);
     for mode in [Mode::Child, Mode::Cli] {
@@ -737,6 +738,171 @@ fn cli_run_with_a_held_lock_is_busy_after_the_wait_and_exits_1() {
     assert_eq!(err.exit_code(Mode::Cli), 1);
     assert!(a.sp().again.exists()); // S§8.3 step 2: the holder sees the mark
     drop(held);
+}
+
+#[test] // S§8.3 step 3 (MS-21 review F1): a CLI run that waited for the lock of a forget writes nothing after it
+fn cli_run_that_waited_for_a_forget_writes_nothing() {
+    let _g = exclusive();
+    let (_r, a) = one();
+    let sp = a.sp();
+    fs::create_dir_all(&sp.sync).unwrap();
+    fs::File::create(&sp.lock).unwrap();
+    let held = take(&sp.lock);
+    let state = a.paths.workspaces_dir().join(WS_ID);
+    let (state2, cache) = (state.clone(), a.paths.workspace_cache_dir().join(WS_ID));
+    let forget: Box<dyn FnOnce() + Send> = Box::new(move || {
+        fs::remove_dir_all(&state2).unwrap();
+        let _ = fs::remove_dir_all(&cache);
+        drop(held);
+    });
+    let e = Env { clock: Box::new(ForgetClock::new(T0, forget)), ..plain_env(&a) };
+    let err = run(&e, WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!(err, SyncError::Stopped { line: "zygo: the workspace was forgotten; nothing synced".into(), check: "forgotten" });
+    assert_eq!(err.exit_code(Mode::Cli), 1);
+    assert!(fs::symlink_metadata(&state).is_err(), "the state folder was made again");
+    assert!(fs::symlink_metadata(&sp.identity).is_err() && fs::symlink_metadata(&sp.worktree).is_err());
+    assert_eq!(git(&a.root, &["worktree", "list", "--porcelain"]).matches("worktree ").count(), 1);
+}
+
+/// The CLI line of a sync whose workspace was forgotten (S§8.3 step 3).
+const FORGOTTEN: &str = "zygo: the workspace was forgotten; nothing synced";
+
+/// A hook that runs `f` once at the seam point `after_gate` (between S§8.3 steps 1 and 2).
+fn after_gate(f: impl FnOnce() + Send + 'static) -> Hook {
+    let f = Mutex::new(Some(f));
+    counting(Arc::default(), move |p, _| {
+        if p == "after_gate" && let Some(f) = f.lock().unwrap().take() {
+            f();
+        }
+    })
+}
+
+#[test] // S§8.3 steps 2-3 (MS-21 review R2-1): a forget after the gate: the sync never makes the state folder again
+fn sync_whose_state_folder_went_after_the_gate_makes_no_state_folder() {
+    let _g = exclusive();
+    let (_r, a) = one();
+    let state = a.paths.workspaces_dir().join(WS_ID);
+    for mode in [Mode::Cli, Mode::Child] {
+        a.workspace(&[(ALICE, "alice")]);
+        let gone = state.clone();
+        let h = after_gate(move || fs::remove_dir_all(&gone).unwrap());
+        let r = run(&hook_env(&a, h), WS_ID, mode);
+        match mode {
+            Mode::Cli => assert_eq!(r.unwrap_err(), SyncError::Stopped { line: FORGOTTEN.into(), check: "forgotten" }),
+            Mode::Child => assert_eq!(r.unwrap().passes, 0),
+        }
+        assert!(fs::symlink_metadata(&state).is_err(), "{mode:?}: the state folder was made again");
+    }
+}
+
+#[test] // S§8.3 step 3 (MS-21 review R2-2): a new record of the same id written after the gate stops the sync
+fn sync_whose_record_was_made_again_after_the_gate_stops_as_forgotten() {
+    let _g = exclusive();
+    let (_r, a) = one();
+    let a = Arc::new(a);
+    let state = a.paths.workspaces_dir().join(WS_ID);
+    // The same record in a new state folder, then a record with another name.
+    for rename in [false, true] {
+        for mode in [Mode::Cli, Mode::Child] {
+            a.workspace(&[(ALICE, "alice")]);
+            let (a2, gone) = (a.clone(), state.clone());
+            let h = after_gate(move || {
+                fs::remove_dir_all(&gone).unwrap();
+                a2.workspace(&[(ALICE, "alice")]);
+                if rename {
+                    Store::open(&a2.paths, WS_ID).update(Duration::from_secs(10), &mut |ws| {
+                        ws.name = "other".into();
+                        ws.tmux_session = "zygo-other".into();
+                        Ok(())
+                    }).unwrap();
+                }
+            });
+            let r = run(&hook_env(&a, h), WS_ID, mode);
+            match mode {
+                Mode::Cli => assert_eq!(r.unwrap_err(), SyncError::Stopped { line: FORGOTTEN.into(), check: "forgotten" }),
+                Mode::Child => assert_eq!(r.unwrap().passes, 0),
+            }
+            assert!(fs::symlink_metadata(a.sp().identity).is_err(), "rename {rename} {mode:?}: a pass ran");
+            assert_eq!(a.errors(), "", "rename {rename} {mode:?}");
+        }
+    }
+}
+
+#[test] // S§8.3 step 3 (MS-21 review R2-2): a record change that is not a new workspace (the phase) does not stop the sync
+fn sync_whose_record_phase_changed_after_the_gate_runs() {
+    let _g = exclusive();
+    let (_r, a) = one();
+    let a = Arc::new(a);
+    let a2 = a.clone();
+    let h = after_gate(move || {
+        Store::open(&a2.paths, WS_ID).update(Duration::from_secs(10), &mut |ws| {
+            ws.phase = Phase::Down;
+            ws.snapshot_seq += 1;
+            Ok(())
+        }).unwrap();
+    });
+    assert_eq!(run(&hook_env(&a, h), WS_ID, Mode::Cli).unwrap().passes, 1);
+}
+
+#[test] // S§8.3 step 3 (MS-21 review R2-2): a lock file unlinked and made again while the CLI waits: the lock taken is
+        // not the lock at `mail/sync/lock`, so the sync stops as forgotten
+fn cli_run_whose_lock_file_was_made_again_stops_as_forgotten() {
+    let _g = exclusive();
+    let (_r, a) = one();
+    let sp = a.sp();
+    fs::create_dir_all(&sp.sync).unwrap();
+    fs::File::create(&sp.lock).unwrap();
+    let held = take(&sp.lock);
+    let lock = sp.lock.clone();
+    let swap: Box<dyn FnOnce() + Send> = Box::new(move || {
+        fs::remove_file(&lock).unwrap();
+        fs::File::create(&lock).unwrap();
+        drop(held);
+    });
+    let e = Env { clock: Box::new(ForgetClock::new(T0, swap)), ..plain_env(&a) };
+    let err = run(&e, WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!(err, SyncError::Stopped { line: FORGOTTEN.into(), check: "forgotten" });
+    assert!(fs::symlink_metadata(&sp.identity).is_err() && fs::symlink_metadata(&sp.worktree).is_err());
+}
+
+#[test] // S§8.3 step 3 (MS-21 review R2-3): a record that cannot be read after the wait is the gate's record stop
+fn cli_run_whose_record_became_newer_during_the_wait_is_the_record_stop() {
+    let _g = exclusive();
+    let (_r, a) = one();
+    let sp = a.sp();
+    fs::create_dir_all(&sp.sync).unwrap();
+    fs::File::create(&sp.lock).unwrap();
+    let held = take(&sp.lock);
+    let file = a.paths.workspaces_dir().join(WS_ID).join("workspace.json");
+    let newer: Box<dyn FnOnce() + Send> = Box::new(move || {
+        let mut v: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        v["version"] = json!(v["version"].as_u64().unwrap() + 1);
+        fs::write(&file, serde_json::to_vec(&v).unwrap()).unwrap();
+        drop(held);
+    });
+    let e = Env { clock: Box::new(ForgetClock::new(T0, newer)), ..plain_env(&a) };
+    let err = run(&e, WS_ID, Mode::Cli).unwrap_err();
+    let line = "zygo: mail sync cannot run: the workspace record cannot be read";
+    assert_eq!(err, SyncError::Stopped { line: line.into(), check: "workspace" });
+    assert_eq!((err.exit_code(Mode::Cli), err.exit_code(Mode::Child)), (1, 0));
+    assert!(fs::symlink_metadata(&sp.identity).is_err());
+    assert_eq!(a.errors(), "");
+}
+
+#[test] // S§8.3 steps 3 and 17 (MS-21 review F1): a child whose record goes before its next pass ends silently, Ok
+fn child_pass_after_the_record_went_does_not_run() {
+    let _g = exclusive();
+    let (_r, a, _b) = pair();
+    let a = Arc::new(a);
+    let a2 = a.clone();
+    let h = counting(Arc::default(), move |p, n| {
+        if p == "after_release" && n == 1 {
+            mark_again(&a2.sp()).unwrap();
+            fs::remove_file(a2.paths.workspaces_dir().join(WS_ID).join("workspace.json")).unwrap();
+        }
+    });
+    assert_eq!(run(&hook_env(&a, h), WS_ID, Mode::Child).unwrap().passes, 1);
+    assert!(a.sp().again.exists(), "a second pass took the mark");
 }
 
 #[test] // S§19 #16a

@@ -41,42 +41,26 @@ fn file_name(id: &str) -> String {
 /// Makes the missing parts of `dir` and its parents, `0700` on unix, then sets `dir` itself to `0700` when it is
 /// not (M-C4). A `dir` that is a symlink or not a folder is refused.
 pub(crate) fn make_dir(dir: &Path) -> std::io::Result<()> {
-    let mut b = DirBuilder::new();
-    b.recursive(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        b.mode(0o700);
-    }
-    b.create(dir)?;
-    let meta = fs::symlink_metadata(dir)?;
-    if !meta.is_dir() {
-        return Err(std::io::Error::new(ErrorKind::InvalidInput, format!("{} is not a folder", dir.display())));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if meta.permissions().mode() & 0o7777 != 0o700 {
-            fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
-        }
-    }
-    Ok(())
+    make_dir_with(dir, true)
 }
 
-/// Makes `dir` alone, `0700` on unix, when its parent exists (`NotFound` when it does not: no parent is made); an
-/// existing `dir` is no error. Then, as [`make_dir`], a `dir` that is a symlink or not a folder is refused and `dir`
-/// is set to `0700` (M-C4; M§5 P1: a missing `mail/` or `mail/<key>/` is not made again).
-pub(crate) fn make_leaf(dir: &Path) -> std::io::Result<()> {
+/// [`make_dir`] that makes no parent: a missing parent is `NotFound` and nothing is made (mail sync design S§8.3
+/// step 2, MS-21 review R2-1).
+pub(crate) fn make_dir_in_place(dir: &Path) -> std::io::Result<()> {
+    make_dir_with(dir, false)
+}
+
+fn make_dir_with(dir: &Path, recursive: bool) -> std::io::Result<()> {
     let mut b = DirBuilder::new();
-    b.recursive(false);
+    b.recursive(recursive);
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
         b.mode(0o700);
     }
     match b.create(dir) {
-        Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
-        r => r?,
+        Err(e) if e.kind() != ErrorKind::AlreadyExists => return Err(e),
+        _ => {}
     }
     let meta = fs::symlink_metadata(dir)?;
     if !meta.is_dir() {
@@ -309,7 +293,7 @@ pub fn read_within(mail_dir: &Path, key: &str, max: usize, bound: Duration) -> R
         }
         // A link at cur/ is refused; a missing cur/ is made, and an existing one is set to 0700 (M-C4).
         real_dir(&cur)?;
-        match make_leaf(&cur) {
+        match make_dir_in_place(&cur) {
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
             r => r?,
         }
