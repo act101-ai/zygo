@@ -43,6 +43,10 @@ pub struct SyncPaths {
     pub last_start: PathBuf,
     /// `<workspace_cache_dir>/<id>/mail-sync`: the side-branch worktree (S§6.3).
     pub worktree: PathBuf,
+    /// The paths that `new` got, for [`SyncPaths::store`] (FX-28).
+    paths: Paths,
+    /// The workspace id that `new` got, for [`SyncPaths::store`] (FX-28).
+    ws_id: String,
 }
 
 impl SyncPaths {
@@ -73,7 +77,14 @@ impl SyncPaths {
             mail: m,
             outbox,
             sync,
+            paths: paths.clone(),
+            ws_id: ws_id.to_string(),
         })
+    }
+
+    /// The state of the workspace: the M§5 taker of `mail/lock` that a remote send uses (S§7.6 step 4, FX-28).
+    pub(crate) fn store(&self) -> zygo_workspace::state::Store {
+        zygo_workspace::state::Store::open(&self.paths, &self.ws_id)
     }
 }
 
