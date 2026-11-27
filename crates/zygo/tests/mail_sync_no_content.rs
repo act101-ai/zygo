@@ -28,7 +28,7 @@ use zygo_mail_sync::outbox;
 use zygo_mail_sync::public::{map_url, probe_command, Mapped};
 use zygo_mail_sync::registry::{read_cache, write_cache, MemberCache};
 use zygo_mail_sync::state::{mark_again, read_last_start, SyncPaths};
-use zygo_mail_sync::sync::{run_with, run_with_deadline, Mode, Opts, Report, SyncError};
+use zygo_mail_sync::sync::{run_with_deadline, Mode, Opts, Report, SyncError};
 use zygo_mcp::tools::mail::tools_with_sync;
 use zygo_mcp::{McpCtx, Tool, ToolError};
 use zygo_redact::act_lite_store;
@@ -409,18 +409,14 @@ fn env_in(h: &Harness, seam: Box<dyn Seam>, policy: DeadlinePolicy) -> Env { env
 /// An hour of secret-pass budget: no clock decides the test.
 fn far() -> DeadlinePolicy { DeadlinePolicy { base: Duration::from_secs(3600), ..Default::default() } }
 
-/// Author's call 2: a sync in process, with an hour of secret-pass budget.
-fn sync_in(h: &Harness) -> Report {
-    run_with(&env_in(h, Box::new(NoSeam), far()), WS_ID, Mode::Cli, &Opts::default()).unwrap()
-}
-
 /// FX-26 review round 2 F-3: an hour of pass deadline (S§8.3 step 4) in place of the production 120 s
 /// (`sync::PASS_DEADLINE`), so a result that counts the work of one pass does not depend on how fast git runs.
+/// FX-26 R3-11: every pass that a walk runs in process takes it, through `sync::run_with_deadline` (the S-C9 seam);
+/// only the real binary runs (`zygo mail sync` and the other [`Harness::zygo`] runs) keep the production 120 s.
 const FAR_PASS: Duration = Duration::from_secs(3600);
 
-/// [`sync_in`] with the pass deadline [`FAR_PASS`] (`sync::run_with_deadline`, the S-C9 seam of FX-26 review round 2
-/// F-3).
-fn sync_far(h: &Harness) -> Report {
+/// Author's call 2: a sync in process, with an hour of secret-pass budget and the pass deadline [`FAR_PASS`].
+fn sync_in(h: &Harness) -> Report {
     run_with_deadline(&env_in(h, Box::new(NoSeam), far()), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap()
 }
 
@@ -672,6 +668,8 @@ fn own_hosts_at_tip(r: &Remote, h: &Harness, host: &str) -> Vec<String> {
 }
 
 /// The unread count of member `key` of `h`.
+/// FX-26 R3-1: the maildir folder `mail/<key>/<sub>/` of `h` (`new` or `cur`), for [`Scanned::folders`].
+fn maildir(h: &Harness, key: &str, sub: &str) -> PathBuf { mail_dir(&h.paths, WS_ID).join(key).join(sub) }
 fn new_count(h: &Harness, key: &str) -> usize { store::unread(&mail_dir(&h.paths, WS_ID), key).unwrap() }
 
 /// One finding `"<what> holds <marker>"` per marker of `markers` that occurs in `bytes` (not per occurrence), in
@@ -880,7 +878,10 @@ fn usage_findings(db: &Path) -> (usize, Vec<String>) {
 /// One machine that [`scan`] reads: its label in a finding, its own member names (M§6, `workspace.json`), its own hosts
 /// (S§7.5, the keys of `state.json`), whether it synced (then each of its stores must be there), whether the walk
 /// expects its `errors.log` (FX-26 review F5: a walk that sets `false` names why in a comment), and whether its
-/// repository holds zygo commits (then the scan checks at least one against S§6.5, whatever its refs).
+/// repository holds zygo commits (then the scan checks at least one against S§6.5, whatever its refs). FX-26 R3-1:
+/// `folders` names each folder kind that the walk knows holds a file on this machine (the maildir folder of each
+/// member that the walk delivered to, the outbox or `refused/` when a message waits there, each `sess-*` folder that
+/// the walk made, and `results/` when the walk wrote a result); the sweep must read a file in each.
 struct Scanned<'a> {
     label: &'a str,
     h: &'a Harness,
@@ -889,6 +890,7 @@ struct Scanned<'a> {
     synced: bool,
     errors_log: bool,
     zygo_commits: bool,
+    folders: Vec<PathBuf>,
 }
 
 /// The tip of the zygo branch ref of `repo` (`refs/heads/zygo/mail` in a bare repository,
@@ -1001,11 +1003,14 @@ fn in_object_store(rel: &Path) -> bool {
 /// Each file under `root` (links not followed; git object stores left out, as [`commit_findings`] reads every commit
 /// and tag) that holds a marker: its path and the markers. FX-26 review round 2 F-4: the sweep read each file of
 /// `known` (the files that the walk knows exist under `root`, at least one), so a sweep that reads nothing fails.
-fn marked_files(root: &Path, known: &[PathBuf]) -> Vec<(PathBuf, Vec<&'static str>)> {
+/// FX-26 R3-1: an entry or a folder that the walk cannot read fails the sweep with its path (no error is dropped), and
+/// the sweep read at least one file in each folder of `dirs` (the folders that the walk knows hold a file).
+fn marked_files(root: &Path, known: &[PathBuf], dirs: &[PathBuf]) -> Vec<(PathBuf, Vec<&'static str>)> {
     assert!(!known.is_empty(), "{}: no known file", root.display());
     let mut read = BTreeSet::new();
     let mut marked = Vec::new();
-    for e in walkdir::WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok) {
+    for e in walkdir::WalkDir::new(root).follow_links(false) {
+        let e = e.unwrap_or_else(|err| panic!("{}: the sweep cannot read it ({err})", err.path().unwrap_or(root).display()));
         if !e.file_type().is_file() || in_object_store(e.path().strip_prefix(root).unwrap()) {
             continue;
         }
@@ -1017,6 +1022,9 @@ fn marked_files(root: &Path, known: &[PathBuf]) -> Vec<(PathBuf, Vec<&'static st
     }
     for k in known {
         assert!(read.contains(k), "{}: the sweep of {} did not read it ({} files read)", k.display(), root.display(), read.len());
+    }
+    for d in dirs {
+        assert!(read.iter().any(|p: &PathBuf| p.starts_with(d)), "{}: the sweep of {} read no file in it", d.display(), root.display());
     }
     marked
 }
@@ -1042,7 +1050,7 @@ fn sweep_machine(m: &Scanned) -> Vec<String> {
         known.extend([ws_json.clone(), s.state.clone(), s.identity.clone(), h.repo().join(".git/HEAD")]);
     }
     let mut found = Vec::new();
-    for (p, hits) in marked_files(h.root(), &known) {
+    for (p, hits) in marked_files(h.root(), &known, &m.folders) {
         let in_maildir = p.strip_prefix(&maildir).ok().is_some_and(|rel| {
             let c: Vec<&OsStr> = rel.iter().collect();
             c.len() == 3 && c[0] != "sync" && c[0] != "outbox" && ["new", "cur", "tmp"].iter().any(|d| c[1] == *d)
@@ -1071,7 +1079,7 @@ fn sweep_remote(r: &Remote) -> Vec<String> {
     let root = r.bare.parent().unwrap();
     let input = root.join("seed/.zygo.toml");
     let known = [r.bare.join("HEAD"), r.bare.join("config"), root.join("seed/README"), root.join("seed/.git/HEAD")];
-    marked_files(root, &known).into_iter()
+    marked_files(root, &known, &[]).into_iter()
         .filter(|(p, _)| *p != input)
         .map(|(p, hits)| format!("{} holds {hits:?} and is not a test input", p.display()))
         .collect()
@@ -1184,7 +1192,8 @@ fn scanners_find_a_planted_marker() {
     let results = h.root().join("sess-x/results");
     put(&results.join("r.json"), SUBJ);
     let m = Scanned { label: "X", h: &h, own_names: vec![A_NAME], own_hosts: vec![HOST_A.into()], synced: false,
-        errors_log: false, zygo_commits: false };
+        errors_log: false, zygo_commits: false,
+        folders: vec![mail_dir(&h.paths, WS_ID).join(ALICE).join("new"), s.incoming.clone(), h.root().join("sess-x"), results.clone()] };
     assert_eq!(sweep_machine(&m), Vec::<String>::new());
     // Outside the set, each is reported: the review F5 plants, then the FX-26 review round 2 F-6 plants at each
     // boundary (a foreign member name in the swept `workspace.json`, a file of `.git/` that is not the sync index, a
@@ -1212,7 +1221,27 @@ fn scanners_find_a_planted_marker() {
     // FX-26 review round 2 F-4: a sweep that does not read a file the walk knows exists fails.
     let empty = d.path().join("empty");
     std::fs::create_dir(&empty).unwrap();
-    assert!(std::panic::catch_unwind(|| marked_files(&empty, &[empty.join("absent")])).is_err());
+    assert!(std::panic::catch_unwind(|| marked_files(&empty, &[empty.join("absent")], &[])).is_err());
+    // FX-26 R3-1: a sweep that reads no file in a folder that the walk knows holds one fails, and names that folder.
+    let quiet = d.path().join("quiet");
+    put(&quiet.join("f"), "x");
+    std::fs::create_dir(quiet.join("new")).unwrap();
+    let r = std::panic::catch_unwind(|| marked_files(&quiet, &[quiet.join("f")], &[quiet.join("new")]));
+    let msg = r.expect_err("a known folder with no file read").downcast::<String>().map(|s| *s).unwrap_or_default();
+    assert!(msg.contains(&format!("{}: the sweep of {} read no file in it", quiet.join("new").display(), quiet.display())), "{msg}");
+    // FX-26 R3-1: a folder that the sweep cannot read fails it, and the failure names that folder (the walk error is
+    // not dropped). The mode goes back to 0700 before the temp folder drops.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let locked = h.root().join("locked");
+        put(&locked.join("leak"), B_NAME);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sweep_machine(&m)));
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let msg = r.expect_err("the sweep read past a folder it cannot read").downcast::<String>().map(|s| *s).unwrap_or_default();
+        assert!(msg.contains(&format!("{}: the sweep cannot read it", locked.display())), "{msg}");
+        std::fs::remove_dir_all(&locked).unwrap();
+    }
     // FX-26 review round 2 F-5: on a remote, only `seed/.zygo.toml` may hold a marker; the object store is left out.
     let r = remote();
     let root = r.bare.parent().unwrap();
@@ -1295,11 +1324,11 @@ fn no_mail_content_after_the_scenarios() {
     let (b_paths, mut first) = (b.paths.clone(), true);
     let race = Hook::new(move |p| {
         if p == "before_push" && std::mem::take(&mut first) {
-            run_with(&env_paths(b_paths.clone(), Box::new(NoSeam), far()), WS_ID, Mode::Child, &Opts::default()).unwrap();
+            run_with_deadline(&env_paths(b_paths.clone(), Box::new(NoSeam), far()), WS_ID, Mode::Child, &Opts::default(), FAR_PASS).unwrap();
         }
         Ok(())
     });
-    run_with(&env_in(&a, Box::new(race), far()), WS_ID, Mode::Cli, &Opts::default()).unwrap();
+    run_with_deadline(&env_in(&a, Box::new(race), far()), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap();
     assert!(tip_paths(&r).contains(&format!("{B_NAME}@{HOST_B}/{ia}.json")));
     assert!(tip_paths(&r).contains(&format!("{A_NAME}@{HOST_A}/{ib}.json")));
     let ic = send_ok(&a, ALICE, &format!("{B_NAME}@{HOST_B}"), 5);
@@ -1311,7 +1340,7 @@ fn no_mail_content_after_the_scenarios() {
         }
         Ok(())
     });
-    let e = run_with(&env_in(&a, Box::new(moves), far()), WS_ID, Mode::Cli, &Opts::default()).unwrap_err();
+    let e = run_with_deadline(&env_in(&a, Box::new(moves), far()), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap_err();
     made.extend(moved.lock().unwrap().drain(..));
     assert_eq!(made.len(), 6); // main and the five moves
     assert_eq!(e, SyncError::Stopped { line: "zygo: the side branch moved 5 times during the sync; try again".into(), check: "moved" });
@@ -1337,7 +1366,7 @@ fn no_mail_content_after_the_scenarios() {
     // #5 (the secret check cannot run: expiry, then an act-lite store that does not parse).
     let i5 = send_ok(&a, ALICE, &format!("{B_NAME}@{HOST_B}"), 9);
     let expire = DeadlinePolicy { expire_after_scans: Some(0), base: Duration::from_secs(3600), ..Default::default() };
-    run_with(&env_in(&a, Box::new(NoSeam), expire), WS_ID, Mode::Cli, &Opts::default()).unwrap();
+    run_with_deadline(&env_in(&a, Box::new(NoSeam), expire), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap();
     assert!(sp(&a).outbox.join(format!("{i5}.json")).is_file());
     assert!(errors(&a).contains(&format!("mail sync: outbox {i5}: secret check could not run: secret_timeout")), "{}", errors(&a));
     let store = act_lite_store::store_path(&a.repo(), &act_lite_store::Lookup::system());
@@ -1495,7 +1524,7 @@ fn no_mail_content_after_the_scenarios() {
     git(&a.repo(), &["remote", "set-url", "--push", "origin", &format!("https://example.invalid/{B_NAME}/r.git")]);
     let refs0 = git(&r.bare, &["for-each-ref"]);
     let public = env_full(a.paths.clone(), Box::new(NoSeam), far(), Box::new(Says(Verdict::Public)), Box::new(NoSpawn), Box::new(NoWake));
-    let e = run_with(&public, WS_ID, Mode::Cli, &Opts::default()).unwrap_err();
+    let e = run_with_deadline(&public, WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap_err();
     assert_eq!(e, SyncError::Stopped { line: PUBLIC.into(), check: "public" });
     assert_eq!(git(&r.bare, &["for-each-ref"]), refs0);
     let (code, out, err) = send(&a, ALICE, &format!("{B_NAME}@{HOST_A}"), 21);
@@ -1531,7 +1560,7 @@ fn no_mail_content_after_the_scenarios() {
     let wake_json = mail_dir(&b.paths, WS_ID).join(BOB).join("wake.json");
     std::fs::create_dir(&wake_json).unwrap();
     let woke = env_full(b.paths.clone(), Box::new(NoSeam), far(), Box::new(NoProbe), Box::new(NoSpawn), Box::new(FailWake));
-    assert_eq!(run_with(&woke, WS_ID, Mode::Cli, &Opts::default()).unwrap().delivered, 2);
+    assert_eq!(run_with_deadline(&woke, WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap().delivered, 2);
     let log = errors(&b);
     let gap_line = "mail wake: [mail] wake_gap \"soon\" is not <n>s, <n>m, <n>h or <n>d; using 30s".to_string();
     assert!(log.lines().any(|l| l.ends_with(&gap_line)), "{log}");
@@ -1596,11 +1625,17 @@ fn no_mail_content_after_the_scenarios() {
     assert!(!own_b.iter().any(|h| h == HOST_B), "{own_b:?}");
     // C's stores went with its forget (scanned above, in `mid`); its repository stays and is scanned.
     let mut found = scan(&[&r], &made, &[
-        Scanned { label: "A", h: &a, own_names: vec![A_NAME], own_hosts: own_a, synced: true, errors_log: true, zygo_commits: true },
-        Scanned { label: "B", h: &b, own_names: vec![B_NAME], own_hosts: own_b, synced: true, errors_log: true, zygo_commits: true },
+        // FX-26 R3-1: A got B's mail and keeps the #3 refused message (`refused/`); B read some of its mail (`cur/`),
+        // and the usage row wrote `sess-u/results/`.
+        Scanned { label: "A", h: &a, own_names: vec![A_NAME], own_hosts: own_a, synced: true, errors_log: true, zygo_commits: true,
+            folders: vec![maildir(&a, ALICE, "new"), sp(&a).refused, a.root().join(format!("sess-{ALICE}"))] },
+        Scanned { label: "B", h: &b, own_names: vec![B_NAME], own_hosts: own_b, synced: true, errors_log: true, zygo_commits: true,
+            folders: vec![maildir(&b, BOB, "new"), maildir(&b, BOB, "cur"), b.root().join(format!("sess-{BOB}")), b.root().join("sess-u"),
+                b.root().join("sess-u/results")] },
         // C: the forget removed its state folder with its `errors.log`, which `mid` scanned before (`assert!(!ec.is_empty())`).
         // Its repository keeps the zygo commits that it fetched and pushed.
-        Scanned { label: "C", h: &c, own_names: vec![A_NAME], own_hosts: own_c, synced: false, errors_log: false, zygo_commits: true },
+        // FX-26 R3-1: C has no folder of these kinds after its forget.
+        Scanned { label: "C", h: &c, own_names: vec![A_NAME], own_hosts: own_c, synced: false, errors_log: false, zygo_commits: true, folders: vec![] },
     ]);
     found.extend(mid);
     let (rows, _) = usage_findings(&b.paths.usage_db);
@@ -1640,11 +1675,11 @@ fn no_mail_content_after_the_branch_scenarios() {
     let race = Hook::new(move |p| {
         if p == "before_push" && std::mem::take(&mut first) {
             let env = env_paths(b_paths.clone(), Box::new(NoSeam), far());
-            *inner2.lock().unwrap() = Some(run_with(&env, WS_ID, Mode::Child, &Opts::default()).is_ok());
+            *inner2.lock().unwrap() = Some(run_with_deadline(&env, WS_ID, Mode::Child, &Opts::default(), FAR_PASS).is_ok());
         }
         Ok(())
     });
-    run_with(&env_in(&a, Box::new(race), far()), WS_ID, Mode::Cli, &Opts::default()).unwrap();
+    run_with_deadline(&env_in(&a, Box::new(race), far()), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap();
     assert_eq!(*inner.lock().unwrap(), Some(true), "B's bootstrap at A's first push");
     let t = tip(&r2);
     assert_eq!(git(&r2.bare, &["rev-list", "--max-parents=0", &t]).lines().count(), 1);
@@ -1716,10 +1751,13 @@ fn no_mail_content_after_the_branch_scenarios() {
     // (marker) stop and each write one.
     let (own_a, own_b) = (own_hosts_at_tip(&r2, &a, HOST_A), own_hosts_at_tip(&r2, &b, HOST_B));
     let found = scan(&[&r2, &r3], &made, &[
-        Scanned { label: "A", h: &a, own_names: vec![A_NAME], own_hosts: own_a, synced: true, errors_log: false, zygo_commits: true },
-        Scanned { label: "B", h: &b, own_names: vec![B_NAME], own_hosts: own_b, synced: true, errors_log: false, zygo_commits: true },
-        Scanned { label: "E", h: &e, own_names: vec![A_NAME], own_hosts: vec![HOST_A.into()], synced: false, errors_log: true, zygo_commits: true },
-        Scanned { label: "D", h: &d, own_names: vec![B_NAME], own_hosts: vec![HOST_B2.into()], synced: false, errors_log: true, zygo_commits: false },
+        // FX-26 R3-1: the #8 race delivered one message to each of A and B; E and D got none and made no session.
+        Scanned { label: "A", h: &a, own_names: vec![A_NAME], own_hosts: own_a, synced: true, errors_log: false, zygo_commits: true,
+            folders: vec![maildir(&a, ALICE, "new")] },
+        Scanned { label: "B", h: &b, own_names: vec![B_NAME], own_hosts: own_b, synced: true, errors_log: false, zygo_commits: true,
+            folders: vec![maildir(&b, BOB, "new")] },
+        Scanned { label: "E", h: &e, own_names: vec![A_NAME], own_hosts: vec![HOST_A.into()], synced: false, errors_log: true, zygo_commits: true, folders: vec![] },
+        Scanned { label: "D", h: &d, own_names: vec![B_NAME], own_hosts: vec![HOST_B2.into()], synced: false, errors_log: true, zygo_commits: false, folders: vec![] },
     ]);
     assert_eq!(found, Vec::<String>::new());
 }
@@ -1780,7 +1818,7 @@ fn no_mail_content_after_the_import_and_prune_scenarios() {
     made.insert(add_folder(&r.bare, &to_b, &lines));
     // FX-26 review round 2 F-3: each pass of 500 deliveries gets an hour, so the 500/500/200 result is the cap's
     // (`import::CANDIDATE_CAP`), never the 120 s pass deadline of a slow machine.
-    let got: Vec<usize> = (0..3).map(|_| sync_far(&b).delivered).collect();
+    let got: Vec<usize> = (0..3).map(|_| sync_in(&b).delivered).collect();
     assert_eq!(got, vec![500, 500, 200]);
     assert_eq!(new_ids(&b, BOB), ids);
     let log = std::fs::read_to_string(sp(&b).imported).unwrap();
@@ -1797,11 +1835,11 @@ fn no_mail_content_after_the_import_and_prune_scenarios() {
     // 3.2 #14 (no second delivery): a crash after A's push and before its outbox delete, then a prune, then A's next
     // pass; then a crash after each delivery step.
     let u = send_ok(&a, ALICE, &to_b, 30);
-    let e = run_with(&env_in(&a, Box::new(crash_once("before_outbox_delete")), far()), WS_ID, Mode::Cli, &Opts::default()).unwrap_err();
+    let e = run_with_deadline(&env_in(&a, Box::new(crash_once("before_outbox_delete")), far()), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap_err();
     assert_eq!(e, SyncError::Stopped { line: "zygo: stopped at seam before_outbox_delete".into(), check: "seam" });
     assert!(sp(&a).outbox.join(format!("{u}.json")).is_file());
     assert_eq!(sync_in(&b).delivered, 1);
-    run_with(&env_in(&b, Box::new(NoSeam), far()), WS_ID, Mode::Cli, &Opts { prune: true }).unwrap();
+    run_with_deadline(&env_in(&b, Box::new(NoSeam), far()), WS_ID, Mode::Cli, &Opts { prune: true }, FAR_PASS).unwrap();
     let at_tip = |id: &str| tip_paths(&r).contains(&format!("{to_b}/{id}.json"));
     assert!(!at_tip(&u));
     sync_in(&b);
@@ -1815,8 +1853,18 @@ fn no_mail_content_after_the_import_and_prune_scenarios() {
     for (n, point) in (31..).zip(["after_incoming", "after_log", "after_new", "after_ack"]) {
         let v = send_ok(&a, ALICE, &to_b, n);
         assert_eq!(sync_in(&a).pushed, 1);
-        let e = run_with(&env_in(&b, Box::new(crash_once(point)), far()), WS_ID, Mode::Cli, &Opts::default()).unwrap_err();
+        let e = run_with_deadline(&env_in(&b, Box::new(crash_once(point)), far()), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap_err();
         assert_eq!(e, SyncError::Stopped { line: format!("zygo: stopped at seam {point}"), check: "seam" });
+        // FX-26 R3-13: the state that each crash point leaves, in the step order of `import::run` (`import.rs`): the
+        // staged file in `incoming/`, then `after_incoming`; the ULID appended to the imported log, then `after_log`;
+        // the move into `new/`, then `after_new`; the ULID added to the acked list in memory, then `after_ack`. The own
+        // ack reaches the branch only with the pass's commit, which no crash point reaches, so at each point the tip's
+        // `ack/<host>.json` does not list the ULID.
+        let staged = sp(&b).incoming.join(format!("{BOB}.{v}.json"));
+        let in_new = new_ids(&b, BOB).iter().filter(|i| **i == v).count();
+        let want = match point { "after_incoming" => (true, 0, 0), "after_log" => (true, 0, 1), _ => (false, 1, 1) };
+        assert_eq!((staged.is_file(), in_new, imported_times(&b, &v)), want, "{point}");
+        assert!(!acked(&r, HOST_B).contains(&v), "{point}");
         // FX-26 review round 2 F-2: the recovery runs through the pass, as in production (S§8.3 step 5, then step 9).
         // Its `delivered` and its wake are not asserted here: the pass drops the count of `import::finish_incoming`,
         // and a message that reached `new/` in the crashed run is only acknowledged, so the recovered message gets no
@@ -1856,7 +1904,7 @@ fn no_mail_content_after_the_import_and_prune_scenarios() {
         }
         Ok(())
     });
-    assert_eq!(run_with(&env_in(&a, Box::new(lease), far()), WS_ID, Mode::Cli, &Opts::default()).unwrap().pushed, 1);
+    assert_eq!(run_with_deadline(&env_in(&a, Box::new(lease), far()), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap().pushed, 1);
     let moved: Vec<String> = moved.lock().unwrap().drain(..).collect();
     assert_eq!(moved.len(), 1, "the prune was due once");
     made.extend(moved.iter().cloned());
@@ -1877,7 +1925,7 @@ fn no_mail_content_after_the_import_and_prune_scenarios() {
     assert!(acked(&r, HOST_A).contains(&u0));
     let year = t0() + YEAR;
     let at = |h: &Harness| env_now(h.paths.clone(), Box::new(NoSeam), Box::new(NoProbe), Box::new(NoSpawn), Box::new(NoWake), year);
-    run_with(&at(&a), WS_ID, Mode::Cli, &Opts { prune: true }).unwrap();
+    run_with_deadline(&at(&a), WS_ID, Mode::Cli, &Opts { prune: true }, FAR_PASS).unwrap();
     let paths = tip_paths(&r);
     assert!(!paths.contains(&format!("{to_a}/{u0}.json")), "{paths:?}");
     for id in [&u1, &u2] {
@@ -1888,23 +1936,26 @@ fn no_mail_content_after_the_import_and_prune_scenarios() {
             assert!(paths.contains(&p), "{p}: {paths:?}");
         }
     }
-    let got: Vec<usize> = (0..2).map(|_| run_with(&at(&b), WS_ID, Mode::Cli, &Opts::default()).unwrap().delivered).collect();
+    let got: Vec<usize> = (0..2).map(|_| run_with_deadline(&at(&b), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap().delivered).collect();
     assert_eq!(got, vec![2, 0]);
     let new_b = new_ids(&b, BOB);
     for id in [&u1, &u2] {
         assert_eq!(new_b.iter().filter(|i| *i == id).count(), 1, "{id}");
         assert!(acked(&r, HOST_B).contains(id), "{id}");
     }
-    run_with(&at(&a), WS_ID, Mode::Cli, &Opts::default()).unwrap();
+    run_with_deadline(&at(&a), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap();
     assert!(!acked(&r, HOST_A).contains(&u0)); // S§7.4: the owner drops the pruned ULID
 
     // The scans (S§19 #24). A and B write no `errors.log` in this walk: its only stops are the #14 seam crashes, and
     // a crash writes no line (`sync.rs` `Fail::Crash` → `Stopped { check: "seam" }`, no `log_error`); every other run
     // ends without a stop or a refusal.
     let (own_a, own_b) = (own_hosts_at_tip(&r, &a, HOST_A), own_hosts_at_tip(&r, &b, HOST_B));
+    // FX-26 R3-1: A got u0; B read the 1200 #13 messages (`cur/`) through its MCP session and holds the later ones.
     let found = scan(&[&r], &made, &[
-        Scanned { label: "A", h: &a, own_names: vec![A_NAME], own_hosts: own_a, synced: true, errors_log: false, zygo_commits: true },
-        Scanned { label: "B", h: &b, own_names: vec![B_NAME], own_hosts: own_b, synced: true, errors_log: false, zygo_commits: true },
+        Scanned { label: "A", h: &a, own_names: vec![A_NAME], own_hosts: own_a, synced: true, errors_log: false, zygo_commits: true,
+            folders: vec![maildir(&a, ALICE, "new")] },
+        Scanned { label: "B", h: &b, own_names: vec![B_NAME], own_hosts: own_b, synced: true, errors_log: false, zygo_commits: true,
+            folders: vec![maildir(&b, BOB, "new"), maildir(&b, BOB, "cur"), b.root().join(format!("sess-{BOB}"))] },
     ]);
     assert_eq!(found, Vec::<String>::new());
 }
@@ -1933,7 +1984,7 @@ fn starter<T: Send + 'static>(a: &Harness, point: &'static str, to: &str, n: u32
         }
         Ok(())
     });
-    let rep = run_with(&env_in(a, Box::new(h), far()), WS_ID, Mode::Child, &Opts::default()).unwrap();
+    let rep = run_with_deadline(&env_in(a, Box::new(h), far()), WS_ID, Mode::Child, &Opts::default(), FAR_PASS).unwrap();
     let (t, id) = got.lock().unwrap().take().unwrap_or_else(|| panic!("the seam {point} ran"));
     (rep.passes, t, id)
 }
@@ -2003,14 +2054,14 @@ fn no_mail_content_after_the_hook_wake_and_text_scenarios() {
     // (a) A second sender and a second child between the end of the holder's pass and its release: the child fails
     // the lock and marks; the holder runs a second pass.
     let (passes, inner, l1) = starter(&a, "before_release", &to_b, 53, |p: &Paths| {
-        run_with(&env_paths(p.clone(), Box::new(NoSeam), far()), WS_ID, Mode::Child, &Opts::default()).map(|r| r.passes)
+        run_with_deadline(&env_paths(p.clone(), Box::new(NoSeam), far()), WS_ID, Mode::Child, &Opts::default(), FAR_PASS).map(|r| r.passes)
     });
     assert_eq!((inner, passes), (Err(SyncError::Busy), 2));
     assert!(at_tip(&l1));
     assert!(!sp(&a).again.exists());
     // (b) A starter between the holder's release and its look takes the free lock and runs the pass itself.
     let (passes, inner, l2) = starter(&a, "after_release", &to_b, 54, |p: &Paths| {
-        run_with(&env_paths(p.clone(), Box::new(NoSeam), far()), WS_ID, Mode::Child, &Opts::default()).map(|r| r.passes)
+        run_with_deadline(&env_paths(p.clone(), Box::new(NoSeam), far()), WS_ID, Mode::Child, &Opts::default(), FAR_PASS).map(|r| r.passes)
     });
     assert_eq!((inner, passes), (Ok(1), 1));
     assert!(at_tip(&l2));
@@ -2032,7 +2083,7 @@ fn no_mail_content_after_the_hook_wake_and_text_scenarios() {
     let woke = |idle: bool, typed: &Typed, now: SystemTime| {
         let wake = StubWake { idle, typed: Arc::clone(typed) };
         let env = env_now(b.paths.clone(), Box::new(NoSeam), Box::new(NoProbe), Box::new(NoSpawn), Box::new(wake), now);
-        run_with(&env, WS_ID, Mode::Cli, &Opts::default()).unwrap().delivered
+        run_with_deadline(&env, WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap().delivered
     };
     send_ok(&a, ALICE, &to_b, 56);
     sync_in(&a);
@@ -2173,14 +2224,14 @@ fn no_mail_content_after_the_hook_wake_and_text_scenarios() {
         env_now(a.paths.clone(), Box::new(NoSeam), Box::new(probe), Box::new(NoSpawn), Box::new(NoWake), now)
     };
     let note = vec!["zygo: cannot check if the remote is public: probe says no".to_string()];
-    let rep = run_with(&unknown(t6), WS_ID, Mode::Cli, &Opts::default()).unwrap();
+    let rep = run_with_deadline(&unknown(t6), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap();
     assert_eq!((&rep.notes, rep.passes, rep.pushed), (&note, 1, 0));
     assert_eq!(probes.load(Ordering::SeqCst), 1);
     assert_eq!(git(&r.bare, &["for-each-ref"]), refs0);
     let cached = env_now(a.paths.clone(), Box::new(NoSeam), Box::new(NoProbe), Box::new(NoSpawn), Box::new(NoWake), t6 + secs(59 * 60));
-    assert_eq!(run_with(&cached, WS_ID, Mode::Cli, &Opts::default()).unwrap().notes,
+    assert_eq!(run_with_deadline(&cached, WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap().notes,
         vec!["zygo: cannot check if the remote is public: the last check, under 1 h ago, could not tell".to_string()]);
-    let rep = run_with(&unknown(t6 + secs(61 * 60)), WS_ID, Mode::Cli, &Opts::default()).unwrap();
+    let rep = run_with_deadline(&unknown(t6 + secs(61 * 60)), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap();
     assert_eq!((probes.load(Ordering::SeqCst), &rep.notes), (2, &note));
     git(&a.repo(), &["config", "--unset", "remote.origin.pushurl"]);
 
@@ -2193,10 +2244,11 @@ fn no_mail_content_after_the_hook_wake_and_text_scenarios() {
     let calls = a.root().join("ls-remote-calls");
     let tmp = a.root().join("tmp"); // the binary's TMPDIR: `LsRemote` makes its empty home here
     std::fs::create_dir(&tmp).unwrap();
-    // FX-26 review round 2 F-7: `HTTPS_PROXY` is recorded too; S§8.2 step 3 keeps the proxy variables.
+    // FX-26 review round 2 F-7, R3-12: each proxy variable is recorded too; S§8.2 step 3 keeps the proxy variables.
+    const PROXIES: [(&str, &str); 4] = [("HTTPS_PROXY", "http://proxy.invalid:3128"), ("HTTP_PROXY", "http://proxy-http.invalid:3128"),
+        ("ALL_PROXY", "socks5://proxy-all.invalid:1080"), ("NO_PROXY", "a.invalid,b.invalid,.c.invalid")];
     let probe_env = ["GIT_ASKPASS", "SSH_ASKPASS", "GIT_TERMINAL_PROMPT", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
-        "GIT_CONFIG_SYSTEM", "HTTPS_PROXY"];
-    const PROXY: &str = "http://proxy.invalid:3128";
+        "GIT_CONFIG_SYSTEM", PROXIES[0].0, PROXIES[1].0, PROXIES[2].0, PROXIES[3].0];
     // FX-26 review round 2 F-8: the stub refuses a `push` or a `fetch` whose remote URL (the argument after `--`, or
     // the URL that `git remote get-url [--push]` gives for a remote name) or argument list names `example.invalid`.
     // It logs the call to `refused` and exits 128 without running the real git, so a later change that makes this
@@ -2249,13 +2301,15 @@ exec '@REAL@' "$@"
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(a.bin.join("git"), std::fs::Permissions::from_mode(0o755)).unwrap();
     };
-    // The binary gets ask-pass programs and a prompt on: the probe must remove and turn them off. It also gets a
-    // proxy, which the probe must keep (F-7).
+    // The binary gets ask-pass programs and a prompt on: the probe must remove and turn them off. It also gets each
+    // proxy variable, which the probe must keep (F-7, R3-12).
     let askpass = a.root().join("no-askpass");
     let probe_run = || {
         assert_eq!(outbox::count(&sp(&a)).unwrap(), 0, "the binary syncs only an empty outbox");
-        zygo_at(&a, a.root(), &["mail", "sync"], &[("GIT_ASKPASS", askpass.as_os_str()), ("SSH_ASKPASS", askpass.as_os_str()),
-            ("GIT_TERMINAL_PROMPT", OsStr::new("1")), ("TMPDIR", tmp.as_os_str()), ("HTTPS_PROXY", OsStr::new(PROXY))])
+        let mut extra = vec![("GIT_ASKPASS", askpass.as_os_str()), ("SSH_ASKPASS", askpass.as_os_str()),
+            ("GIT_TERMINAL_PROMPT", OsStr::new("1")), ("TMPDIR", tmp.as_os_str())];
+        extra.extend(PROXIES.map(|(k, v)| (k, OsStr::new(v))));
+        zygo_at(&a, a.root(), &["mail", "sync"], &extra)
     };
     let refs0 = git(&r.bare, &["for-each-ref"]);
     // `public`: a ref line and exit 0. The sync stops before any fetch.
@@ -2280,12 +2334,14 @@ exec '@REAL@' "$@"
         let k = lines.iter().position(|l| l.starts_with("GIT_ASKPASS=")).unwrap_or_else(|| panic!("{rec}"));
         let want: Vec<String> = probe_command(url, Path::new("/unused")).get_args().map(|x| x.to_string_lossy().into_owned()).collect();
         assert_eq!(lines[..k], want, "{rec}");
-        let proxy = format!("HTTPS_PROXY={PROXY}");
-        assert_eq!(lines[k..k + 7], ["GIT_ASKPASS=(unset)", "SSH_ASKPASS=(unset)", "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1",
-            "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", proxy.as_str()], "{rec}");
-        let home = Path::new(lines[k + 7].strip_prefix("HOME=").unwrap_or_else(|| panic!("{rec}")));
+        let mut env_want: Vec<String> = ["GIT_ASKPASS=(unset)", "SSH_ASKPASS=(unset)", "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1",
+            "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null"].map(String::from).to_vec();
+        env_want.extend(PROXIES.iter().map(|(k, v)| format!("{k}={v}")));
+        let n = env_want.len();
+        assert_eq!(lines[k..k + n], env_want, "{rec}");
+        let home = Path::new(lines[k + n].strip_prefix("HOME=").unwrap_or_else(|| panic!("{rec}")));
         assert!(home.starts_with(&tmp) && home != tmp, "{rec}");
-        assert_eq!(lines[k + 8..], ["HOME is empty"], "{rec}");
+        assert_eq!(lines[k + n + 1..], ["HOME is empty"], "{rec}");
     }
     // F-8: neither run that must stay local tried a push or a fetch to an `example.invalid` URL.
     assert!(!refused.exists(), "{}", std::fs::read_to_string(&refused).unwrap_or_default());
@@ -2312,8 +2368,12 @@ exec '@REAL@' "$@"
     assert_eq!(files_findings(&[b_log], &MARKERS), (1, vec![]));
     let (own_a, own_b) = (own_hosts_at_tip(&r, &a, HOST_A), own_hosts_at_tip(&r, &b, HOST_B));
     let found = scan(&[&r], &made, &[
-        Scanned { label: "A", h: &a, own_names: vec![A_NAME], own_hosts: own_a, synced: true, errors_log: true, zygo_commits: true },
-        Scanned { label: "B", h: &b, own_names: vec![B_NAME], own_hosts: own_b, synced: true, errors_log: true, zygo_commits: true },
+        // FX-26 R3-1: A got no mail in this walk and made the MCP sessions of alice-q7x and of the member with no
+        // name (#21); B read mail (`cur/`) and holds the #16 and #23 messages.
+        Scanned { label: "A", h: &a, own_names: vec![A_NAME], own_hosts: own_a, synced: true, errors_log: true, zygo_commits: true,
+            folders: vec![a.root().join(format!("sess-{ALICE}")), a.root().join(format!("sess-{ANON}"))] },
+        Scanned { label: "B", h: &b, own_names: vec![B_NAME], own_hosts: own_b, synced: true, errors_log: true, zygo_commits: true,
+            folders: vec![maildir(&b, BOB, "new"), maildir(&b, BOB, "cur"), b.root().join(format!("sess-{BOB}"))] },
     ]);
     assert_eq!(found, Vec::<String>::new());
 }
