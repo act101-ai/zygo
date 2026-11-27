@@ -191,7 +191,6 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | DONE | judgment | e8f19e67..5bc5249b · acceptance pass (operator 22 passed) · PR #190 |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | DONE | implementation | 0167648d..826c59f6 · acceptance pass (mail_sync_cli 14 passed, cli_surface 21 passed) · PR #210 |
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | DONE | implementation | 37139e44^..e21d5e0b · acceptance pass (mail_remote 16 passed) · PR #212 |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
@@ -209,7 +208,7 @@ Session text (T, SX nodes):
 | MS-22 | No mail content in logs, state, usage rows, commits or refs | MS-18, MS-19, MS-21 | DONE | judgment | e2b744fe^..91edeada · acceptance pass (mail_sync_no_content 2 passed) · PR #222 |
 | WD-15 | `zygo workspace approve [--yes] [--digest <hex>]` | WD-14, DR-3, MS-21 | DONE | judgment | a923b915^..fe86a15d · acceptance pass (workspace_approve 28 passed) · PR #223 |
 | WD-16 | `config show/check`, `profile list/show`, `loadout list/show` show the repository files | WD-15, WD-24 | DONE | implementation | 4e0686e5^..b5991ee0 · acceptance pass (definition_surfaces 22 passed) · PR #225 |
-| WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | TODO | mechanical | — |
+| WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | DONE | mechanical | cff91852^..b884b0b7 · acceptance pass (docs_readme_and_passthrough_md 1 passed, cli_surface 21 passed) · PR #228 |
 | SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | DONE | implementation | 1b49483c^..7b96c5b5 · acceptance pass (builtin 13, check-premises ok) · PR #227 |
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | DONE | mechanical | fc991ad1^..7018a2f3 · acceptance pass (builtin 13, check-premises ok) · PR #229 |
 | OS-46 | Bound the hook's usage-store wait per Bash call | — | DONE | judgment | 75339a21 · d6be5653 · c727ff0e · 68f8e48c · acceptance pass (busy_wait_total/open_bounded_total 7, rollback_journal 1, zygo-usage, zygo-hooks, readbacks) · PR #205 |
@@ -217,15 +216,17 @@ Session text (T, SX nodes):
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | DONE | judgment | 87a292d6^..da0207f1 · acceptance pass (mail_lifecycle 23 passed) · PR #219 |
 | FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | DONE | implementation | 19fbf580^..b0212f6c · acceptance pass (shape_clean 29 passed) · PR #209 |
-| FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | DONE | mechanical | 96868305 · c98ea5fa · cc948a96 · acceptance pass (live selftest: ok (85)) · PR #194 |
 | FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | DONE | implementation | 569e61a9^..9ac65902 · acceptance pass (shape_clean 35 passed) · PR #211 |
 | FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
 | FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | DONE | implementation | bb21eadf^..c99eeb95 · acceptance pass (offline: 7 test files, 0 failed) · PR #220 |
 | FX-24 | Mail sync deliveries and ws forget take the M§5 mail lock | FX-13, MS-21 | DONE | judgment | f1661e09^..f20d5502 · acceptance pass (import 32, sync_pass 57, admin 40) · PR #224 |
 | FX-25 | `zygo up` reads the definition at the current checkout; `find_checkout` keeps a failed or timed-out `git worktree list` (exit 1) | WD-15 | DONE | implementation | a8092a70^..3c511812 · acceptance pass (up_definition 42, up 82, workspace_approve 29) · PR #226 |
-| FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | TODO | implementation | — |
+| FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | DONE | judgment | ccb3aaec^..336d5654 · acceptance pass (mail_sync_no_content 5 passed) · PR #236 |
 | FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | DONE | judgment | 343897e2^..a9b6f61c · acceptance pass (renamed_host_ack_goes_with_only_acked_link_and_gitlink_entries 1 passed) · PR #231 |
-| FX-28 | A remote send during `ws forget` is lost uncounted | FX-24 | PLANNED | judgment | PR #234 |
+| FX-28 | A remote send during `ws forget` is lost uncounted | FX-24, FX-26 | PLANNED | judgment | PR #234 |
+| FX-29 | config check rejects default_loadout = "repository" that zygo up accepts | WD-20 | TODO | implementation | — |
+| FX-30 | A crash-recovered delivery gets no wake and no count | FX-26, FX-28 | TODO | judgment | — |
+| FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | TODO | judgment | — |
 
 ## Log
 
@@ -443,6 +444,7 @@ Session text (T, SX nodes):
 | 2026-11-26 | MS-22 DONE: no mail content in any store, log, commit or ref after the walked S§19 scenarios on three machines; R1 fixed stale host keys in state.json (forget_hosts); S-C2, S§7.5, S§19 #24 rewritten; FX-26, FX-27 added · PR #222 |
 | 2026-11-26 | WD-16 PLANNED: R§10 loadout row follows the `<name>  <source>` format; /zygo:profile reads nothing (R-C8); one CLI-only read module for config, profile, loadout and doctor; workspace_approve.rs left to FX-25 (shared file) |
 | 2026-11-26 | WD-16 DONE: config show/check, profile list/show and loadout list/show show the repository files through one CLI-only read (workspace_files.rs); unapproved files show only ref, digest and state; R1 F1–F5 fixed · PR #225 |
+| 2026-11-26 | WD-20 PLANNED: README section and passthrough.md pool section, exact text checked on a hermetic fixture; R§6.2 names and R§10 up row follow the code (default_loadout=repository refuses); no new doc page or test; FX-25 behaviour left out |
 | 2026-11-26 | SX-7 PLANNED: 11 steps; T§13 rewritten to the merged code (author's call): OpenCode zygo-<role> prompt kept until ST4, trim gives the post-compaction copy, no-main-role case, flag skips zygo- and bad ids; stale reinject.rs:22 line citation added to Files |
 | 2026-11-26 | SX-7 DONE: base spec §8.5, §8.6 item 7 and last paragraph, §8.7 N33, §10.6 state what the merged session-text code does (effective role, ST4-conditional OpenCode delivery, trim after compaction); T§13 rewritten to the code; W§9.1 aligned · PR #227 |
 | 2026-11-26 | FX-24 PLANNED: d1-d4 hold at 6b283c74; import, incoming finish, notice under mail/lock per delivery; forget holds it excl across rename, after before_remove; order op<sync<mail<state; S§8.5/8.6/7.6, M§5 rewritten; author's calls in node |
@@ -456,3 +458,15 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-27 DONE: ULID-keyed re-plan R1–R4; review rounds 1–2 fixed tests and spec text; author's calls: non-address folders are documented as operator-only removal; planner's call: non-ULID names do not keep the ack. |
 | 2026-11-27 | FX-28 BLOCKED: failed 3 review rounds; round 3: mail/lock released after the remote_send_before_link hook passes every test; CI definition_hooks p2: outbox.rs names zygo_workspace::up; branch discarded, diff saved · PR #232 closed |
 | 2026-11-27 | FX-28 PLANNED (re-plan): send hooks before Delivery::begin and both sides of the link; timing-free tests; fire_point in zygo_workspace::mail, not up; open_regular/activity name the path; CLI lines start with zygo:; review rounds reset to 0 |
+| 2026-11-27 | FX-26 BLOCKED: failed 3 review rounds; round 3: the sweep skips unreadable folders, the deadline seam test misses the injected clock, FX-30 leaves S§19 #24 stale, no edges between mail-sync spec nodes; #233 closed; diff saved in ~/.cache/fx26-old |
+| 2026-11-27 | FX-26 PLANNED (re-plan): step 0 applies the reviewed diff (patches 0003-0005, no docs/work), steps 1-10 fix R3-1..R3-13 (sweep errors, seam test and test-hooks gate, S-C9, far deadline, proxies, #14 states, FX-30 contract), step 11 floor |
+| 2026-11-27 | FX-30 created from FX-26 review round 2 F-1; deps FX-26, FX-28 (author's call: every node that edits the mail-sync spec is on one dependency path); the FX-28 → FX-26 edge is added on phase3/FX-28 (PR #234) |
+| 2026-11-27 | FX-28 deps FX-26 added on phase3/FX-26 (FX-26 re-plan review round 1 F2): both change the mail-sync spec; author's call: phase3/FX-28 (PR #234) takes this row when it re-syncs, so phase-3 stays valid when FX-26 merges |
+| 2026-11-27 | Correction of the FX-30 line: the FX-28 → FX-26 edge is set on phase3/FX-26 (graph row and nodes/FX-28.md Row), not on phase3/FX-28; author's call: FX-28's implementation waits until FX-26 merges (FX-26 re-plan review round 2 F6) |
+| 2026-11-27 | FX-26 BLOCKED (re-plan 1: 3 rounds; #235 closed); round 3: the sweep's name allowance in the sync worktree, S§19 #24 contradicted itself, FX-30 cited a lost commit; saved in ~/.cache/fx26-old2 |
+| 2026-11-27 | FX-26 re-plan 2: sweep allows no marked name (S§6.3 no-checkout); reviewed work re-applied (patches 0001-0012 of 86ed9358, no docs/work); steps a-f done |
+| 2026-11-27 | FX-26 IN-PROGRESS: re-plan 2 review round 1 fixes (exact #4 notice; #5, #9, #15 fully walked; FX-28 merge note for both orders; change-log rounds; S-C9 live-premise build; run_with keeps 120 s; CI permission-case check) |
+| 2026-11-27 | FX-26 IN-PROGRESS: re-plan 2 review round 2 fixes (#12 none delivered and its write set; run_with lower bound; test-hooks comment); author's call: no Row line in nodes/FX-28.md and FX-30.md (graph-format §3: deps live in this table) |
+| 2026-11-27 | FX-26 DONE: the walk covers S§19 except the SP2 premise and FX-30 (the #14 count and wake); author's calls: no marked name anywhere (S§6.3 no-checkout), the test-hooks pass-deadline seam (S-C9); round 3 fixed F1-F8 · PR #236 |
+| 2026-11-27 | Author's correction: execute-work §4: a stage passes once every confirmed finding is fixed; earlier re-plans of FX-27/FX-28/FX-26 counted a re-review after the fixes as a failed round (author's error, recorded for operator review) |
+| 2026-11-27 | WD-20 DONE: user docs for workspace files, approval, members, pool, passthrough; R1 fixed H1-H2, M1-M4, L1-L9; C6 (L9 split into docs/workspace-files.md); FX-29 and FX-31 created from the found issues; MS-15 row archived · PR #228 |
