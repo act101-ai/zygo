@@ -6,7 +6,7 @@
 mod common;
 
 use std::collections::BTreeSet;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -78,27 +78,45 @@ const CLEARED: &[&str] = &[
     "GIT_COMMITTER_EMAIL", "ACT_CONFIG_DIR",
 ];
 
-/// Author's call 3: the in-process sync starts git through `git_command`, which reads the global config of `HOME`.
-/// The first call builds the stub agent with the real `HOME` (its cargo home), then sets the process `HOME` and
-/// `XDG_CONFIG_HOME` to one empty folder and removes the git variables of [`CLEARED`].
-fn hermetic() {
-    common::stub_agent();
-    static HOME: OnceLock<TempDir> = OnceLock::new();
-    HOME.get_or_init(|| {
-        let t = tempfile::Builder::new().prefix("home").tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-        let h = t.path().canonicalize().unwrap();
-        std::fs::create_dir_all(h.join(".config")).unwrap();
-        // SAFETY: every test calls `hermetic()` first, under `SERIAL`, before it starts a process or a thread, and
-        // `OnceLock` blocks the other callers until the variables are set.
+/// The hermetic environment of one test ([`hermetic`]). Its drop gives the process its variables back, then removes
+/// the home folder (MS-22 review F5), so no run leaves a folder.
+struct Hermetic {
+    saved: Vec<(&'static str, Option<OsString>)>,
+    _home: TempDir,
+}
+impl Drop for Hermetic {
+    fn drop(&mut self) {
+        // SAFETY: the test drops the guard under `SERIAL`, after every process and thread it started has ended.
         unsafe {
-            std::env::set_var("HOME", &h);
-            std::env::set_var("XDG_CONFIG_HOME", h.join(".config"));
-            for k in CLEARED {
-                std::env::remove_var(k);
+            for (k, v) in &self.saved {
+                match v {
+                    Some(v) => std::env::set_var(k, v),
+                    None => std::env::remove_var(k),
+                }
             }
         }
-        t
-    });
+    }
+}
+
+/// Author's call 3: the in-process sync starts git through `git_command`, which reads the global config of `HOME`.
+/// It builds the stub agent with the real `HOME` (its cargo home, once per process), then sets the process `HOME`
+/// and `XDG_CONFIG_HOME` to a new empty folder in the temporary folder and removes the git variables of [`CLEARED`],
+/// until the returned guard drops.
+fn hermetic() -> Hermetic {
+    common::stub_agent();
+    let t = tempfile::Builder::new().prefix("home").tempdir().unwrap();
+    let h = t.path().canonicalize().unwrap();
+    std::fs::create_dir_all(h.join(".config")).unwrap();
+    let saved = ["HOME", "XDG_CONFIG_HOME"].iter().chain(CLEARED).map(|k| (*k, std::env::var_os(k))).collect();
+    // SAFETY: every test calls `hermetic()` first, under `SERIAL`, before it starts a process or a thread.
+    unsafe {
+        std::env::set_var("HOME", &h);
+        std::env::set_var("XDG_CONFIG_HOME", h.join(".config"));
+        for k in CLEARED {
+            std::env::remove_var(k);
+        }
+    }
+    Hermetic { saved, _home: t }
 }
 
 /// `git` with no global or system config and no template folder, so the hooks, signing, templates and `insteadOf`
@@ -671,7 +689,13 @@ fn usage_findings(db: &Path) -> (usize, Vec<String>) {
 #[test] // author's call 6: each scanner reports a planted marker and passes the allowed form
 fn scanners_find_a_planted_marker() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    hermetic();
+    // MS-22 review F5: the hermetic home goes with its guard.
+    let home = {
+        let _h = hermetic();
+        PathBuf::from(std::env::var_os("HOME").unwrap())
+    };
+    assert!(!home.exists(), "{}: the hermetic home stays after its guard", home.display());
+    let _h = hermetic();
     let d = tempfile::tempdir().unwrap();
     assert_eq!(text_findings("errors.log", b"x mail sync: outbox 01J: refused: ship_word\n", &MARKERS), Vec::<String>::new());
     assert_eq!(text_findings("errors.log", format!("x {HOST_B}\n").as_bytes(), &MARKERS), vec![format!("errors.log holds {HOST_B}")]);
@@ -750,7 +774,7 @@ fn scanners_find_a_planted_marker() {
         // and identity
 fn no_mail_content_after_the_scenarios() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    hermetic();
+    let _h = hermetic(); // dropped after every machine of the walk, before `_g`
 
     // Setup and #1 (normal; CLI and MCP send).
     let r = remote();
