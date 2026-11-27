@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::{bail, Context};
 use zygo_config::profile::{set_default_profile, valid_name};
 use zygo_config::layers::seg;
@@ -9,6 +11,30 @@ fn loaded(ctx: &VerbCtx) -> anyhow::Result<Merged> {
     super::verbs::base(ctx, "profile", super::verbs::team(ctx, "profile")?, None)
 }
 
+/// The config of `list` and `show` (R§10): `loaded`, then, in the CLI form only, the approved workspace files of the
+/// current folder's repository (`workspace_files::here`), with its not-approved, invalid or unread line on stderr.
+/// The slash form runs in the hook process and reads no workspace files (R-C8, R§18 item 20): config profiles only.
+fn listed(ctx: &VerbCtx) -> anyhow::Result<Merged> {
+    let m = loaded(ctx)?;
+    if ctx.slash {
+        return Ok(m);
+    }
+    let v = super::workspace_files::here(&m, &ctx.paths.approvals_file);
+    if let Some(line) = &v.line {
+        super::print_err(&format!("{line}\n"));
+    }
+    Ok(v.merged)
+}
+
+/// The source text of profile `n`: `workspace-files` for a profile the workspace files added, else its layer.
+fn source(m: &Merged, n: &str) -> String {
+    let key = format!("profile.{}", seg(n));
+    match m.definition_file_of(&key) {
+        Some(_) => "workspace-files".to_string(),
+        None => m.source_of(&key).name().to_string(),
+    }
+}
+
 pub fn verb(ctx: &VerbCtx, args: &[String]) -> anyhow::Result<String> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     match args.as_slice() {
@@ -17,28 +43,36 @@ pub fn verb(ctx: &VerbCtx, args: &[String]) -> anyhow::Result<String> {
             Ok(format!("default profile: {}", zygo_core::esc(m.config.user.default_profile.as_deref().unwrap_or("none"))))
         }
         ["list"] => {
-            let m = loaded(ctx)?;
+            let m = listed(ctx)?;
             let cur = m.config.user.default_profile.as_deref();
-            if m.config.profile.is_empty() {
+            let shadowed = m.shadowed_profiles();
+            // R§18 item 9: a repository profile that a user profile or a team preset shadows is the row after the row
+            // of that name, with no `*` (it does not apply).
+            let names: BTreeSet<&str> =
+                m.config.profile.keys().map(String::as_str).chain(shadowed.iter().map(String::as_str)).collect();
+            if names.is_empty() {
                 return Ok("no profiles".into());
             }
-            Ok(m.config
-                .profile
-                .keys()
-                .map(|n| {
-                    let mark = if Some(n.as_str()) == cur { "*" } else { " " };
-                    format!("{mark} {} ({})", zygo_core::esc(n), m.source_of(&format!("profile.{}", seg(n))).name())
-                })
-                .collect::<Vec<_>>()
-                .join("\n"))
+            let mut rows = Vec::new();
+            for n in names {
+                if m.config.profile.contains_key(n) {
+                    let mark = if Some(n) == cur { "*" } else { " " };
+                    rows.push(format!("{mark} {} ({})", zygo_core::esc(n), source(&m, n)));
+                }
+                if shadowed.iter().any(|s| s == n) {
+                    rows.push(format!("  {} (workspace-files, shadowed)", zygo_core::esc(n)));
+                }
+            }
+            Ok(rows.join("\n"))
         }
         ["show", n] => {
-            let m = loaded(ctx)?;
+            // The profile that applies: a shadowed repository profile is not shown.
+            let m = listed(ctx)?;
             let Some(p) = m.config.profile.get(*n) else { bail!("profile {}: not found", zygo_core::esc(n)) };
             let body = toml::to_string(p).context("encoding profile")?;
             // Each line escaped; the line breaks stay (§11.3).
             let body: String = body.lines().map(|l| format!("{}\n", zygo_core::esc(l))).collect();
-            Ok(format!("profile {} ({})\n{body}", zygo_core::esc(n), m.source_of(&format!("profile.{}", seg(n))).name()))
+            Ok(format!("profile {} ({})\n{body}", zygo_core::esc(n), source(&m, n)))
         }
         // `help` is not a profile name: the verb's help, as `help profile` (spec §11 note, N42 review).
         ["help"] => super::help::verb(ctx, &["profile".into()]),
