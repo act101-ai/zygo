@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use ulid::Ulid;
 use zygo_config::{sync_for, Config, LoadContext, SyncOff, SyncSettings};
 use zygo_work::repo::Flow;
-use zygo_workspace::mail::{names, store, Message};
+use zygo_workspace::mail::{names, store, Delivery, Message, MAIL_LOCK_WAIT};
 use zygo_workspace::state::{Store, Workspace};
 
 use crate::address;
@@ -664,15 +664,18 @@ fn host_of(to: &str) -> &str { to.split_once('@').map_or("", |(_, h)| h) }
 
 /// S§8.6 "At commit": moves `outbox/<id>.json` to `refused/` and sends the notice to its sender, whose keys go into
 /// `notified`; `body` replaces the secret-pass notice body (`ids`) for another reason. A failed move or notice
-/// writes the log line `notice`.
+/// writes the log line `notice`. The notice is one M§5 P1 delivery (S§8.6): `mail/lock` held shared for at most
+/// [`MAIL_LOCK_WAIT`], the sender resolved on the member records read under it (not the gate's read), and the lock
+/// dropped before the next git call; a lock not taken, or a sender with no record in that read, sends no notice.
 fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut Vec<String>) {
     let now = c.env.clock.now();
     let mut notify = |sender: &str, subject: &str, secret_body: &str| -> std::io::Result<()> {
         let fail = |_| std::io::Error::other("notice not delivered");
-        for t in names::resolve(&c.ws, sender, None).map_err(fail)? {
+        let d = Delivery::begin(&c.store, MAIL_LOCK_WAIT).map_err(fail)?;
+        for t in names::resolve(d.workspace(), sender, None).map_err(fail)? {
             let label = t.name.clone().unwrap_or_else(|| t.key.clone());
             let msg = Message::new("zygo", &label, subject, body.unwrap_or(secret_body), now).map_err(fail)?;
-            store::deliver(&c.sp.mail, &t.key, &label, &msg, c.cfg.mail.max_unread).map_err(fail)?;
+            d.deliver(&t.key, &label, &msg, c.cfg.mail.max_unread).map_err(fail)?;
             notified.push(t.key);
         }
         Ok(())

@@ -1260,3 +1260,45 @@ fn every_test_holds_the_spawn_guard() {
         }
     }
 }
+
+#[test] // d1 (FX-24), S§8.6 "At commit": the notice resolves its sender on the read under mail/lock, not the gate's
+fn notice_to_a_sender_whose_record_went_makes_no_maildir() {
+    let _g = exclusive();
+    let (r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "say zz-forbidden-zz now");
+    a.config(Some("a"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
+    let w = Store::open(&a.paths, WS_ID);
+    let h = after_gate(move || {
+        w.update(Duration::from_secs(10), &mut |ws| {
+            ws.members.remove(ALICE);
+            Ok(())
+        })
+        .unwrap();
+    });
+    run(&hook_env(&a, h), WS_ID, Mode::Cli).unwrap();
+    assert!(a.sp().refused.join(format!("{id}.json")).is_file());
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none());
+    assert!(fs::symlink_metadata(a.sp().mail.join(ALICE)).is_err(), "the notice made mail/<alice>/");
+    let log = a.errors();
+    assert!(log.lines().any(|l| l.ends_with(&format!("mail sync: outbox {id}: notice"))), "{log}");
+}
+
+#[test] // d1 (FX-24), S§8.6 "At commit": a notice that cannot take mail/lock in its 2 s bound is not sent
+fn notice_that_cannot_take_mail_lock_is_not_sent() {
+    let _g = exclusive();
+    let (_r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "say zz-forbidden-zz now");
+    a.config(Some("a"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
+    let held = {
+        use std::os::unix::fs::OpenOptionsExt;
+        let f = fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).mode(0o600)
+            .open(a.sp().mail.join("lock")).unwrap();
+        fs4::FileExt::try_lock(&f).unwrap();
+        f
+    };
+    sync(&a);
+    drop(held);
+    assert!(a.sp().refused.join(format!("{id}.json")).is_file());
+    assert!(fs::symlink_metadata(a.sp().mail.join(ALICE)).is_err());
+    assert!(a.errors().lines().any(|l| l.ends_with(&format!("mail sync: outbox {id}: notice"))));
+}
