@@ -656,19 +656,20 @@ fn host_of(to: &str) -> &str { to.split_once('@').map_or("", |(_, h)| h) }
 /// moves the file to `refused/` (FX-24 review F5: in that order); `body` replaces the secret-pass notice body
 /// (`ids`) for another reason. The notice is one M§5 P1 delivery (S§8.6): `mail/lock` held shared for at most
 /// [`MAIL_LOCK_WAIT`], the target the sender's name resolved on the member records read under it (not the gate's
-/// read), and the lock dropped before the next git call. A notice that a later pass can deliver (a lock not taken, an
-/// I/O error) writes the log line `notice` and leaves the file in the outbox for the next pass. A notice that no pass
-/// can deliver (FX-24 review R2 F1: [`notice_error`]) moves the file all the same, with the log line
-/// `notice: <reason>`: `full` (the sender's `new/` is at `max_unread`), `no-record` (that read does not have the
-/// sender's name: no notice and no maildir, as `cli`) or `moved` (review R2 F5, R3 F1: the pass's first read `c.ws`
-/// also has the name and maps it to other keys, so it was renamed or another member holds the name now; the notice
-/// goes to no one). A name that `c.ws` does not have is notified at the keys of the read under the lock. A failed
-/// move writes the line `notice` too.
+/// read), and the lock dropped before the next git call. A notice whose [`Delivery::begin`] fails (review R3 F3:
+/// [`begin_error`]: a lock not taken, the lock I/O, a bad state or `mail/`, no workspace) writes the log line `notice`
+/// and leaves the file in the outbox for the next pass. A notice that no pass can deliver (review R2 F1, R3 F3:
+/// [`write_error`]) moves the file all the same, with the log line `notice: <reason>`: `full` (the sender's `new/` is
+/// at `max_unread`), `no-record` (that read does not have the sender's name: no notice and no maildir, as `cli`),
+/// `maildir` or `io` (the write into the sender's maildir failed) or `moved` (review R2 F5, R3 F1: the pass's first
+/// read `c.ws` also has the name and maps it to other keys, so it was renamed or another member holds the name now;
+/// the notice goes to no one). A name that `c.ws` does not have is notified at the keys of the read under the lock. A
+/// failed move writes the line `notice` too.
 fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut Notified) {
     let now = c.env.clock.now();
     let mut notify = |sender: &str, subject: &str, secret_body: &str| -> Result<(), NoticeError> {
-        let d = Delivery::begin(&c.store, MAIL_LOCK_WAIT).map_err(notice_error)?;
-        let targets = names::resolve(d.workspace(), sender, None).map_err(notice_error)?;
+        let d = Delivery::begin(&c.store, MAIL_LOCK_WAIT).map_err(begin_error)?;
+        let targets = names::resolve(d.workspace(), sender, None).map_err(write_error)?;
         // FX-24 review R2 F5, R3 F1: the target is the sender's name resolved in the read under the lock. Only when
         // the pass's first read also has the name and maps it to other keys (renamed, or now held by another member)
         // is it not that member: no notice. A name the first read does not have (a member that renamed itself and
@@ -681,8 +682,8 @@ fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut 
         let each = || -> Result<(), NoticeError> {
             for t in targets {
                 let label = t.name.clone().unwrap_or_else(|| t.key.clone());
-                let msg = Message::new("zygo", &label, subject, body.unwrap_or(secret_body), now).map_err(notice_error)?;
-                d.deliver(&t.key, &label, &msg, c.cfg.mail.max_unread).map_err(notice_error)?;
+                let msg = Message::new("zygo", &label, subject, body.unwrap_or(secret_body), now).map_err(write_error)?;
+                d.deliver(&t.key, &label, &msg, c.cfg.mail.max_unread).map_err(write_error)?;
                 notified.keys.push(t.key);
                 sent = true;
             }
@@ -701,15 +702,25 @@ fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut 
     }
 }
 
-/// S§8.6 (FX-24 review R2 F1): a notice delivery error as a [`NoticeError`]. Lasting, so the message moves with no
-/// notice: `Full` (`full`: the sender's inbox is at `max_unread`, and only the sender's reads can clear it) and a
-/// sender with no record in the read under `mail/lock` (`no-record`: `UnknownTarget` or `NoRecord`). Every other
-/// error (a busy lock, an I/O error, no workspace) is one that a later pass can clear, so the message stays.
-fn notice_error(e: MailError) -> NoticeError {
+/// S§8.6 (FX-24 review R3 F3): an error of [`Delivery::begin`] for the notice (a busy lock, the lock I/O, a bad state,
+/// a bad `mail/`, no workspace) is one that a later pass can clear: the message stays in the outbox.
+fn begin_error(e: MailError) -> NoticeError { NoticeError::Later(std::io::Error::other(e.to_string())) }
+
+/// S§8.6 (FX-24 review R2 F1, R3 F3): an error after [`Delivery::begin`] (the sender's name resolved in the read under
+/// the lock, the notice made and written into the sender's maildir) is lasting, so the message moves with no notice,
+/// with the reason: `full` (the sender's inbox is at `max_unread`, and only the sender's reads can clear it),
+/// `no-record` (the read under the lock does not have the sender: `UnknownTarget` or `NoRecord`), `maildir` (the
+/// sender's maildir is not made of real folders: the store's check of a link or an entry that is not a folder at
+/// `mail/<key>/` or one of its folders, `InvalidInput`, or a path part that is not a folder, `NotADirectory`) and
+/// `io` (every other error of the write).
+fn write_error(e: MailError) -> NoticeError {
     match e {
         MailError::Full { .. } => NoticeError::Never("full"),
         MailError::UnknownTarget { .. } | MailError::NoRecord { .. } => NoticeError::Never("no-record"),
-        e => NoticeError::Later(std::io::Error::other(e.to_string())),
+        MailError::Io(e) if matches!(e.kind(), std::io::ErrorKind::InvalidInput | std::io::ErrorKind::NotADirectory) => {
+            NoticeError::Never("maildir")
+        }
+        _ => NoticeError::Never("io"),
     }
 }
 

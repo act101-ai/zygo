@@ -249,10 +249,11 @@ fn set_mtime(path: &Path, t: SystemTime) -> io::Result<()> {
 /// Why the notice of a refusal (S§8.6) was not delivered.
 #[derive(Debug)]
 pub enum NoticeError {
-    /// A later pass can deliver it (a busy `mail/lock`, an I/O error): the message stays in the outbox.
+    /// A later pass can deliver it (its delivery did not begin: a busy `mail/lock`, the lock I/O, a bad state or
+    /// `mail/`, no workspace): the message stays in the outbox.
     Later(io::Error),
-    /// No later pass can deliver it (FX-24 review R2 F1): the message moves to `refused/` with no notice. The text
-    /// is the reason of the `errors.log` line: `full`, `no-record` or `moved`.
+    /// No later pass can deliver it (FX-24 review R2 F1, R3 F3): the message moves to `refused/` with no notice. The
+    /// text is the reason of the `errors.log` line: `full`, `no-record`, `maildir`, `io` or `moved`.
     Never(&'static str),
 }
 

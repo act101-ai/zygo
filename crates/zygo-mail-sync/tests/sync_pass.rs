@@ -1464,3 +1464,32 @@ fn notice_to_a_sender_renamed_after_the_gate_with_the_same_key_is_sent() {
     assert!(!log.lines().any(|l| l.contains(&format!("mail sync: outbox {id}: notice"))), "{log}");
     assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none());
 }
+
+#[test] // FX-24 review R3 F3, S§8.6: a write into the sender's maildir that fails (a link at mail/<sender>/new) is a lasting
+// refusal of the notice: the message moves to refused/ once, with `notice: maildir`, and later passes write nothing
+fn notice_whose_maildir_write_fails_moves_the_message_to_refused() {
+    let _g = exclusive();
+    let (r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "say zz-forbidden-zz now");
+    a.config(Some("a"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
+    let md = a.sp().mail.join(ALICE);
+    fs::create_dir_all(&md).unwrap();
+    let elsewhere = a.dir.path().join("elsewhere");
+    fs::create_dir(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, md.join("new")).unwrap();
+    let (queued, refused) = (a.sp().outbox.join(format!("{id}.json")), a.sp().refused.join(format!("{id}.json")));
+    sync(&a);
+    let lines = |log: String| log.lines().filter(|l| l.contains(&id.to_string())).map(String::from).collect::<Vec<_>>();
+    let once = lines(a.errors());
+    assert!(refused.is_file(), "the message is not in refused/ after one pass: {once:?}");
+    assert!(fs::symlink_metadata(&queued).is_err(), "the message is still in the outbox: {once:?}");
+    assert_eq!(once.len(), 2, "{once:?}");
+    assert!(once[0].ends_with(&format!("mail sync: outbox {id}: refused: ship_word")), "{once:?}");
+    assert!(once[1].ends_with(&format!("mail sync: outbox {id}: notice: maildir")), "{once:?}");
+    sync(&a);
+    sync(&a);
+    assert_eq!(lines(a.errors()), once, "a later pass wrote about the moved message");
+    assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0, "a notice was written through the link");
+    assert!(fs::symlink_metadata(md.join("new")).unwrap().file_type().is_symlink());
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none());
+}
