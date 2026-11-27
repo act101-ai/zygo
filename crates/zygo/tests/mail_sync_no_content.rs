@@ -1019,7 +1019,8 @@ fn scan(remotes: &[&Remote], made: &BTreeSet<String>, ms: &[Scanned]) -> Vec<Str
         assert!(!m.synced || s.state.is_file(), "{}: no state.json", m.label);
         if s.state.is_file() {
             if m.synced {
-                let st: Value = serde_json::from_slice(&std::fs::read(&s.state).unwrap()).unwrap();
+                // FX-26 re-plan 2 review round 3 F5: a read error fails the scan with the path.
+                let st: Value = serde_json::from_slice(&read_file(&s.state, "scan")).unwrap();
                 assert!(!st["pushed"].as_object().unwrap().is_empty(), "{}: {st}", m.label);
             }
             let own: Vec<&str> = m.own_hosts.iter().map(String::as_str).collect();
@@ -1355,6 +1356,17 @@ fn scanners_find_a_planted_marker() {
     put(&h.root().join("old.git/objects/pack/p.pack"), HOST_B2);
     let results = h.root().join("sess-x/results");
     put(&results.join("r.json"), SUBJ);
+    // FX-26 re-plan 2 review round 3 F6: an allowed-side plant for each other allowance, so that a sweep without it
+    // reports the plant: a maildir file in `cur/` and in `tmp/`, an outbox file, a `refused/` file, `members.json`,
+    // `config.toml` (`config` writes its host, a marker) and `team/team.toml`.
+    let alice_dir = mail_dir(&h.paths, WS_ID).join(ALICE);
+    put(&alice_dir.join("cur/c.json"), BODY);
+    put(&alice_dir.join("tmp/t.json"), HOST_B);
+    put(&s.outbox.join("o.json"), B_NAME);
+    put(&s.refused.join("r.json"), SUBJ);
+    put(&s.members, HOST_B2);
+    assert_eq!(file_markers(&h.paths.config_file), vec![HOST_A]);
+    put(&h.root().join("team/team.toml"), HOST_R3);
     assert!(s.worktree.starts_with(h.root()), "{}", s.worktree.display());
     let m = Scanned { label: "X", h: &h, own_names: vec![A_NAME], own_hosts: vec![HOST_A.into()], synced: false,
         errors_log: false, zygo_commits: false,
@@ -1385,6 +1397,8 @@ fn scanners_find_a_planted_marker() {
         (mail_dir(&h.paths, WS_ID).join(ALICE).join("other/f"), HOST_B),
         (h.root().join("sess-x/other/f"), SUBJ),
         (h.root().join("x/results/f"), BODY),
+        // FX-26 re-plan 2 review round 3 F6: a marked file beside `config.toml`, in the config folder.
+        (h.paths.config_file.with_file_name("other.toml"), HOST_R2),
     ];
     for (p, hit) in &planted {
         put(p, hit);
@@ -1436,6 +1450,18 @@ fn scanners_find_a_planted_marker() {
     }
     for (p, hit) in &named {
         assert!(f.contains(&format!("X {} has a name or link target that holds [{hit:?}]", p.display())), "{p:?}: {f:?}");
+    }
+    // FX-26 re-plan 2 review round 3 F6: own and foreign values together in `workspace.json` and in `state.json` are
+    // reported (every hit must be own), so a rule that lets one own value pass the file fails here.
+    let mixed = [(ws_json.clone(), format!("{A_NAME} {B_NAME}"), vec![A_NAME, B_NAME]),
+        (s.state.clone(), format!("registry/{HOST_A}.json {HOST_B}"), vec![HOST_A, HOST_B])];
+    for (p, text, _) in &mixed {
+        put(p, text);
+    }
+    let f = sweep_machine(&m);
+    assert_eq!(f.len(), planted.len() + named.len() + tree_names.len(), "{f:?}");
+    for (p, _, hits) in &mixed {
+        assert!(f.contains(&format!("X {} holds {hits:?} and is not in the S-C2 allowed set", p.display())), "{p:?}: {f:?}");
     }
     // FX-26 review round 2 F-4: a sweep that does not read a file the walk knows exists fails.
     let empty = d.path().join("empty");
@@ -1579,6 +1605,10 @@ fn no_mail_content_after_the_scenarios() {
     for id in [&id1, &id2] {
         let path = format!("{B_NAME}@{HOST_B}/{id}.json");
         let got = std::fs::read(mail_dir(&b.paths, WS_ID).join(BOB).join("new").join(format!("{id}.json"))).unwrap();
+        // FX-26 re-plan 2 review round 3 F4: the delivered message names its sender and its target with the walk's own
+        // names (S§7.3), so an address that `outbox::send_remote_with` builds wrong fails here.
+        let msg: Value = serde_json::from_slice(&got).unwrap();
+        assert_eq!((&msg["from"], &msg["to"]), (&json!(format!("{A_NAME}@{HOST_A}")), &json!(format!("{B_NAME}@{HOST_B}"))), "{msg}");
         assert_eq!(Some(got), tip_blob(&r, &path));
     }
     let ack: Value = serde_json::from_slice(&tip_blob(&r, &format!("ack/{HOST_B}.json")).unwrap()).unwrap();
@@ -2737,19 +2767,34 @@ exec '@REAL@' "$@"
     let all_subs = std::fs::read_to_string(&subs).unwrap();
     let private_subs = all_subs.strip_prefix(&public_subs).unwrap_or_else(|| panic!("{all_subs}"));
     assert_eq!(private_subs, "ls-remote\nfetch\n");
+    let private_log = std::fs::read_to_string(&calls).unwrap().strip_prefix(&public_log).unwrap_or_else(|| panic!("{public_log}")).to_string();
+    // FX-26 re-plan 2 review round 3 F1: `unknown`, a failure text that is not in `public::PRIVATE_TEXT`, and exit 128.
+    // `public::classify` gives `Unknown("git ls-remote failed: <first stderr line>")`, `sync::public_check` adds the
+    // note `zygo: cannot check if the remote is public: <reason>` and the sync goes on (it fetches), and `print_report`
+    // (`cmd/mail.rs`) writes that note, and only it, on stderr, then the summary on stdout. Each URL is new, so no
+    // cached verdict decides the run.
+    git(&a.repo(), &["remote", "set-url", "--push", "origin", "https://example.invalid/s.git"]);
+    stub("echo 'remote: no idea' >&2; exit 128");
+    let o = probe_run();
+    assert_eq!((o.status.code(), out_of(&o), err_of(&o)), (Some(0), "zygo: mail sync: 0 sent, 0 delivered\n".to_string(),
+        "zygo: cannot check if the remote is public: git ls-remote failed: remote: no idea\n".to_string()));
+    let all_subs2 = std::fs::read_to_string(&subs).unwrap();
+    let unknown_subs = all_subs2.strip_prefix(&all_subs).unwrap_or_else(|| panic!("{all_subs2}"));
+    assert_eq!(unknown_subs, "ls-remote\nfetch\n");
     // Each run asked once, and that probe ran to its end (its `done` line), with the arguments that `probe_command`
     // builds for the `https` form (no user info) and the S§8.2 step 3 environment: no ask-pass, no prompt, no global or
     // system config, `HOME` an empty folder.
     let log = std::fs::read_to_string(&calls).unwrap();
-    let private_log = log.strip_prefix(&public_log).unwrap_or_else(|| panic!("{log}"));
-    for (run, rc) in [(&public_log[..], 0), (private_log, 128)] {
+    let unknown_log = log.strip_prefix(&format!("{public_log}{private_log}")).unwrap_or_else(|| panic!("{log}"));
+    for (run, rc) in [(&public_log[..], 0), (&private_log[..], 128), (unknown_log, 128)] {
         let recs: Vec<&str> = run.split("argv\n").filter(|r| !r.is_empty()).collect();
         assert_eq!(recs.len(), 1, "{run}");
         assert!(recs[0].ends_with(&format!("\ndone {rc}\n")), "{run}");
     }
     let records: Vec<&str> = log.split("argv\n").filter(|r| !r.is_empty()).collect();
-    assert_eq!(records.len(), 2, "{log}");
-    for ((rec, url), rc) in records.iter().zip(["https://example.invalid/p.git", "https://example.invalid/q.git"]).zip([0, 128]) {
+    assert_eq!(records.len(), 3, "{log}");
+    for ((rec, url), rc) in records.iter()
+        .zip(["https://example.invalid/p.git", "https://example.invalid/q.git", "https://example.invalid/s.git"]).zip([0, 128, 128]) {
         let lines: Vec<&str> = rec.lines().collect();
         let k = lines.iter().position(|l| l.starts_with("GIT_ASKPASS=")).unwrap_or_else(|| panic!("{rec}"));
         let want: Vec<String> = probe_command(url, Path::new("/unused")).get_args().map(|x| x.to_string_lossy().into_owned()).collect();
@@ -2774,7 +2819,7 @@ exec '@REAL@' "$@"
     assert_eq!(guarded(&["push", "--porcelain", "--", "origin", "HEAD:refs/heads/x"]).status.code(), Some(128));
     assert_eq!(guarded(&["fetch", "--no-tags", "--", "https://example.invalid/r.git", "+refs/heads/x:refs/x"]).status.code(), Some(128));
     assert_eq!(std::fs::read_to_string(&refused).unwrap(),
-        "push https://example.invalid/q.git\nfetch https://example.invalid/r.git\n");
+        "push https://example.invalid/s.git\nfetch https://example.invalid/r.git\n");
     assert_eq!(git(&r.bare, &["for-each-ref"]), refs0);
     // The real git again, for the scans.
     std::fs::remove_file(a.bin.join("git")).unwrap();

@@ -327,6 +327,21 @@ fn pass_deadline_seam_bounds_the_pass() {
     let rep = run_with_deadline(&jump(T0, T0 + PASS_DEADLINE.as_secs() + 1), WS_ID, Mode::Cli, &Opts::default(), FAR).unwrap();
     assert_eq!(rep.pushed, 1);
     assert!(tip_file(&r, BRANCH, &format!("bob@b/{id2}.json")).is_some());
+    // FX-26 re-plan 2 review round 3 F2: the seam's deadline is the one it is given, pinned with a middle value (600 s)
+    // from both sides. The clock at `T0 + 599 s` at the `pass_end` check: no stop, and the pass pushes; at `T0 + 601 s`:
+    // it stops with the check `deadline`. A seam that scales or bounds its argument fails one of the two.
+    const MID: Duration = Duration::from_secs(600);
+    let id_mid = send(&a, "alice", ("bob", "b"), "hello in the middle");
+    let tip_mid = git(&r.bare, &["rev-parse", &format!("refs/heads/{BRANCH}")]);
+    let e = run_with_deadline(&jump(T0, T0 + MID.as_secs() + 1), WS_ID, Mode::Cli, &Opts::default(), MID).unwrap_err();
+    assert_eq!(e, SyncError::Stopped { line: "zygo: mail sync stopped (deadline); the outbox is kept".into(), check: "deadline" });
+    assert_eq!(git(&r.bare, &["rev-parse", &format!("refs/heads/{BRANCH}")]), tip_mid);
+    assert!(a.sp().outbox.join(format!("{id_mid}.json")).is_file());
+    let rep = run_with_deadline(&jump(T0, T0 + MID.as_secs() - 1), WS_ID, Mode::Cli, &Opts::default(), MID)
+        .expect("the seam stopped before its deadline");
+    assert_eq!(rep.pushed, 1);
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id_mid}.json")).is_some());
+    assert!(!a.sp().outbox.join(format!("{id_mid}.json")).exists());
     // FX-26 re-plan 2 review round 1 F6: `run_with` keeps `PASS_DEADLINE`. The same clock move past `T0 +
     // PASS_DEADLINE` that the far seam deadline lets through stops `run_with` at the `pass_end` check.
     let id3 = send(&a, "alice", ("bob", "b"), "hello a third time");
