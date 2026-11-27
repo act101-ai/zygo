@@ -2206,7 +2206,7 @@ fn ws_with_bob(p: &Paths, t: &Path) -> Store {
     })
 }
 
-#[test] // d4: a delivery in flight while ws forget runs links under its lock, and the forget renames after it
+#[test] // d4, review F4: a delivery that holds mail/lock refuses the forget; after it linked, the forget leaves nothing
 fn forget_waits_for_a_delivery_in_flight_and_leaves_no_maildir() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -2229,44 +2229,36 @@ fn forget_waits_for_a_delivery_in_flight_and_leaves_no_maildir() {
             Ok(())
         })),
     );
-    for point in ["forget_before_mail_lock", "forget_before_tombstone_remove"] {
-        let go = go_tx.clone();
-        up::testing::hook(
-            &dir,
-            point,
-            Some(Box::new(move || {
-                let _ = go.send(());
-                Ok(())
-            })),
-        );
-    }
-    drop(go_tx);
     let thread = std::thread::spawn(move || {
         let r = Delivery::begin(&store, MAIL_LOCK_WAIT).and_then(|d| {
             d.deliver("kbbbbbbbb", "x", &Message::new("cli", "x", "s", "b", SystemTime::now()).unwrap(), 500)
         });
         let _ = ev_tx.send(Event::Done(r));
     });
-    let first = ev_rx.recv().unwrap();
-    if let Event::Done(r) = first {
-        for point in ["mail_delivery_after_read", "forget_before_mail_lock", "forget_before_tombstone_remove"] {
-            up::testing::hook(&dir, point, None);
-        }
+    // (a) The delivery holds mail/lock shared, paused after its record read.
+    if let Event::Done(r) = ev_rx.recv().unwrap() {
+        up::testing::hook(&dir, "mail_delivery_after_read", None);
         panic!("the delivery ended before its hook: {r:?}");
     }
-    let forgot = forget_run(&p, &t.join("none"), None, "app");
-    // Clearing the hooks drops every `go` sender, so the delivery never waits past a forget that failed early.
-    for point in ["mail_delivery_after_read", "forget_before_mail_lock", "forget_before_tombstone_remove"] {
-        up::testing::hook(&dir, point, None);
-    }
+    // (b) The lock stays held for the forget's whole bound: refused, nothing deleted.
+    let busy = forget_run(&p, &t.join("none"), None, "app");
+    // (c) Released, the delivery links and ends; the test waits for its result, with no time bound.
+    go_tx.send(()).unwrap();
     let delivered = match ev_rx.recv().unwrap() {
         Event::Done(r) => r,
         Event::Held => panic!("a second held signal"),
     };
     thread.join().unwrap();
-    assert_eq!(forgot, (0, "zygo: forgot app\n".to_string(), String::new()));
+    up::testing::hook(&dir, "mail_delivery_after_read", None);
+    assert_eq!(busy, (1, String::new(), "zygo: cannot forget app: mail is busy; try again\n".to_string()));
     assert!(delivered.is_ok(), "{delivered:?}");
-    assert!(fs::symlink_metadata(&dir).is_err(), "a delivery made the state folder or its maildir again");
+    assert_eq!(fs::read_dir(dir.join("mail/kbbbbbbbb/new")).unwrap().count(), 1);
+    // (d) The forget now runs to its end: no state folder and no maildir stay, and a new delivery finds no workspace.
+    assert_eq!(forget_run(&p, &t.join("none"), None, "app"), (0, "zygo: forgot app\n".to_string(), String::new()));
+    assert!(fs::symlink_metadata(&dir).is_err(), "the state folder or its maildir stayed");
+    let e = Delivery::begin(&Store::open(&p, ID), MAIL_LOCK_WAIT).unwrap_err();
+    assert!(matches!(e, MailError::NoWorkspace), "{e:?}");
+    assert!(fs::symlink_metadata(&dir).is_err(), "a delivery made the state folder again");
 }
 
 #[test] // S§7.6 step 4: under all forget locks, right before the rename, a delivery cannot take mail/lock
