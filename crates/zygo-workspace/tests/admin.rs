@@ -2355,18 +2355,103 @@ fn delivery_that_locked_a_moved_mail_lock_finds_no_workspace() {
     // (a) The delivery holds the lock of mail/lock, paused before it checks that file.
     let d = Paused::start(&dir, "mail_delivery_after_lock", deliver_to_bob(store));
     d.held();
-    // (b) A forget's rename moves the state folder (and the locked file) away; a new workspace of the same id writes a
-    // new state folder with the record of kbbbbbbbb and a new mail/lock.
-    let old = t.join("tombstone");
-    fs::rename(&dir, &old).unwrap();
-    ws_with_bob(&p, t);
-    fs::create_dir(dir.join("mail")).unwrap();
-    fs::write(dir.join("mail/lock"), b"").unwrap();
+    // (b) A forget's rename moves the state folder (and the locked file) away; a new workspace of the same id.
+    let old = renew_state(&p, t);
     // (c) Released, the delivery checks its locked file, finds it is not mail/lock, and writes nothing.
     let r = d.release();
     assert!(matches!(r, Err(MailError::NoWorkspace)), "{r:?}");
     assert!(fs::symlink_metadata(dir.join("mail/kbbbbbbbb")).is_err(), "the delivery wrote into the new workspace");
     assert!(fs::symlink_metadata(old.join("mail/kbbbbbbbb")).is_err(), "the delivery wrote into the old workspace");
+}
+
+/// A forget's rename of the state folder of `ID` to `<t>/tombstone` (returned), with the `mail/lock` that a paused
+/// taker holds, then a new workspace of the same id: a new state folder with the record of `kbbbbbbbb` and a new
+/// `mail/lock`.
+fn renew_state(p: &Paths, t: &Path) -> PathBuf {
+    let dir = p.workspaces_dir().join(ID);
+    let old = t.join("tombstone");
+    fs::rename(&dir, &old).unwrap();
+    ws_with_bob(p, t);
+    fs::create_dir(dir.join("mail")).unwrap();
+    fs::write(dir.join("mail/lock"), b"").unwrap();
+    old
+}
+
+#[test] // FX-24 review R3 F2 (a), M§5 P1, S§7.6 step 4: a read whose locked file is no longer mail/lock returns nothing
+fn read_that_locked_a_moved_mail_lock_returns_no_message() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    fs::create_dir(dir.join("mail")).unwrap();
+    // (a) The read holds mail/lock shared, paused before it checks that file.
+    let mail = dir.join("mail");
+    let d = Paused::start(&dir, "mail_read_after_lock", move || mail_store::read_within(&mail, "kbbbbbbbb", 10, MAIL_LOCK_WAIT));
+    d.held();
+    // (b) The rename and a new workspace with one unread message for kbbbbbbbb: a read that went on into it would move
+    // that message to cur/ and return it.
+    renew_state(&p, t);
+    deliver_to_bob(Store::open(&p, ID))().unwrap();
+    // (c) Released, the read checks its locked file, finds it is not mail/lock, and returns no message.
+    let r = d.release();
+    assert!(matches!(&r, Ok(v) if v.is_empty()), "{r:?}");
+    assert_eq!(fs::read_dir(dir.join("mail/kbbbbbbbb/new")).unwrap().count(), 1, "the read took the new workspace's message");
+    assert_eq!(fs::read_dir(dir.join("mail/kbbbbbbbb/cur")).unwrap().count(), 0, "the read moved a message to cur/");
+}
+
+/// The maildir of `kcccccccc`, a pane key with no member record, in the state folder `dir`.
+fn orphan_maildir(dir: &Path) -> PathBuf {
+    let md = dir.join("mail/kcccccccc");
+    fs::create_dir_all(md.join("new")).unwrap();
+    md
+}
+
+#[test] // FX-24 review R3 F2 (b), M§5 P1, S§7.6 step 4: a maildir removal whose locked file is no longer mail/lock removes nothing
+fn removal_that_locked_a_moved_mail_lock_removes_nothing() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let store = ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    orphan_maildir(&dir);
+    // (a) The removal holds mail/lock exclusive, paused before it checks that file.
+    let d = Paused::start(&dir, "mail_removal_after_lock", move || {
+        zygo_workspace::mail::remove_maildir(&store, "kcccccccc", MAIL_LOCK_WAIT)
+    });
+    d.held();
+    // (b) The rename and a new workspace with a maildir of kcccccccc, which has no record there either.
+    let old = renew_state(&p, t);
+    let md = orphan_maildir(&dir);
+    // (c) Released, the removal checks its locked file, finds it is not mail/lock, and removes nothing.
+    let r = d.release();
+    assert!(matches!(r, Ok(false)), "{r:?}");
+    assert!(md.is_dir(), "the removal removed a maildir of the new workspace");
+    assert!(old.join("mail/kcccccccc").is_dir(), "the removal removed a maildir of the old workspace");
+}
+
+#[test] // FX-24 review R3 F2 (b), M§5 P1, S§7.6 step 4: a prune whose locked file is no longer mail/lock removes nothing
+fn prune_that_locked_a_moved_mail_lock_removes_nothing() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let store = ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    orphan_maildir(&dir);
+    // (a) The prune holds mail/lock exclusive, paused before it checks that file.
+    let d = Paused::start(&dir, "mail_removal_after_lock", move || zygo_workspace::mail::prune(&store, MAIL_LOCK_WAIT));
+    d.held();
+    // (b) The rename and a new workspace with a maildir of kcccccccc, which has no record there either.
+    let old = renew_state(&p, t);
+    let md = orphan_maildir(&dir);
+    // (c) Released, the prune checks its locked file, finds it is not mail/lock, and removes nothing.
+    let r = d.release();
+    assert!(matches!(&r, Ok(v) if v.is_empty()), "{r:?}");
+    assert!(md.is_dir(), "the prune removed a maildir of the new workspace");
+    assert!(old.join("mail/kcccccccc").is_dir(), "the prune removed a maildir of the old workspace");
 }
 
 #[test] // S§7.6 step 4: under all forget locks, right before the rename, a delivery cannot take mail/lock

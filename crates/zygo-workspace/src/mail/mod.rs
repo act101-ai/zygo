@@ -263,6 +263,7 @@ fn removal_lock(store: &Store, mail: &Path, bound: Duration) -> std::io::Result<
         let text = format!("{}/lock is held by another process", mail.display());
         return Err(std::io::Error::new(ErrorKind::WouldBlock, text));
     };
+    crate::up::fire(store.dir(), "mail_removal_after_lock").map_err(|e| std::io::Error::other(e.to_string()))?;
     if !lock_is_at(&lock, &mail.join("lock")) {
         return Ok(None);
     }

@@ -287,6 +287,8 @@ pub fn read_within(mail_dir: &Path, key: &str, max: usize, bound: Duration) -> R
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
+    let state_dir = mail_dir.parent().unwrap_or(mail_dir);
+    crate::up::fire(state_dir, "mail_read_after_lock").map_err(|e| std::io::Error::other(e.to_string()))?;
     if !crate::state::lock_is_at(&lock, &mail_dir.join("lock")) {
         return Ok(Vec::new());
     }
@@ -299,7 +301,6 @@ pub fn read_within(mail_dir: &Path, key: &str, max: usize, bound: Duration) -> R
     if !ids.is_empty() {
         // M§5 P1: a read never makes mail/<key>/. Only cur/ is made, in a maildir that exists; a maildir removed since
         // the listing has nothing to return.
-        let state_dir = mail_dir.parent().unwrap_or(mail_dir);
         crate::up::fire(state_dir, "mail_read_before_dirs").map_err(|e| std::io::Error::other(e.to_string()))?;
         match real_dir(&md) {
             Ok(false) => return Ok(Vec::new()),

@@ -142,8 +142,13 @@ pub mod testing {
     /// `mail_delivery_after_lock` (in `mail::Delivery::begin`, after `mail/lock` is taken and before the check that
     /// the locked file is still `mail/lock`; FX-24 review R2 F3; an error there is the delivery's `Io` error),
     /// `mail_delivery_after_read` (in `mail::Delivery::begin`, after the state read under `mail/lock`; an error there
-    /// is the delivery's `Io` error) and `mail_read_before_dirs` (in `mail::store::read`, before it makes `cur/`; the
-    /// state folder is the parent of `mail/`; an error there is the read's `Io` error).
+    /// is the delivery's `Io` error), `mail_read_after_lock` (in `mail::store::read_within`, after `mail/lock` is
+    /// taken and before the check that the locked file is still `mail/lock`; FX-24 review R3 F2; the state folder is
+    /// the parent of `mail/`; an error there is the read's `Io` error), `mail_read_before_dirs` (in `mail::store::read`,
+    /// before it makes `cur/`; the state folder is the parent of `mail/`; an error there is the read's `Io` error) and
+    /// `mail_removal_after_lock` (in `mail::remove_maildir` and `mail::prune`, after `mail/lock` is taken exclusive and
+    /// before the check that the locked file is still `mail/lock`; FX-24 review R3 F2; an error there is the removal's
+    /// error).
     /// An `Err(text)` of the hook becomes `MuxError::Failed { message: text }` at that point; at `before_undo` it is
     /// the undo's write error.
     pub fn hook(dir: &Path, point: &'static str, f: Option<Box<dyn Fn() -> Result<(), String> + Send + Sync>>) {

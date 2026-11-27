@@ -1112,6 +1112,23 @@ fn lock_failure_is_logged_for_a_child() {
     assert!(a.errors().contains("mail sync: stopped: lock"));
 }
 
+#[test] // FX-24 review R3 F2 (c), S§8.3 step 3, S§7.6 step 1: a FIFO at mail/sync/lock is never taken as the lock: the
+// sync refuses with the lock stop and runs no pass
+fn fifo_at_the_sync_lock_is_the_lock_stop_and_no_pass_runs() {
+    let _g = exclusive();
+    let (r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "one");
+    let sp = a.sp();
+    fs::remove_file(&sp.lock).unwrap();
+    let fifo = std::ffi::CString::new(sp.lock.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    let e = run(&plain_env(&a), WS_ID, Mode::Cli).unwrap_err();
+    assert!(matches!(e, SyncError::Stopped { check: "lock", .. }), "{e:?}");
+    assert!(a.errors().contains("mail sync: stopped: lock"));
+    assert!(sp.outbox.join(format!("{id}.json")).is_file(), "a pass sent the queued message");
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none(), "a pass pushed the queued message");
+}
+
 #[test] // R4 (review F5), S§8.3 step 1
 fn missing_workspace_record_is_a_gate_failure() {
     let _g = shared();
