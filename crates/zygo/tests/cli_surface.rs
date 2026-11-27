@@ -751,5 +751,5 @@ fn config_show_layer_echo_is_escaped() {
     let o = with_config("", &["config", "show", "--layer", "x\u{1b}[2K\nforged"]);
     assert_eq!(o.status.code(), Some(2));
     assert_eq!(String::from_utf8_lossy(&o.stderr),
-        "zygo config: unknown layer x\\u{1b}[2K\\nforged (builtin|team|user|repository|profile|flags|session)\n");
+        "zygo config: unknown layer x\\u{1b}[2K\\nforged (builtin|team|user|repository|profile|flags|session|workspace-files)\n");
 }
