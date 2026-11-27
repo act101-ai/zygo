@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use regex::Regex;
+use zygo_config::repo_def::REPOSITORY_LOADOUT;
 use zygo_config::{Loadout, LoadoutPane, BUILTIN_LOADOUT};
 use zygo_core::paths::Paths;
 use zygo_core::{esc, Agent};
@@ -12,7 +13,8 @@ use zygo_workspace::identity::Worktree;
 use zygo_workspace::loadout::{self, pane_cwd, LoadoutError, Source};
 use zygo_workspace::up::{find_checkout, GIT_BOUND};
 
-use super::{op5_exit, print_err, print_out, user_config_or_exit};
+use super::workspace_files::{here, State};
+use super::{op5_exit, print_err, print_out, user_merged_or_exit};
 
 const USER_INFO_REMOVED: &str = "<user info removed>";
 const INLINE_JSON_HIDDEN: &str = "<inline JSON not shown>";
@@ -377,19 +379,27 @@ pub enum LoadoutCmd {
 }
 
 /// The OP5 check, the user config (D3), then D7: `<name escaped>  built-in`, `user` or `workspace-files` per line, in
-/// the order of `loadout::list`.
+/// the order of `loadout::list`, with the R§10 row of the workspace files of the current folder's repository.
 pub fn run(a: &LoadoutArgs) -> i32 {
     if let Some(code) = op5_exit() {
         return code;
     }
-    let cfg = match user_config_or_exit(&Paths::from_env(), "loadout") {
-        Ok(c) => c,
+    let paths = Paths::from_env();
+    let m = match user_merged_or_exit(&paths, "loadout") {
+        Ok(m) => m,
         Err(code) => return code,
     };
     match &a.sub {
         LoadoutCmd::List => {
-            // The CLI's config has no definition applied yet; WD-16 passes the value from WD-7's Merged::definition_file_of.
-            let text: String = loadout::list(&cfg, false)
+            // R§10 `zygo loadout list`: the approved files add `repository` (source `workspace-files`); a not-approved,
+            // invalid or shadowed repository loadout is one more `repository` row after the others of that name. Only
+            // an unread read prints its line; the other states are the text of that row.
+            let v = here(&m, &paths.approvals_file);
+            if let (State::Unread, Some(line)) = (&v.state, &v.line) {
+                print_err(&format!("{line}\n"));
+            }
+            let from_files = v.merged.definition_file_of(&format!("loadout.{REPOSITORY_LOADOUT}")).is_some();
+            let mut rows: Vec<(String, &str)> = loadout::list(&v.merged.config, from_files)
                 .into_iter()
                 .map(|(name, source)| {
                     let source = match source {
@@ -397,17 +407,44 @@ pub fn run(a: &LoadoutArgs) -> i32 {
                         Source::User => "user",
                         Source::Repository => "workspace-files",
                     };
-                    format!("{}  {source}\n", esc(&name))
+                    (name, source)
                 })
                 .collect();
+            let extra = match &v.state {
+                State::NotApproved { workspace: true } => Some("workspace-files, not approved"),
+                State::Invalid { .. } => Some("workspace-files, invalid"),
+                State::Approved { workspace: true } if !from_files => Some("workspace-files, shadowed"),
+                _ => None,
+            };
+            if let Some(text) = extra {
+                rows.push((REPOSITORY_LOADOUT.to_string(), text));
+                // Stable: the extra row stays after the rows of its name.
+                rows.sort_by(|a, b| a.0.cmp(&b.0));
+            }
+            let text: String = rows.iter().map(|(name, source)| format!("{}  {source}\n", esc(name))).collect();
             print_out(&text);
             0
         }
         LoadoutCmd::Show { name } => {
-            // D7: the user's `[loadout.<name>]` first, then the built-in `solo`
-            let l = match cfg.loadout.get(name) {
+            // D7: the user's `[loadout.<name>]` first, then the built-in `solo`; R§10: `repository` with no user
+            // `[loadout.repository]` is the loadout of the approved workspace files, else their line.
+            let l = match m.config.loadout.get(name) {
                 Some(l) => l.clone(),
                 None if name == BUILTIN_LOADOUT => loadout::builtin_solo(),
+                None if name == REPOSITORY_LOADOUT => {
+                    let v = here(&m, &paths.approvals_file);
+                    match (v.merged.config.loadout.get(name), &v.line) {
+                        (Some(l), _) => l.clone(),
+                        (None, Some(line)) => {
+                            print_err(&format!("{line}\n"));
+                            return 1;
+                        }
+                        (None, None) => {
+                            print_err(&format!("zygo: {}\n", LoadoutError::Unknown { name: name.clone() }));
+                            return 1;
+                        }
+                    }
+                }
                 None => {
                     print_err(&format!("zygo: {}\n", LoadoutError::Unknown { name: name.clone() }));
                     return 1;
