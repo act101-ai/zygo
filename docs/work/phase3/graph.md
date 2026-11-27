@@ -226,6 +226,7 @@ Session text (T, SX nodes):
 | FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | PLANNED | judgment | PR #233 |
 | FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | DONE | judgment | 343897e2^..a9b6f61c · acceptance pass (renamed_host_ack_goes_with_only_acked_link_and_gitlink_entries 1 passed) · PR #231 |
 | FX-28 | A remote send during `ws forget` is lost uncounted | FX-24 | TODO | judgment | — |
+| FX-30 | A crash-recovered delivery gets no wake and no count | FX-26 | TODO | judgment | — |
 
 ## Log
 
@@ -455,3 +456,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-27 PLANNED (re-plan), author's call: R1 ack = (old ∪ acked ∪ own-ack union) ∩ folder ULIDs; R2 old ack goes with no message file, every ULID listed, registry gone; R3 prune unchanged; R4 drop-host counts message files; invariant: one delivery per ULID |
 | 2026-11-26 | FX-27 DONE: ULID-keyed re-plan R1–R4; review rounds 1–2 fixed tests and spec text; author's calls: non-address folders are documented as operator-only removal; planner's call: non-ULID names do not keep the ack. |
 | 2026-11-27 | FX-26 PLANNED: 19 S§19 items walked in 4 test functions with one scan helper (session.log added); only the https probe (LsRemote, network) recorded as not walked; S§19 #24 final text in step 8; capability judgment (large) |
+| 2026-11-27 | FX-30 created from FX-26 review round 2 F-1 |
