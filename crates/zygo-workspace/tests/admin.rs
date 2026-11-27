@@ -2151,6 +2151,28 @@ fn forget_does_not_follow_a_mail_link() {
     assert!(common_names(&elsewhere.join("sync")).is_empty());
 }
 
+#[test] // FX-24 review R2 F4, S§7.6 steps 1 and 4: a lock file that no sync or delivery can hold does not stop the forget
+fn forget_goes_on_when_a_lock_file_is_a_link_or_a_folder() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let target = t.join("target");
+    fs::write(&target, b"kept").unwrap();
+    // A link at mail/lock: a delivery refuses to open it, so no delivery can hold it.
+    ws_state(&p, ID, "app", &t.join("r/app"), |_| {});
+    fs::create_dir_all(mail_dir(&p, ID)).unwrap();
+    std::os::unix::fs::symlink(&target, mail_dir(&p, ID).join("lock")).unwrap();
+    // A folder at mail/sync/lock: a sync refuses to open it, so no sync can hold it.
+    ws_state(&p, OTHER, "bee", &t.join("r/bee"), |_| {});
+    fs::create_dir_all(mail_dir(&p, OTHER).join("sync/lock")).unwrap();
+    for (name, id) in [("app", ID), ("bee", OTHER)] {
+        assert_eq!(forget_run(&p, &t.join("none"), None, name), (0, format!("zygo: forgot {name}\n"), String::new()));
+        assert!(fs::symlink_metadata(p.workspaces_dir().join(id)).is_err(), "the state folder of {name} stayed");
+    }
+    assert_eq!(fs::read(&target).unwrap(), b"kept");
+}
+
 #[test] // S§7.6 steps 2-3: an Err of before_remove refuses with exit 1 and its reason; nothing deleted
 fn forget_refuses_with_the_reason_of_before_remove() {
     let _s = serial();

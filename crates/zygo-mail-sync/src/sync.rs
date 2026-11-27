@@ -377,7 +377,10 @@ pub(crate) fn locked<T>(env: &Env, ws_id: &str, f: impl FnOnce(&Ctx) -> Result<T
 }
 
 /// S§8.3 step 3: the lock on `mail/sync/lock`. Held by another (`Ok(None)`): at once for a child; the CLI tries each
-/// 5 ms until [`LOCK_WAIT`] has passed on the injected clock. A folder, open or lock error is the `lock` stop.
+/// 5 ms until [`LOCK_WAIT`] has passed on the injected clock. A folder, open or lock error is the `lock` stop. A lock
+/// file that is a link or not a regular file is never opened as the lock (no link followed, `O_NONBLOCK` so a FIFO
+/// does not wait, the handle checked), so no sync holds it and `zygo ws forget` goes on without it (S§7.6 step 1,
+/// FX-24 review R2 F4).
 fn take_lock(sp: &SyncPaths, mode: Mode, clock: &dyn Clock) -> Result<Option<File>, Fail> {
     let fail = || stop("lock");
     for d in [&sp.mail, &sp.sync] {
@@ -388,9 +391,12 @@ fn take_lock(sp: &SyncPaths, mode: Mode, clock: &dyn Clock) -> Result<Option<Fil
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        o.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        o.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
     }
     let f = o.open(&sp.lock).map_err(|_| fail())?;
+    if !f.metadata().is_ok_and(|m| m.is_file()) {
+        return Err(fail());
+    }
     let start = clock.now();
     loop {
         match fs4::FileExt::try_lock(&f) {

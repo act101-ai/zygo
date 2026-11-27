@@ -23,7 +23,7 @@ use crate::mux::tmux::Tmux;
 use crate::mux::{check_path, session_target, Multiplexer, MuxError, SessionAnswer, BOUND, UNSAFE_PATH_MESSAGE};
 use crate::repair::check_saved_socket;
 use crate::snapshot;
-use crate::state::{list_all, lock_file, lock_file_as, read_state_capped, StateBytes, MemberRecord, MemberState, OpLock, PaneKind, Phase, StateError, Store, Workspace};
+use crate::state::{list_all, lock_file, read_state_capped, take_lock, StateBytes, MemberRecord, MemberState, OpLock, PaneKind, Phase, StateError, Store, Taken, Workspace};
 use crate::up::{check_server, find_checkout, fire, member_live, server, socket_is_private, Exit, GIT_BOUND};
 
 /// The git bound of `status`, so `/zygo:workspace` fits the 4.5 s hook bound (D12, D23).
@@ -684,7 +684,9 @@ fn forget_run(
 /// [`MAIL_LOCK_WAIT`], after `before_remove` and before the state rename, so a delivery in flight links first and
 /// none starts until the state folder is gone (a later one finds no workspace). A missing `mail/` is made `0700` so
 /// the lock exists before the rename; `None` when `mail/` is a link or not a folder (no mail; nothing made through
-/// the link). A lock held for the whole bound: `zygo: cannot forget <label>: mail is busy; try again` (exit 1).
+/// the link). `None` too when `mail/lock` is a link or not a regular file: no delivery can hold it, since every
+/// delivery refuses to open it, so the forget goes on without it (FX-24 review R2 F4). A lock held for the whole
+/// bound: `zygo: cannot forget <label>: mail is busy; try again` (exit 1); any other error refuses with its text.
 fn mail_lock(store: &Store, label: &str) -> Result<Option<fs::File>, ForgetError> {
     let fail = |e: &dyn fmt::Display| ForgetError::Line(format!("zygo: cannot forget {label}: {e}"));
     let mail = store.dir().join("mail");
@@ -692,9 +694,10 @@ fn mail_lock(store: &Store, label: &str) -> Result<Option<fs::File>, ForgetError
         return Ok(None);
     }
     fire(store.dir(), "forget_before_mail_lock").map_err(|e| fail(&e))?;
-    match lock_file_as(&mail.join("lock"), MAIL_LOCK_WAIT, false) {
-        Ok(Some(f)) => Ok(Some(f)),
-        Ok(None) => Err(ForgetError::Line(format!("zygo: cannot forget {label}: mail is busy; try again"))),
+    match take_lock(&mail.join("lock"), MAIL_LOCK_WAIT, false) {
+        Ok(Taken::Held(f)) => Ok(Some(f)),
+        Ok(Taken::NotRegular) => Ok(None),
+        Ok(Taken::Busy) => Err(ForgetError::Line(format!("zygo: cannot forget {label}: mail is busy; try again"))),
         Err(e) => Err(fail(&e)),
     }
 }
@@ -703,7 +706,9 @@ fn mail_lock(store: &Store, label: &str) -> Result<Option<fs::File>, ForgetError
 /// taken at once. `mail/`, `mail/sync/` (each `0700`) and the lock file (`0600`) are made when missing, and no link is
 /// followed, so a sync that starts meanwhile waits for this lock and then finds the workspace gone (review F1).
 /// `None` when `mail/` or `mail/sync/` is a link or not a folder: the workspace has no mail, and nothing is made
-/// through the link (review F3). Held by a sync: `zygo: a mail sync runs for <label>; try again` (exit 1).
+/// through the link (review F3). `None` too when `mail/sync/lock` is a link or not a regular file: no sync can hold
+/// it, since the sync refuses to open it, so the forget goes on without it (FX-24 review R2 F4). Held by a sync:
+/// `zygo: a mail sync runs for <label>; try again` (exit 1); any other error refuses with its text.
 fn sync_lock(paths: &Paths, id: &str, label: &str) -> Result<Option<fs::File>, ForgetError> {
     let fail = |e: std::io::Error| ForgetError::Line(format!("zygo: cannot forget {label}: {e}"));
     let mail = mail_dir(paths, id);
@@ -711,9 +716,10 @@ fn sync_lock(paths: &Paths, id: &str, label: &str) -> Result<Option<fs::File>, F
     if !real_dir(&mail).map_err(fail)? || !real_dir(&dir).map_err(fail)? {
         return Ok(None);
     }
-    match lock_file(&dir.join("lock"), Duration::ZERO) {
-        Ok(Some(f)) => Ok(Some(f)),
-        Ok(None) => Err(ForgetError::Line(format!("zygo: a mail sync runs for {label}; try again"))),
+    match take_lock(&dir.join("lock"), Duration::ZERO, false) {
+        Ok(Taken::Held(f)) => Ok(Some(f)),
+        Ok(Taken::NotRegular) => Ok(None),
+        Ok(Taken::Busy) => Err(ForgetError::Line(format!("zygo: a mail sync runs for {label}; try again"))),
         Err(e) => Err(fail(e)),
     }
 }

@@ -853,6 +853,41 @@ pub fn lock_is_at(lock: &File, path: &Path) -> bool {
 /// other), else exclusive (M§5 `mail/lock`, FX-13).
 pub(crate) fn lock_file_as(path: &Path, bound: Duration, shared: bool) -> std::io::Result<Option<File>> {
     let f = open_regular(private().read(true).write(true).create(true).truncate(false), path)?;
+    lock_open(f, bound, shared)
+}
+
+/// What [`take_lock`] found at the lock file.
+pub(crate) enum Taken {
+    /// The lock is held; it ends when the file is dropped.
+    Held(File),
+    /// Another holder kept the lock for the whole bound.
+    Busy,
+    /// The lock file is a link or not a regular file (a folder, a FIFO, a socket, a device). No taker of the lock can
+    /// hold it, because every taker refuses to open such a file (FX-24 review R2 F4).
+    NotRegular,
+}
+
+/// [`lock_file`] (`shared`: as [`lock_file_as`]) that tells a lock file that is a link or not a regular file
+/// (`NotRegular`) apart from every other error. Nothing is followed, and a folder at `path` is `NotRegular`, as a
+/// link is. `zygo ws forget` takes `mail/lock` and `mail/sync/lock` with it: no delivery or sync can hold such a
+/// file, so the forget goes on without that lock (S§7.6 steps 1 and 4).
+pub(crate) fn take_lock(path: &Path, bound: Duration, shared: bool) -> std::io::Result<Taken> {
+    let f = match open_nofollow(private().read(true).write(true).create(true).truncate(false), path) {
+        Ok(Opened::File(f)) => f,
+        Ok(Opened::Link | Opened::NotFile) => return Ok(Taken::NotRegular),
+        // A folder at `path` fails the open for write (`EISDIR`) before the handle can be checked.
+        Err(_) if fs::symlink_metadata(path).is_ok_and(|m| !m.file_type().is_file()) => return Ok(Taken::NotRegular),
+        Err(e) => return Err(e),
+    };
+    Ok(match lock_open(f, bound, shared)? {
+        Some(f) => Taken::Held(f),
+        None => Taken::Busy,
+    })
+}
+
+/// Takes the lock of the open file `f`: tries each 5 ms until `bound` ends; `Ok(None)` when another holder kept it
+/// for the whole bound.
+fn lock_open(f: File, bound: Duration, shared: bool) -> std::io::Result<Option<File>> {
     // `None`: the bound is past the end of the clock, so no deadline exists.
     let deadline = Instant::now().checked_add(bound);
     loop {
