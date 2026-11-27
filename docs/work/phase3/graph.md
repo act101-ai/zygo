@@ -211,13 +211,12 @@ Session text (T, SX nodes):
 | WD-16 | `config show/check`, `profile list/show`, `loadout list/show` show the repository files | WD-15, WD-24 | DONE | implementation | 4e0686e5^..b5991ee0 · acceptance pass (definition_surfaces 22 passed) · PR #225 |
 | WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | TODO | mechanical | — |
 | SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | DONE | implementation | 1b49483c^..7b96c5b5 · acceptance pass (builtin 13, check-premises ok) · PR #227 |
-| OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | PLANNED | mechanical | — |
+| OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | DONE | mechanical | fc991ad1^..7018a2f3 · acceptance pass (builtin 13, check-premises ok) · PR #229 |
 | OS-46 | Bound the hook's usage-store wait per Bash call | — | DONE | judgment | 75339a21 · d6be5653 · c727ff0e · 68f8e48c · acceptance pass (busy_wait_total/open_bounded_total 7, rollback_journal 1, zygo-usage, zygo-hooks, readbacks) · PR #205 |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | DONE | judgment | 87a292d6^..da0207f1 · acceptance pass (mail_lifecycle 23 passed) · PR #219 |
 | FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | DONE | implementation | 19fbf580^..b0212f6c · acceptance pass (shape_clean 29 passed) · PR #209 |
-| FX-17 | `zygo up` refuses a `[limits] max_members` outside 1-32 from the team or user layer (`config check` rule, `check_jobs` path) | FX-14, WD-11 | DONE | implementation | plan 7a124777 · node da3062c7, e437fde9 · acceptance pass (workspace_restore 7 passed, cmd::up 16 passed) · PR #169 |
 | FX-18 | live-mail.sh fixture head line doubles the word zygo | ML-19 | DONE | mechanical | plan 02a12d2d · node fad4e150 · acceptance pass (sh scripts/premises/live-selftest.sh: live selftest: ok (77)) · PR #187 |
 | FX-19 | PO2 row states what its run observed | OS-34 | DONE | mechanical | plan b2c8ca97 · node b5fa4c27, efbcccae · acceptance pass (check-premises ok; po2_ 3 passed) · PR #188 |
 | FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | DONE | mechanical | 96868305 · c98ea5fa · cc948a96 · acceptance pass (live selftest: ok (85)) · PR #194 |
@@ -451,3 +450,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-24 PLANNED: d1-d4 hold at 6b283c74; import, incoming finish, notice under mail/lock per delivery; forget holds it excl across rename, after before_remove; order op<sync<mail<state; S§8.5/8.6/7.6, M§5 rewritten; author's calls in node |
 | 2026-11-26 | FX-24 DONE: mail-sync import, staged retry, refusal notice and ws forget take mail/lock in the lock order; every taker checks the lock inode; R1–R3 fixed (no lost staged mail, notice only to the same key); FX-28 added · PR #224 |
 | 2026-11-26 | OS-39 PLANNED: 16 steps; §10.1, §10.7, §14 final text from the merged code; O§12, O§6.5 item 3, O§6.6 rewritten (author's call): OpenCode trims bash only, shaped view over 8 KiB below threshold, results on/off override, full open users, usage none/unknown lines |
+| 2026-11-26 | OS-39 DONE: base spec §10.1, §10.7, §14 state the merged output shaping and saving accounting (views, raw text, measure, net figures, read-backs, retention); O§12 and O§6.5 rewritten to the code; §20 item 14 names its input · PR #229 |
