@@ -560,21 +560,6 @@ fn commit_findings(repo: &Path, test_made: &BTreeSet<String>) -> (usize, Vec<Str
     (checked, found)
 }
 
-/// The `session.log` of each session folder of `h`: the zygo sessions, and the folders `sess-*` that the test makes
-/// for the MCP tools and the trim hook.
-fn session_logs(h: &Harness) -> Vec<PathBuf> {
-    let mut logs = Vec::new();
-    for (dir, every) in [(h.paths.sessions_dir.clone(), true), (h.root().to_path_buf(), false)] {
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
-        for e in rd.map(|e| e.unwrap()) {
-            if every || e.file_name().to_string_lossy().starts_with("sess-") {
-                logs.push(e.path().join("session.log"));
-            }
-        }
-    }
-    logs
-}
-
 /// `mail/sync/imported`, `identity`, `last_start` and `incoming/` of `h` (MS-22 review F3).
 fn sync_files(h: &Harness) -> Vec<PathBuf> {
     let s = sp(h);
@@ -754,14 +739,12 @@ fn scanners_find_a_planted_marker() {
     assert!(ref_findings(&wt).1.contains(&format!("ref refs/worktree/{HOST_A} holds {HOST_A}")));
     git(&r2, &["symbolic-ref", "HEAD", &format!("refs/heads/zygo/{HOST_B2}")]); // unborn: no ref lists it
     assert!(ref_findings(&r2).1.contains(&format!("HEAD refs/heads/zygo/{HOST_B2} holds {HOST_B2}")), "{:?}", ref_findings(&r2));
-    // The session logs and the sync files: each file of a folder is read, with its name.
-    let sess = d.path().join("sessions/s1");
-    std::fs::create_dir_all(&sess).unwrap();
-    std::fs::write(sess.join("session.log"), format!("x {B_NAME}\n")).unwrap();
+    // The sync files: each file of a folder is read, with its name; a path that is not there is skipped.
+    std::fs::write(d.path().join("identity"), format!("x {B_NAME}\n")).unwrap();
     std::fs::create_dir_all(d.path().join("incoming")).unwrap();
     std::fs::write(d.path().join("incoming").join(format!("{HOST_B2}.json")), "x").unwrap();
     std::fs::write(d.path().join("imported"), format!("{SUBJ}\n")).unwrap();
-    let (n, f) = files_findings(&[sess.join("session.log"), d.path().join("incoming"), d.path().join("imported"), d.path().join("absent")], &MARKERS);
+    let (n, f) = files_findings(&[d.path().join("identity"), d.path().join("incoming"), d.path().join("imported"), d.path().join("absent")], &MARKERS);
     assert_eq!(n, 3);
     for m in [B_NAME, HOST_B2, SUBJ] {
         assert!(f.iter().any(|l| l.ends_with(&format!("holds {m}"))), "{m}: {f:?}");
@@ -1054,7 +1037,6 @@ fn no_mail_content_after_the_scenarios() {
     assert_eq!(own_c, vec![HOST_A2.to_string()]);
     mid.extend(state_findings(&sp(&c).state, &[HOST_A2]));
     mid.extend(ref_findings(&sp(&c).worktree).1);
-    mid.extend(files_findings(&session_logs(&c), &MARKERS).1);
     mid.extend(files_findings(&sync_files(&c), &MARKERS).1);
     for n in [24, 25] {
         send_ok(&c, ALICE, &format!("{B_NAME}@{HOST_A}"), n);
@@ -1119,7 +1101,6 @@ fn no_mail_content_after_the_scenarios() {
         let (refs, f) = ref_findings(&sp(h).worktree);
         assert!(refs >= 1, "{}: no ref read", sp(h).worktree.display());
         found.extend(f);
-        found.extend(files_findings(&session_logs(h), &MARKERS).1);
         let (n, f) = files_findings(&sync_files(h), &MARKERS);
         assert!(n >= 2, "{}: imported and identity", h.root().display());
         found.extend(f);
