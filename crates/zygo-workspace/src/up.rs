@@ -103,9 +103,11 @@ pub struct Target {
     pub id: String,
     pub name: String,
     pub common_dir: PathBuf,
+    /// The main worktree (AU77), the base of the pane folders (W§11). By name: the saved `main_root` while its folder
+    /// exists, else the main worktree found again from `common_dir` (FX-25 review F2).
     pub main_root: PathBuf,
     /// The folder of the definition read (workspace definition design R§10, `zygo up` row): `Checkout.top` of the
-    /// checkout found from the cwd; the saved `main_root` for a workspace found by name.
+    /// checkout found from the cwd; `main_root` for a workspace found by name.
     pub top: PathBuf,
     pub worktrees: Vec<Worktree>,
     pub state: Result<Option<Workspace>, String>,
@@ -388,9 +390,8 @@ pub fn find_checkout_with(cwd: &Path, bound: Duration, git: &OsStr) -> Result<(C
             if list.is_empty() {
                 return Err(usage(NOT_A_REPO));
             }
-            let main = main_worktree(&list).ok_or_else(|| usage(BARE))?;
-            checkout(&main.path, deadline)
-                .ok_or_else(|| fail(format!("no checkout at the main worktree {}", main.path.display())))?
+            let main = main_of(&list)?;
+            checkout(&main, deadline).ok_or_else(|| no_checkout_at(&main))?
         }
     };
     // `rev-parse` found this checkout, so "not a git repository" here is a failed read (as `zygo_work::repo`).
@@ -398,8 +399,40 @@ pub fn find_checkout_with(cwd: &Path, bound: Duration, git: &OsStr) -> Result<(C
         ListError::NotARepository => failed(ListError::Failed),
         e => failed(e),
     })?;
-    let main = main_worktree(&list).ok_or_else(|| usage(BARE))?.path.clone();
+    let main = main_of(&list)?;
     Ok((co, list, main))
+}
+
+/// The code-1 `Exit` of a main worktree with no checkout (W§8.1 step 3); no prefix, not escaped.
+fn no_checkout_at(main: &Path) -> Exit { fail(format!("no checkout at the main worktree {}", main.display())) }
+
+/// The main worktree of `list` (AU77, [`main_worktree`]: the first non-bare entry whose folder exists). With no
+/// non-bare entry: code 2 `BARE`. With non-bare entries whose folders are all gone: code 1, no checkout at the first.
+fn main_of(list: &[Worktree]) -> Result<PathBuf, Exit> {
+    if let Some(main) = main_worktree(list) {
+        return Ok(main.path.clone());
+    }
+    match list.iter().find(|w| !w.bare) {
+        Some(first) => Err(no_checkout_at(&first.path)),
+        None => Err(Exit { code: 2, message: BARE.to_string() }),
+    }
+}
+
+/// The main worktree and worktree list of a workspace found by name (W§8.1 step 3, AU20). The saved `main_root` while
+/// its folder exists; else the main worktree ([`main_worktree`]) of the list that git gives in the saved `common_dir`
+/// (FX-25 review F2). When that list has no main worktree, or git fails, the saved `main_root` stays.
+fn main_by_name(git: &OsStr, common_dir: &Path, main_root: &Path) -> (PathBuf, Vec<Worktree>) {
+    let list_in = |top: &Path| {
+        let deadline = Instant::now() + GIT_BOUND;
+        let co = Checkout { top: top.to_path_buf(), common_dir: common_dir.to_path_buf(), main_root: main_root.to_path_buf(), deadline };
+        worktrees_with(git, &co).unwrap_or_default()
+    };
+    if main_root.is_dir() {
+        return (main_root.to_path_buf(), list_in(main_root));
+    }
+    let list = list_in(common_dir);
+    let main = main_worktree(&list).map_or_else(|| main_root.to_path_buf(), |w| w.path.clone());
+    (main, list)
 }
 
 /// The tmux version check of W§8.1 step 2 (code 2): tmux missing, older than 3.2, or a version that cannot be read
@@ -426,19 +459,15 @@ pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path
     tmux_check(tmux)?;
     let all = list_all(paths);
     if let Some(n) = name {
-        let tree = |common_dir: &Path, main_root: &Path| {
-            let deadline = Instant::now() + GIT_BOUND;
-            let co = Checkout { top: main_root.to_path_buf(), common_dir: common_dir.to_path_buf(), main_root: main_root.to_path_buf(), deadline };
-            worktrees_with(git, &co).unwrap_or_default()
-        };
         if let Some(ws) = all.iter().find_map(|(_, r)| r.as_ref().ok().filter(|ws| ws.name == n)) {
+            let (main_root, worktrees) = main_by_name(git, &ws.common_dir, &ws.main_root);
             return Ok(Target {
                 id: ws.id.clone(),
                 name: ws.name.clone(),
                 common_dir: ws.common_dir.clone(),
-                main_root: ws.main_root.clone(),
-                top: ws.main_root.clone(),
-                worktrees: tree(&ws.common_dir, &ws.main_root),
+                top: main_root.clone(),
+                main_root,
+                worktrees,
                 state: Ok(Some(ws.clone())),
             });
         }
@@ -477,11 +506,12 @@ pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path
             [] => return Err(fail(format!("zygo: no workspace named {}", esc(n)))),
             [(_, StateError::Newer { .. }, _, _)] => return Err(fail(NEWER.into())),
             [(id, e, _, v)] => {
-                let (common_dir, main_root) = (PathBuf::from(text_of(v, "common_dir")), PathBuf::from(text_of(v, "main_root")));
+                let common_dir = PathBuf::from(text_of(v, "common_dir"));
+                let (main_root, worktrees) = main_by_name(git, &common_dir, Path::new(&text_of(v, "main_root")));
                 return Ok(Target {
                     id: (*id).clone(),
                     name: n.to_string(),
-                    worktrees: tree(&common_dir, &main_root),
+                    worktrees,
                     common_dir,
                     top: main_root.clone(),
                     main_root,

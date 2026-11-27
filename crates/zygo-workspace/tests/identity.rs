@@ -151,6 +151,17 @@ fn bare_repository_main_worktree_is_the_first_non_bare_entry() {
     assert_eq!(main_worktree(&list), Some(&main));
 }
 
+#[test] // FX-25 review F1, AU77: a worktree whose folder is gone is not the main worktree
+fn main_worktree_is_the_first_non_bare_entry_whose_folder_exists() {
+    let t = TempDir::new().unwrap();
+    let here = canon(t.path());
+    let entry = |path: PathBuf, bare: bool| Worktree { path, branch: None, bare };
+    let gone = entry(here.join("one"), false);
+    let list = [entry(here.join("repo.git"), true), gone.clone(), entry(here.clone(), false)];
+    assert_eq!(main_worktree(&list), Some(&list[2]));
+    assert_eq!(main_worktree(&[gone]), None);
+}
+
 #[test] // the git call is bounded by `Checkout.deadline`; a git failure is an error
 fn worktrees_fails_after_the_deadline_and_when_git_fails() {
     let t = TempDir::new().unwrap();

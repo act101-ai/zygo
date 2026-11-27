@@ -1089,3 +1089,98 @@ fn first_worktree_deleted_reads_the_definition_at_the_current_checkout() {
     assert_eq!((ws.loadout.as_str(), ws.common_dir.clone()), ("repository", b.clone()));
     assert!(ws.members.values().all(|m| m.launch.definition.as_ref().is_some_and(|p| p.digest == digest)));
 }
+
+/// A bare clone `b.git` of `o.git` with the detached worktrees `one` and `two` (in that order), the digest of the
+/// read at `two` approved, and the `before_undo` hook of its store; returns (`b.git`, `one`, `two`, the store).
+fn two_worktrees(f: &Fx) -> (PathBuf, PathBuf, PathBuf, Store) {
+    git(&f.t, &["clone", "-q", "--bare", "o.git", "b.git"]);
+    let b = canon(&f.t.join("b.git"));
+    git(&b, &["worktree", "add", "-q", "--detach", "../one", "main"]);
+    git(&b, &["worktree", "add", "-q", "--detach", "../two", "main"]);
+    let (one, two) = (canon(&f.t.join("one")), canon(&f.t.join("two")));
+    let id = workspace_id(&b);
+    let Use::NotApproved { digest, .. } = check_default(&two, &id, &f.o.paths.approvals_file, &SystemGit) else {
+        panic!("not approved")
+    };
+    approve_workspace_in(&f.o.paths.approvals_file, &id, &digest).unwrap();
+    let store = Store::open(&f.o.paths, &id);
+    let (state, planned) = (store.dir().join("workspace.json"), f.t.join("planned.json"));
+    up::testing::hook(
+        store.dir(),
+        "before_undo",
+        Some(Box::new(move || fs::copy(&state, &planned).map(|_| ()).map_err(|e| e.to_string()))),
+    );
+    (b, one, two, store)
+}
+
+/// One pane of [`plan_of`]: kind, name, cwd and pin.
+type PlanPane = (PaneKind, Option<String>, PathBuf, Option<Pin>);
+
+/// The parts of a planned state that do not depend on the random pane keys: name, loadout, `main_root`, and per pane
+/// its kind, name, cwd and pin.
+fn plan_of(ws: &Workspace) -> (String, String, PathBuf, Vec<PlanPane>) {
+    let pane = |p: &Pane| (p.kind.clone(), p.name.clone(), p.cwd.clone(), ws.members.get(&p.key).and_then(|m| m.launch.definition.clone()));
+    (ws.name.clone(), ws.loadout.clone(), ws.main_root.clone(), ws.panes.iter().map(pane).collect())
+}
+
+#[test] // FX-25 review F1, AU77, W§11: with the first worktree's folder deleted, the main worktree is the first that exists
+fn first_worktree_deleted_saves_an_existing_main_root_and_pane_folders() {
+    let _g = serial();
+    let mut f = fx(&[(WS, b"version = 1\n")]);
+    let (b, one, two, _store) = two_worktrees(&f);
+    fs::remove_dir_all(&one).unwrap();
+    f.o.cwd = two.clone();
+    assert_eq!(f.up(), gone());
+    let ws = f.planned();
+    assert_eq!(
+        (ws.loadout.as_str(), ws.common_dir.clone(), ws.main_root.clone(), ws.name.as_str()),
+        ("repository", b, two.clone(), "two")
+    );
+    assert_eq!(ws.panes.len(), 5);
+    for p in &ws.panes {
+        assert_eq!(p.cwd, two, "{:?}", p.name);
+        assert!(p.cwd.is_dir(), "{:?}", p.cwd);
+    }
+}
+
+#[test] // FX-25 review F2, W§8.1 step 3, AU20: by name, a saved main_root that is gone is found again from common_dir
+fn by_name_and_from_the_checkout_plan_the_same_after_the_main_worktree_is_deleted() {
+    let _g = serial();
+    let mut f = fx(&[(WS, b"version = 1\n")]);
+    let (b, one, two, store) = two_worktrees(&f);
+    // The state as an `up` left it while `one` existed: `main_root` = `one`, every pane in `one`.
+    f.o.cwd = two.clone();
+    assert_eq!(f.up(), gone());
+    let first = f.planned();
+    assert_eq!((first.main_root.clone(), first.name.as_str()), (one.clone(), "one"));
+    let down = |ws: &Workspace| {
+        set(&store, |w| {
+            *w = ws.clone();
+            w.phase = Phase::Down;
+        })
+    };
+    fs::remove_dir_all(&one).unwrap();
+    f.o.reset = true;
+    // By name, from a folder outside the repository.
+    down(&first);
+    f.o.cwd = f.t.clone();
+    f.o.name = Some("one".into());
+    let by_name = f.up();
+    let named = f.planned();
+    // From the checkout `two`.
+    down(&first);
+    f.o.cwd = two.clone();
+    f.o.name = None;
+    let from_two = f.up();
+    let here = f.planned();
+    assert_eq!(by_name, gone());
+    assert_eq!(by_name, from_two);
+    assert_eq!(plan_of(&named), plan_of(&here));
+    for ws in [&named, &here] {
+        assert_eq!((ws.loadout.as_str(), ws.common_dir.clone(), ws.main_root.clone()), ("repository", b.clone(), two.clone()));
+        for p in &ws.panes {
+            assert_eq!(p.cwd, two, "{:?}", p.name);
+            assert!(p.cwd.is_dir(), "{:?}", p.cwd);
+        }
+    }
+}

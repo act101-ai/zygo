@@ -97,9 +97,11 @@ pub struct Worktree {
     pub bare: bool,
 }
 
-/// The main worktree (AU77): the first entry that is not bare; none when the list has only a bare entry or is empty.
+/// The main worktree (AU77): the first entry that is not bare and whose folder exists (git keeps a worktree whose
+/// folder was deleted in its list, marked `prunable`, until `git worktree prune`; FX-25 review F1). None when the list
+/// has no such entry: only a bare entry, no entry, or only worktrees whose folders are gone.
 pub fn main_worktree(worktrees: &[Worktree]) -> Option<&Worktree> {
-    worktrees.iter().find(|w| !w.bare)
+    worktrees.iter().find(|w| !w.bare && w.path.is_dir())
 }
 
 /// Why [`worktrees`] gave no list. `Display`: `not a git repository`, `git not found`, `git worktree list failed`,
