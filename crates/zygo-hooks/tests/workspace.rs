@@ -1532,7 +1532,7 @@ fn hostile_inputs_change_nothing() {
     assert!(!f.dir.activity_json().exists());
     assert_eq!(
         slog(&f),
-        [format!("workspace hook prompt: {lock_path}: open lock file: {lock_path}: is a link; it is not followed")]
+        [format!("workspace hook prompt: {lock_path}: is a link; it is not followed")]
     );
     // A session folder made read-only: the write fails, a persistent condition (round 4 T3). The session log exists
     // before, so its lines can still be appended. Root writes in a read-only folder, so the case is skipped there.

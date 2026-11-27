@@ -201,6 +201,19 @@ fn update_waits_for_a_lock_released_within_its_bound() {
     holder.join().unwrap();
 }
 
+#[cfg(unix)]
+#[test] // FX-28 (re-plan R3-F4): a folder at activity.lock is refused with a line that names the path once; nothing is
+        // written and the folder stays
+fn a_folder_at_activity_lock_names_the_path_once() {
+    let (_t, d) = dir();
+    fs::create_dir(d.activity_lock()).unwrap();
+    let e = activity::update(&d, S10, &mut |a| a.busy = true).unwrap_err();
+    assert!(e.is::<activity::FileCondition>(), "{e:#}");
+    assert_eq!(format!("{e:#}"), format!("{}: is not a regular file", d.activity_lock().display()));
+    assert!(d.activity_lock().is_dir());
+    assert!(!d.activity_json().exists());
+}
+
 #[test]
 fn update_fails_when_the_session_dir_is_missing_and_names_the_lock_file() {
     let (t, _) = dir();
@@ -464,13 +477,13 @@ fn update_errors_of_the_files_are_file_conditions_and_the_others_are_not() {
     fs::write(&outside, "x").unwrap();
     fs::remove_file(d.activity_lock()).unwrap();
     std::os::unix::fs::symlink(&outside, d.activity_lock()).unwrap();
-    assert_eq!(condition(&d), (true, format!("{lock}: open lock file: {lock}: is a link; it is not followed")));
+    assert_eq!(condition(&d), (true, format!("{lock}: is a link; it is not followed")));
     assert_eq!(fs::read_to_string(&outside).unwrap(), "x");
     assert!(!d.activity_json().exists());
     fs::remove_file(d.activity_lock()).unwrap();
-    // `activity.lock` as a folder: the open for writing fails (EISDIR).
+    // `activity.lock` as a folder: the open for writing fails (EISDIR); the line names the path once (FX-28).
     fs::create_dir(d.activity_lock()).unwrap();
-    assert_eq!(condition(&d), (true, format!("{lock}: open lock file: Is a directory (os error 21)")));
+    assert_eq!(condition(&d), (true, format!("{lock}: is not a regular file")));
     fs::remove_dir(d.activity_lock()).unwrap();
     // One-off: a refused over-limit result and the lock timeout.
     let id = "x".repeat(2 << 20);
