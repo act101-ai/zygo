@@ -214,10 +214,11 @@ fn worktrees_tells_not_a_repository_from_a_failure() {
     // On the git child only: no repository above the temporary folder (a TMPDIR inside a repository) is found.
     let mut git = zygo_config::repo_file::git_command();
     git.env("GIT_CEILING_DIRECTORIES", t.path().parent().unwrap());
-    assert_eq!(worktrees_by(git, &c), Err(ListError::NotARepository));
+    let got = worktrees_by(git, &c);
+    assert!(matches!(&got, Err(ListError::NotARepository(text)) if text.contains("not a git repository")), "{got:?}");
     assert_eq!(
         [
-            ListError::NotARepository,
+            ListError::NotARepository("fatal: not a git repository".into()),
             ListError::NotFound,
             ListError::Failed(String::new()),
             ListError::Failed("fatal: x".into()),

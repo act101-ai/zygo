@@ -130,8 +130,9 @@ pub fn first_user_worktree<'a>(worktrees: &'a [Worktree], cache: &Path) -> Optio
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ListError {
     /// git's own answer: the folder is in no repository (its stderr passes `zygo_config::repo_file::git_absent` and
-    /// holds "not a git repository").
-    NotARepository,
+    /// holds "not a git repository"). It keeps git's stderr text, for a caller that reads this answer as a failure
+    /// (the list of a checkout that `rev-parse` found, FX-25 review round 2 F6).
+    NotARepository(String),
     /// No program `git` to start (`io::ErrorKind::NotFound`).
     NotFound,
     /// Any other start error (text `cannot start git: <error>`), any other non-zero exit, a read error, a missing pipe
@@ -144,7 +145,7 @@ pub enum ListError {
 impl std::fmt::Display for ListError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ListError::NotARepository => f.write_str("not a git repository"),
+            ListError::NotARepository(_) => f.write_str("not a git repository"),
             ListError::NotFound => f.write_str("git not found"),
             ListError::Failed(why) if why.is_empty() => f.write_str("git worktree list failed"),
             ListError::Failed(why) => write!(f, "git worktree list failed: {why}"),
@@ -244,7 +245,7 @@ pub fn worktrees_by(mut cmd: Command, checkout: &Checkout) -> Result<Vec<Worktre
         let text = String::from_utf8_lossy(&stderr);
         let text = text.trim();
         let absent = zygo_config::repo_file::git_absent(text) && text.contains(NOT_A_REPOSITORY);
-        return Err(if absent { ListError::NotARepository } else { ListError::Failed(text.to_string()) });
+        return Err(if absent { ListError::NotARepository(text.to_string()) } else { ListError::Failed(text.to_string()) });
     }
     let text = read.ok().and_then(|bytes| String::from_utf8(bytes).ok());
     text.map(|text| parse(&text)).ok_or(ListError::Failed(String::new()))

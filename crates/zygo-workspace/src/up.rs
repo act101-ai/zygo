@@ -420,7 +420,7 @@ pub fn find_checkout_by(cwd: &Path, bounds: Bounds, git: &OsStr, cache: &Path) -
             let probe = Checkout { top: cwd.to_path_buf(), common_dir: cwd.to_path_buf(), main_root: cwd.to_path_buf(), deadline };
             let list = match worktrees_with(git, &probe) {
                 Ok(list) => list,
-                Err(ListError::NotARepository) => return Err(usage(NOT_A_REPO)),
+                Err(ListError::NotARepository(_)) => return Err(usage(NOT_A_REPO)),
                 Err(e) => return Err(failed(e)),
             };
             if list.is_empty() {
@@ -437,9 +437,10 @@ pub fn find_checkout_by(cwd: &Path, bounds: Bounds, git: &OsStr, cache: &Path) -
         }
     };
     let co = Checkout { deadline: own(bounds.list), ..co };
-    // `rev-parse` found this checkout, so "not a git repository" here is a failed read (as `zygo_work::repo`).
+    // `rev-parse` found this checkout, so "not a git repository" here is a failed read (as `zygo_work::repo`), with
+    // git's text (F6).
     let list = worktrees_with(git, &co).map_err(|e| match e {
-        ListError::NotARepository => failed(ListError::Failed(String::new())),
+        ListError::NotARepository(text) => failed(ListError::Failed(text)),
         e => failed(e),
     })?;
     let main = main_of(&list, cache)?;

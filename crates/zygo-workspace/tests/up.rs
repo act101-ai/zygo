@@ -426,6 +426,22 @@ fn other_absent_phrase_of_worktree_list_exits_1_with_the_text() {
     );
 }
 
+#[test] // FX-25 review R2 F6, W§8.1 step 3: after `rev-parse` found the checkout, git's "not a git repository" from its
+        // list is a failed list that keeps git's text
+fn not_a_repository_from_the_found_checkout_list_keeps_the_text() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let r = repo(t, "app");
+    // git's own answer for a folder in no repository (the one `GIT_ABSENT` phrase of `ListError::NotARepository`).
+    let line = "fatal: not a git repository (or any of the parent directories): .git";
+    let stub = failing_list_git(t, "nar", line);
+    assert_eq!(
+        up::find_checkout_with(&r, Duration::from_secs(3600), stub.as_os_str(), &cache(t)).err(),
+        Some(Exit { code: 1, message: format!("git worktree list failed: {line}") })
+    );
+}
+
 #[test] // FX-25 f6, W§8.1 step 3, AU25: a failed or timed-out list keeps its reason, exit 1, no write
 fn worktree_list_failure_exits_1_with_the_reason() {
     let _g = serial();
