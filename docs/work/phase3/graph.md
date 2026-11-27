@@ -223,9 +223,10 @@ Session text (T, SX nodes):
 | FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | DONE | implementation | bb21eadf^..c99eeb95 · acceptance pass (offline: 7 test files, 0 failed) · PR #220 |
 | FX-24 | Mail sync deliveries and ws forget take the M§5 mail lock | FX-13, MS-21 | DONE | judgment | f1661e09^..f20d5502 · acceptance pass (import 32, sync_pass 57, admin 40) · PR #224 |
 | FX-25 | `zygo up` reads the definition at the current checkout; `find_checkout` keeps a failed or timed-out `git worktree list` (exit 1) | WD-15 | DONE | implementation | a8092a70^..3c511812 · acceptance pass (up_definition 42, up 82, workspace_approve 29) · PR #226 |
-| FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | TODO | implementation | — |
+| FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | PLANNED | judgment | — |
 | FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | DONE | judgment | 343897e2^..a9b6f61c · acceptance pass (renamed_host_ack_goes_with_only_acked_link_and_gitlink_entries 1 passed) · PR #231 |
 | FX-28 | A remote send during `ws forget` is lost uncounted | FX-24 | TODO | judgment | — |
+| FX-30 | A crash-recovered delivery gets no wake and no count | FX-26, FX-28 | TODO | judgment | — |
 
 ## Log
 
@@ -454,3 +455,6 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-27 BLOCKED: failed 3 review rounds; round 3: the member-gated prune (R2 D-B) leaves delivered mail after a member rename, a cross-pass member duplicate is never acked, member_names is quadratic; branch discarded, re-plan · PR #230 closed |
 | 2026-11-26 | FX-27 PLANNED (re-plan), author's call: R1 ack = (old ∪ acked ∪ own-ack union) ∩ folder ULIDs; R2 old ack goes with no message file, every ULID listed, registry gone; R3 prune unchanged; R4 drop-host counts message files; invariant: one delivery per ULID |
 | 2026-11-26 | FX-27 DONE: ULID-keyed re-plan R1–R4; review rounds 1–2 fixed tests and spec text; author's calls: non-address folders are documented as operator-only removal; planner's call: non-ULID names do not keep the ack. |
+| 2026-11-27 | FX-26 BLOCKED: failed 3 review rounds; round 3: the sweep skips unreadable folders, the deadline seam test misses the injected clock, FX-30 leaves S§19 #24 stale, no edges between mail-sync spec nodes; #233 closed; diff saved in ~/.cache/fx26-old |
+| 2026-11-27 | FX-26 PLANNED (re-plan): step 0 applies the reviewed diff (patches 0003-0005, no docs/work), steps 1-10 fix R3-1..R3-13 (sweep errors, seam test and test-hooks gate, S-C9, far deadline, proxies, #14 states, FX-30 contract), step 11 floor |
+| 2026-11-27 | FX-30 created from FX-26 review round 2 F-1; deps FX-26, FX-28 (author's call: every node that edits the mail-sync spec is on one dependency path); the FX-28 → FX-26 edge is added on phase3/FX-28 (PR #234) |
