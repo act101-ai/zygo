@@ -11,7 +11,7 @@ use ulid::Ulid;
 use zygo_config::{sync_for, Config, LoadContext, SyncOff, SyncSettings};
 use zygo_work::repo::Flow;
 use zygo_workspace::mail::{names, store, Delivery, MailError, Message, MAIL_LOCK_WAIT};
-use zygo_workspace::state::{Store, Workspace};
+use zygo_workspace::state::{lock_is_at, Store, Workspace};
 
 use crate::address;
 use crate::branch::{self, BranchError, Change, Fetched, Pushed};
@@ -374,23 +374,6 @@ pub(crate) fn locked<T>(env: &Env, ws_id: &str, f: impl FnOnce(&Ctx) -> Result<T
         let _ = run_with(env, ws_id, Mode::Child, &Opts::default());
     }
     out
-}
-
-/// S§8.3 step 3 (MS-21 review R2-2): the locked file `lock` is the file at `path` now (unix: the same device and
-/// inode, `path` read with no link followed). A forget unlinks the lock file a waiting sync opened, so that sync can
-/// lock the old file while another sync locks a new one at `path`. The check is unix only: on other platforms it
-/// is always `true` (`zygo ws forget` does not run there: every workspace verb exits 2, OP5).
-fn lock_is_at(lock: &File, path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        let open = file_id(lock.metadata());
-        open.is_some() && open == file_id(std::fs::symlink_metadata(path))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (lock, path);
-        true
-    }
 }
 
 /// S§8.3 step 3: the lock on `mail/sync/lock`. Held by another (`Ok(None)`): at once for a child; the CLI tries each

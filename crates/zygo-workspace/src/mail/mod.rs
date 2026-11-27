@@ -15,7 +15,7 @@ use time::format_description::well_known::Rfc3339;
 use zygo_core::paths::Paths;
 
 use crate::identity::valid_pane_key;
-use crate::state::{Store, Workspace, lock_file_as};
+use crate::state::{Store, Workspace, lock_file_as, lock_is_at};
 
 /// The largest subject in bytes (M§5).
 pub const SUBJECT_MAX: usize = 200;
@@ -157,9 +157,11 @@ impl fmt::Debug for Delivery {
 }
 
 impl Delivery {
-    /// Takes `mail/lock` of `store`'s workspace shared, waiting at most `bound`, then reads the state under it. It
-    /// makes `mail/` (`0700`) when the state folder exists, never the state folder itself. A missing state folder,
-    /// `mail/` that cannot be made because the folder went away, or no `workspace.json` is `NoWorkspace`; a lock held
+    /// Takes `mail/lock` of `store`'s workspace shared, waiting at most `bound`, checks that the locked file is still
+    /// the file at `mail/lock` ([`lock_is_at`]), then reads the state under it. It makes `mail/` (`0700`) when the
+    /// state folder exists, never the state folder itself. A missing state folder, `mail/` that cannot be made because
+    /// the folder went away, a locked file that is no longer at `mail/lock` (a forget renamed the state folder while
+    /// this waited; FX-24 review R2 F3), or no `workspace.json` is `NoWorkspace`; a lock held
     /// for the whole bound is `Busy`; a state folder that is a link or not a folder, and a state that does not read as
     /// valid, is `BadState`; every other error of the make or check of `mail/` (a link or an entry that is not a
     /// folder at `mail/`) is `BadMail` (FX-24 review R2 F2); every other error is `Io`.
@@ -189,6 +191,12 @@ impl Delivery {
             Err(e) if e.kind() == ErrorKind::NotFound => return Err(MailError::NoWorkspace),
             Err(e) => return Err(e.into()),
         };
+        crate::up::fire(store.dir(), "mail_delivery_after_lock").map_err(|e| std::io::Error::other(e.to_string()))?;
+        // FX-24 review R2 F3: a forget renamed the state folder (with the file this delivery locked) while it waited;
+        // the state at the path, if any, is another workspace's, and its `mail/lock` is not held.
+        if !lock_is_at(&lock, &mail.join("lock")) {
+            return Err(MailError::NoWorkspace);
+        }
         let ws = match store.read() {
             Ok(Some(ws)) => ws,
             Ok(None) => return Err(MailError::NoWorkspace),
@@ -247,13 +255,17 @@ fn checked_mail(store: &Store) -> std::io::Result<Option<PathBuf>> {
     Ok(store::real_dir(&mail)?.then_some(mail))
 }
 
-/// Takes `mail/lock` exclusive (at most `bound`) and reads the state under it; `Ok(None)` when the state is gone. A
-/// lock held for the whole bound is `WouldBlock`.
+/// Takes `mail/lock` exclusive (at most `bound`) and reads the state under it; `Ok(None)` when the state is gone, or
+/// when the locked file is no longer the file at `mail/lock` (a forget renamed the state folder while this waited;
+/// FX-24 review R2 F3). A lock held for the whole bound is `WouldBlock`.
 fn removal_lock(store: &Store, mail: &Path, bound: Duration) -> std::io::Result<Option<(fs::File, Workspace)>> {
     let Some(lock) = lock_file_as(&mail.join("lock"), bound, false)? else {
         let text = format!("{}/lock is held by another process", mail.display());
         return Err(std::io::Error::new(ErrorKind::WouldBlock, text));
     };
+    if !lock_is_at(&lock, &mail.join("lock")) {
+        return Ok(None);
+    }
     match store.read() {
         Ok(Some(ws)) => Ok(Some((lock, ws))),
         Ok(None) => Ok(None),

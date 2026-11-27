@@ -268,7 +268,8 @@ pub fn read(mail_dir: &Path, key: &str, max: usize) -> Result<Vec<Message>, Mail
 }
 
 /// [`read`], waiting at most `bound` for `mail/lock`: a lock held for the whole bound is `Busy`. A missing `mail/`
-/// takes no lock and is not made.
+/// takes no lock and is not made. A locked file that is no longer the file at `mail/lock` (a forget renamed the state
+/// folder while this waited; FX-24 review R2 F3) has no messages, as a missing `mail/`.
 pub fn read_within(mail_dir: &Path, key: &str, max: usize, bound: Duration) -> Result<Vec<Message>, MailError> {
     let md = maildir(mail_dir, key)?;
     let (new, cur) = (md.join("new"), md.join("cur"));
@@ -279,12 +280,16 @@ pub fn read_within(mail_dir: &Path, key: &str, max: usize, bound: Duration) -> R
     if !real_dir(mail_dir)? {
         return Ok(Vec::new());
     }
-    let _lock = match crate::state::lock_file_as(&mail_dir.join("lock"), bound, true) {
+    // Held until the end of the read (M§5 P1).
+    let lock = match crate::state::lock_file_as(&mail_dir.join("lock"), bound, true) {
         Ok(Some(f)) => f,
         Ok(None) => return Err(MailError::Busy),
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
+    if !crate::state::lock_is_at(&lock, &mail_dir.join("lock")) {
+        return Ok(Vec::new());
+    }
     for dir in [md.as_path(), new.as_path()] {
         if !real_dir(dir)? {
             return Ok(Vec::new());

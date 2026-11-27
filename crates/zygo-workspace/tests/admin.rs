@@ -2261,6 +2261,58 @@ fn forget_waits_for_a_delivery_in_flight_and_leaves_no_maildir() {
     assert!(fs::symlink_metadata(&dir).is_err(), "a delivery made the state folder again");
 }
 
+#[test] // FX-24 review R2 F3, M§5 P1, S§7.6 step 4: a delivery whose locked file is no longer mail/lock finds no workspace
+fn delivery_that_locked_a_moved_mail_lock_finds_no_workspace() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let store = ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    let (ev_tx, ev_rx) = std::sync::mpsc::channel::<Event>();
+    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+    let go_rx = Mutex::new(go_rx);
+    let held_tx = Mutex::new(ev_tx.clone());
+    up::testing::hook(
+        &dir,
+        "mail_delivery_after_lock",
+        Some(Box::new(move || {
+            let _ = held_tx.lock().unwrap().send(Event::Held);
+            let _ = go_rx.lock().unwrap().recv();
+            Ok(())
+        })),
+    );
+    let thread = std::thread::spawn(move || {
+        let r = Delivery::begin(&store, MAIL_LOCK_WAIT).and_then(|d| {
+            d.deliver("kbbbbbbbb", "x", &Message::new("cli", "x", "s", "b", SystemTime::now()).unwrap(), 500)
+        });
+        let _ = ev_tx.send(Event::Done(r));
+    });
+    // (a) The delivery holds the lock of mail/lock, paused before it checks that file.
+    if let Event::Done(r) = ev_rx.recv().unwrap() {
+        up::testing::hook(&dir, "mail_delivery_after_lock", None);
+        panic!("the delivery ended before its hook: {r:?}");
+    }
+    // (b) A forget's rename moves the state folder (and the locked file) away; a new workspace of the same id writes a
+    // new state folder with the record of kbbbbbbbb and a new mail/lock.
+    let old = t.join("tombstone");
+    fs::rename(&dir, &old).unwrap();
+    ws_with_bob(&p, t);
+    fs::create_dir(dir.join("mail")).unwrap();
+    fs::write(dir.join("mail/lock"), b"").unwrap();
+    // (c) Released, the delivery checks its locked file, finds it is not mail/lock, and writes nothing.
+    go_tx.send(()).unwrap();
+    let r = match ev_rx.recv().unwrap() {
+        Event::Done(r) => r,
+        Event::Held => panic!("a second held signal"),
+    };
+    thread.join().unwrap();
+    up::testing::hook(&dir, "mail_delivery_after_lock", None);
+    assert!(matches!(r, Err(MailError::NoWorkspace)), "{r:?}");
+    assert!(fs::symlink_metadata(dir.join("mail/kbbbbbbbb")).is_err(), "the delivery wrote into the new workspace");
+    assert!(fs::symlink_metadata(old.join("mail/kbbbbbbbb")).is_err(), "the delivery wrote into the old workspace");
+}
+
 #[test] // S§7.6 step 4: under all forget locks, right before the rename, a delivery cannot take mail/lock
 fn forget_holds_mail_lock_across_the_state_rename() {
     let _s = serial();

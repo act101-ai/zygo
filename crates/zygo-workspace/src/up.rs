@@ -139,6 +139,8 @@ pub mod testing {
     /// `before_remove`, right before `mail/lock` is taken; FX-24), `forget_pane_before_op_lock`,
     /// `forget_pane_before_cache`, `forget_pane_remove_results` and `forget_pane_remove_program` (right before the
     /// removal of that cache; an error there is that cache's error); the mail points of FX-13 (M§5 P1):
+    /// `mail_delivery_after_lock` (in `mail::Delivery::begin`, after `mail/lock` is taken and before the check that
+    /// the locked file is still `mail/lock`; FX-24 review R2 F3; an error there is the delivery's `Io` error),
     /// `mail_delivery_after_read` (in `mail::Delivery::begin`, after the state read under `mail/lock`; an error there
     /// is the delivery's `Io` error) and `mail_read_before_dirs` (in `mail::store::read`, before it makes `cur/`; the
     /// state folder is the parent of `mail/`; an error there is the read's `Io` error).

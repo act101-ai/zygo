@@ -848,10 +848,12 @@ fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>)
 /// removed, then the renamed folder. A writer of the cache (`ws run`) that reads the state after it made a folder
 /// finds the state gone whenever the cache removal could have run before its folder, so it removes that folder
 /// itself (W§12). A cache that cannot be removed is reported after the rest; the next `forget` sweeps it (D26).
-/// `mail` (`mail/lock` held exclusive, [`mail_lock`]) is released after `lock` and before `op` (FX-24 review F7): a
-/// delivery that waited for it then reads the state while `op.lock` still keeps a `zygo up` of the same id from
-/// writing a new one, so it finds no workspace. On an early return the parameters drop in reverse order, `mail`
-/// before `op`, too.
+/// `mail` (`mail/lock` held exclusive, [`mail_lock`]) is released after `lock` and before `op` (FX-24 review F7), the
+/// reverse of the lock order. The rename moves the file that `mail` locks into the tombstone, so a taker of `mail/lock`
+/// that waited for it (a delivery, a read, a removal) then holds the lock of a file that is no longer at
+/// `<state>/mail/lock`; each taker checks that ([`crate::state::lock_is_at`]) and finds no workspace, whatever a
+/// `zygo up` of the same id wrote after `op` was released (FX-24 review R2 F3). On an early return the parameters drop
+/// in reverse order, `mail` before `op`, too.
 fn remove(
     paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock, mail: Option<fs::File>,
 ) -> Result<String, String> {

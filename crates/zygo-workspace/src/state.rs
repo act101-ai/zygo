@@ -827,6 +827,28 @@ pub(crate) fn lock_file(path: &Path, bound: Duration) -> std::io::Result<Option<
     lock_file_as(path, bound, false)
 }
 
+/// The locked file `lock` is still the file at `path`: the same device and inode by `fstat` of the open file and by
+/// `lstat` of `path`, no link followed (unix). `zygo ws forget` renames the state folder, with its lock files, while
+/// another taker waits for a lock; that taker then holds the lock of a file that is no longer at `path`, and a third
+/// can lock a new file there. Every taker of `mail/lock` (M§5 P1; FX-24 review R2 F3) and of `mail/sync/lock` (mail
+/// sync design S§8.3 step 3, MS-21 review R2-2) checks this after it gets the lock. On other platforms it is always
+/// `true` (`zygo ws forget` does not run there: every workspace verb exits 2, OP5).
+pub fn lock_is_at(lock: &File, path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (lock.metadata(), fs::symlink_metadata(path)) {
+            (Ok(open), Ok(at)) => (open.dev(), open.ino()) == (at.dev(), at.ino()),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (lock, path);
+        true
+    }
+}
+
 /// [`lock_file`] with the kind of lock chosen: shared when `shared` (holders of a shared lock do not wait for each
 /// other), else exclusive (M§5 `mail/lock`, FX-13).
 pub(crate) fn lock_file_as(path: &Path, bound: Duration, shared: bool) -> std::io::Result<Option<File>> {
