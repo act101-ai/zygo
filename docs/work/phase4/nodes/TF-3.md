@@ -1,7 +1,7 @@
 # TF-3 — check-premises.sh: no bash warning on a binary file in the name scan
 
 **Spec:** none (CI and dev-host defect); found by the TF-2 round 2 implementer (author's call, 2026-11-26)
-**Files:** `scripts/check-premises.sh` (`name_scan` only), `scripts/test-check-premises.sh` (the new bash cases and the optional shell argument of `run_names` only)
+**Files:** `scripts/check-premises.sh` (`name_scan`; round 1: `nontrivial`, `HDR`, `TROWS`, `S19`/`S19A`/`S105`, `row`, `NOTES`), `scripts/test-check-premises.sh` (the new bash cases and the optional shell argument of `run_names`; round 1: `SOH`, `soh_to_nul`, `add_nul`, `expect_ok_alone`)
 **Consumes:** —
 **Produces:** `scripts/check-premises.sh` gives the same output under `dash`, bash 3.2 and bash ≥4.4 on a binary file in the scan scope; `scripts/test-check-premises.sh` runs the binary-file cases under `bash` too
 **Acceptance:** each command run alone from the repository root, on a host where `/bin/sh` is bash ≥4.4 and `dash` is not installed (for example the dev host of 2026-11-26: `/bin/sh` → `/usr/bin/bash`, GNU bash 5.3.20, `command -v dash` fails): `bash scripts/test-check-premises.sh` → exit 0; `sh scripts/test-check-premises.sh` → exit 0; `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → exit 0; then the CI run of the node's pull request is green on ubuntu, macOS and Windows (the TF-2 premise steps run on ubuntu and macOS).
@@ -59,3 +59,29 @@ Host: `/bin/sh` → bash, GNU bash 5.3.20, no `dash` (no password-free `sudo`, s
   - `sh scripts/test-check-premises.sh` → exit 0, `test-check-premises: ok (176 cases)`.
   - `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → exit 0, `check-premises: ok (P1 … PC18 PC19)`.
   - `sh scripts/premises/lib_test.sh` → exit 0, `lib tests: ok (183)` (no other `lib_test` ran; before the merge: `lib tests: ok (176)`).
+
+## Round 1 review
+
+Host: `/bin/sh` → GNU bash 5.3.20; `dash` not installed: `sudo -n pacman -S --noconfirm dash` → `sudo: a password is required` (no password-free `sudo`), so no `dash` run.
+
+- **F1 (important)** — fixed in `86c7a29d`. The cases "TF-3: under bash, a binary file with an e-mail address" and "… with an API key" now use `expect_fail` with the full line: `forbidden content (e-mail address): $BINF:1:a b bob@corp.com` and `forbidden content (API key): $BINF:1:a b sk-ant-x`. Mutation: a scratch copy of the fixed tree with `tr '\000' ' ' |` removed from `scan` (`scripts/check-premises.sh:298` after the fix; `:293` before), the TF-3 cases run under `bash` from a harness of the test file's helpers: both cases fail, the other nine pass:
+  ```
+  FAIL TF-3: under bash, a binary file with an e-mail address: output is not 'check-premises: forbidden content (e-mail address): fixtures/codex/bin.dat:1:a b bob@corp.com'
+  check-premises: forbidden content (e-mail address): fixtures/codex/bin.dat:1:ab bob@corp.com
+  FAIL TF-3: under bash, a binary file with an API key: output is not 'check-premises: forbidden content (API key): fixtures/codex/bin.dat:1:a b sk-ant-x'
+  check-premises: forbidden content (API key): fixtures/codex/bin.dat:1:ab sk-ant-x
+  ```
+- **F2 (nit)** — fixed in `86c7a29d`. `NOTES` (`:288`) pipes `grep -anH` through `tr '\000' ' '` inside the substitution. Case "TF-3: under bash, an N38 line with a NUL before a forbidden name": `printf 'N38 note: x\0alice\n' >> docs/conformance.md`, `N2_FORBIDDEN_NAMES=alice`, bash → `forbidden name from N2_FORBIDDEN_NAMES: docs/conformance.md:<last line>`. Before the fix: exit 0, `…/scripts/check-premises.sh: line 283: warning: command substitution: ignored null byte in input`, then `check-premises: ok (…)` (the dropped NUL hid the hit).
+- **F3 (nit)** — fixed in `86c7a29d`. `nontrivial` (`:28`) uses `tr -d ' \t\r\n\000'`; for a file with no NUL the result is the same. New helper `expect_ok_alone`: `expect_ok`, and the ok line is all of `OUT` (stdout and stderr), so stderr is empty; the ok cases set `N2_FORBIDDEN_NAMES=zzcinameq`, else the "name scan skipped" note is a second line. Case "TF-3: under bash, a required file with a NUL": `printf 'x\0\n' > fixtures/opencode/help.txt` → ok, one line. Before the fix: `…: line 26: warning: command substitution: ignored null byte in input`, then the ok line.
+- **Other command substitutions over file content** — each could carry a NUL from file content (gawk and `sed` pass a NUL through), so each now maps a NUL to a blank before the substitution reads it, with one bash case (`expect_ok_alone`) that plants a NUL through the new helpers `add_nul`/`soh_to_nul` (a SOH byte, then `tr '\001' '\000'`). Before the fix each case failed on the warning at the listed line (line numbers of `7d91604e`); after the fix each passes:
+  - `HDR` (`:54`, was `:50`/`:62`): `tr '\000' ' ' <"$P" | awk …`; awk stays last in the pipeline, so `[ $? -ne 3 ]` still reads awk's status. Case "a header line with a NUL" (`Zz-test: a<NUL>b` after `tmux: `): warning at `line 62`.
+  - `TROWS` (`:86`, was `:82`/`:87`): same form. Case "a table line with a NUL in its first cell" (`| a<NUL>b | x |`): warning at `line 87`.
+  - `row` (`:141`, was `:137`): `sed -n "${ln}p" "$P" | tr '\000' ' '`. Case "a Results row with a NUL" (PC99 row, Item `Test<NUL>row`): warning at `line 137`.
+  - `S19`, `S19A`, `S105` (`:120-122`, was `:116-118`): `tr '\000' ' ' <"$SPEC" | awk …`. Cases "spec section 19 / 19a / 10.5 with a NUL" (`x<NUL>y` after the heading): warnings at `line 116`, `line 117`, `line 118`.
+  - Not changed, as they cannot carry file content: `res2` (`:93`) prints only `NR`; `rows_of` prints only a count (`grep -c`); `version_of` and `dup` read `HDR`, `cells`/`paths` read `row` (both NUL-free now); the `want=` line of the verbatim check keeps only 64 hex digits (`sed -n 's/…\([0-9A-Fa-f]\{64\}\)…/\1/p'`).
+- Before the fix (scratch copy with the script of `7d91604e`, the new test cases): 9 of the 11 TF-3 cases fail (the two F1 cases pass there, as `scan` has the `tr`); after the fix all 11 pass.
+- Checks, each alone from the repository root, `TMPDIR` not set (`/tmp`), on `86c7a29d`:
+  - `bash scripts/test-check-premises.sh` → exit 0, `test-check-premises: ok (184 cases)`.
+  - `sh scripts/test-check-premises.sh` → exit 0, `test-check-premises: ok (184 cases)`.
+  - `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → exit 0, `check-premises: ok (P1 … PC18 PC19)`.
+  - `python3 -I scripts/premises/scrub_test.py` → exit 0, `scrub tests: ok (156)`.
