@@ -169,18 +169,48 @@ fn worktrees_fails_after_the_deadline_and_when_git_fails() {
     assert_eq!(worktrees(&Checkout { deadline: Instant::now(), ..co(&w) }), Err(ListError::TimedOut));
     let gone = t.path().join("gone"); // no such directory: `git -C` exits non-zero with "cannot change to"
     let c = Checkout { top: gone.clone(), common_dir: gone.clone(), main_root: gone, deadline: Instant::now() + GIT };
-    assert_eq!(worktrees(&c), Err(ListError::Failed));
+    assert!(matches!(worktrees(&c), Err(ListError::Failed(_))));
 }
 
-#[test] // FX-25 f6: git's "not a git repository" is told from a failure
+#[test] // FX-25 f6, review F5d: git's "not a git repository" is told from a failure
 fn worktrees_tells_not_a_repository_from_a_failure() {
     let t = TempDir::new().unwrap();
     let plain = t.path().join("plain");
     std::fs::create_dir_all(&plain).unwrap();
     let c = Checkout { top: plain.clone(), common_dir: plain.clone(), main_root: plain, deadline: Instant::now() + GIT };
-    assert_eq!(worktrees(&c), Err(ListError::NotARepository));
+    // On the git child only: no repository above the temporary folder (a TMPDIR inside a repository) is found.
+    let mut git = zygo_config::repo_file::git_command();
+    git.env("GIT_CEILING_DIRECTORIES", t.path().parent().unwrap());
+    assert_eq!(worktrees_by(git, &c), Err(ListError::NotARepository));
     assert_eq!(
-        [ListError::NotARepository, ListError::NotFound, ListError::Failed, ListError::TimedOut].map(|e| e.to_string()),
-        ["not a git repository", "git not found", "git worktree list failed", "git worktree list timed out"]
+        [
+            ListError::NotARepository,
+            ListError::NotFound,
+            ListError::Failed(String::new()),
+            ListError::Failed("fatal: x".into()),
+            ListError::TimedOut,
+        ]
+        .map(|e| e.to_string()),
+        [
+            "not a git repository",
+            "git not found",
+            "git worktree list failed",
+            "git worktree list failed: fatal: x",
+            "git worktree list timed out",
+        ]
     );
+}
+
+#[cfg(unix)] // a file with no execute bit
+#[test] // FX-25 review F5c: only a missing program is "git not found"; any other start error is a failure with its text
+fn worktrees_maps_only_a_missing_program_to_not_found() {
+    let t = TempDir::new().unwrap();
+    let w = repo(t.path(), "w");
+    let missing = t.path().join("none").join("git");
+    assert_eq!(worktrees_with(missing.as_os_str(), &co(&w)), Err(ListError::NotFound));
+    // A file that is not executable: the start fails with "permission denied", not "not found".
+    let plain_file = t.path().join("git");
+    std::fs::write(&plain_file, "not a program").unwrap();
+    let got = worktrees_with(plain_file.as_os_str(), &co(&w));
+    assert!(matches!(&got, Err(ListError::Failed(why)) if why.starts_with("cannot start git: ")), "{got:?}");
 }

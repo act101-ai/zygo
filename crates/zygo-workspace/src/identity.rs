@@ -3,7 +3,7 @@
 use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -104,28 +104,30 @@ pub fn main_worktree(worktrees: &[Worktree]) -> Option<&Worktree> {
     worktrees.iter().find(|w| !w.bare && w.path.is_dir())
 }
 
-/// Why [`worktrees`] gave no list. `Display`: `not a git repository`, `git not found`, `git worktree list failed`,
-/// `git worktree list timed out`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why [`worktrees`] gave no list. `Display`: `not a git repository`, `git not found`, `git worktree list failed`
+/// (then `: <text>` when the failure has a text), `git worktree list timed out`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ListError {
     /// git's own answer: the folder is in no repository (its stderr passes `zygo_config::repo_file::git_absent`).
     NotARepository,
-    /// git could not be started.
+    /// No program `git` to start (`io::ErrorKind::NotFound`).
     NotFound,
-    /// Any other non-zero exit, a read error, a missing pipe or output that is not UTF-8.
-    Failed,
+    /// Any other start error (text `cannot start git: <error>`), any other non-zero exit, a read error, a missing pipe
+    /// or output that is not UTF-8. The text is empty when there is none.
+    Failed(String),
     /// The deadline of the checkout passed.
     TimedOut,
 }
 
 impl std::fmt::Display for ListError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            ListError::NotARepository => "not a git repository",
-            ListError::NotFound => "git not found",
-            ListError::Failed => "git worktree list failed",
-            ListError::TimedOut => "git worktree list timed out",
-        })
+        match self {
+            ListError::NotARepository => f.write_str("not a git repository"),
+            ListError::NotFound => f.write_str("git not found"),
+            ListError::Failed(why) if why.is_empty() => f.write_str("git worktree list failed"),
+            ListError::Failed(why) => write!(f, "git worktree list failed: {why}"),
+            ListError::TimedOut => f.write_str("git worktree list timed out"),
+        }
     }
 }
 
@@ -139,7 +141,8 @@ const STDERR_CAP: u64 = 64 * 1024;
 /// `git -c core.fsmonitor=false -C <checkout.top> worktree list --porcelain` on `zygo_config::repo_file::git_command`
 /// with `GIT_OPTIONAL_LOCKS=0` and `GIT_TERMINAL_PROMPT=0`, stdin null, stdout and stderr piped (stderr drained in its
 /// own thread, at most 64 KiB kept). The call ends at `checkout.deadline`: git is then killed and reaped, and the
-/// result is [`ListError::TimedOut`]. A git that cannot be started is [`ListError::NotFound`]. A non-zero exit whose
+/// result is [`ListError::TimedOut`]. No program `git` (`io::ErrorKind::NotFound`) is [`ListError::NotFound`]; any other
+/// start error is [`ListError::Failed`] with the text `cannot start git: <error>`. A non-zero exit whose
 /// stderr is git's "not a git repository" answer (`zygo_config::repo_file::git_absent`) is
 /// [`ListError::NotARepository`]; that stderr is taken only on a non-zero exit, within the time left to the deadline
 /// (else `TimedOut`). Every other non-zero exit, a read error, a missing pipe and output that is not UTF-8 are
@@ -150,22 +153,32 @@ pub fn worktrees(checkout: &Checkout) -> Result<Vec<Worktree>, ListError> { work
 /// the `PATH` of its own process. Production calls go through [`worktrees`].
 #[doc(hidden)]
 pub fn worktrees_with(git: &OsStr, checkout: &Checkout) -> Result<Vec<Worktree>, ListError> {
+    worktrees_by(zygo_config::repo_file::git_command_for(git), checkout)
+}
+
+/// [`worktrees`] on `cmd`, a `git` command with no arguments yet (`zygo_config::repo_file::git_command_for`): the seam
+/// of a test that sets a variable on the git child only, such as `GIT_CEILING_DIRECTORIES` (FX-25 review F5). Production
+/// calls go through [`worktrees`].
+#[doc(hidden)]
+pub fn worktrees_by(mut cmd: Command, checkout: &Checkout) -> Result<Vec<Worktree>, ListError> {
     let left = checkout.deadline.saturating_duration_since(Instant::now());
     if left.is_zero() {
         return Err(ListError::TimedOut);
     }
-    let mut cmd = zygo_config::repo_file::git_command_for(git);
     cmd.args(["-c", "core.fsmonitor=false", "-C"]).arg(&checkout.top).args(["worktree", "list", "--porcelain"]);
     cmd.env("GIT_OPTIONAL_LOCKS", "0").env("GIT_TERMINAL_PROMPT", "0");
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|_| ListError::NotFound)?;
+    let mut child = cmd.spawn().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => ListError::NotFound,
+        _ => ListError::Failed(format!("cannot start git: {e}")),
+    })?;
     let stop = |child: &mut Child, why: ListError| {
         let _ = child.kill();
         let _ = child.wait();
         why
     };
     let (Some(mut out), Some(mut err)) = (child.stdout.take(), child.stderr.take()) else {
-        return Err(stop(&mut child, ListError::Failed));
+        return Err(stop(&mut child, ListError::Failed(String::new())));
     };
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -183,14 +196,14 @@ pub fn worktrees_with(git: &OsStr, checkout: &Checkout) -> Result<Vec<Worktree>,
     let read = match rx.recv_timeout(left) {
         Ok(read) => read,
         Err(mpsc::RecvTimeoutError::Timeout) => return Err(stop(&mut child, ListError::TimedOut)),
-        Err(mpsc::RecvTimeoutError::Disconnected) => return Err(stop(&mut child, ListError::Failed)),
+        Err(mpsc::RecvTimeoutError::Disconnected) => return Err(stop(&mut child, ListError::Failed(String::new()))),
     };
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < checkout.deadline => std::thread::sleep(Duration::from_millis(5)),
             Ok(None) => return Err(stop(&mut child, ListError::TimedOut)),
-            Err(_) => return Err(stop(&mut child, ListError::Failed)),
+            Err(_) => return Err(stop(&mut child, ListError::Failed(String::new()))),
         }
     };
     if !status.success() {
@@ -198,13 +211,13 @@ pub fn worktrees_with(git: &OsStr, checkout: &Checkout) -> Result<Vec<Worktree>,
         let stderr = match erx.recv_timeout(left) {
             Ok(bytes) => bytes,
             Err(mpsc::RecvTimeoutError::Timeout) => return Err(ListError::TimedOut),
-            Err(mpsc::RecvTimeoutError::Disconnected) => return Err(ListError::Failed),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Err(ListError::Failed(String::new())),
         };
         let absent = zygo_config::repo_file::git_absent(&String::from_utf8_lossy(&stderr));
-        return Err(if absent { ListError::NotARepository } else { ListError::Failed });
+        return Err(if absent { ListError::NotARepository } else { ListError::Failed(String::new()) });
     }
     let text = read.ok().and_then(|bytes| String::from_utf8(bytes).ok());
-    text.map(|text| parse(&text)).ok_or(ListError::Failed)
+    text.map(|text| parse(&text)).ok_or(ListError::Failed(String::new()))
 }
 
 /// The entries of `git worktree list --porcelain` output. Lines other than `worktree`, `bare` and a `branch` under

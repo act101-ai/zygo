@@ -362,8 +362,9 @@ pub fn socket_is_private(_path: &Path, _create_parent: bool) -> Result<(), Strin
 /// Also used by zygo config check and show, and zygo loadout show (FIX-27).
 /// Exits (W§8.1 step 3, FX-25): code 2 [`NOT_A_REPO`] only for git's "not a git repository" answer or an empty list
 /// from the cwd, code 2 `BARE` for a list with no non-bare entry; code 1 with the reason for a failed or timed-out
-/// `git worktree list` (`git worktree list failed`, `git worktree list timed out`), a git that cannot start
-/// (`git not found`) and a main worktree with no checkout (`no checkout at the main worktree <path>`). A code-1 message
+/// `git worktree list` (`git worktree list failed[: <text>]`, `git worktree list timed out`), no program `git`
+/// (`git not found`; another start error is `git worktree list failed: cannot start git: <error>`) and a main worktree
+/// with no checkout (`no checkout at the main worktree <path>`). A code-1 message
 /// has no `zygo:` prefix and is not escaped: each caller adds its prefix and escapes.
 pub fn find_checkout(cwd: &Path, bound: Duration) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
     find_checkout_with(cwd, bound, OsStr::new("git"))
@@ -396,7 +397,7 @@ pub fn find_checkout_with(cwd: &Path, bound: Duration, git: &OsStr) -> Result<(C
     };
     // `rev-parse` found this checkout, so "not a git repository" here is a failed read (as `zygo_work::repo`).
     let list = worktrees_with(git, &co).map_err(|e| match e {
-        ListError::NotARepository => failed(ListError::Failed),
+        ListError::NotARepository => failed(ListError::Failed(String::new())),
         e => failed(e),
     })?;
     let main = main_of(&list)?;
