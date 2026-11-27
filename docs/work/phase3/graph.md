@@ -198,7 +198,7 @@ Session text (T, SX nodes):
 | OS-37 | On-demand latency test, ignored in CI | OS-35 | DONE | implementation | 98d82be5 · b5c27cbd · 77c6726f · acceptance pass (shaping_latency 5 ignored) · PR #200 |
 | WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | DONE | judgment | 1324716e^..e1276ac2 · acceptance pass (workspace_definition 23 passed with tmux) · PR #214 |
 | MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17, FX-15 | DONE | implementation | 5e2be987^..1de15e3e · acceptance pass (mail_remote_cli 20 passed) · PR #215 |
-| MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | TODO | implementation | — |
+| MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | DONE | implementation | e887478a^..a9ed0c7b · acceptance pass (mail_sync_forget 9 passed, admin 31 passed) · PR #217 |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | TODO | mechanical | — |
 | OS-45 | Bound the usage-store wait in elapsed time | — | DONE | judgment | fb717aba · aecf74d2 · a0378951 · acceptance pass (busy_wait 7, zygo-usage, zygo-hooks, readbacks) · PR #203 |
 | OS-47 | Runner view cost on large inputs, output unchanged | — | DONE | judgment | f1d69ae0 · d56988df · c37c66d4 · acceptance pass (runner_fast_path 5, zygo-results, shaping 36, shaping_fixtures 22, shaping_hook 29) · PR #206 |
@@ -214,13 +214,11 @@ Session text (T, SX nodes):
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
 | OS-46 | Bound the hook's usage-store wait per Bash call | — | DONE | judgment | 75339a21 · d6be5653 · c727ff0e · 68f8e48c · acceptance pass (busy_wait_total/open_bounded_total 7, rollback_journal 1, zygo-usage, zygo-hooks, readbacks) · PR #205 |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
-| FX-7 | Exec-failure relaunch test runs in a child process (environ swap breaks parallel PATH lookups) | — | DONE | implementation | 365436c6 · zygo lib ws/work/plugins 22p, down 8p; --include-ignored 54p; floor green · PR #97 |
-| FX-8 | zygo usage reads summary and savings from one snapshot | OS-8 | DONE | implementation | 4636d2ee, 73cffb55 · report_snapshot 1/0, usage_doctor 45/0 ; floor green · PR #105 |
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
 | FX-10 | HUD spec lists the member name and unread mail segments and the ✉ glyph | ML-15, RT-3 | DONE | mechanical | 8b19ed30, daf5faed · ✉ 4 ; floor green · PR #123 |
 | FX-11 | zygo doctor icon line shows the ✉ mail glyph | ML-15, RT-3 | DONE | implementation | 1921d4ca, a7ac8924 · usage_doctor 45/0, statusline_render 37/0 ; floor green · PR #122 |
 | FX-12 | HUD unread count uses the store's definition (regular <ULID>.json files; missing new/ is 0) | ML-15, ML-2, FX-11 | DONE | implementation | 233290fe, 9335d48e · statusline_mail 9/0 ; floor green · PR #124 |
-| FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | TODO | judgment | — |
+| FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | DONE | judgment | 87a292d6^..da0207f1 · acceptance pass (mail_lifecycle 23 passed) · PR #219 |
 | FX-14 | `zygo up` team read: CLI test of `with_team`, team-layer warnings only, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code | WD-11, WD-12, ML-12 | DONE | implementation | 64d9685c, 3dc62442, 34467d50 · up_definition, workspace_restore, serve_cli, cmd::up all pass ; floor green · PR #162 |
 | FX-15 | `zygo doctor` pool lines skip the members `zygo up` skips | WD-12 | DONE | implementation | 0b4ee021, f046b2b7 · definition_doctor 17/0 ; floor green · PR #129 |
 | FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | DONE | implementation | 19fbf580^..b0212f6c · acceptance pass (shape_clean 29 passed) · PR #209 |
@@ -229,9 +227,9 @@ Session text (T, SX nodes):
 | FX-19 | PO2 row states what its run observed | OS-34 | DONE | mechanical | plan b2c8ca97 · node b5fa4c27, efbcccae · acceptance pass (check-premises ok; po2_ 3 passed) · PR #188 |
 | FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | DONE | mechanical | 96868305 · c98ea5fa · cc948a96 · acceptance pass (live selftest: ok (85)) · PR #194 |
 | FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | DONE | implementation | 569e61a9^..9ac65902 · acceptance pass (shape_clean 35 passed) · PR #211 |
-| FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | TODO | implementation | — |
+| FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
 | FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | DONE | implementation | bb21eadf^..c99eeb95 · acceptance pass (offline: 7 test files, 0 failed) · PR #220 |
-| DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
+| FX-24 | Mail sync deliveries and ws forget take the M§5 mail lock | FX-13, MS-21 | TODO | judgment | — |
 
 ## Log
 
@@ -435,4 +433,11 @@ Session text (T, SX nodes):
 | 2026-11-26 | MS-18 DONE: CLI send/read/ls/watch with addresses, ls sync line, doctor twin line; review R1 F1/F3 (watch synced in process, a hang blocked it) → watch starts the child; R2 F1 per-workspace rate limit, F2 F3 fixed, F4 F5 recorded · PR #215 |
 | 2026-11-26 | WD-19 plan: premise held: hooks, MCP and status line read nothing from .zygo/; node adds tests only; R§8 and R§18 item 20 restated against the code |
 | 2026-11-26 | WD-19 DONE: scans, repo_def tripwire (test-hooks feature, test builds only), inotify watch and git output canary prove no .zygo/ read on hook, MCP and status-line paths; R1 F1-F7, R2 F1 F2 fixed, F3 recorded · PR #218 |
+| 2026-11-26 | FX-22 PLANNED: tag v2.9.2 moved 409b9da→9d82bd9 (rewritten history); author's call: re-pin v2.9.2 (tree, act-lite digest unchanged) not v2.9.5; tags lightweight, so acceptance reads plain ref line; act-lite not found = binary off PATH (§15.3), not pin |
+| 2026-11-26 | FX-22 DONE: built-in act101 v2.9.2 re-pinned to the tag's current commit 9d82bd97 (upstream rewrote history; same tree and act-lite 1.2.3 digest); Acceptance self-checking, author's call: lightweight tags have no ^{} line · PR #221 |
+| 2026-11-26 | MS-21 plan: premise drift: S§14 forget order (checks, sync lock, question, worktree, then state and cache); S§6.3 git runs only when the worktree folder and main_root exist |
+| 2026-11-26 | MS-21 DONE: ws forget asks for unsent and refused mail and removes the sync worktree; R1 F1 (a waiting sync rebuilt what forget deleted) F2-F5 fixed; R2 R2-1..R2-4 fixed, R2-5 refuted (OP5) · PR #217 |
+| 2026-11-26 | FX-13: agent-written operator gate in the node contract deleted (no operator citation; same kind as FX-16's, PR #208); P1 mail/lock and P2 split taken as author's call (lead) for operator review |
+| 2026-11-26 | FX-13 DONE: deliveries, reads and maildir removals take mail/lock (shared/exclusive) and read records under it; no maildir without a record; R1 F1-F5, R2 R1-2..R1-5 fixed, R1-1 recorded · PR #219 |
+| 2026-11-26 | FX-24 added: FX-13 P2: mail-sync deliveries (sync.rs, import.rs) and ws forget take the M§5 mail lock |
 | 2026-11-26 | FX-23 DONE: shared harness turns the built-in marketplace off by default (NO_MARKETPLACE) and fails any run that syncs; 90 tests in 6 files had synced; R1 F1 F2 F4 F5 fixed, F3 DNS leak of the offline form recorded · PR #220 |

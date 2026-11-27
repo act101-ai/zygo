@@ -29,6 +29,7 @@ fn paths(p: &Path) -> Paths {
 fn setup() -> (TempDir, SyncPaths) {
     let t = TempDir::new().unwrap();
     let sp = SyncPaths::new(&paths(t.path()), ID).unwrap();
+    fs::create_dir_all(sp.mail.parent().unwrap()).unwrap(); // the workspace exists (MS-21 review R2-1)
     (t, sp)
 }
 
@@ -153,6 +154,12 @@ fn sync_paths_refuse_a_bad_workspace_id() {
 fn write_atomic_replaces_0600_in_0700_folders() {
     let (_t, sp) = setup();
     let f = sp.sync.join("x");
+    // MS-21 review R2-1: it makes the file's folder only, never a parent of it.
+    assert_eq!(write_atomic(&f, b"one").unwrap_err().kind(), std::io::ErrorKind::NotFound);
+    assert!(fs::symlink_metadata(&sp.mail).is_err());
+    for d in [&sp.mail, &sp.outbox] {
+        zygo_workspace::mail::ensure_mail_dir(d).unwrap();
+    }
     write_atomic(&f, b"one").unwrap();
     set_mode(&f, 0o644);
     write_atomic(&f, b"two").unwrap();

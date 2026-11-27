@@ -9,6 +9,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail};
 
+use crate::mail::{self, MAIL_LOCK_WAIT, not_pruned_line};
 use crate::mux::{check_path, parse_pane_line, Multiplexer, MuxError, SessionAnswer, UnsafePath};
 use crate::snapshot::OP_WAIT;
 use crate::state::{Pane, PaneKind, Phase, StateError, Store, Workspace};
@@ -82,13 +83,29 @@ pub(crate) fn repair_failure(e: &anyhow::Error) -> (i32, String) {
 /// Repairs the state of a dead `up` or `down` (W§8.1 step 5, D20). The caller holds `op.lock`. No state, or phase
 /// `up` or `down`, makes no tmux call. The AU96 and layout lines go to `err`. `Err` holds the text without the
 /// `zygo: ` prefix, except a saved socket that fails AU54: that `Err` is [`UnsafePath`] itself, before any tmux call.
+///
+/// After a repair that wrote, the maildirs of the records it dropped are removed under `mail/lock` (M§5 P1): the
+/// loadout take-back of a dead build and the panes that did not fit drop records. A removal that fails prints one line
+/// to `err`; the next removal tries again. In phase `up` or `down` it runs the same removal, best effort (an error or a
+/// held lock is ignored and leaves the next removal to try again), so a maildir that a failed removal left does not
+/// stay.
 pub fn repair(store: &Store, mux: &dyn Multiplexer, zygo: &Path, _out: &mut dyn Write, err: &mut dyn Write) -> anyhow::Result<()> {
     let Some(ws) = store.read()? else {
         return Ok(());
     };
     if matches!(ws.phase, Phase::Up | Phase::Down) {
+        let _ = mail::prune(store, MAIL_LOCK_WAIT);
         return Ok(());
     }
+    repair_phase(store, mux, zygo, ws, err)?;
+    if let Err(e) = mail::prune(store, MAIL_LOCK_WAIT) {
+        let _ = writeln!(err, "{}", not_pruned_line(&e));
+    }
+    Ok(())
+}
+
+/// The repair of a state in phase `building`, `draining` or `stopping` (W§8.1 step 5).
+fn repair_phase(store: &Store, mux: &dyn Multiplexer, zygo: &Path, ws: Workspace, err: &mut dyn Write) -> anyhow::Result<()> {
     check_saved_socket(&ws)?;
     let answer = mux.session_exists(&ws.tmux_session);
     if let SessionAnswer::Error { message } = &answer {

@@ -496,6 +496,7 @@ fn due_follows_now_minus_last_start() {
     let t = TempDir::new().unwrap();
     let p = paths(t.path());
     let sp = SyncPaths::new(&p, ID).unwrap();
+    fs::create_dir_all(sp.mail.parent().unwrap()).unwrap(); // the workspace exists (MS-21 review R2-1)
     assert!(due(&sp, at(T), GAP));
     write_last_start(&sp, T).unwrap();
     assert!(!due(&sp, at(T + 59), GAP));

@@ -23,7 +23,7 @@ use crate::identity::{
     main_worktree, new_pane_key, slug, unique_name, valid_name, valid_pane_key, workspace_id, worktrees, Worktree,
 };
 use crate::loadout::{self, LoadoutError, PaneKind as PlanKind, PlanPane};
-use crate::mail::{mail_dir, store as mail_store};
+use crate::mail::{self, MAIL_LOCK_WAIT, mail_dir, not_pruned_line, store as mail_store};
 use crate::pool;
 use crate::mux::tmux::Tmux;
 use crate::mux::{
@@ -137,7 +137,10 @@ pub mod testing {
     /// removed), `forget_before_cache` (after the state rename, before the cache removal; an error there is the cache
     /// error), `forget_before_tombstone_remove` (after the rename), `forget_pane_before_op_lock`,
     /// `forget_pane_before_cache`, `forget_pane_remove_results` and `forget_pane_remove_program` (right before the
-    /// removal of that cache; an error there is that cache's error).
+    /// removal of that cache; an error there is that cache's error); the mail points of FX-13 (M§5 P1):
+    /// `mail_delivery_after_read` (in `mail::Delivery::begin`, after the state read under `mail/lock`; an error there
+    /// is the delivery's `Io` error) and `mail_read_before_dirs` (in `mail::store::read`, before it makes `cur/`; the
+    /// state folder is the parent of `mail/`; an error there is the read's `Io` error).
     /// An `Err(text)` of the hook becomes `MuxError::Failed { message: text }` at that point; at `before_undo` it is
     /// the undo's write error.
     pub fn hook(dir: &Path, point: &'static str, f: Option<Box<dyn Fn() -> Result<(), String> + Send + Sync>>) {
@@ -1413,6 +1416,11 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
                     say(err, &no_build_plan_line(&name));
                 }
                 let _ = snapshot::after_write(&opts.paths, &Tmux::new(opts.tmux.clone(), w.tmux_socket.clone()), &id, snapshot::OP_WAIT);
+                // M§5 P1: after the undo write, which put the `plan.forget` records back, the maildirs of the fresh
+                // records that `take_back_plan` dropped go.
+                if let Err(e) = mail::prune(&store, MAIL_LOCK_WAIT) {
+                    say(err, &not_pruned_line(&e));
+                }
             }
             Err(e) => say(err, &format!("zygo: state not cleaned: {e}")),
         }
@@ -1615,6 +1623,11 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
         .map_err(write_err)?;
     if let Err(e) = snapshot::after_write(&opts.paths, &Tmux::new(opts.tmux.clone(), done.tmux_socket.clone()), &id, snapshot::OP_WAIT) {
         say(err, &format!("zygo: final snapshot not saved: {e:#}"));
+    }
+    // M§5 P1: after `phase = up`, the maildirs of the records this `up` dropped (`--reset`, `plan.forget`, members
+    // not built) go, under mail/lock and the state read there.
+    if let Err(e) = mail::prune(&store, MAIL_LOCK_WAIT) {
+        say(err, &not_pruned_line(&e));
     }
     // D23; M§9: the unread count when it is not zero.
     let mail = mail_dir(&opts.paths, &id);

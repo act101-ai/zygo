@@ -4,7 +4,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use super::{BODY_MAX, MailError, Message, SUBJECT_MAX};
+use super::{BODY_MAX, MAIL_LOCK_WAIT, MailError, Message, SUBJECT_MAX};
 use crate::identity::valid_pane_key;
 
 /// A file in `tmp/` older than this is a failed write; the sweep deletes it (M§10 "Write fails partway").
@@ -41,14 +41,27 @@ fn file_name(id: &str) -> String {
 /// Makes the missing parts of `dir` and its parents, `0700` on unix, then sets `dir` itself to `0700` when it is
 /// not (M-C4). A `dir` that is a symlink or not a folder is refused.
 pub(crate) fn make_dir(dir: &Path) -> std::io::Result<()> {
+    make_dir_with(dir, true)
+}
+
+/// [`make_dir`] that makes no parent: a missing parent is `NotFound` and nothing is made (mail sync design S§8.3
+/// step 2, MS-21 review R2-1).
+pub(crate) fn make_dir_in_place(dir: &Path) -> std::io::Result<()> {
+    make_dir_with(dir, false)
+}
+
+fn make_dir_with(dir: &Path, recursive: bool) -> std::io::Result<()> {
     let mut b = DirBuilder::new();
-    b.recursive(true);
+    b.recursive(recursive);
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
         b.mode(0o700);
     }
-    b.create(dir)?;
+    match b.create(dir) {
+        Err(e) if e.kind() != ErrorKind::AlreadyExists => return Err(e),
+        _ => {}
+    }
     let meta = fs::symlink_metadata(dir)?;
     if !meta.is_dir() {
         return Err(std::io::Error::new(ErrorKind::InvalidInput, format!("{} is not a folder", dir.display())));
@@ -61,6 +74,22 @@ pub(crate) fn make_dir(dir: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// `dir` checked with `symlink_metadata` (no link follow): `Ok(true)` for a real folder, `Ok(false)` when it is
+/// missing; a link or an entry that is not a folder is `InvalidInput`.
+pub(crate) fn real_dir(dir: &Path) -> std::io::Result<bool> {
+    match fs::symlink_metadata(dir) {
+        Ok(m) if m.file_type().is_symlink() => {
+            Err(std::io::Error::new(ErrorKind::InvalidInput, format!("{} is a link; it is not followed", dir.display())))
+        }
+        Ok(m) if !m.is_dir() => {
+            Err(std::io::Error::new(ErrorKind::InvalidInput, format!("{} is not a folder", dir.display())))
+        }
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
 /// `mail/`, `mail/<key>/` and its three folders, each `0700` (M-C4).
@@ -220,15 +249,54 @@ pub fn deliver(mail_dir: &Path, key: &str, label: &str, msg: &Message, max_unrea
 /// another reader, and an id already in `cur/` is a duplicate, removed from `new/` and not returned. A moved file
 /// gets the read time as its modification time, so the sweep ages it from its read. A moved file that cannot be
 /// read or parsed stays in `cur/` for the sweep. An error before the first move is returned; after it, `read` stops
-/// and returns what it has.
+/// and returns what it has. `mail/`, `mail/<key>/`, `new/` and `cur/` are never followed as links: a link or an
+/// entry that is not a folder at any of them is an `Io` error; a missing `mail/`, `mail/<key>/` or `new/` has no
+/// messages and nothing is made; only `cur/` is made, when `new/` has a message, and an existing `cur/` is set to
+/// `0700` then (M-C4). The list and the moves run under `mail/lock` held shared (M§5 P1), so no removal of
+/// `mail/<key>/` runs between them; [`read_within`] with [`MAIL_LOCK_WAIT`].
 pub fn read(mail_dir: &Path, key: &str, max: usize) -> Result<Vec<Message>, MailError> {
+    read_within(mail_dir, key, max, MAIL_LOCK_WAIT)
+}
+
+/// [`read`], waiting at most `bound` for `mail/lock`: a lock held for the whole bound is `Busy`. A missing `mail/`
+/// takes no lock and is not made.
+pub fn read_within(mail_dir: &Path, key: &str, max: usize, bound: Duration) -> Result<Vec<Message>, MailError> {
     let md = maildir(mail_dir, key)?;
     let (new, cur) = (md.join("new"), md.join("cur"));
     let mut out = Vec::new();
     let mut moved = false;
+    // No link is followed (M-C4): `mail/`, `mail/<key>/` and `new/` are checked without a follow; a missing one has
+    // no messages and nothing is made.
+    if !real_dir(mail_dir)? {
+        return Ok(Vec::new());
+    }
+    let _lock = match crate::state::lock_file_as(&mail_dir.join("lock"), bound, true) {
+        Ok(Some(f)) => f,
+        Ok(None) => return Err(MailError::Busy),
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    for dir in [md.as_path(), new.as_path()] {
+        if !real_dir(dir)? {
+            return Ok(Vec::new());
+        }
+    }
     let ids = ids(&new)?;
     if !ids.is_empty() {
-        make_dirs(mail_dir, &md)?;
+        // M§5 P1: a read never makes mail/<key>/. Only cur/ is made, in a maildir that exists; a maildir removed since
+        // the listing has nothing to return.
+        let state_dir = mail_dir.parent().unwrap_or(mail_dir);
+        crate::up::fire(state_dir, "mail_read_before_dirs").map_err(|e| std::io::Error::other(e.to_string()))?;
+        match real_dir(&md) {
+            Ok(false) => return Ok(Vec::new()),
+            r => r.map(|_| ())?,
+        }
+        // A link at cur/ is refused; a missing cur/ is made, and an existing one is set to 0700 (M-C4).
+        real_dir(&cur)?;
+        match make_dir_in_place(&cur) {
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+            r => r?,
+        }
     }
     for id in ids {
         if out.len() >= max {
@@ -305,7 +373,10 @@ pub fn sweep(mail_dir: &Path, keep: Duration, now: SystemTime) {
     }
 }
 
-/// Deletes the maildir of `key` (`forget-pane`, M§5); a missing one is no error.
+/// Deletes the maildir of `key`; a missing one is no error. It takes no `mail/lock` and reads no member record, so it
+/// has no production caller: production removals use [`super::remove_maildir`] and [`super::prune`] (M§5 P1). It
+/// stays `pub` and hidden because the integration tests (`tests/mail_store.rs`, `tests/mail_lifecycle.rs`) call it.
+#[doc(hidden)]
 pub fn remove_pane(mail_dir: &Path, key: &str) -> std::io::Result<()> {
     if !valid_pane_key(key) {
         return Err(std::io::Error::new(ErrorKind::InvalidInput, "invalid pane key"));

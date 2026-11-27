@@ -9,7 +9,7 @@ use ulid::Ulid;
 use zygo_work::repo::{Flow, RunError};
 use zygo_workspace::identity::valid_pane_key;
 use zygo_workspace::mail::store::{deliver_staged, unread, write_synced};
-use zygo_workspace::mail::{ensure_mail_root, Message, BODY_MAX, SUBJECT_MAX};
+use zygo_workspace::mail::{ensure_mail_dir, Message, BODY_MAX, SUBJECT_MAX};
 
 use crate::address::{self, ulid_file};
 use crate::branch::{self, BranchError, Entry};
@@ -262,7 +262,7 @@ pub fn run(sp: &SyncPaths, mail_dir: &Path, wt: &Path, tip: &str, own_hosts: &[S
             continue;
         }
         let staged = sp.incoming.join(format!("{}.{id}.json", c.key));
-        let wrote = [&sp.mail, &sp.sync, &sp.incoming].into_iter().try_for_each(|d| ensure_mail_root(d))
+        let wrote = [&sp.mail, &sp.sync, &sp.incoming].into_iter().try_for_each(|d| ensure_mail_dir(d))
             .and_then(|()| write_synced(&staged, &bytes));
         if wrote.is_err() {
             log(&format!("mail sync: import {id}: write"));

@@ -823,6 +823,44 @@ fn a_spawn_failure_after_the_callback_puts_the_previous_record_back() { // revie
     assert_eq!(member(&h, &pane_key(&h, &pane)), None);
 }
 
+#[test] // FX-13 b5 (M§5 P1): the undo of a hand start that never started removes the maildir of the record it drops
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn lifecycle_hand_start_undo_removes_the_maildir() {
+    let Some(h) = Harness::new() else { return };
+    workspace_session(&h, Some(KEY), Some(WS_ID));
+    up_state(&h, &[(KEY, record(Agent::ClaudeCode, MemberState::Ended, Some("old"), Some(OLD_ZS)))], &mut |_| {});
+    let pane = split(&h, "=zygo-app:", "cat");
+    let (_out, mut env) = h.stub(Agent::ClaudeCode, "a");
+    let g = h.root().join("gate");
+    let returned = Hold::new(&g, "returned");
+    env.push(("ZYGO_TEST_MEMBER_GATE", g.clone().into_os_string()));
+    // `--agents []` is refused by the adapter after the callback (exit 2): the agent never starts.
+    let child = Guarded::spawn(hand(&h, &pane, &["claude", "--", "--agents", "[]"], &pairs(&env)));
+    assert!(until(Duration::from_secs(20), || g.join("returned").exists()));
+    let key = pane_key(&h, &pane);
+    let ws = h.store(WS_ID).read().unwrap().unwrap();
+    assert!(ws.members.contains_key(&key), "the callback wrote the record of {key}");
+    let r = zygo_workspace::mail::send(
+        &h.paths,
+        &ws,
+        None,
+        &key,
+        "s",
+        "b",
+        &zygo_config::MailConfig::default(),
+        std::time::SystemTime::now(),
+    )
+    .unwrap();
+    assert_eq!(r.sent.len(), 1, "{r:?}");
+    let maildir = zygo_workspace::mail::mail_dir(&h.paths, WS_ID).join(&key);
+    assert!(maildir.is_dir());
+    drop(returned);
+    let o = child.output("hand start");
+    assert_eq!(o.status.code(), Some(2), "{}", text(&o.stderr));
+    assert_eq!(member(&h, &key), None);
+    assert!(std::fs::symlink_metadata(&maildir).is_err(), "{}", text(&o.stderr));
+}
+
 // ---- The not-saved line (decision 6) and the callback re-check (AU34 `NotMember`) ----
 
 /// A hand start of Claude Code in a new split of `zygo-app` (WS_ID) after `setup`; checks exit 0, no

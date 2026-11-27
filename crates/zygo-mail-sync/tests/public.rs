@@ -242,6 +242,7 @@ mod unix {
             usage_db: p.join("data/usage.db"),
         };
         let sp = SyncPaths::new(&paths, "0123456789abcdef").unwrap();
+        std::fs::create_dir_all(sp.mail.parent().unwrap()).unwrap(); // the workspace exists (MS-21 review R2-1)
         (t, sp)
     }
 
