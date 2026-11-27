@@ -280,9 +280,9 @@ fn tip_paths(r: &Remote) -> Vec<String> {
     }
     out_of(&o).lines().map(String::from).collect()
 }
-/// The bytes of `<tip>:<path>`; `None` when absent.
+/// The bytes of `<tip>:<path>`; `None` when the path is absent at the tip.
 fn tip_blob(r: &Remote, path: &str) -> Option<Vec<u8>> {
-    let o = git_cmd().args(["cat-file", "blob", &format!("refs/heads/zygo/mail:{path}")]).current_dir(&r.bare).output().unwrap();
+    let o = git_cmd().args(["cat-file", "blob", &format!("{}:{path}", tip(r))]).current_dir(&r.bare).output().unwrap();
     o.status.success().then_some(o.stdout)
 }
 
@@ -301,10 +301,10 @@ fn advance(bare: &Path) -> String {
     test_commit(bare, &tree)
 }
 
-/// S§19 #12: six hostile entries in `bob-q7x@birch-q7x/` on top of the tip: a link, a gitlink, a 9 MiB blob, a message
+/// S§19 #12: six hostile entries in `bob-q7x@<host>/` on top of the tip: a link, a gitlink, a 9 MiB blob, a message
 /// whose id is not its file's, a message to another name, and a file that is not JSON. Returns the six ids and the
 /// commit id.
-fn hostile(bare: &Path) -> ([String; 6], String) {
+fn hostile(bare: &Path, host: &str) -> ([String; 6], String) {
     let ids: [String; 6] = std::array::from_fn(|i| format!("01KQ7X0000000000000000000{}", i + 1));
     let msg = |id: &str, to: &str| {
         serde_json::to_vec(&json!({"version": 1, "id": id, "from": format!("{A_NAME}@{HOST_A}"), "to": to,
@@ -315,11 +315,11 @@ fn hostile(bare: &Path) -> ([String; 6], String) {
         ("120000", "blob", blob(b"/etc/passwd")),
         ("160000", "commit", "0123456789abcdef0123456789abcdef01234567".to_string()),
         ("100644", "blob", blob(&vec![b' '; 9 * 1024 * 1024])),
-        ("100644", "blob", blob(&msg("01KQ7X00000000000000000099", &format!("{B_NAME}@{HOST_B}")))),
-        ("100644", "blob", blob(&msg(&ids[4], &format!("eve@{HOST_B}")))),
+        ("100644", "blob", blob(&msg("01KQ7X00000000000000000099", &format!("{B_NAME}@{host}")))),
+        ("100644", "blob", blob(&msg(&ids[4], &format!("eve@{host}")))),
         ("100644", "blob", blob(b"{not json")),
     ];
-    let folder = format!("{B_NAME}@{HOST_B}");
+    let folder = format!("{B_NAME}@{host}");
     let mut lines = git(bare, &["ls-tree", &format!("refs/heads/zygo/mail:{folder}")]);
     for ((mode, kind, id), name) in entries.iter().zip(&ids) {
         lines.push_str(&format!("\n{mode} {kind} {id}\t{name}.json"));
@@ -491,4 +491,235 @@ fn scanners_find_a_planted_marker() {
     zygo_usage::Store::open(&db).unwrap().insert_trim(&zygo_usage::TrimRow { session: BODY.into(), ..Default::default() }).unwrap();
     let (rows, f) = usage_findings(&db);
     assert!(rows >= 1 && f.iter().any(|l| l.ends_with(&format!("holds {BODY}"))), "{rows} {f:?}");
+}
+
+#[test] // S-C2, S§6.5, S§19 #24 (as rewritten): after #1, #3, #4, #5, #12, #15, #19, #9 and #20 on two machines through
+        // the CLI and the MCP tool, and one usage row, no marker is in a log, a state file, the usage store, a commit
+        // or a ref name, and every zygo commit has the S§6.5 message and identity
+fn no_mail_content_after_the_scenarios() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    hermetic();
+
+    // Setup and #1 (normal; CLI and MCP send).
+    let r = remote();
+    let a = machine(&r, HOST_A, ALICE, A_NAME);
+    let b = machine(&r, HOST_B, BOB, B_NAME);
+    let mut made = BTreeSet::from([git(&r.bare, &["rev-parse", "refs/heads/main"])]);
+    for h in [&b, &a, &b] {
+        let o = sync_bin(h, &[]);
+        assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    }
+    let id1 = send_ok(&a, ALICE, &format!("{B_NAME}@{HOST_B}"), 1);
+    let v = call(&tools(&a, ALICE), "mail_send", json!({"to": format!("{B_NAME}@{HOST_B}"), "subject": format!("{SUBJ}-2"), "body": format!("{BODY}-2")})).unwrap();
+    let id2 = v["sent"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(sync_in(&a).pushed, 2);
+    let o = sync_bin(&b, &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    for id in [&id1, &id2] {
+        let path = format!("{B_NAME}@{HOST_B}/{id}.json");
+        let got = std::fs::read(mail_dir(&b.paths, WS_ID).join(BOB).join("new").join(format!("{id}.json"))).unwrap();
+        assert_eq!(Some(got), tip_blob(&r, &path));
+    }
+    let ack: Value = serde_json::from_slice(&tip_blob(&r, &format!("ack/{HOST_B}.json")).unwrap()).unwrap();
+    for id in [&id1, &id2] {
+        assert!(ack["imported"].as_array().unwrap().iter().any(|u| u == id.as_str()), "{ack}");
+    }
+    assert_eq!(call(&tools(&b, BOB), "mail_list", json!({})).unwrap()["remote"], json!([format!("{A_NAME}@{HOST_A}")]));
+
+    // #3 (push race, then five moves).
+    let ia = send_ok(&a, ALICE, &format!("{B_NAME}@{HOST_B}"), 3);
+    let ib = send_ok(&b, BOB, &format!("{A_NAME}@{HOST_A}"), 4);
+    let (b_paths, mut first) = (b.paths.clone(), true);
+    let race = Hook::new(move |p| {
+        if p == "before_push" && std::mem::take(&mut first) {
+            run_with(&env_paths(b_paths.clone(), Box::new(NoSeam), far()), WS_ID, Mode::Child, &Opts::default()).unwrap();
+        }
+        Ok(())
+    });
+    run_with(&env_in(&a, Box::new(race), far()), WS_ID, Mode::Cli, &Opts::default()).unwrap();
+    assert!(tip_paths(&r).contains(&format!("{B_NAME}@{HOST_B}/{ia}.json")));
+    assert!(tip_paths(&r).contains(&format!("{A_NAME}@{HOST_A}/{ib}.json")));
+    let ic = send_ok(&a, ALICE, &format!("{B_NAME}@{HOST_B}"), 5);
+    let (bare, moved) = (r.bare.clone(), Arc::new(Mutex::new(Vec::new())));
+    let m2 = Arc::clone(&moved);
+    let moves = Hook::new(move |p| {
+        if p == "before_push" {
+            m2.lock().unwrap().push(advance(&bare));
+        }
+        Ok(())
+    });
+    let e = run_with(&env_in(&a, Box::new(moves), far()), WS_ID, Mode::Cli, &Opts::default()).unwrap_err();
+    made.extend(moved.lock().unwrap().drain(..));
+    assert_eq!(made.len(), 6); // main and the five moves
+    assert_eq!(e, SyncError::Stopped { line: "zygo: the side branch moved 5 times during the sync; try again".into(), check: "moved" });
+    assert!(sp(&a).outbox.join(format!("{ic}.json")).is_file());
+    assert_eq!(sync_in(&a).pushed, 1);
+
+    // #4 (secret at send, CLI and MCP; then a new pattern before the pass).
+    let aws = ["AK", "IA", "ABCDEFGHIJKLMNOP"].concat();
+    let (code, o, e) = send_with(&a, ALICE, &format!("{B_NAME}@{HOST_B}"), 6, &format!("{BODY}-6 {aws}"));
+    assert_eq!((code, o, e), (1, String::new(), "zygo: message not sent: it holds a secret (aws_access_key_id)\n".into()));
+    assert_eq!(call(&tools(&a, ALICE), "mail_send", json!({"to": format!("{B_NAME}@{HOST_B}"), "subject": format!("{SUBJ}-7"), "body": format!("{BODY}-7 {aws}")})),
+        Err(ToolError::Failed("zygo: message not sent: it holds a secret (aws_access_key_id)".into())));
+    assert_eq!(outbox::count(&sp(&a)).unwrap(), 0);
+    let i4 = send_body(&a, ALICE, &format!("{B_NAME}@{HOST_B}"), 8, &format!("{BODY}-8 {SHIP}")); // passes at send
+    config(&a, HOST_A, "", &format!("[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"{SHIP}\"\naction = \"redact\"\ndescription = \"d\"\n"));
+    sync_in(&a);
+    assert!(sp(&a).refused.join(format!("{i4}.json")).is_file());
+    assert!(!tip_paths(&r).iter().any(|p| p.ends_with(&format!("/{i4}.json"))));
+    assert!(errors(&a).lines().any(|l| l.ends_with(&format!("mail sync: outbox {i4}: refused: ship_word"))), "{}", errors(&a));
+    assert!(std::fs::read_dir(mail_dir(&a.paths, WS_ID).join(ALICE).join("new")).unwrap().count() >= 1); // the notice from zygo
+    config(&a, HOST_A, "", "");
+
+    // #5 (the secret check cannot run: expiry, then an act-lite store that does not parse).
+    let i5 = send_ok(&a, ALICE, &format!("{B_NAME}@{HOST_B}"), 9);
+    let expire = DeadlinePolicy { expire_after_scans: Some(0), base: Duration::from_secs(3600), ..Default::default() };
+    run_with(&env_in(&a, Box::new(NoSeam), expire), WS_ID, Mode::Cli, &Opts::default()).unwrap();
+    assert!(sp(&a).outbox.join(format!("{i5}.json")).is_file());
+    assert!(errors(&a).contains(&format!("mail sync: outbox {i5}: secret check could not run: secret_timeout")), "{}", errors(&a));
+    let store = act_lite_store::store_path(&a.repo(), &act_lite_store::Lookup::system());
+    std::fs::create_dir_all(store.parent().unwrap()).unwrap();
+    std::fs::write(&store, "not an assignment\n").unwrap();
+    sync_in(&a);
+    assert!(errors(&a).contains(&format!("mail sync: outbox {i5}: secret check could not run: act_lite_store")), "{}", errors(&a));
+    std::fs::remove_file(&store).unwrap();
+    assert_eq!(sync_in(&a).pushed, 1);
+
+    // #15 (inbox full; bob reads through the MCP tool). B first imports what waits for it since #3 (in the plan's
+    // order the #12 pass did this).
+    let o = sync_bin(&b, &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    call(&tools(&b, BOB), "mail_read", json!({"max": 1000})).unwrap();
+    assert_eq!(new_count(&b, BOB), 0);
+    config(&b, HOST_B, "max_unread = 1\n", "");
+    let f1 = send_ok(&a, ALICE, &format!("{B_NAME}@{HOST_B}"), 10);
+    let f2 = send_ok(&a, ALICE, &format!("{B_NAME}@{HOST_B}"), 11);
+    assert_eq!(sync_in(&a).pushed, 2);
+    let o = sync_bin(&b, &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    assert_eq!(new_count(&b, BOB), 1);
+    let ack: Value = serde_json::from_slice(&tip_blob(&r, &format!("ack/{HOST_B}.json")).unwrap()).unwrap();
+    let acked = |id: &str| ack["imported"].as_array().unwrap().iter().any(|u| u == id);
+    assert_eq!(acked(&f1) as u8 + acked(&f2) as u8, 1, "{ack}"); // the one not delivered is not acknowledged
+    call(&tools(&b, BOB), "mail_read", json!({})).unwrap();
+    let o = sync_bin(&b, &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    assert_eq!(new_count(&b, BOB), 1); // the second one now
+    config(&b, HOST_B, "", "");
+
+    // #19 (host rename while mail waits).
+    for n in 12..15 {
+        send_ok(&a, ALICE, &format!("{B_NAME}@{HOST_B}"), n);
+    }
+    assert_eq!(sync_in(&a).pushed, 3);
+    config(&b, HOST_B2, "", "");
+    let before = new_count(&b, BOB);
+    let o = sync_bin(&b, &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    assert_eq!(new_count(&b, BOB), before + 3);
+    let paths = tip_paths(&r);
+    assert!(!paths.contains(&format!("registry/{HOST_B}.json")) && paths.contains(&format!("registry/{HOST_B2}.json")), "{paths:?}");
+    assert!(paths.contains(&format!("ack/{HOST_B}.json")), "{paths:?}");
+    let o = sync_bin(&a, &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    let (code, out, _) = send(&a, ALICE, &format!("{B_NAME}@{HOST_B}"), 15);
+    assert_eq!((code, out.as_str(), outbox::count(&sp(&a)).unwrap()), (1, "", 0));
+    let o = sync_bin(&b, &["--prune"]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    let o = sync_bin(&b, &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    assert!(!tip_paths(&r).contains(&format!("ack/{HOST_B}.json")), "{:?} {}", tip_paths(&r), errors(&b));
+    let i19 = send_ok(&a, ALICE, &format!("{B_NAME}@{HOST_B2}"), 16);
+    sync_in(&a);
+    let o = sync_bin(&b, &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    assert!(mail_dir(&b.paths, WS_ID).join(BOB).join("new").join(format!("{i19}.json")).is_file());
+
+    // #12 (hostile tip, imported by the binary on B), in the folder of B's host after #19 (implementer's note, step 6).
+    let (hs, hc) = hostile(&r.bare, HOST_B2);
+    made.insert(hc);
+    let o = sync_bin(&b, &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    let log = errors(&b);
+    for (id, check) in hs.iter().zip(["mode", "mode", "size", "id", "to", "json"]) {
+        assert!(log.lines().any(|l| l.ends_with(&format!("mail sync: import {id}: {check}"))), "{id} {check}: {log}");
+    }
+    let ack: Value = serde_json::from_slice(&tip_blob(&r, &format!("ack/{HOST_B2}.json")).unwrap()).unwrap();
+    for id in &hs {
+        assert!(ack["imported"].as_array().unwrap().iter().any(|u| u == id.as_str()), "{id}: {ack}");
+    }
+
+    // #9 (collision and take-host, on the two machines).
+    config(&b, HOST_A, "", "");
+    let o = sync_bin(&b, &[]);
+    assert_eq!((o.status.code(), err_of(&o)), (Some(1), format!("{COLLISION}\n")));
+    let o = sync_bin(&b, &["--take-host"]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    let o = sync_bin(&a, &[]);
+    assert_eq!((o.status.code(), err_of(&o)), (Some(1), format!("{COLLISION}\n")));
+    config(&a, HOST_A2, "", "");
+    let o = sync_bin(&a, &["--new-identity"]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    assert!(tip_paths(&r).contains(&format!("registry/{HOST_A2}.json")));
+
+    // #20 (forget part with "no", then drop host with "no" and `--yes`).
+    let to = format!("{B_NAME}@{HOST_A}"); // B's host since #9
+    send_ok(&a, ALICE, &to, 17);
+    send_ok(&a, ALICE, &to, 18);
+    let refused = outbox::refused_count(&sp(&a)).unwrap();
+    let prompt = format!("zygo: 2 unsent messages and {refused} refused messages will be deleted. Forget the workspace? [y/N]");
+    let o = zygo(&a, &["ws", "forget", "app"], Some(b"n\n"));
+    assert_eq!((o.status.code(), out_of(&o), err_of(&o)), (Some(0), "zygo: app not forgotten\n".into(), format!("{prompt} ")));
+    send_ok(&a, ALICE, &to, 19);
+    assert_eq!(sync_in(&a).pushed, 3);
+    let ask = format!("zygo: 3 messages wait for host {HOST_A}; they will be deleted. Delete them? [y/N]");
+    let before = tip_paths(&r);
+    let o = zygo(&a, &["mail", "sync", "--drop-host", HOST_A], Some(b"n\n"));
+    assert_eq!((o.status.code(), out_of(&o), err_of(&o)), (Some(0), format!("zygo: host {HOST_A} not dropped\n"), format!("{ask} ")));
+    assert_eq!(tip_paths(&r), before);
+    let o = zygo(&a, &["mail", "sync", "--drop-host", HOST_A, "--yes"], None);
+    assert_eq!((o.status.code(), out_of(&o), err_of(&o)), (Some(0), format!("zygo: host {HOST_A} dropped; 3 messages deleted\n"), format!("{ask} y (--yes)\n")));
+    let after = tip_paths(&r);
+    assert!(after.iter().all(|p| !p.starts_with(&format!("{B_NAME}@{HOST_A}/")) && *p != format!("registry/{HOST_A}.json") && *p != format!("ack/{HOST_A}.json")), "{after:?}");
+
+    // Usage row (author's call 5), on B.
+    let sd = SessionDir::new(b.root().join("sess-u"));
+    sd.create().unwrap();
+    SessionView { session: "u".into(), agent: Agent::ClaudeCode, results: true, trim_threshold_bytes: 16384, head_lines: 60, tail_lines: 20, ..Default::default() }.save(&sd).unwrap();
+    drop(zygo_usage::Store::open(&b.paths.usage_db).unwrap()); // the database as the launcher leaves it (hook_trim.rs:30)
+    // Each line numbered, so the shaper counts no repeated lines and the size trim stores the output (implementer's
+    // note, step 6).
+    let stdout: String = (0..400).map(|i| format!("{i:03} {SUBJ}-u {BODY}-u {A_NAME}@{HOST_A} {B_NAME}@{HOST_B} {HOST_B2} {HOST_A2}\n")).collect();
+    let event = json!({"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {"command": format!("zygo mail read --name {B_NAME}")},
+        "tool_response": {"stdout": stdout, "stderr": "", "interrupted": false, "isImage": false, "noOutputExpected": false}});
+    let mut c = b.zygo(&["hook", "trim"], &[("ZYGO_SESSION_DIR", sd.root.as_os_str())]);
+    c.stdin(Stdio::piped());
+    let mut child = c.spawn().unwrap();
+    feed_stdin(child.stdin.take().unwrap(), &serde_json::to_vec(&event).unwrap());
+    let o = child.wait_with_output().unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    assert!(out_of(&o).contains("[zygo trimmed this output:"), "{} {}", out_of(&o), err_of(&o));
+
+    // The scans (S§19 #24 as rewritten; each also proves the file it reads is there).
+    let (ea, eb) = (errors(&a), errors(&b));
+    assert!(!ea.is_empty() && !eb.is_empty());
+    let mut found = Vec::new();
+    found.extend(text_findings("A errors.log", ea.as_bytes(), &MARKERS));
+    found.extend(text_findings("B errors.log", eb.as_bytes(), &MARKERS));
+    found.extend(workspace_findings(&a.store(WS_ID).dir().join("workspace.json"), &[A_NAME]));
+    found.extend(workspace_findings(&b.store(WS_ID).dir().join("workspace.json"), &[B_NAME]));
+    for (h, own) in [(&a, &[HOST_A, HOST_A2][..]), (&b, &[HOST_B, HOST_B2, HOST_A][..])] {
+        let st: Value = serde_json::from_slice(&std::fs::read(sp(h).state).unwrap()).unwrap();
+        assert!(!st["pushed"].as_object().unwrap().is_empty());
+        found.extend(state_findings(&sp(h).state, own));
+    }
+    for repo in [r.bare.clone(), a.repo(), b.repo()] {
+        found.extend(commit_findings(&repo, &made));
+        found.extend(ref_findings(&repo));
+    }
+    let (rows, f) = usage_findings(&b.paths.usage_db);
+    assert!(rows >= 1, "the trim hook wrote no usage row");
+    found.extend(f);
+    found.extend(usage_findings(&a.paths.usage_db).1);
+    assert_eq!(found, Vec::<String>::new());
 }
