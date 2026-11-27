@@ -9,26 +9,31 @@ use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use tempfile::TempDir;
-use zygo::cmd::mail::send_cli;
+use zygo::cmd::mail::{send_cli, watch_sync_step, watch_with};
 use zygo_config::{Config, Features, LoadContext, MailConfig};
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::{Member, SessionView, ViewWorkspace};
 use zygo_core::Agent;
+use zygo_hooks::mail::{other_machines, stop_block};
+use zygo_hooks::workspace::{run_with_sync, session_start_with_sync};
 use zygo_mail_sync::env::{Clock, Crash, Env, NoSeam, Probe, Seam, Spawner, Verdict, Wake};
 use zygo_mail_sync::outbox;
-use zygo_mail_sync::state::SyncPaths;
+use zygo_mail_sync::public::{map_url, probe_command, Mapped};
+use zygo_mail_sync::registry::{read_cache, write_cache, MemberCache};
+use zygo_mail_sync::state::{mark_again, read_last_start, SyncPaths};
 use zygo_mail_sync::sync::{run_with, Mode, Opts, Report, SyncError};
 use zygo_mcp::tools::mail::tools_with_sync;
 use zygo_mcp::{McpCtx, Tool, ToolError};
 use zygo_redact::act_lite_store;
 use zygo_redact::secret::DeadlinePolicy;
-use zygo_workspace::mail::wake::{after_send_with, Probe as IdleProbe};
+use zygo_workspace::mail::wake::{after_send_with, Probe as IdleProbe, WAKE_TEXT};
 use zygo_workspace::mail::{mail_dir, store};
 use zygo_workspace::mux::{HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split};
 use zygo_workspace::state::{MemberRecord, Phase, Workspace};
@@ -57,6 +62,26 @@ const MESSAGE: &str = "zygo mail [skip ci]\n";
 const ZYGO_ID: &str = "zygo <zygo@zygo.invalid>";
 /// The #4 pattern text.
 const SHIP: &str = "zz-forbidden-zz";
+/// #21: a member key with no name.
+const ANON: &str = "kcccccccc";
+/// #10: the other workspace state on the machine.
+const OTHER_WS: &str = "fedcba9876543210";
+/// #18: the injected clock a year later.
+const YEAR: Duration = Duration::from_secs(365 * 86_400);
+/// The S§7.2 line of a remote send from a member with no name (`crates/zygo/tests/mail_remote_cli.rs:42`).
+const NO_NAME: &str = "zygo: remote mail needs a sender name; give this member a name in the loadout or with --name";
+/// The S§7.2 line of a send to a reserved name (`crates/zygo/tests/mail_remote_cli.rs:45`).
+const RESERVED: &str = "zygo: all, cli and zygo have no address; send to <name> or <name>@<host>";
+/// The S§8.3 step 7 line of a side branch without `ZYGO-MAIL`.
+const MARKER_LINE: &str = "zygo: the side branch is not a zygo mail branch";
+/// The S§11 line of a `sync` branch that is not of the `zygo/` form.
+const BAD_BRANCH: &str = "zygo: mail sync is off: sync in [mail.workspace.app] is not zygo/ and 1 to 32 of a-z, 0-9 and -";
+/// The S§7.1 line of no `[mail] host`.
+const NO_HOST: &str = "zygo: mail sync is off: no mail host; set host in [mail] of the user config";
+/// #25: the line of `[mail]` in `.zygo.toml` (`crates/zygo-config/tests/mail_sync_config.rs:19`).
+const REPO_LINE: &str = ".zygo.toml: [mail] ignored; the repository file may set only [guards], [navigation], [limits], [work]";
+/// #25: the line of `[mail]` in team config (`crates/zygo-config/tests/mail_sync_config.rs:18`).
+const TEAM_LINE: &str = "config: [mail] in team config ignored; only user config may set them";
 /// The line of `crates/zygo/tests/mail_sync_cli.rs:29`, byte for byte.
 const COLLISION: &str = "zygo: the mail host name is taken on the side branch by another identity. If that is another machine, set another [mail] host. If it is this workspace from before (a moved repository, a ws forget, a restored backup), run zygo mail sync --take-host.";
 /// The S§7.5 twin line (`crates/zygo-mail-sync/src/identity.rs:22`), byte for byte.
@@ -201,6 +226,15 @@ fn zygo(h: &Harness, args: &[&str], input: Option<&[u8]>) -> Output {
     common::assert_no_marketplace_sync(h.root());
     o
 }
+/// `h.zygo(args, …)` in the folder `cwd` with `ZYGO_WORKSPACE = WS_ID` and then `extra`, stdin the null device. After
+/// the run, no marketplace sync ran.
+fn zygo_at(h: &Harness, cwd: &Path, args: &[&str], extra: &[(&str, &OsStr)]) -> Output {
+    let mut vars = vec![("ZYGO_WORKSPACE", OsStr::new(WS_ID))];
+    vars.extend_from_slice(extra);
+    let o = h.zygo(args, &vars).current_dir(cwd).output().unwrap();
+    common::assert_no_marketplace_sync(h.root());
+    o
+}
 fn out_of(o: &Output) -> String { String::from_utf8_lossy(&o.stdout).into_owned() }
 fn err_of(o: &Output) -> String { String::from_utf8_lossy(&o.stderr).into_owned() }
 
@@ -242,29 +276,61 @@ impl Spawner for FailSpawn {
 struct NoWake;
 impl Wake for NoWake { fn wake(&self, _: &Paths, _: &Workspace, _: &[String], _: &MailConfig, _: SystemTime) {} }
 
+/// #22: the spawn seam counts each start and starts nothing.
+struct Count(Arc<AtomicUsize>);
+impl Spawner for Count {
+    fn spawn_sync(&self, _: &str) -> std::io::Result<()> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+/// #6: the injected public probe counts each call and gives its verdict; no network host is asked.
+struct CountProbe(Arc<AtomicUsize>, Verdict);
+impl Probe for CountProbe {
+    fn probe(&self, _: &str) -> Verdict {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        self.1.clone()
+    }
+}
+
 /// #23: the M§7.3 wake of each key with a `wake_gap` that does not parse, an idle member and a pane that takes no
-/// text ([`FailMux`]).
+/// text ([`StubMux`] with no record).
 struct FailWake;
 impl Wake for FailWake {
     fn wake(&self, paths: &Paths, ws: &Workspace, keys: &[String], cfg: &MailConfig, now: SystemTime) {
         let cfg = MailConfig { wake_gap: "soon".into(), ..cfg.clone() };
         for k in keys {
-            after_send_with(paths, ws, std::slice::from_ref(k), &cfg, &FailMux(k.clone()), &Idle(now), now);
+            let mux = StubMux { key: k.clone(), typed: None };
+            after_send_with(paths, ws, std::slice::from_ref(k), &cfg, &mux, &Idle { idle: true, now }, now);
         }
     }
 }
-/// The idle rule of a wake: idle, at the clock of the sync.
-struct Idle(SystemTime);
-impl IdleProbe for Idle {
-    fn idle(&self, _: &Path) -> bool { true }
-    fn now(&self) -> SystemTime { self.0 }
+/// #23: the M§7.3 wake of each key through the multiplexer stub, which records each typed text, with a fixed idle rule
+/// (as `crates/zygo-mail-sync/tests/sync_pass.rs:136-150`).
+struct StubWake { idle: bool, typed: Typed }
+impl Wake for StubWake {
+    fn wake(&self, paths: &Paths, ws: &Workspace, keys: &[String], cfg: &MailConfig, now: SystemTime) {
+        for k in keys {
+            let mux = StubMux { key: k.clone(), typed: Some(self.typed.clone()) };
+            after_send_with(paths, ws, std::slice::from_ref(k), cfg, &mux, &Idle { idle: self.idle, now }, now);
+        }
+    }
 }
-/// The error of every [`FailMux`] send.
+/// The idle rule of a wake: fixed, at the clock of the sync.
+struct Idle { idle: bool, now: SystemTime }
+impl IdleProbe for Idle {
+    fn idle(&self, _: &Path) -> bool { self.idle }
+    fn now(&self) -> SystemTime { self.now }
+}
+/// The error of every [`StubMux`] send with no record.
 fn mux_error() -> MuxError { MuxError::Failed { message: "no server running".into() } }
+/// Each `(pane, text)` that a [`StubMux`] typed.
+type Typed = Arc<Mutex<Vec<(String, String)>>>;
 /// A session `@zygo-ws` = [`WS_ID`] with one pane `%3` that holds the key (the line of
-/// `crates/zygo-mail-sync/tests/sync_pass.rs:120`); a send fails with [`mux_error`].
-struct FailMux(String);
-impl Multiplexer for FailMux {
+/// `crates/zygo-mail-sync/tests/sync_pass.rs:120`). With `typed`, a send is recorded and passes; with none, a send
+/// fails with [`mux_error`].
+struct StubMux { key: String, typed: Option<Typed> }
+impl Multiplexer for StubMux {
     fn socket(&self) -> Option<&Path> { None }
     fn version(&self) -> Result<(u32, u32), MuxError> { unreachable!() }
     fn socket_path(&self, _: &str) -> Result<PathBuf, MuxError> { unreachable!() }
@@ -286,16 +352,22 @@ impl Multiplexer for FailMux {
     fn select_pane(&self, _: &str) -> Result<(), MuxError> { unreachable!() }
     fn zoom(&self, _: &str) -> Result<(), MuxError> { unreachable!() }
     fn list_panes(&self, _: &str) -> Result<Vec<String>, MuxError> {
-        Ok(vec![format!("0|w|1|l|80|24|1|0|%3|0|1|{}|/srv/app", self.0)])
+        Ok(vec![format!("0|w|1|l|80|24|1|0|%3|0|1|{}|/srv/app", self.key)])
     }
-    fn show_pane_option(&self, _: &str, _: &str) -> Result<Option<String>, MuxError> { Ok(Some(self.0.clone())) }
+    fn show_pane_option(&self, _: &str, _: &str) -> Result<Option<String>, MuxError> { Ok(Some(self.key.clone())) }
     fn set_pane_option(&self, _: &str, _: &str, _: &str) -> Result<(), MuxError> { unreachable!() }
     fn display(&self, _: &str, _: &str) -> Result<String, MuxError> { unreachable!() }
     fn kill_session(&self, _: &str) -> Result<(), MuxError> { unreachable!() }
     fn attach(&self, _: &str) -> Result<i32, MuxError> { unreachable!() }
     fn switch_client(&self, _: &str) -> Result<(), MuxError> { unreachable!() }
-    fn send_keys_literal(&self, _: &str, _: &str) -> Result<(), MuxError> { Err(mux_error()) }
-    fn send_enter(&self, _: &str) -> Result<(), MuxError> { Err(mux_error()) }
+    fn send_keys_literal(&self, pane: &str, text: &str) -> Result<(), MuxError> {
+        let Some(t) = &self.typed else { return Err(mux_error()) };
+        t.lock().unwrap().push((pane.to_string(), text.to_string()));
+        Ok(())
+    }
+    fn send_enter(&self, _: &str) -> Result<(), MuxError> {
+        if self.typed.is_some() { Ok(()) } else { Err(mux_error()) }
+    }
 }
 
 /// #23: a live session `<sessions_dir>/<id>` (`token` and a held lock on `pid`) while the file lives
@@ -324,7 +396,12 @@ fn env_paths(paths: Paths, seam: Box<dyn Seam>, policy: DeadlinePolicy) -> Env {
 /// The env of `paths` at [`t0`] with every seam given.
 fn env_full(paths: Paths, seam: Box<dyn Seam>, policy: DeadlinePolicy, probe: Box<dyn Probe>, spawner: Box<dyn Spawner>,
     wake: Box<dyn Wake>) -> Env {
-    Env { paths, clock: Box::new(Fixed(t0())), probe, seam, spawner, wake, secret_policy: policy }
+    Env { secret_policy: policy, ..env_now(paths, seam, probe, spawner, wake, t0()) }
+}
+/// Author's call 3: the env of `paths` at the fixed time `now` with every seam given and an hour of secret-pass budget.
+fn env_now(paths: Paths, seam: Box<dyn Seam>, probe: Box<dyn Probe>, spawner: Box<dyn Spawner>, wake: Box<dyn Wake>,
+    now: SystemTime) -> Env {
+    Env { paths, clock: Box::new(Fixed(now)), probe, seam, spawner, wake, secret_policy: far() }
 }
 fn env_in(h: &Harness, seam: Box<dyn Seam>, policy: DeadlinePolicy) -> Env { env_paths(h.paths.clone(), seam, policy) }
 /// An hour of secret-pass budget: no clock decides the test.
@@ -336,16 +413,35 @@ fn sync_in(h: &Harness) -> Report {
 }
 
 /// The user config of `h`, as the binary loads it.
-fn cfg(h: &Harness) -> Config {
-    zygo_config::load(&LoadContext { paths: h.paths.clone(), repo: None, team: None }).unwrap().config
+fn cfg(h: &Harness) -> Config { cfg_of(&h.paths) }
+/// The user config of `paths`.
+fn cfg_of(paths: &Paths) -> Config {
+    zygo_config::load(&LoadContext { paths: paths.clone(), repo: None, team: None }).unwrap().config
 }
 
 /// `send_cli` in `env` from `key` with subject `{SUBJ}-{n}` and `body`: (exit code, stdout, stderr).
 fn send_env(env: &Env, h: &Harness, key: &str, to: &str, n: u32, body: &str) -> (i32, String, String) {
-    let ws = h.store(WS_ID).read().unwrap().unwrap();
+    send_subject(env, &h.paths, key, to, &format!("{SUBJ}-{n}"), body)
+}
+/// `send_cli` in `env` on the machine of `paths` from `key` with `subject` and `body`: (exit code, stdout, stderr).
+fn send_subject(env: &Env, paths: &Paths, key: &str, to: &str, subject: &str, body: &str) -> (i32, String, String) {
+    let ws = zygo_workspace::state::Store::open(paths, WS_ID).read().unwrap().unwrap();
     let (mut o, mut e) = (Vec::new(), Vec::new());
-    let code = send_cli(env, &ws, Some(key), to, &format!("{SUBJ}-{n}"), body, &cfg(h), &mut o, &mut e);
+    let code = send_cli(env, &ws, Some(key), to, subject, body, &cfg_of(paths), &mut o, &mut e);
     (code, String::from_utf8(o).unwrap(), String::from_utf8(e).unwrap())
+}
+/// A send on the machine of `paths` that must pass ([`send_body`]), with no seam; returns `<id>`. A seam closure, which
+/// holds no [`Harness`], sends with it (#16).
+fn send_paths(paths: &Paths, key: &str, to: &str, n: u32) -> String {
+    let env = env_paths(paths.clone(), Box::new(NoSeam), far());
+    let (code, out, err) = send_subject(&env, paths, key, to, &format!("{SUBJ}-{n}"), &format!("{BODY}-{n}"));
+    sent_id(code, &out, &err, to)
+}
+/// The `<id>` of a send that passed: exit 0, no stderr, stdout `sent <id> to <to>`.
+fn sent_id(code: i32, out: &str, err: &str, to: &str) -> String {
+    assert_eq!((code, err), (0, ""), "{out}");
+    let id = out.strip_prefix("sent ").and_then(|s| s.strip_suffix(&format!(" to {to}\n"))).unwrap_or_else(|| panic!("{out}"));
+    id.to_string()
 }
 /// [`send_env`] with no seam.
 fn send_with(h: &Harness, key: &str, to: &str, n: u32, body: &str) -> (i32, String, String) {
@@ -356,9 +452,7 @@ fn send(h: &Harness, key: &str, to: &str, n: u32) -> (i32, String, String) { sen
 /// A send that must pass: exit 0, no stderr, stdout `sent <id> to <to>`; returns `<id>`.
 fn send_body(h: &Harness, key: &str, to: &str, n: u32, body: &str) -> String {
     let (code, out, err) = send_with(h, key, to, n, body);
-    assert_eq!((code, err.as_str()), (0, ""), "{out}");
-    let id = out.strip_prefix("sent ").and_then(|s| s.strip_suffix(&format!(" to {to}\n"))).unwrap_or_else(|| panic!("{out}"));
-    id.to_string()
+    sent_id(code, &out, &err, to)
 }
 fn send_ok(h: &Harness, key: &str, to: &str, n: u32) -> String { send_body(h, key, to, n, &format!("{BODY}-{n}")) }
 
@@ -410,6 +504,95 @@ fn test_commit(bare: &Path, tree: &str) -> String {
 fn advance(bare: &Path) -> String {
     let tree = git(bare, &["rev-parse", "refs/heads/zygo/mail^{tree}"]);
     test_commit(bare, &tree)
+}
+
+/// #17: `n` new empty commits on `refs/heads/zygo/mail` of `bare` with one `git fast-import` (one process), each with
+/// the tree of the one before and that one as parent, the first on the tip (as `crates/zygo-mail-sync/tests/prune.rs`
+/// `grow`). Returns the new commits (the caller puts them in `made`).
+fn grow(bare: &Path, n: u64) -> Vec<String> {
+    let old = git(bare, &["rev-parse", "refs/heads/zygo/mail"]);
+    let mut s = String::new();
+    for i in 0..n {
+        s.push_str("commit refs/heads/zygo/mail\ncommitter t <t@t.invalid> 1700000000 +0000\ndata 0\n");
+        if i == 0 {
+            s.push_str(&format!("from {old}\n"));
+        }
+        s.push('\n');
+    }
+    git_in(bare, &["fast-import", "--quiet"], s.as_bytes());
+    let new = git(bare, &["rev-parse", "refs/heads/zygo/mail"]);
+    git(bare, &["rev-list", &new, &format!("^{old}")]).lines().map(String::from).collect()
+}
+
+/// The commit count of `refs/heads/zygo/mail` of the bare repository.
+fn count(r: &Remote) -> u64 { git(&r.bare, &["rev-list", "--count", "refs/heads/zygo/mail"]).parse().unwrap() }
+
+/// A test commit on the tip with the new top-level folder `folder` (not at the tip) of the `git mktree` lines `lines`;
+/// returns its id.
+fn add_folder(bare: &Path, folder: &str, lines: &[String]) -> String {
+    let sub = git_in(bare, &["mktree", "--missing"], format!("{}\n", lines.join("\n")).as_bytes());
+    let mut top: Vec<String> = git(bare, &["ls-tree", "refs/heads/zygo/mail"]).lines().map(String::from).collect();
+    assert!(!top.iter().any(|l| l.ends_with(&format!("\t{folder}"))), "{folder} is at the tip");
+    top.push(format!("040000 tree {sub}\t{folder}"));
+    let tree = git_in(bare, &["mktree", "--missing"], format!("{}\n", top.join("\n")).as_bytes());
+    test_commit(bare, &tree)
+}
+
+/// The M§5 version 1 JSON of a message `id` from `from` to `to` with `subject` and the body `{BODY}-<id>` (as the
+/// messages of [`hostile`]).
+fn message(id: &str, from: &str, to: &str, subject: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({"version": 1, "id": id, "from": from, "to": to, "sent_at": "2026-11-25T10:00:00Z",
+        "subject": subject, "body": format!("{BODY}-{id}")})).unwrap()
+}
+
+/// The sorted `<ULID>` names of the files in `mail/<key>/new/` of `h`; empty when the folder is missing.
+fn new_ids(h: &Harness, key: &str) -> Vec<String> {
+    let Ok(d) = std::fs::read_dir(mail_dir(&h.paths, WS_ID).join(key).join("new")) else { return Vec::new() };
+    let mut ids: Vec<String> = d.map(|e| e.unwrap().file_name().into_string().unwrap())
+        .map(|n| n.strip_suffix(".json").map(String::from).unwrap_or(n)).collect();
+    ids.sort();
+    ids
+}
+
+/// Author's call 5: `zygo hook workspace --event <event>` in process for the session folder `sd` of `h`, with the sync
+/// seams of `env` and a `zygo` program that does not exist.
+fn hook(h: &Harness, sd: &SessionDir, event: &str, payload: &Value, env: &Env) -> Option<String> {
+    let bytes = serde_json::to_vec(payload).unwrap();
+    let root = sd.root.clone().into_os_string();
+    run_with_sync(event, &bytes, &h.paths, &|k| (k == "ZYGO_SESSION_DIR").then(|| root.clone()), &h.root().join("missing"), None, env)
+        .unwrap()
+}
+
+/// The entries of `git worktree list --porcelain` in `repo` (as `crates/zygo/tests/mail_sync_forget.rs`).
+fn worktrees(repo: &Path) -> Vec<String> {
+    git(repo, &["worktree", "list", "--porcelain"]).split("\n\n").map(String::from).collect()
+}
+
+/// #2: the parts of the user repository that the sync must not change (S-G2; as
+/// `crates/zygo-mail-sync/tests/sync_pass.rs` `snap`).
+#[derive(Debug, PartialEq)]
+struct Snap {
+    head: String,
+    branches: String,
+    status: String,
+    index: Vec<u8>,
+    fetch_head: Option<Vec<u8>>,
+    packs: BTreeSet<String>,
+    worktrees: String,
+}
+fn snap(root: &Path) -> Snap {
+    let packs = std::fs::read_dir(root.join(".git/objects/pack"))
+        .map(|d| d.map(|e| e.unwrap().file_name().into_string().unwrap()).collect())
+        .unwrap_or_default();
+    Snap {
+        head: git(root, &["rev-parse", "HEAD"]),
+        branches: git(root, &["for-each-ref", "refs/heads"]),
+        status: git(root, &["status", "--porcelain"]),
+        index: std::fs::read(root.join(".git/index")).unwrap(),
+        fetch_head: std::fs::read(root.join(".git/FETCH_HEAD")).ok(),
+        packs,
+        worktrees: git(root, &["worktree", "list", "--porcelain"]),
+    }
 }
 
 /// S§19 #12: six hostile entries in `bob-q7x@<host>/` on top of the tip: a link, a gitlink, a 9 MiB blob, a message
@@ -682,6 +865,99 @@ fn usage_findings(db: &Path) -> (usize, Vec<String>) {
     (rows, found)
 }
 
+/// One machine that [`scan`] reads: its label in a finding, its own member names (M§6, `workspace.json`), its own hosts
+/// (S§7.5, the keys of `state.json`), and whether it synced (then each of its stores must be there).
+struct Scanned<'a> {
+    label: &'a str,
+    h: &'a Harness,
+    own_names: Vec<&'a str>,
+    own_hosts: Vec<String>,
+    synced: bool,
+}
+
+/// The tip of the zygo branch ref of `repo` (`refs/heads/zygo/mail` in a bare repository,
+/// `refs/remotes/origin/zygo/mail` in a checkout); `None` when the ref does not exist.
+fn zygo_ref(repo: &Path, bare: bool) -> Option<String> {
+    let name = if bare { "refs/heads/zygo/mail" } else { "refs/remotes/origin/zygo/mail" };
+    let o = git_cmd().args(["rev-parse", "--verify", "-q", name]).current_dir(repo).output().unwrap();
+    o.status.success().then(|| out_of(&o).trim_end().to_string())
+}
+
+/// The session logs `<root>/sess-*/session.log` of `h` that exist.
+fn session_logs(h: &Harness) -> Vec<PathBuf> {
+    let mut logs: Vec<PathBuf> = std::fs::read_dir(h.root()).unwrap()
+        .map(|e| e.unwrap())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("sess-"))
+        .map(|e| e.path().join("session.log"))
+        .filter(|p| p.is_file())
+        .collect();
+    logs.sort();
+    logs
+}
+
+/// Step 2: the scans of S§19 #24 after a walk. For each machine of `ms`: `errors.log`, `workspace.json`, `state.json`
+/// (when it exists), the refs of the sync worktree, the sync files, each session log and the usage store. For each bare
+/// repository of `remotes` and each machine repository: every commit and tag ([`commit_findings`]), every ref name
+/// ([`ref_findings`]), and the reflogs and linked-worktree admin files ([`git_meta_findings`]). A synced machine must
+/// have each store; a repository whose zygo branch ref is a commit not in `made` must have a zygo commit checked.
+/// Returns the findings.
+fn scan(remotes: &[&Remote], made: &BTreeSet<String>, ms: &[Scanned]) -> Vec<String> {
+    let mut found = Vec::new();
+    for m in ms {
+        let (h, s) = (m.h, sp(m.h));
+        found.extend(text_findings(&format!("{} errors.log", m.label), errors(h).as_bytes(), &MARKERS));
+        let ws = h.store(WS_ID).dir().join("workspace.json");
+        assert!(!m.synced || ws.is_file(), "{}: no workspace.json", m.label);
+        if ws.is_file() {
+            found.extend(workspace_findings(&ws, &m.own_names));
+        }
+        assert!(!m.synced || s.state.is_file(), "{}: no state.json", m.label);
+        if s.state.is_file() {
+            if m.synced {
+                let st: Value = serde_json::from_slice(&std::fs::read(&s.state).unwrap()).unwrap();
+                assert!(!st["pushed"].as_object().unwrap().is_empty(), "{}: {st}", m.label);
+            }
+            let own: Vec<&str> = m.own_hosts.iter().map(String::as_str).collect();
+            found.extend(state_findings(&s.state, &own));
+        }
+        assert!(!m.synced || s.worktree.is_dir(), "{}: no sync worktree", m.label);
+        if s.worktree.is_dir() {
+            let (refs, f) = ref_findings(&s.worktree);
+            assert!(refs >= 1, "{}: no ref read", s.worktree.display());
+            found.extend(f);
+        }
+        let (n, f) = files_findings(&sync_files(h), &MARKERS);
+        assert!(!m.synced || n >= 2, "{}: imported and identity", m.label);
+        found.extend(f);
+        found.extend(files_findings(&session_logs(h), &MARKERS).1);
+        found.extend(usage_findings(&h.paths.usage_db).1);
+    }
+    let repos = remotes.iter().map(|r| (r.bare.clone(), true, false))
+        .chain(ms.iter().map(|m| (m.h.repo(), false, m.synced)));
+    for (repo, bare, synced) in repos {
+        // MS-22 review F4: each scan read something in each repository.
+        let (checked, f) = commit_findings(&repo, made);
+        let tip = zygo_ref(&repo, bare);
+        assert!(!synced || tip.is_some(), "{}: no zygo branch fetched", repo.display());
+        if tip.is_some_and(|t| !made.contains(&t)) {
+            assert!(checked >= 1, "{}: no zygo commit checked", repo.display());
+        }
+        found.extend(f);
+        let (refs, f) = ref_findings(&repo);
+        assert!(refs >= 1, "{}: no ref read", repo.display());
+        found.extend(f);
+        // MS-22 review F3: the reflogs (the sync worktree's among them) and the linked worktrees' admin files.
+        let (read, f) = git_meta_findings(&repo);
+        assert!(bare || read.logs >= 1, "{}: no reflog", repo.display());
+        // MS-22 review R2 F-B: a synced machine has a sync worktree, so the scan read its admin folder and its index.
+        if synced {
+            assert!(read.admins >= 1 && read.indexes >= 1, "{}: {read:?}", repo.display());
+        }
+        found.extend(f);
+    }
+    found
+}
+
 #[test] // author's call 6: each scanner reports a planted marker and passes the allowed form
 fn scanners_find_a_planted_marker() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -776,6 +1052,11 @@ fn no_mail_content_after_the_scenarios() {
     let a = machine(&r, HOST_A, ALICE, A_NAME);
     let b = machine(&r, HOST_B, BOB, B_NAME);
     let mut made = BTreeSet::from([git(&r.bare, &["rev-parse", "refs/heads/main"])]);
+    // #2 (user repository untouched): `gc.auto = 1` in each user checkout, and its state before the first sync.
+    for h in [&a, &b] {
+        git(&h.repo(), &["config", "gc.auto", "1"]);
+    }
+    let before = [snap(&a.repo()), snap(&b.repo())];
     for h in [&b, &a, &b] {
         let o = sync_bin(h, &[]);
         assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
@@ -796,6 +1077,21 @@ fn no_mail_content_after_the_scenarios() {
         assert!(ack["imported"].as_array().unwrap().iter().any(|u| u == id.as_str()), "{ack}");
     }
     assert_eq!(call(&tools(&b, BOB), "mail_list", json!({})).unwrap()["remote"], json!([format!("{A_NAME}@{HOST_A}")]));
+    // #2: after #1, `HEAD`, the branch list, the status, the index, `FETCH_HEAD` and the packs of each user checkout
+    // are as before; no `gc.log`; the worktree list is as before plus one detached sync worktree.
+    for (h, s0) in [&a, &b].into_iter().zip(before) {
+        let s = snap(&h.repo());
+        assert_eq!((&s.head, &s.branches, &s.status), (&s0.head, &s0.branches, &s0.status), "{}", h.root().display());
+        assert_eq!(s.index, s0.index, "{}", h.root().display());
+        assert_eq!(s.fetch_head, s0.fetch_head, "{}", h.root().display());
+        assert_eq!(s.packs, s0.packs, "{}", h.root().display());
+        assert!(!h.repo().join(".git/gc.log").exists(), "{}", h.root().display());
+        let added = s.worktrees.strip_prefix(&s0.worktrees).unwrap();
+        let blocks: Vec<&str> = added.split("\n\n").map(str::trim).filter(|b| !b.is_empty()).collect();
+        assert_eq!(blocks.len(), 1, "{added}");
+        assert!(blocks[0].starts_with(&format!("worktree {}\n", sp(h).worktree.display())), "{added}");
+        assert!(blocks[0].lines().any(|l| l == "detached"), "{added}");
+    }
 
     // #3 (push race, then five moves).
     let ia = send_ok(&a, ALICE, &format!("{B_NAME}@{HOST_B}"), 3);
@@ -984,11 +1280,19 @@ fn no_mail_content_after_the_scenarios() {
     assert!(errors(&a).lines().any(|l| l.ends_with("mail sync: stopped: twin")), "{}", errors(&a));
     let st: Value = serde_json::from_slice(&std::fs::read(sp(&a).state).unwrap()).unwrap();
     assert_eq!(st["last_error"], "twin");
+    // #11: `zygo doctor` on A prints the twin line while it stands.
+    let doctor_twin = |h: &Harness| {
+        let o = zygo(h, &["doctor"], None);
+        assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+        out_of(&o).lines().any(|l| l == TWIN)
+    };
+    assert!(doctor_twin(&a));
     mid.extend(state_findings(&sp(&a).state, &[HOST_A2]));
     config(&a, HOST_A3, "", "");
     let o = sync_bin(&a, &["--new-identity"]);
     assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
     assert!(tip_paths(&r).contains(&format!("registry/{HOST_A3}.json")));
+    assert!(!doctor_twin(&a));
 
     // #6 (public check, the `public` verdict of the injected probe: no network host is asked): the sync stops before
     // any fetch, the bare repository's refs do not change, and a remote send is refused.
@@ -1053,10 +1357,19 @@ fn no_mail_content_after_the_scenarios() {
     for n in [24, 25] {
         send_ok(&c, ALICE, &format!("{B_NAME}@{HOST_A}"), n);
     }
+    // #26: another worktree of C's checkout, beside its own and the sync worktree.
+    git(&c.repo(), &["worktree", "add", "-q", "-b", "other", c.root().join("other").to_str().unwrap()]);
+    let wt_before = worktrees(&c.repo());
+    let is_sync = |e: &String| e.starts_with(&format!("worktree {}\n", sp(&c).worktree.display()));
+    assert_eq!((wt_before.len(), wt_before.iter().filter(|e| is_sync(e)).count()), (3, 1), "{wt_before:?}");
     let prompt = "zygo: 2 unsent messages and 0 refused messages will be deleted. Forget the workspace? [y/N]";
     let o = zygo(&c, &["ws", "forget", "app"], Some(b"y\n"));
     assert_eq!((o.status.code(), out_of(&o), err_of(&o)), (Some(0), "zygo: forgot app\n".into(), format!("{prompt} ")));
     assert!(std::fs::symlink_metadata(c.store(WS_ID).dir()).is_err());
+    // #26: the sync worktree left git's list; the other worktrees are unchanged.
+    let want: Vec<String> = wt_before.iter().filter(|e| !is_sync(e)).cloned().collect();
+    assert_eq!(worktrees(&c.repo()), want);
+    assert_eq!(want.len(), 2);
 
     // Usage row (author's call 5), on B.
     let sd = SessionDir::new(b.root().join("sess-u"));
@@ -1078,54 +1391,585 @@ fn no_mail_content_after_the_scenarios() {
     assert!(out_of(&o).contains("[zygo trimmed this output:"), "{} {}", out_of(&o), err_of(&o));
 
     // The scans (S§19 #24 as rewritten; each also proves the file it reads is there).
-    let (ea, eb) = (errors(&a), errors(&b));
-    assert!(!ea.is_empty() && !eb.is_empty());
-    let mut found = Vec::new();
-    found.extend(text_findings("A errors.log", ea.as_bytes(), &MARKERS));
-    found.extend(text_findings("B errors.log", eb.as_bytes(), &MARKERS));
-    found.extend(workspace_findings(&a.store(WS_ID).dir().join("workspace.json"), &[A_NAME]));
-    found.extend(workspace_findings(&b.store(WS_ID).dir().join("workspace.json"), &[B_NAME]));
+    assert!(!errors(&a).is_empty() && !errors(&b).is_empty());
     // S§7.5 own hosts at the end of the walk (MS-22 review F1): A has its current host only; B has its current host
     // and each old host whose ack still holds its identity.
     let (own_a, own_b) = (own_hosts_at_tip(&r, &a, HOST_A3), own_hosts_at_tip(&r, &b, HOST_A));
     assert_eq!(own_a, vec![HOST_A3.to_string()]);
     assert_eq!(own_b[0], HOST_A);
     assert!(!own_b.iter().any(|h| h == HOST_B), "{own_b:?}");
-    for (h, own) in [(&a, &own_a), (&b, &own_b)] {
-        let st: Value = serde_json::from_slice(&std::fs::read(sp(h).state).unwrap()).unwrap();
-        assert!(!st["pushed"].as_object().unwrap().is_empty());
-        let own: Vec<&str> = own.iter().map(String::as_str).collect();
-        found.extend(state_findings(&sp(h).state, &own));
-    }
-    for repo in [r.bare.clone(), a.repo(), b.repo(), c.repo()] {
-        // MS-22 review F4: each scan read something in each repository.
-        let (checked, f) = commit_findings(&repo, &made);
-        assert!(checked >= 1, "{}: no zygo commit checked", repo.display());
-        found.extend(f);
-        let (refs, f) = ref_findings(&repo);
-        assert!(refs >= 1, "{}: no ref read", repo.display());
-        found.extend(f);
-        // MS-22 review F3: the reflogs (the sync worktree's among them) and the linked worktrees' admin files.
-        let (read, f) = git_meta_findings(&repo);
-        assert!(repo == r.bare || read.logs >= 1, "{}: no reflog", repo.display());
-        // MS-22 review R2 F-B: A and B have a sync worktree (C's went with its forget), so the scan read its admin
-        // folder and its index.
-        if repo == a.repo() || repo == b.repo() {
-            assert!(read.admins >= 1 && read.indexes >= 1, "{}: {read:?}", repo.display());
-        }
-        found.extend(f);
-    }
-    for h in [&a, &b] {
-        let (refs, f) = ref_findings(&sp(h).worktree);
-        assert!(refs >= 1, "{}: no ref read", sp(h).worktree.display());
-        found.extend(f);
-        let (n, f) = files_findings(&sync_files(h), &MARKERS);
-        assert!(n >= 2, "{}: imported and identity", h.root().display());
-        found.extend(f);
-    }
+    // C's stores went with its forget (scanned above, in `mid`); its repository stays and is scanned.
+    let mut found = scan(&[&r], &made, &[
+        Scanned { label: "A", h: &a, own_names: vec![A_NAME], own_hosts: own_a, synced: true },
+        Scanned { label: "B", h: &b, own_names: vec![B_NAME], own_hosts: own_b, synced: true },
+        Scanned { label: "C", h: &c, own_names: vec![A_NAME], own_hosts: own_c, synced: false },
+    ]);
     found.extend(mid);
-    let (rows, f) = usage_findings(&b.paths.usage_db);
+    let (rows, _) = usage_findings(&b.paths.usage_db);
     assert!(rows >= 1, "the trim hook wrote no usage row");
-    found.extend(f);
+    assert_eq!(found, Vec::<String>::new());
+}
+
+/// Writes the member cache of `h` with the one host `host` and its one member `name`; the mail folders are made first
+/// (as `crates/zygo-mail-sync/tests/sync_pass.rs` `knows`).
+fn knows(h: &Harness, host: &str, name: &str) {
+    let s = sp(h);
+    for d in [&s.mail, &s.sync] {
+        zygo_workspace::mail::ensure_mail_root(d).unwrap();
+    }
+    write_cache(&s, &MemberCache { hosts: [(host.to_string(), vec![name.to_string()])].into() }).unwrap();
+}
+
+#[test] // S-C2, S§6.5, S§19 #24 (FX-26 walk 2): after #8 (two bootstraps between one fetch and one push), #10 (a moved
+        // repository) and #7 (own branch only), no marker is in a log, a state file, the usage store, a commit or a ref
+        // name, and every zygo commit has the S§6.5 message and identity
+fn no_mail_content_after_the_branch_scenarios() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _h = hermetic(); // dropped after every machine of the walk, before `_g`
+
+    // 2.1 #8 (bootstrap race): no branch on the remote; B bootstraps between A's fetch and A's push.
+    let r2 = remote();
+    let mut made = BTreeSet::from([git(&r2.bare, &["rev-parse", "refs/heads/main"])]);
+    let a = machine(&r2, HOST_A, ALICE, A_NAME);
+    let b = machine(&r2, HOST_B, BOB, B_NAME);
+    knows(&a, HOST_B, B_NAME);
+    knows(&b, HOST_A, A_NAME);
+    let (to_a, to_b) = (format!("{A_NAME}@{HOST_A}"), format!("{B_NAME}@{HOST_B}"));
+    let ida = send_ok(&a, ALICE, &to_b, 1);
+    let idb = send_ok(&b, BOB, &to_a, 2);
+    let (b_paths, mut first, inner) = (b.paths.clone(), true, Arc::new(Mutex::new(None)));
+    let inner2 = Arc::clone(&inner);
+    let race = Hook::new(move |p| {
+        if p == "before_push" && std::mem::take(&mut first) {
+            let env = env_paths(b_paths.clone(), Box::new(NoSeam), far());
+            *inner2.lock().unwrap() = Some(run_with(&env, WS_ID, Mode::Child, &Opts::default()).is_ok());
+        }
+        Ok(())
+    });
+    run_with(&env_in(&a, Box::new(race), far()), WS_ID, Mode::Cli, &Opts::default()).unwrap();
+    assert_eq!(*inner.lock().unwrap(), Some(true), "B's bootstrap at A's first push");
+    let t = tip(&r2);
+    assert_eq!(git(&r2.bare, &["rev-list", "--max-parents=0", &t]).lines().count(), 1);
+    let paths = tip_paths(&r2);
+    assert!(paths.contains(&format!("{to_b}/{ida}.json")) && paths.contains(&format!("{to_a}/{idb}.json")), "{paths:?}");
+    assert_eq!(tip_blob(&r2, "ZYGO-MAIL").unwrap(), b"1\n");
+    assert_eq!(git(&r2.bare, &["for-each-ref", "--format=%(refname)", "refs/heads/zygo/"]), "refs/heads/zygo/mail");
+    assert_eq!(sync_in(&b).delivered, 1);
+    // A's pass fetched again after the rejected push and imported B's message then (S§8.3): each message is in its
+    // target's `new/` once, and A's next pass delivers nothing.
+    assert_eq!(sync_in(&a).delivered, 0);
+    assert_eq!((new_ids(&a, ALICE), new_ids(&b, BOB)), (vec![idb.clone()], vec![ida.clone()]));
+
+    // 2.2 #10 (moved repository): a new home E with A's host, whose other workspace state holds A's identity.
+    let e = machine(&r2, HOST_A, ALICE, A_NAME);
+    let other = SyncPaths::new(&e.paths, OTHER_WS).unwrap();
+    std::fs::create_dir_all(other.mail.parent().unwrap()).unwrap();
+    for d in [&other.mail, &other.sync] {
+        zygo_workspace::mail::ensure_mail_root(d).unwrap();
+    }
+    std::fs::copy(sp(&a).identity, &other.identity).unwrap();
+    let refs0 = git(&r2.bare, &["for-each-ref"]);
+    let o = sync_bin(&e, &[]);
+    let moved = format!("{COLLISION} The workspace state {OTHER_WS} on this machine also holds that identity.\n");
+    assert_eq!((o.status.code(), err_of(&o)), (Some(1), moved));
+    assert!(errors(&e).lines().any(|l| l.ends_with("mail sync: stopped: collision")), "{}", errors(&e));
+    assert_eq!(git(&r2.bare, &["for-each-ref"]), refs0);
+
+    // 2.3 #7 (own branch only): `zygo/mail` without `ZYGO-MAIL`, then `sync = "main"`, then no host.
+    let r3 = remote();
+    made.insert(git(&r3.bare, &["rev-parse", "refs/heads/main"]));
+    let readme = git_in(&r3.bare, &["hash-object", "-w", "--stdin"], b"x\n");
+    let tree = git_in(&r3.bare, &["mktree"], format!("100644 blob {readme}\tREADME\n").as_bytes());
+    let root = git(&r3.bare, &["commit-tree", &tree, "-m", "test root"]);
+    git(&r3.bare, &["update-ref", "refs/heads/zygo/mail", &root]);
+    made.insert(root.clone());
+    let d = machine(&r3, HOST_B2, BOB, B_NAME);
+    let o = sync_bin(&d, &[]);
+    assert_eq!((o.status.code(), err_of(&o)), (Some(1), format!("{MARKER_LINE}\n")));
+    assert_eq!(tip(&r3), root);
+    assert!(errors(&d).lines().any(|l| l.ends_with("mail sync: stopped: marker")), "{}", errors(&d));
+    let st: Value = serde_json::from_slice(&std::fs::read(sp(&d).state).unwrap()).unwrap();
+    assert_eq!(st["last_error"], "marker");
+    d.config(&format!("[mail]\nhost = \"{HOST_B2}\"\n[mail.workspace.app]\nsync = \"main\"\n"));
+    let o = sync_bin(&d, &[]);
+    assert_eq!((o.status.code(), err_of(&o)), (Some(1), format!("{BAD_BRANCH}\n")));
+    let o = zygo_at(&d, &d.repo(), &["config", "check"], &[]);
+    let line = "error: mail.workspace.app.sync: must match ^zygo/[a-z0-9][a-z0-9-]{0,31}$";
+    assert_eq!(o.status.code(), Some(11), "{} {}", out_of(&o), err_of(&o));
+    assert!(out_of(&o).lines().any(|l| l == line), "{}", out_of(&o));
+    d.config("[mail]\n[mail.workspace.app]\nsync = \"zygo/mail\"\n");
+    let o = sync_bin(&d, &[]);
+    assert_eq!((o.status.code(), err_of(&o)), (Some(1), format!("{NO_HOST}\n")));
+    let o = zygo_at(&d, &d.repo(), &["config", "check"], &[]);
+    let line = "error: mail.host: set [mail] host to turn on mail sync; zygo does not publish the system host name";
+    assert_eq!(o.status.code(), Some(11), "{} {}", out_of(&o), err_of(&o));
+    assert!(out_of(&o).lines().any(|l| l == line), "{}", out_of(&o));
+    assert_eq!(tip(&r3), root);
+
+    // The scans (S§19 #24).
+    let (own_a, own_b) = (own_hosts_at_tip(&r2, &a, HOST_A), own_hosts_at_tip(&r2, &b, HOST_B));
+    let found = scan(&[&r2, &r3], &made, &[
+        Scanned { label: "A", h: &a, own_names: vec![A_NAME], own_hosts: own_a, synced: true },
+        Scanned { label: "B", h: &b, own_names: vec![B_NAME], own_hosts: own_b, synced: true },
+        Scanned { label: "E", h: &e, own_names: vec![A_NAME], own_hosts: vec![HOST_A.into()], synced: false },
+        Scanned { label: "D", h: &d, own_names: vec![B_NAME], own_hosts: vec![HOST_B2.into()], synced: false },
+    ]);
+    assert_eq!(found, Vec::<String>::new());
+}
+
+/// #14: a seam that stops the run at the first `point` only.
+fn crash_once(point: &'static str) -> Hook {
+    let mut first = true;
+    Hook::new(move |p| if p == point && std::mem::take(&mut first) { Err(Crash(p)) } else { Ok(()) })
+}
+
+/// The ULIDs that `ack/<host>.json` at the tip of `r` lists.
+fn acked(r: &Remote, host: &str) -> Vec<String> {
+    let ack: Value = serde_json::from_slice(&tip_blob(r, &format!("ack/{host}.json")).unwrap()).unwrap();
+    ack["imported"].as_array().unwrap().iter().map(|u| u.as_str().unwrap().to_string()).collect()
+}
+
+/// How often the imported log of `h` lists `id`.
+fn imported_times(h: &Harness, id: &str) -> usize {
+    std::fs::read_to_string(sp(h).imported).unwrap().lines().filter(|l| *l == id).count()
+}
+
+/// The message of the tip commit of `r`.
+fn tip_message(r: &Remote) -> String {
+    let c = git(&r.bare, &["cat-file", "commit", &tip(r)]);
+    c.split_once("\n\n").map(|(_, m)| format!("{m}\n")).unwrap_or_default()
+}
+
+#[test] // S-C2, S§6.5, S§19 #24 (FX-26 walk 3): after #13 (the import cap), #14 (no second delivery), #17 (prune after
+        // push, the lease) and #18 (prune keeps the unacknowledged, the clock a year later), no marker is in a log, a
+        // state file, the usage store, a commit or a ref name, and every zygo commit has the S§6.5 message and identity
+fn no_mail_content_after_the_import_and_prune_scenarios() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _h = hermetic(); // dropped after every machine of the walk, before `_g`
+    let r = remote();
+    let mut made = BTreeSet::from([git(&r.bare, &["rev-parse", "refs/heads/main"])]);
+    let a = machine(&r, HOST_A, ALICE, A_NAME);
+    let b = machine(&r, HOST_B, BOB, B_NAME);
+    config(&a, HOST_A, "keep = \"1d\"\n", "");
+    config(&b, HOST_B, "max_unread = 5000\nkeep = \"90d\"\n", "");
+    for h in [&b, &a, &b] {
+        let o = sync_bin(h, &[]);
+        assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    }
+    let (to_a, to_b) = (format!("{A_NAME}@{HOST_A}"), format!("{B_NAME}@{HOST_B}"));
+
+    // 3.1 #13 (import cap): 1200 messages for bob-q7x@birch-q7x, one test commit.
+    let ids: Vec<String> = (1..=1200).map(|n: u32| format!("01KQ7Y{n:020}")).collect();
+    let files = tempfile::tempdir().unwrap();
+    let mut list = String::new();
+    for id in &ids {
+        let p = files.path().join(format!("{id}.json"));
+        std::fs::write(&p, message(id, &to_a, &to_b, &format!("{SUBJ}-c"))).unwrap();
+        list.push_str(&format!("{}\n", p.display()));
+    }
+    let blobs = git_in(&r.bare, &["hash-object", "-w", "--stdin-paths"], list.as_bytes());
+    let lines: Vec<String> = blobs.lines().zip(&ids).map(|(blob, id)| format!("100644 blob {blob}\t{id}.json")).collect();
+    assert_eq!(lines.len(), 1200);
+    made.insert(add_folder(&r.bare, &to_b, &lines));
+    let got: Vec<usize> = (0..3).map(|_| sync_in(&b).delivered).collect();
+    assert_eq!(got, vec![500, 500, 200]);
+    assert_eq!(new_ids(&b, BOB), ids);
+    let log = std::fs::read_to_string(sp(&b).imported).unwrap();
+    let logged: Vec<&str> = log.lines().collect();
+    assert_eq!(logged.len(), 1200);
+    assert_eq!(logged.iter().copied().collect::<BTreeSet<&str>>(), ids.iter().map(String::as_str).collect());
+    let ack: BTreeSet<String> = acked(&r, HOST_B).into_iter().collect();
+    assert_eq!(ack, ids.iter().cloned().collect());
+    for _ in 0..2 {
+        call(&tools(&b, BOB), "mail_read", json!({"max": 1000})).unwrap();
+    }
+    assert_eq!(new_count(&b, BOB), 0);
+
+    // 3.2 #14 (no second delivery): a crash after A's push and before its outbox delete, then a prune, then A's next
+    // pass; then a crash after each delivery step.
+    let u = send_ok(&a, ALICE, &to_b, 30);
+    let e = run_with(&env_in(&a, Box::new(crash_once("before_outbox_delete")), far()), WS_ID, Mode::Cli, &Opts::default()).unwrap_err();
+    assert_eq!(e, SyncError::Stopped { line: "zygo: stopped at seam before_outbox_delete".into(), check: "seam" });
+    assert!(sp(&a).outbox.join(format!("{u}.json")).is_file());
+    assert_eq!(sync_in(&b).delivered, 1);
+    run_with(&env_in(&b, Box::new(NoSeam), far()), WS_ID, Mode::Cli, &Opts { prune: true }).unwrap();
+    let at_tip = |id: &str| tip_paths(&r).contains(&format!("{to_b}/{id}.json"));
+    assert!(!at_tip(&u));
+    sync_in(&b);
+    assert!(!acked(&r, HOST_B).contains(&u));
+    assert_eq!(sync_in(&a).pushed, 1); // the path is not at the tip: A adds it again
+    assert!(at_tip(&u));
+    assert_eq!(outbox::count(&sp(&a)).unwrap(), 0);
+    assert_eq!(sync_in(&b).delivered, 0);
+    assert_eq!((new_ids(&b, BOB), imported_times(&b, &u)), (vec![u.clone()], 1));
+    assert!(acked(&r, HOST_B).contains(&u)); // acked again
+    for (n, point) in (31..).zip(["after_incoming", "after_log", "after_new", "after_ack"]) {
+        let v = send_ok(&a, ALICE, &to_b, n);
+        assert_eq!(sync_in(&a).pushed, 1);
+        let e = run_with(&env_in(&b, Box::new(crash_once(point)), far()), WS_ID, Mode::Cli, &Opts::default()).unwrap_err();
+        assert_eq!(e, SyncError::Stopped { line: format!("zygo: stopped at seam {point}"), check: "seam" });
+        sync_in(&b);
+        assert_eq!(new_ids(&b, BOB).iter().filter(|i| **i == v).count(), 1, "{point}");
+        assert_eq!(imported_times(&b, &v), 1, "{point}");
+    }
+
+    // 3.3 #17 (prune after push): 999 commits; the pass whose push makes 1000 prunes, and the new root holds the
+    // pushed message; then a push of another machine between the push and the prune push loses the lease.
+    made.extend(grow(&r.bare, 999 - count(&r)));
+    assert_eq!(sync_in(&a).pushed, 0);
+    assert_eq!(count(&r), 999);
+    let w = send_ok(&a, ALICE, &to_b, 60);
+    assert_eq!(sync_in(&a).pushed, 1);
+    assert_eq!(count(&r), 1);
+    assert!(at_tip(&w));
+    assert_eq!(tip_blob(&r, "ZYGO-MAIL").unwrap(), b"1\n");
+    let paths = tip_paths(&r);
+    for h in [HOST_A, HOST_B] {
+        for p in [format!("registry/{h}.json"), format!("ack/{h}.json")] {
+            assert!(paths.contains(&p), "{p}: {paths:?}");
+        }
+    }
+    assert_eq!(tip_message(&r), MESSAGE);
+    assert_eq!(sync_in(&b).delivered, 1);
+    made.extend(grow(&r.bare, 999 - count(&r)));
+    let x = send_ok(&a, ALICE, &to_b, 61);
+    let (bare, moved) = (r.bare.clone(), Arc::new(Mutex::new(Vec::new())));
+    let m2 = Arc::clone(&moved);
+    let lease = Hook::new(move |p| {
+        if p == "before_prune_push" {
+            m2.lock().unwrap().push(advance(&bare));
+        }
+        Ok(())
+    });
+    assert_eq!(run_with(&env_in(&a, Box::new(lease), far()), WS_ID, Mode::Cli, &Opts::default()).unwrap().pushed, 1);
+    let moved: Vec<String> = moved.lock().unwrap().drain(..).collect();
+    assert_eq!(moved.len(), 1, "the prune was due once");
+    made.extend(moved.iter().cloned());
+    assert_eq!(tip(&r), moved[0]);
+    assert_eq!(count(&r), 1001);
+    assert!(at_tip(&x));
+    sync_in(&a); // the next pass prunes again
+    assert_eq!(count(&r), 1);
+    assert!(at_tip(&x));
+
+    // 3.4 #18 (prune keeps the unacknowledged), last: the clock moves a year. B is idle after its push of u0.
+    let u0 = send_ok(&b, BOB, &to_a, 40);
+    assert_eq!(sync_in(&b).pushed, 1);
+    let u1 = send_ok(&a, ALICE, &to_b, 41);
+    let u2 = send_ok(&a, ALICE, &to_b, 42);
+    let rep = sync_in(&a);
+    assert_eq!((rep.pushed, rep.delivered), (2, 1));
+    assert!(acked(&r, HOST_A).contains(&u0));
+    let year = t0() + YEAR;
+    let at = |h: &Harness| env_now(h.paths.clone(), Box::new(NoSeam), Box::new(NoProbe), Box::new(NoSpawn), Box::new(NoWake), year);
+    run_with(&at(&a), WS_ID, Mode::Cli, &Opts { prune: true }).unwrap();
+    let paths = tip_paths(&r);
+    assert!(!paths.contains(&format!("{to_a}/{u0}.json")), "{paths:?}");
+    for id in [&u1, &u2] {
+        assert!(paths.contains(&format!("{to_b}/{id}.json")), "{id}: {paths:?}");
+    }
+    for h in [HOST_A, HOST_B] {
+        for p in [format!("registry/{h}.json"), format!("ack/{h}.json")] {
+            assert!(paths.contains(&p), "{p}: {paths:?}");
+        }
+    }
+    let got: Vec<usize> = (0..2).map(|_| run_with(&at(&b), WS_ID, Mode::Cli, &Opts::default()).unwrap().delivered).collect();
+    assert_eq!(got, vec![2, 0]);
+    let new_b = new_ids(&b, BOB);
+    for id in [&u1, &u2] {
+        assert_eq!(new_b.iter().filter(|i| *i == id).count(), 1, "{id}");
+        assert!(acked(&r, HOST_B).contains(id), "{id}");
+    }
+    run_with(&at(&a), WS_ID, Mode::Cli, &Opts::default()).unwrap();
+    assert!(!acked(&r, HOST_A).contains(&u0)); // S§7.4: the owner drops the pruned ULID
+
+    // The scans (S§19 #24).
+    let (own_a, own_b) = (own_hosts_at_tip(&r, &a, HOST_A), own_hosts_at_tip(&r, &b, HOST_B));
+    let found = scan(&[&r], &made, &[
+        Scanned { label: "A", h: &a, own_names: vec![A_NAME], own_hosts: own_a, synced: true },
+        Scanned { label: "B", h: &b, own_names: vec![B_NAME], own_hosts: own_b, synced: true },
+    ]);
+    assert_eq!(found, Vec::<String>::new());
+}
+
+/// The env of `h` at `now` with the counting spawn seam `c` and no other effect.
+fn env_count(h: &Harness, c: &Arc<AtomicUsize>, now: SystemTime) -> Env {
+    env_now(h.paths.clone(), Box::new(NoSeam), Box::new(NoProbe), Box::new(Count(Arc::clone(c))), Box::new(NoWake), now)
+}
+/// The whole seconds of `t` since the Unix epoch.
+fn unix(t: SystemTime) -> u64 { t.duration_since(UNIX_EPOCH).unwrap().as_secs() }
+/// `n` seconds.
+fn secs(n: u64) -> Duration { Duration::from_secs(n) }
+
+/// #16: a run of A in `Mode::Child` whose seam, at the first `point`, sends one message to `to` and then runs `then`
+/// with A's paths. Returns the outer report's pass count, what `then` gave, and the id of the message.
+fn starter<T: Send + 'static>(a: &Harness, point: &'static str, to: &str, n: u32,
+    then: impl FnOnce(&Paths) -> T + Send + 'static) -> (u32, T, String) {
+    let (paths, to) = (a.paths.clone(), to.to_string());
+    let got = Arc::new(Mutex::new(None));
+    let got2 = Arc::clone(&got);
+    let mut then = Some(then);
+    let h = Hook::new(move |p| {
+        if p == point && let Some(f) = then.take() {
+            let id = send_paths(&paths, ALICE, &to, n);
+            *got2.lock().unwrap() = Some((f(&paths), id));
+        }
+        Ok(())
+    });
+    let rep = run_with(&env_in(a, Box::new(h), far()), WS_ID, Mode::Child, &Opts::default()).unwrap();
+    let (t, id) = got.lock().unwrap().take().unwrap_or_else(|| panic!("the seam {point} ran"));
+    (rep.passes, t, id)
+}
+
+#[test] // S-C2, S§6.5, S§19 #24 (FX-26 walk 4): after #21 (remote send rules), #28 (terminal escape), #16 (lost wakeup),
+        // #23 (a wake through the multiplexer stub, the `Stop` block), #22 (the rate limit through the hook path, a send
+        // with no gap, a child that does not start), a session-log line, #27 (agent text), #25 (config layers) and #6
+        // (`unknown`, the URL forms, the cache, the probe command), no marker is in a log, a state file, a session log,
+        // the usage store, a commit or a ref name, and every zygo commit has the S§6.5 message and identity
+fn no_mail_content_after_the_hook_wake_and_text_scenarios() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _h = hermetic(); // dropped after every machine of the walk, before `_g`
+    let r = remote();
+    let mut made = BTreeSet::from([git(&r.bare, &["rev-parse", "refs/heads/main"])]);
+    let a = machine(&r, HOST_A, ALICE, A_NAME);
+    let b = machine(&r, HOST_B, BOB, B_NAME);
+    a.store(WS_ID).update(Duration::from_secs(5), &mut |w| {
+        w.members.insert(ANON.into(), MemberRecord { name: None, ..MemberRecord::new(Agent::ClaudeCode) });
+        Ok(())
+    }).unwrap();
+    b.store(WS_ID).update(Duration::from_secs(5), &mut |w| {
+        w.members.get_mut(BOB).unwrap().zygo_session = Some("sbob".into());
+        Ok(())
+    }).unwrap();
+    let held = live(&b.paths, "sbob");
+    for h in [&b, &a, &b] {
+        let o = sync_bin(h, &[]);
+        assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    }
+    let (to_a, to_b) = (format!("{A_NAME}@{HOST_A}"), format!("{B_NAME}@{HOST_B}"));
+    let mcp_send = |key: &str, to: &str, n: u32| {
+        call(&tools(&a, key), "mail_send", json!({"to": to, "subject": format!("{SUBJ}-{n}"), "body": format!("{BODY}-{n}")}))
+    };
+
+    // 4.1 #21 (remote send rules): a member with no name, then a send to `cli@<host>`, through the CLI and MCP.
+    let (code, out, err) = send(&a, ANON, &to_b, 50);
+    assert_eq!((code, out.as_str(), err), (1, "", format!("{NO_NAME}\n")));
+    assert_eq!(mcp_send(ANON, &to_b, 50), Err(ToolError::Failed(NO_NAME.into())));
+    let cli = format!("cli@{HOST_B}");
+    let (code, out, err) = send(&a, ALICE, &cli, 51);
+    assert_eq!((code, out.as_str(), err), (1, "", format!("{RESERVED}\n")));
+    assert_eq!(mcp_send(ALICE, &cli, 51), Err(ToolError::Failed(RESERVED.into())));
+    assert_eq!(outbox::count(&sp(&a)).unwrap(), 0);
+
+    // 4.2 #28 (terminal escape): `zygo mail watch` prints a remote subject that holds `\x1b[2J` as escaped text.
+    let (code, out, err) = send_subject(&env_in(&a, Box::new(NoSeam), far()), &a.paths, ALICE, &to_b,
+        &format!("{SUBJ}-52\x1b[2J"), &format!("{BODY}-52"));
+    let e52 = sent_id(code, &out, &err, &to_b);
+    assert_eq!(sync_in(&a).pushed, 1);
+    assert_eq!(sync_in(&b).delivered, 1);
+    let watched = Arc::new(AtomicUsize::new(0));
+    let env = env_count(&b, &watched, t0());
+    let ws_b = b.store(WS_ID).read().unwrap().unwrap();
+    let (i, mut out) = (Instant::now(), Vec::new());
+    let code = watch_with(&mail_dir(&b.paths, WS_ID), BOB, Duration::ZERO, Duration::ZERO, &|| i, &mut out,
+        &mut watch_sync_step(&env, &ws_b));
+    assert_eq!(code, 0);
+    assert_eq!(String::from_utf8(out.clone()).unwrap(), format!("{e52} {to_a} {SUBJ}-52\\u{{1b}}[2J\n"));
+    assert!(!out.contains(&0x1b));
+    assert_eq!(watched.load(Ordering::SeqCst), 1);
+    call(&tools(&b, BOB), "mail_read", json!({"max": 1000})).unwrap();
+    assert_eq!(new_count(&b, BOB), 0);
+
+    // 4.3 #16 (lost wakeup), on A in `Mode::Child`.
+    let at_tip = |id: &str| tip_paths(&r).contains(&format!("{to_b}/{id}.json"));
+    // (a) A second sender and a second child between the end of the holder's pass and its release: the child fails
+    // the lock and marks; the holder runs a second pass.
+    let (passes, inner, l1) = starter(&a, "before_release", &to_b, 53, |p: &Paths| {
+        run_with(&env_paths(p.clone(), Box::new(NoSeam), far()), WS_ID, Mode::Child, &Opts::default()).map(|r| r.passes)
+    });
+    assert_eq!((inner, passes), (Err(SyncError::Busy), 2));
+    assert!(at_tip(&l1));
+    assert!(!sp(&a).again.exists());
+    // (b) A starter between the holder's release and its look takes the free lock and runs the pass itself.
+    let (passes, inner, l2) = starter(&a, "after_release", &to_b, 54, |p: &Paths| {
+        run_with(&env_paths(p.clone(), Box::new(NoSeam), far()), WS_ID, Mode::Child, &Opts::default()).map(|r| r.passes)
+    });
+    assert_eq!((inner, passes), (Ok(1), 1));
+    assert!(at_tip(&l2));
+    // (c) A starter that has written its mark there but not reached the lock: the holder's look sees the mark.
+    let (passes, (), l3) = starter(&a, "after_release", &to_b, 55, |p: &Paths| {
+        mark_again(&SyncPaths::new(p, WS_ID).unwrap()).unwrap();
+    });
+    assert_eq!(passes, 2);
+    assert!(at_tip(&l3));
+    assert!(!sp(&a).again.exists());
+    // B imports and reads the three, so 4.4 counts from an empty inbox.
+    assert_eq!(sync_in(&b).delivered, 3);
+    call(&tools(&b, BOB), "mail_read", json!({"max": 1000})).unwrap();
+    assert_eq!(new_count(&b, BOB), 0);
+
+    // 4.4 #23 (wake): an idle bob with a live launcher is woken through the multiplexer stub once within `wake_gap`;
+    // a busy bob is not, and its `Stop` hook blocks with the M§7.1 line.
+    let typed = Typed::default();
+    let woke = |idle: bool, typed: &Typed, now: SystemTime| {
+        let wake = StubWake { idle, typed: Arc::clone(typed) };
+        let env = env_now(b.paths.clone(), Box::new(NoSeam), Box::new(NoProbe), Box::new(NoSpawn), Box::new(wake), now);
+        run_with(&env, WS_ID, Mode::Cli, &Opts::default()).unwrap().delivered
+    };
+    send_ok(&a, ALICE, &to_b, 56);
+    sync_in(&a);
+    assert_eq!(woke(true, &typed, t0()), 1);
+    send_ok(&a, ALICE, &to_b, 57);
+    sync_in(&a);
+    assert_eq!(woke(true, &typed, t0() + secs(10)), 1); // within wake_gap (30 s, M§11 default)
+    assert_eq!(*typed.lock().unwrap(), vec![("%3".to_string(), WAKE_TEXT.to_string())]);
+    let busy = Typed::default();
+    send_ok(&a, ALICE, &to_b, 58);
+    sync_in(&a);
+    assert_eq!(woke(false, &busy, t0() + secs(100)), 1);
+    assert!(busy.lock().unwrap().is_empty());
+    assert_eq!(new_count(&b, BOB), 3);
+    let sess_b = SessionDir::new(b.root().join(format!("sess-{BOB}")));
+    let none = Arc::new(AtomicUsize::new(0));
+    let stop = |active: bool| json!({"hook_event_name": "Stop", "stop_hook_active": active});
+    let block = hook(&b, &sess_b, "stop", &stop(false), &env_count(&b, &none, t0() + secs(100)));
+    assert_eq!(block, Some(stop_block(3)));
+    assert_eq!(stop_block(3), r#"{"decision":"block","reason":"zygo: 3 new messages; read them with mail_read"}"#);
+    assert_eq!(hook(&b, &sess_b, "stop", &stop(true), &env_count(&b, &none, t0() + secs(100))), None);
+
+    // 4.5 #22 (rate limit) and `session.log`: with the clock fixed, ten `tool-end` events start one child; after the
+    // clock moves 60 s the next event starts a second; a send starts a child with no gap.
+    let tt = t0() + secs(600);
+    let c = Arc::new(AtomicUsize::new(0));
+    for _ in 0..10 {
+        assert_eq!(hook(&b, &sess_b, "tool-end", &json!({}), &env_count(&b, &c, tt)), None);
+    }
+    assert_eq!((c.load(Ordering::SeqCst), read_last_start(&sp(&b))), (1, Some(unix(tt))));
+    hook(&b, &sess_b, "tool-end", &json!({}), &env_count(&b, &c, tt + secs(59)));
+    assert_eq!(c.load(Ordering::SeqCst), 1);
+    hook(&b, &sess_b, "tool-end", &json!({}), &env_count(&b, &c, tt + secs(60)));
+    assert_eq!((c.load(Ordering::SeqCst), read_last_start(&sp(&b))), (2, Some(unix(tt) + 60)));
+    let (c2, a_last) = (Arc::new(AtomicUsize::new(0)), read_last_start(&sp(&a)));
+    for n in 59..62 {
+        let (code, out, err) = send_env(&env_count(&a, &c2, tt), &a, ALICE, &to_b, n, &format!("{BODY}-{n}"));
+        sent_id(code, &out, &err, &to_b);
+    }
+    assert_eq!((c2.load(Ordering::SeqCst), read_last_start(&sp(&a))), (3, a_last));
+    let fail = env_now(b.paths.clone(), Box::new(NoSeam), Box::new(NoProbe), Box::new(FailSpawn), Box::new(NoWake), tt + secs(120));
+    hook(&b, &sess_b, "tool-end", &json!({}), &fail);
+    let line = format!("workspace hook tool-end: cannot start the mail sync child: {}", std::io::Error::from(std::io::ErrorKind::NotFound));
+    assert!(errors(&b).lines().any(|l| l.ends_with(&line)), "{line}: {}", errors(&b));
+    // An `activity.json` that is a folder: the `prompt` hook writes its line to the session log.
+    let activity = sess_b.root.join("activity.json");
+    if activity.is_file() {
+        std::fs::remove_file(&activity).unwrap();
+    }
+    std::fs::create_dir(&activity).unwrap();
+    hook(&b, &sess_b, "prompt", &json!({"hook_event_name": "UserPromptSubmit"}), &env_count(&b, &c, tt + secs(200)));
+    let slog = std::fs::read_to_string(sess_b.log()).unwrap();
+    assert!(slog.lines().any(|l| l.starts_with("workspace hook prompt: ")), "{slog}");
+    std::fs::remove_dir(&activity).unwrap();
+
+    // 4.6 #27 (agent text): after a sync on A that sees B's registry, the session text of A's member lists
+    // bob-q7x@birch-q7x in the item 8 clause, and `mail_list` returns it.
+    assert_eq!(sync_in(&a).pushed, 3);
+    assert_eq!(read_cache(&sp(&a)).hosts, [(HOST_B.to_string(), vec![B_NAME.to_string()])].into());
+    let ta = tools(&a, ALICE);
+    let sess_a = SessionDir::new(a.root().join(format!("sess-{ALICE}")));
+    let view = SessionView::load(&sess_a).unwrap();
+    let mut out = Vec::new();
+    let got = session_start_with_sync(&json!({}), &sess_a, &view, &a.paths, &a.root().join("missing"), &mut out, "TEXT",
+        &env_count(&a, &c2, tt + secs(200))).unwrap();
+    assert_eq!(got, None);
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    let text = v["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
+    let clause = other_machines(std::slice::from_ref(&to_b)).unwrap();
+    assert_eq!(clause, format!("Other machines: {to_b}; mail them by the full address."));
+    assert!(text.contains(&clause), "{text}");
+    assert_eq!(call(&ta, "mail_list", json!({})).unwrap()["remote"], json!([to_b]));
+
+    // 4.7 #25 (config layers): `[mail]` in `.zygo.toml` on the default branch is ignored with the existing line; in
+    // team config it is dropped with one warning.
+    let parent = r.bare.parent().unwrap();
+    git(parent, &["clone", "-q", &r.url, "seed25"]);
+    let seed = parent.join("seed25");
+    std::fs::write(seed.join(".zygo.toml"), format!("[mail]\nhost = \"{HOST_R1}\"\n")).unwrap();
+    git(&seed, &["add", ".zygo.toml"]);
+    git(&seed, &["commit", "-q", "-m", "repo config"]);
+    made.insert(git(&seed, &["rev-parse", "HEAD"]));
+    git(&seed, &["push", "-q", "origin", "HEAD:refs/heads/main"]);
+    git(&a.repo(), &["fetch", "-q", "origin"]);
+    let team = a.root().join("team");
+    std::fs::create_dir(&team).unwrap();
+    // A team layer makes the server's catalog authoritative (`crates/zygo-config/src/layers.rs:495-501`), so the team
+    // file carries the built-in catalog, as a server's does, then its `[mail]` table.
+    let catalog = include_str!("../../zygo-config/data/catalog.toml");
+    std::fs::write(team.join("team.toml"), format!("{catalog}\n[mail]\nhost = \"{HOST_R2}\"\n")).unwrap();
+    let o = zygo_at(&a, &a.repo(), &["config", "check"], &[("ZYGO_SESSION_DIR", team.as_os_str())]);
+    assert_eq!((o.status.code(), out_of(&o).as_str()), (Some(0), "config ok\n"), "{}", err_of(&o));
+    let mut lines: Vec<String> = err_of(&o).lines().map(String::from).collect();
+    lines.sort();
+    let mut want = vec![REPO_LINE.to_string(), TEAM_LINE.to_string()];
+    want.sort();
+    assert_eq!(lines, want);
+    let both: Vec<u8> = o.stdout.iter().chain(&o.stderr).copied().collect();
+    assert_eq!(text_findings("config check", &both, &MARKERS), Vec::<String>::new());
+    sync_in(&a);
+    let paths = tip_paths(&r);
+    assert!(paths.contains(&format!("registry/{HOST_A}.json")), "{paths:?}");
+    for h in [HOST_R1, HOST_R2] {
+        assert!(!paths.contains(&format!("registry/{h}.json")), "{paths:?}");
+    }
+
+    // 4.8 #6 (public check), last: the clock moves. The URL table, then the probe command (not run), then `unknown`
+    // with an `https` push URL, the cache at 59 minutes and a new check at 61.
+    assert_eq!(map_url(&r.url), Mapped::Local);
+    let https = || Mapped::Https("https://example.invalid/p".into());
+    assert_eq!(map_url("https://u:p@example.invalid/p"), https());
+    assert_eq!(map_url("git@example.invalid:p"), https());
+    assert_eq!(map_url("ssh://user@example.invalid:22/p"), https());
+    assert_eq!(map_url("http://example.invalid/p"), Mapped::Unknown);
+    assert_eq!(map_url("ext::sh -c x"), Mapped::Unknown);
+    let home = tempfile::tempdir().unwrap();
+    let url = "https://example.invalid/r.git";
+    let cmd = probe_command(url, home.path());
+    let args: Vec<&OsStr> = cmd.get_args().collect();
+    let tail: Vec<&OsStr> = ["-c", "credential.helper=", "-c", "core.askPass=", "ls-remote", "--heads", url].map(OsStr::new).to_vec();
+    assert!(args.ends_with(&tail), "{args:?}");
+    let envs: std::collections::BTreeMap<&OsStr, Option<&OsStr>> = cmd.get_envs().collect();
+    for (k, v) in [("GIT_ASKPASS", None), ("SSH_ASKPASS", None), ("GIT_TERMINAL_PROMPT", Some(OsStr::new("0"))),
+        ("GIT_CONFIG_NOSYSTEM", Some(OsStr::new("1"))), ("HOME", Some(home.path().as_os_str()))] {
+        assert_eq!(envs.get(OsStr::new(k)), Some(&v), "{k}: {envs:?}");
+    }
+    git(&a.repo(), &["remote", "set-url", "--push", "origin", &format!("https://example.invalid/{B_NAME}/u.git")]);
+    let refs0 = git(&r.bare, &["for-each-ref"]);
+    let t6 = t0() + secs(7200);
+    let probes = Arc::new(AtomicUsize::new(0));
+    let unknown = |now: SystemTime| {
+        let probe = CountProbe(Arc::clone(&probes), Verdict::Unknown("probe says no".into()));
+        env_now(a.paths.clone(), Box::new(NoSeam), Box::new(probe), Box::new(NoSpawn), Box::new(NoWake), now)
+    };
+    let note = vec!["zygo: cannot check if the remote is public: probe says no".to_string()];
+    let rep = run_with(&unknown(t6), WS_ID, Mode::Cli, &Opts::default()).unwrap();
+    assert_eq!((&rep.notes, rep.passes, rep.pushed), (&note, 1, 0));
+    assert_eq!(probes.load(Ordering::SeqCst), 1);
+    assert_eq!(git(&r.bare, &["for-each-ref"]), refs0);
+    let cached = env_now(a.paths.clone(), Box::new(NoSeam), Box::new(NoProbe), Box::new(NoSpawn), Box::new(NoWake), t6 + secs(59 * 60));
+    assert_eq!(run_with(&cached, WS_ID, Mode::Cli, &Opts::default()).unwrap().notes,
+        vec!["zygo: cannot check if the remote is public: the last check, under 1 h ago, could not tell".to_string()]);
+    let rep = run_with(&unknown(t6 + secs(61 * 60)), WS_ID, Mode::Cli, &Opts::default()).unwrap();
+    assert_eq!((probes.load(Ordering::SeqCst), &rep.notes), (2, &note));
+    git(&a.repo(), &["config", "--unset", "remote.origin.pushurl"]);
+    drop(held);
+
+    // The scans (S§19 #24); B's session log is among the files read.
+    let b_log = sess_b.log();
+    assert!(session_logs(&b).contains(&b_log));
+    assert_eq!(files_findings(&[b_log], &MARKERS), (1, vec![]));
+    let (own_a, own_b) = (own_hosts_at_tip(&r, &a, HOST_A), own_hosts_at_tip(&r, &b, HOST_B));
+    let found = scan(&[&r], &made, &[
+        Scanned { label: "A", h: &a, own_names: vec![A_NAME], own_hosts: own_a, synced: true },
+        Scanned { label: "B", h: &b, own_names: vec![B_NAME], own_hosts: own_b, synced: true },
+    ]);
     assert_eq!(found, Vec::<String>::new());
 }
