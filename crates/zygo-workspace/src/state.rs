@@ -824,11 +824,18 @@ pub(crate) fn sweep_tmp(dir: &Path) {
 /// another holder kept the lock for the whole bound. The lock ends when the file is dropped. A link at `path` is not
 /// followed and an entry that is not a regular file is refused ([`open_regular`], FIX-17 Round 2 F3).
 pub(crate) fn lock_file(path: &Path, bound: Duration) -> std::io::Result<Option<File>> {
+    lock_file_as(path, bound, false)
+}
+
+/// [`lock_file`] with the kind of lock chosen: shared when `shared` (holders of a shared lock do not wait for each
+/// other), else exclusive (M§5 `mail/lock`, FX-13).
+pub(crate) fn lock_file_as(path: &Path, bound: Duration, shared: bool) -> std::io::Result<Option<File>> {
     let f = open_regular(private().read(true).write(true).create(true).truncate(false), path)?;
     // `None`: the bound is past the end of the clock, so no deadline exists.
     let deadline = Instant::now().checked_add(bound);
     loop {
-        match fs4::FileExt::try_lock(&f) {
+        let r = if shared { fs4::FileExt::try_lock_shared(&f) } else { fs4::FileExt::try_lock(&f) };
+        match r {
             Ok(()) => return Ok(Some(f)),
             Err(fs4::TryLockError::Error(e)) => return Err(e),
             Err(fs4::TryLockError::WouldBlock) => {
