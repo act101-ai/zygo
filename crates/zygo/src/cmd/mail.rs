@@ -602,7 +602,7 @@ pub(crate) fn workspace_of(
             (id.to_string(), true)
         }
         None => {
-            let (co, _, _) = find_checkout(cwd, git_bound).map_err(|_| anyhow!(NO_WORKSPACE))?;
+            let (co, _, _) = find_checkout(cwd, git_bound, &paths.workspace_cache_dir()).map_err(|_| anyhow!(NO_WORKSPACE))?;
             (workspace_id(&co.common_dir), false)
         }
     };

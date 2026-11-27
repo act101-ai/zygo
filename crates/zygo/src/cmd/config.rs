@@ -177,7 +177,7 @@ fn run_in(tokens: &[String], ctx: &LoadContext, s: &dyn SecretStore, team: &dyn 
     let base = if merged.config.loadout.is_empty() || !shows_loadouts {
         PaneBase { main_root: PathBuf::new(), worktrees: vec![] }
     } else {
-        let (base, warning) = PaneBase::from_folder(ctx.repo.as_deref().unwrap_or(Path::new("")));
+        let (base, warning) = PaneBase::from_folder(ctx.repo.as_deref().unwrap_or(Path::new("")), &ctx.paths.workspace_cache_dir());
         if let Some(m) = warning {
             print_folder_warning(&m);
         }

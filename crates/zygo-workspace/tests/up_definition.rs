@@ -1184,3 +1184,48 @@ fn by_name_and_from_the_checkout_plan_the_same_after_the_main_worktree_is_delete
         }
     }
 }
+
+/// The main worktree that `up::find_checkout` gives from `cwd` with the cache folder of `f` (D1).
+fn main_from(f: &Fx, cwd: &Path) -> Result<PathBuf, up::Exit> {
+    up::find_checkout(cwd, S5, &f.o.paths.workspace_cache_dir()).map(|(_, _, main)| main)
+}
+
+/// The paths of `git worktree list --porcelain` in `dir`, in git's order.
+fn listed(dir: &Path) -> Vec<PathBuf> {
+    let text = git(dir, &["worktree", "list", "--porcelain"]);
+    text.lines().filter_map(|l| l.strip_prefix("worktree ")).map(PathBuf::from).collect()
+}
+
+#[test] // FX-25 review R2 F2, D1, AU77: zygo's own mail-sync worktree under the workspaces cache folder sorts first in the
+        // list of git; it is never the main worktree
+fn mail_sync_worktree_listed_first_is_not_the_main_worktree() {
+    let _g = serial();
+    let mut f = fx(&[(WS, b"version = 1\n")]);
+    let (b, one, two, _store) = two_worktrees(&f);
+    let sync = f.o.paths.workspace_cache_dir().join(workspace_id(&b)).join("mail-sync");
+    fs::create_dir_all(sync.parent().unwrap()).unwrap();
+    git(&b, &["worktree", "add", "-q", "--detach", sync.to_str().unwrap(), "main"]);
+    let sync = canon(&sync);
+    // git's order: the bare entry, then the sync worktree before `one` and `two`.
+    assert_eq!(listed(&b), [b.clone(), sync.clone(), one.clone(), two.clone()]);
+    assert_eq!(main_from(&f, &two), Ok(one.clone()));
+    assert_eq!(main_from(&f, &b), Ok(one.clone()));
+    f.o.cwd = two.clone();
+    assert_eq!(f.up(), gone());
+    let ws = f.planned();
+    assert_eq!((ws.main_root.clone(), ws.name.as_str()), (one.clone(), "one"));
+    assert!(ws.panes.iter().all(|p| p.cwd == one), "{:?}", ws.panes);
+}
+
+#[test] // FX-25 review R2 F3, D1, AU77: an empty folder at the place of a deleted worktree (an empty mount point) is
+        // marked `prunable` by git; it is not the main worktree, also from the bare folder
+fn empty_folder_of_a_deleted_worktree_is_not_the_main_worktree() {
+    let _g = serial();
+    let f = fx(&[(WS, b"version = 1\n")]);
+    let (b, one, two, _store) = two_worktrees(&f);
+    fs::remove_dir_all(&one).unwrap();
+    fs::create_dir(&one).unwrap();
+    assert!(git(&b, &["worktree", "list", "--porcelain"]).contains("\nprunable "));
+    assert_eq!(main_from(&f, &two), Ok(two.clone()));
+    assert_eq!(main_from(&f, &b), Ok(two.clone()));
+}

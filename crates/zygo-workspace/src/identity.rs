@@ -89,19 +89,40 @@ pub fn new_pane_key() -> String {
 }
 
 /// One entry of `git worktree list --porcelain`: `path` is canonical when the directory exists, `branch` has no
-/// `refs/heads/` (none when detached or bare), `bare` marks the bare repository's own entry.
+/// `refs/heads/` (none when detached or bare), `bare` marks the bare repository's own entry, `prunable` an entry that
+/// git marks with its `prunable` line (the worktree's `.git` file is gone: git keeps the entry in its list until
+/// `git worktree prune`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Worktree {
     pub path: PathBuf,
     pub branch: Option<String>,
     pub bare: bool,
+    pub prunable: bool,
 }
 
-/// The main worktree (AU77): the first entry that is not bare and whose folder exists (git keeps a worktree whose
-/// folder was deleted in its list, marked `prunable`, until `git worktree prune`; FX-25 review F1). None when the list
-/// has no such entry: only a bare entry, no entry, or only worktrees whose folders are gone.
-pub fn main_worktree(worktrees: &[Worktree]) -> Option<&Worktree> {
-    worktrees.iter().find(|w| !w.bare && w.path.is_dir())
+/// A valid worktree (AU77, FX-25 review round 2 D1): not bare, not marked `prunable` by git, and its path is not inside
+/// `cache`, zygo's own workspaces cache folder (`Paths::workspace_cache_dir`), where the mail-sync worktree of each
+/// workspace lives (mail-sync design S§6.3). The folder itself is not checked: git's `prunable` mark is the signal.
+pub fn valid_worktree(w: &Worktree, cache: &Path) -> bool {
+    !w.bare && !w.prunable && !in_cache(&w.path, cache)
+}
+
+/// True when `path` is inside `cache`, as given or made canonical (the paths of the list are canonical).
+fn in_cache(path: &Path, cache: &Path) -> bool {
+    path.starts_with(cache) || cache.canonicalize().is_ok_and(|c| path.starts_with(c))
+}
+
+/// The main worktree (AU77): the first valid entry ([`valid_worktree`]) of the list, in git's order. None when the list
+/// has no valid entry.
+pub fn main_worktree<'a>(worktrees: &'a [Worktree], cache: &Path) -> Option<&'a Worktree> {
+    worktrees.iter().find(|w| valid_worktree(w, cache))
+}
+
+/// The first entry that is neither bare nor inside `cache`, prunable or not: the worktree that a repository with no
+/// valid worktree names in its "no checkout" line (W§8.1 step 3). None when the repository has only its bare entry and
+/// zygo's own worktrees.
+pub fn first_user_worktree<'a>(worktrees: &'a [Worktree], cache: &Path) -> Option<&'a Worktree> {
+    worktrees.iter().find(|w| !w.bare && !in_cache(&w.path, cache))
 }
 
 /// Why [`worktrees`] gave no list. `Display`: `not a git repository`, `git not found`, `git worktree list failed`
@@ -229,17 +250,20 @@ pub fn worktrees_by(mut cmd: Command, checkout: &Checkout) -> Result<Vec<Worktre
     text.map(|text| parse(&text)).ok_or(ListError::Failed(String::new()))
 }
 
-/// The entries of `git worktree list --porcelain` output. Lines other than `worktree`, `bare` and a `branch` under
-/// `refs/heads/` change nothing; a path that cannot be made canonical (the directory is gone) is kept as git wrote it.
+/// The entries of `git worktree list --porcelain` output. Lines other than `worktree`, `bare`, `prunable` (alone or
+/// with git's reason) and a `branch` under `refs/heads/` change nothing; a path that cannot be made canonical (the
+/// directory is gone) is kept as git wrote it.
 fn parse(text: &str) -> Vec<Worktree> {
     let mut list: Vec<Worktree> = Vec::new();
     for line in text.lines() {
         if let Some(p) = line.strip_prefix("worktree ") {
             let path = Path::new(p).canonicalize().unwrap_or_else(|_| PathBuf::from(p));
-            list.push(Worktree { path, branch: None, bare: false });
+            list.push(Worktree { path, branch: None, bare: false, prunable: false });
         } else if let Some(current) = list.last_mut() {
             if line == "bare" {
                 current.bare = true;
+            } else if line == "prunable" || line.starts_with("prunable ") {
+                current.prunable = true;
             } else if let Some(name) = line.strip_prefix("branch refs/heads/") {
                 current.branch = Some(name.to_string());
             }

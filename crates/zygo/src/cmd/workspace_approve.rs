@@ -66,7 +66,7 @@ pub(crate) fn run(ctx: &VerbCtx, args: &[String], input: &mut dyn BufRead, promp
     let cwd = std::env::current_dir().map_err(|e| anyhow!("zygo: {}", cwd_error(&e)))?;
     // WD-15 review F5: "not a repository" is exit 2 with this verb's line; any other lookup error (a bare repository with
     // no checkout, a git call that failed) keeps its reason, exit 1.
-    let (co, _, _) = find_checkout(&cwd, GIT_BOUND).map_err(|e| -> anyhow::Error {
+    let (co, _, _) = find_checkout(&cwd, GIT_BOUND, &ctx.paths.workspace_cache_dir()).map_err(|e| -> anyhow::Error {
         if e.message == up::NOT_A_REPO {
             UsageError(NOT_A_REPO.into()).into()
         } else {

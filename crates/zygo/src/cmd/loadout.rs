@@ -291,8 +291,8 @@ pub(crate) struct PaneBase {
 impl PaneBase {
     /// The base of the repository of `here`, by `zygo up`'s own lookup (`find_checkout`). When it fails: `here` with no
     /// worktree, and the reason.
-    pub(crate) fn from_folder(here: &Path) -> (PaneBase, Option<String>) {
-        match find_checkout(here, GIT_BOUND) {
+    pub(crate) fn from_folder(here: &Path, cache: &Path) -> (PaneBase, Option<String>) {
+        match find_checkout(here, GIT_BOUND, cache) {
             Ok((_, list, main)) => (PaneBase { main_root: main, worktrees: list }, None),
             Err(e) => (PaneBase { main_root: here.to_path_buf(), worktrees: vec![] }, Some(e.message)),
         }
@@ -382,7 +382,8 @@ pub fn run(a: &LoadoutArgs) -> i32 {
     if let Some(code) = op5_exit() {
         return code;
     }
-    let cfg = match user_config_or_exit(&Paths::from_env(), "loadout") {
+    let paths = Paths::from_env();
+    let cfg = match user_config_or_exit(&paths, "loadout") {
         Ok(c) => c,
         Err(code) => return code,
     };
@@ -421,7 +422,7 @@ pub fn run(a: &LoadoutArgs) -> i32 {
                 }
             };
             // D6: the same lookup as `config show` and `config check`
-            let (base, warning) = PaneBase::from_folder(&here);
+            let (base, warning) = PaneBase::from_folder(&here, &paths.workspace_cache_dir());
             if let Some(m) = warning {
                 print_folder_warning(&m);
             }

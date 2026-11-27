@@ -89,6 +89,8 @@ fn repo(parent: &Path, name: &str) -> PathBuf {
     git(&parent.join(name), &["commit", "-q", "--allow-empty", "-m", "a"]);
     parent.join(name)
 }
+/// A cache folder that holds no worktree of these tests.
+fn no_cache() -> PathBuf { PathBuf::from("/nonexistent/zygo-cache/workspaces") }
 fn co(dir: &Path) -> Checkout { checkout(dir, Instant::now() + GIT).unwrap() }
 /// Beside `w`: worktree `a` on branch `feat` and worktree `b` detached.
 fn two_linked(w: &Path) -> (PathBuf, PathBuf) {
@@ -110,7 +112,7 @@ fn one_repository_has_one_id_and_two_apps_get_two_names() {
     assert_ne!(workspace_id(&co(&app2).common_dir), id);
     let name = |dir: &Path| {
         let list = worktrees(&co(dir)).unwrap();
-        slug(main_worktree(&list).unwrap().path.file_name().unwrap().to_str().unwrap())
+        slug(main_worktree(&list, &no_cache()).unwrap().path.file_name().unwrap().to_str().unwrap())
     };
     let first = unique_name(&name(&a), &|_| false); // from a linked worktree: the main worktree gives the name
     assert_eq!(first, "app");
@@ -123,12 +125,12 @@ fn worktrees_lists_the_main_worktree_first() {
     let w = repo(t.path(), "w");
     let (a, b) = two_linked(&w);
     let mut list = worktrees(&co(&a)).unwrap();
-    assert_eq!(list[0], Worktree { path: canon(&w), branch: Some("main".into()), bare: false });
-    assert_eq!(main_worktree(&list), Some(&list[0]));
+    assert_eq!(list[0], Worktree { path: canon(&w), branch: Some("main".into()), bare: false, prunable: false });
+    assert_eq!(main_worktree(&list, &no_cache()), Some(&list[0]));
     list[1..].sort_by(|x, y| x.path.cmp(&y.path));
     assert_eq!(list[1..], [
-        Worktree { path: canon(&a), branch: Some("feat".into()), bare: false },
-        Worktree { path: canon(&b), branch: None, bare: false },
+        Worktree { path: canon(&a), branch: Some("feat".into()), bare: false, prunable: false },
+        Worktree { path: canon(&b), branch: None, bare: false, prunable: false },
     ]);
 }
 
@@ -140,26 +142,57 @@ fn bare_repository_main_worktree_is_the_first_non_bare_entry() {
     let bare = canon(&t.path().join("repo.git"));
     let only = Checkout { top: bare.clone(), common_dir: bare.clone(), main_root: bare.clone(), deadline: Instant::now() + GIT };
     let list = worktrees(&only).unwrap();
-    assert_eq!(list, [Worktree { path: bare.clone(), branch: None, bare: true }]);
-    assert_eq!(main_worktree(&list), None);
+    assert_eq!(list, [Worktree { path: bare.clone(), branch: None, bare: true, prunable: false }]);
+    assert_eq!(main_worktree(&list, &no_cache()), None);
     git(&t.path().join("repo.git"), &["worktree", "add", "-q", "../main", "main"]);
     let c = co(&t.path().join("main"));
     assert_eq!(c.main_root, bare); // the AU77 premise: `Checkout.main_root` is the bare directory
     let list = worktrees(&c).unwrap();
     assert!(list[0].bare);
-    let main = Worktree { path: canon(&t.path().join("main")), branch: Some("main".into()), bare: false };
-    assert_eq!(main_worktree(&list), Some(&main));
+    let main = Worktree { path: canon(&t.path().join("main")), branch: Some("main".into()), bare: false, prunable: false };
+    assert_eq!(main_worktree(&list, &no_cache()), Some(&main));
 }
 
-#[test] // FX-25 review F1, AU77: a worktree whose folder is gone is not the main worktree
-fn main_worktree_is_the_first_non_bare_entry_whose_folder_exists() {
+#[test] // FX-25 review R2 D1, AU77: the main worktree is the first entry that is not bare, not prunable and not inside
+        // zygo's workspaces cache folder; whether its folder exists is not looked at
+fn main_worktree_is_the_first_valid_entry() {
     let t = TempDir::new().unwrap();
     let here = canon(t.path());
-    let entry = |path: PathBuf, bare: bool| Worktree { path, branch: None, bare };
-    let gone = entry(here.join("one"), false);
-    let list = [entry(here.join("repo.git"), true), gone.clone(), entry(here.clone(), false)];
-    assert_eq!(main_worktree(&list), Some(&list[2]));
-    assert_eq!(main_worktree(&[gone]), None);
+    let cache = here.join("cache").join("workspaces");
+    let entry = |path: PathBuf, bare: bool, prunable: bool| Worktree { path, branch: None, bare, prunable };
+    let sync = entry(cache.join("0123456789abcdef").join("mail-sync"), false, false);
+    let pruned = entry(here.join("one"), false, true);
+    // An entry that git does not mark is valid also when no folder is there: git's mark is the signal.
+    let unmarked = entry(here.join("not-made"), false, false);
+    let list = [entry(here.join("repo.git"), true, false), sync.clone(), pruned.clone(), unmarked.clone()];
+    assert_eq!(main_worktree(&list, &cache), Some(&unmarked));
+    assert!(list.iter().map(|w| valid_worktree(w, &cache)).eq([false, false, false, true]));
+    assert_eq!(main_worktree(&[sync.clone(), pruned.clone()], &cache), None);
+    assert_eq!(first_user_worktree(&[sync.clone(), pruned.clone()], &cache), Some(&pruned));
+    assert_eq!(first_user_worktree(&[sync], &cache), None);
+    // A cache folder given by a path that is not canonical (a link to it) still holds the sync worktree.
+    #[cfg(unix)]
+    {
+        std::fs::create_dir_all(&cache).unwrap();
+        let link = here.join("cache-link");
+        std::os::unix::fs::symlink(&cache, &link).unwrap();
+        let synced = entry(cache.join("0123456789abcdef").join("mail-sync"), false, false);
+        assert!(!valid_worktree(&synced, &link));
+    }
+}
+
+#[test] // FX-25 review R2 D1: `worktrees` keeps git's `prunable` line, here for an empty folder at a deleted worktree
+fn worktrees_keeps_the_prunable_mark() {
+    let t = TempDir::new().unwrap();
+    let w = repo(t.path(), "w");
+    let (a, b) = two_linked(&w);
+    std::fs::remove_dir_all(&a).unwrap();
+    std::fs::create_dir(&a).unwrap();
+    let list = worktrees(&co(&w)).unwrap();
+    let marks: Vec<(PathBuf, bool)> = list.iter().map(|e| (e.path.clone(), e.prunable)).collect();
+    assert!(marks.contains(&(canon(&a), true)), "{marks:?}");
+    assert!(marks.contains(&(canon(&b), false)), "{marks:?}");
+    assert!(marks.contains(&(canon(&w), false)), "{marks:?}");
 }
 
 #[test] // the git call is bounded by `Checkout.deadline`; a git failure is an error

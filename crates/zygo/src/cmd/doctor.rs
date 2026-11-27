@@ -254,11 +254,11 @@ pub fn report(env: &Env, merged: &Merged) -> Vec<String> {
 /// R§10 `zygo doctor`: the workspace files of the default branch (only where `zygo up` finds a checkout), the member maximum of their
 /// repository loadout, the `[workspace] pool` directory, and the pool directories that the loadout `zygo up` would
 /// choose shares. Never fails: each case is a line. R-C6: the pool is listed by names and types only, no file opened.
-pub fn definition_lines(cwd: &Path, merged: &Merged, approvals: &Path, git: &dyn GitRunner) -> Vec<String> {
+pub fn definition_lines(cwd: &Path, merged: &Merged, approvals: &Path, cache: &Path, git: &dyn GitRunner) -> Vec<String> {
     let mut out = Vec::new();
     // The checkout of `zygo up` (a bare repository's folder and `.git` give the main worktree); an `Err` is up's
     // "not a repository": no workspace-files line.
-    let found = find_checkout(cwd, GIT_BOUND)
+    let found = find_checkout(cwd, GIT_BOUND, cache)
         .ok()
         .map(|(co, ..)| check_default(&co.top, &workspace_id(&co.common_dir), approvals, git));
     // R§10 `up` row: `[workspace] default_loadout` chooses only when the user config file sets it.
@@ -479,7 +479,7 @@ pub fn run() -> i32 {
         &merged,
     );
     if let Ok(cwd) = std::env::current_dir() {
-        lines.extend(definition_lines(&cwd, &merged, &paths.approvals_file, &SystemGit));
+        lines.extend(definition_lines(&cwd, &merged, &paths.approvals_file, &paths.workspace_cache_dir(), &SystemGit));
         // S§7.5: the workspace of the mail verbs (`ZYGO_WORKSPACE`, else the checkout of this folder); none: no line.
         if let Ok(ws) = super::mail::workspace_of(&paths, &cwd, std::env::var_os("ZYGO_WORKSPACE").as_deref(), GIT_BOUND) {
             lines.extend(twin_line(&paths, &ws.id));

@@ -20,7 +20,7 @@ use zygo_work::repo::{checkout, Checkout};
 use crate::args::{bypass_flags, filter_from, has_user_info};
 use crate::env::{cleaned, REMOVE_ALWAYS, REMOVE_INSIDE_AGENT};
 use crate::identity::{
-    main_worktree, new_pane_key, slug, unique_name, valid_name, valid_pane_key, workspace_id, worktrees_with, ListError, Worktree,
+    first_user_worktree, main_worktree, new_pane_key, slug, unique_name, valid_name, valid_pane_key, workspace_id, worktrees_with, ListError, Worktree,
 };
 use crate::loadout::{self, LoadoutError, PaneKind as PlanKind, PlanPane};
 use crate::mail::{self, MAIL_LOCK_WAIT, mail_dir, not_pruned_line, store as mail_store};
@@ -366,15 +366,17 @@ pub fn socket_is_private(_path: &Path, _create_parent: bool) -> Result<(), Strin
 /// (`git not found`; another start error is `git worktree list failed: cannot start git: <error>`) and a main worktree
 /// with no checkout (`no checkout at the main worktree <path>`). A code-1 message
 /// has no `zygo:` prefix and is not escaped: each caller adds its prefix and escapes.
-pub fn find_checkout(cwd: &Path, bound: Duration) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
-    find_checkout_with(cwd, bound, OsStr::new("git"))
+/// `cache` is zygo's workspaces cache folder (`Paths::workspace_cache_dir`): a worktree inside it (the mail-sync
+/// worktree) is never the main worktree (D1, [`crate::identity::valid_worktree`]).
+pub fn find_checkout(cwd: &Path, bound: Duration, cache: &Path) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
+    find_checkout_with(cwd, bound, OsStr::new("git"), cache)
 }
 
 /// [`find_checkout`] with `git` as the program of each `git worktree list` (`identity::worktrees_with`): the seam of
 /// a test's failing or missing `git` (FX-25), so no test changes the `PATH` of its own process. The `rev-parse` calls
 /// of `zygo_work::repo::checkout` keep the `git` of the `PATH`. Production calls go through [`find_checkout`].
 #[doc(hidden)]
-pub fn find_checkout_with(cwd: &Path, bound: Duration, git: &OsStr) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
+pub fn find_checkout_with(cwd: &Path, bound: Duration, git: &OsStr, cache: &Path) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
     let usage = |m: &str| Exit { code: 2, message: m.to_string() };
     let failed = |e: ListError| fail(e.to_string());
     let deadline = Instant::now() + bound;
@@ -391,7 +393,7 @@ pub fn find_checkout_with(cwd: &Path, bound: Duration, git: &OsStr) -> Result<(C
             if list.is_empty() {
                 return Err(usage(NOT_A_REPO));
             }
-            let main = main_of(&list)?;
+            let main = main_of(&list, cache)?;
             checkout(&main, deadline).ok_or_else(|| no_checkout_at(&main))?
         }
     };
@@ -400,20 +402,20 @@ pub fn find_checkout_with(cwd: &Path, bound: Duration, git: &OsStr) -> Result<(C
         ListError::NotARepository => failed(ListError::Failed(String::new())),
         e => failed(e),
     })?;
-    let main = main_of(&list)?;
+    let main = main_of(&list, cache)?;
     Ok((co, list, main))
 }
 
 /// The code-1 `Exit` of a main worktree with no checkout (W§8.1 step 3); no prefix, not escaped.
 fn no_checkout_at(main: &Path) -> Exit { fail(format!("no checkout at the main worktree {}", main.display())) }
 
-/// The main worktree of `list` (AU77, [`main_worktree`]: the first non-bare entry whose folder exists). With no
-/// non-bare entry: code 2 `BARE`. With non-bare entries whose folders are all gone: code 1, no checkout at the first.
-fn main_of(list: &[Worktree]) -> Result<PathBuf, Exit> {
-    if let Some(main) = main_worktree(list) {
+/// The main worktree of `list` (AU77, [`main_worktree`]: the first valid worktree, D1). With no entry that is neither
+/// bare nor inside `cache`: code 2 `BARE`. With such entries, all marked `prunable`: code 1, no checkout at the first.
+fn main_of(list: &[Worktree], cache: &Path) -> Result<PathBuf, Exit> {
+    if let Some(main) = main_worktree(list, cache) {
         return Ok(main.path.clone());
     }
-    match list.iter().find(|w| !w.bare) {
+    match first_user_worktree(list, cache) {
         Some(first) => Err(no_checkout_at(&first.path)),
         None => Err(Exit { code: 2, message: BARE.to_string() }),
     }
@@ -422,7 +424,7 @@ fn main_of(list: &[Worktree]) -> Result<PathBuf, Exit> {
 /// The main worktree and worktree list of a workspace found by name (W§8.1 step 3, AU20). The saved `main_root` while
 /// its folder exists; else the main worktree ([`main_worktree`]) of the list that git gives in the saved `common_dir`
 /// (FX-25 review F2). When that list has no main worktree, or git fails, the saved `main_root` stays.
-fn main_by_name(git: &OsStr, common_dir: &Path, main_root: &Path) -> (PathBuf, Vec<Worktree>) {
+fn main_by_name(git: &OsStr, common_dir: &Path, main_root: &Path, cache: &Path) -> (PathBuf, Vec<Worktree>) {
     let list_in = |top: &Path| {
         let deadline = Instant::now() + GIT_BOUND;
         let co = Checkout { top: top.to_path_buf(), common_dir: common_dir.to_path_buf(), main_root: main_root.to_path_buf(), deadline };
@@ -432,7 +434,7 @@ fn main_by_name(git: &OsStr, common_dir: &Path, main_root: &Path) -> (PathBuf, V
         return (main_root.to_path_buf(), list_in(main_root));
     }
     let list = list_in(common_dir);
-    let main = main_worktree(&list).map_or_else(|| main_root.to_path_buf(), |w| w.path.clone());
+    let main = main_worktree(&list, cache).map_or_else(|| main_root.to_path_buf(), |w| w.path.clone());
     (main, list)
 }
 
@@ -461,7 +463,7 @@ pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path
     let all = list_all(paths);
     if let Some(n) = name {
         if let Some(ws) = all.iter().find_map(|(_, r)| r.as_ref().ok().filter(|ws| ws.name == n)) {
-            let (main_root, worktrees) = main_by_name(git, &ws.common_dir, &ws.main_root);
+            let (main_root, worktrees) = main_by_name(git, &ws.common_dir, &ws.main_root, &paths.workspace_cache_dir());
             return Ok(Target {
                 id: ws.id.clone(),
                 name: ws.name.clone(),
@@ -508,7 +510,7 @@ pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path
             [(_, StateError::Newer { .. }, _, _)] => return Err(fail(NEWER.into())),
             [(id, e, _, v)] => {
                 let common_dir = PathBuf::from(text_of(v, "common_dir"));
-                let (main_root, worktrees) = main_by_name(git, &common_dir, Path::new(&text_of(v, "main_root")));
+                let (main_root, worktrees) = main_by_name(git, &common_dir, Path::new(&text_of(v, "main_root")), &paths.workspace_cache_dir());
                 return Ok(Target {
                     id: (*id).clone(),
                     name: n.to_string(),
@@ -525,7 +527,7 @@ pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path
             }
         }
     }
-    let (co, list, main_root) = find_checkout_with(cwd, GIT_BOUND, git)
+    let (co, list, main_root) = find_checkout_with(cwd, GIT_BOUND, git, &paths.workspace_cache_dir())
         .map_err(|e| if e.code == 1 { fail(format!("zygo: {}", esc(&e.message))) } else { e })?;
     let id = workspace_id(&co.common_dir);
     let taken: BTreeSet<String> =

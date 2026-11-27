@@ -388,6 +388,9 @@ fn preflight_tmux_version() {
     assert!(!o.paths.workspaces_dir().exists());
 }
 
+/// zygo's workspaces cache folder of [`paths`]`(t)` (`Paths::workspace_cache_dir`), where the mail-sync worktree lives.
+fn cache(t: &Path) -> PathBuf { paths(t).workspace_cache_dir() }
+
 /// The first `git` file on the `PATH` of the test process (read only: no test changes that `PATH`).
 fn real_git() -> PathBuf {
     let path = std::env::var_os("PATH").unwrap_or_default();
@@ -418,7 +421,7 @@ fn other_absent_phrase_of_worktree_list_exits_1_with_the_text() {
     let stub = failing_list_git(t, "invalid", "fatal: invalid object name x");
     // The probe list in a bare repository's own folder, where `rev-parse` finds no work tree.
     assert_eq!(
-        up::find_checkout_with(&t.join("repo.git"), Duration::from_secs(3600), stub.as_os_str()).err(),
+        up::find_checkout_with(&t.join("repo.git"), Duration::from_secs(3600), stub.as_os_str(), &cache(t)).err(),
         Some(Exit { code: 1, message: "git worktree list failed: fatal: invalid object name x".into() })
     );
 }
@@ -431,13 +434,13 @@ fn worktree_list_failure_exits_1_with_the_reason() {
     let r = repo(t, "app");
     let far = Duration::from_secs(3600);
     // Timed out: with no time left, no git starts.
-    assert_eq!(up::find_checkout(&r, Duration::ZERO).err(), Some(Exit { code: 1, message: "git worktree list timed out".into() }));
+    assert_eq!(up::find_checkout(&r, Duration::ZERO, &cache(t)).err(), Some(Exit { code: 1, message: "git worktree list timed out".into() }));
     // Failed: the list of the checkout found from a work tree, and the probe list in a bare repository's own folder.
     let stub = failing_list_git(t, "bin", "fatal: stub");
     let failed = Some(Exit { code: 1, message: "git worktree list failed: fatal: stub".into() });
-    assert_eq!(up::find_checkout_with(&r, far, stub.as_os_str()).err(), failed);
+    assert_eq!(up::find_checkout_with(&r, far, stub.as_os_str(), &cache(t)).err(), failed);
     git(t, &["clone", "-q", "--bare", "app", "repo.git"]);
-    assert_eq!(up::find_checkout_with(&t.join("repo.git"), far, stub.as_os_str()).err(), failed);
+    assert_eq!(up::find_checkout_with(&t.join("repo.git"), far, stub.as_os_str(), &cache(t)).err(), failed);
     // `zygo up` (and attach, down) prints the reason with its `zygo: ` prefix, and writes nothing.
     let o = opts(t, &r, &version_tmux(t, "tmux34", "tmux 3.4"), &t.join("zygo"));
     assert_eq!(
@@ -447,7 +450,7 @@ fn worktree_list_failure_exits_1_with_the_reason() {
     assert!(!o.paths.workspaces_dir().exists());
     // No git: the program cannot start.
     let missing = t.join("empty").join("git");
-    assert_eq!(up::find_checkout_with(&r, far, missing.as_os_str()).err(), Some(Exit { code: 1, message: "git not found".into() }));
+    assert_eq!(up::find_checkout_with(&r, far, missing.as_os_str(), &cache(t)).err(), Some(Exit { code: 1, message: "git not found".into() }));
 }
 
 /// The folder that [`find_checkout_child`] looks up; set on the child process only.
@@ -481,7 +484,7 @@ fn find_checkout_in_child(dir: &Path, env: &[(&str, &OsStr)]) -> Option<Exit> {
 fn find_checkout_child() {
     let _g = serial();
     let Some(dir) = std::env::var_os(CHILD_DIR) else { return };
-    match up::find_checkout(Path::new(&dir), Duration::from_secs(3600)) {
+    match up::find_checkout(Path::new(&dir), Duration::from_secs(3600), &Path::new(&dir).join("no-cache")) {
         Ok(_) => println!("FIND_CHECKOUT ok"),
         Err(e) => println!("FIND_CHECKOUT {}\t{}", e.code, e.message),
     }
@@ -549,7 +552,7 @@ fn worktree_list_of_the_found_checkout_timed_out_exits_1() {
     let (stub, log) = blocking_list_git(t);
     // `rev-parse` (the real git) finds `r` from `sub` well within the bound; only the list of `r` then waits for it.
     assert_eq!(
-        up::find_checkout_with(&sub, Duration::from_secs(2), stub.as_os_str()).err(),
+        up::find_checkout_with(&sub, Duration::from_secs(2), stub.as_os_str(), &cache(t)).err(),
         Some(Exit { code: 1, message: "git worktree list timed out".into() })
     );
     // One list ran, in the found checkout `r` (the second site), not the probe in the cwd `sub`.
@@ -568,7 +571,7 @@ fn bare_folder_with_its_main_worktree_gone_exits_1() {
     git(&t.join("repo.git"), &["worktree", "add", "-q", "--detach", "../one", "main"]);
     fs::remove_dir_all(t.join("one")).unwrap();
     assert_eq!(
-        up::find_checkout(&t.join("repo.git"), far).err(),
+        up::find_checkout(&t.join("repo.git"), far, &cache(t)).err(),
         Some(Exit { code: 1, message: format!("no checkout at the main worktree {}", t.join("one").display()) })
     );
 }
