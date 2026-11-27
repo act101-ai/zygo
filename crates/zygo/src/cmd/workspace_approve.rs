@@ -7,7 +7,9 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail};
 use zygo_config::Config;
-use zygo_config::repo_def::{approve_workspace_in, check_default, repository_loadout, Definition, Files, Stored, SystemGit, Use};
+use zygo_config::repo_def::{
+    approve_workspace_in, check_default, repository_loadout, Definition, Files, Stored, SystemGit, Use, REPOSITORY_LOADOUT,
+};
 use zygo_core::esc;
 use zygo_workspace::identity::workspace_id;
 use zygo_workspace::pool;
@@ -133,11 +135,20 @@ fn quoted(s: &str) -> String {
 /// when `zygo up` refuses the pool (`up::pool_unexpanded`, WD-15 review round 2 finding 1; `up::pool_refused`, WD-15
 /// review F6), its reason. Names the shape restricts to `[a-z0-9-]` (member, profile and role names) and the fixed values of `kind` and `job`
 /// are bare; the free text of the files (`cwd`, each override's model) is `quoted`.
+/// R§10 (WD-15 review round 2 finding 2): when the user config has `[loadout.repository]` (`up::loadout_shadowed`, the
+/// decision of `zygo up`), the repository loadout is not used: the summary says so, names no repository member, and
+/// counts the agents and the pool members of the user loadout, which `zygo up` starts.
 fn summary(def: &Definition, cfg: &Config, home: Option<&Path>) -> Vec<String> {
-    let panes: Vec<_> = repository_loadout(def).map(|l| l.window.into_iter().flat_map(|w| w.pane).collect()).unwrap_or_default();
+    let shadowed = up::loadout_shadowed(cfg, def);
+    let loadout = if shadowed { cfg.loadout.get(REPOSITORY_LOADOUT).cloned() } else { repository_loadout(def) };
+    let panes: Vec<_> = loadout.map(|l| l.window.into_iter().flat_map(|w| w.pane).collect()).unwrap_or_default();
     let or_dash = |v: &Option<String>| v.as_deref().map_or_else(|| "-".to_string(), esc);
-    let mut out = vec!["summary:".to_string(), format!("  agents: {}", panes.len())];
-    for p in &panes {
+    let mut out = vec!["summary:".to_string()];
+    if shadowed {
+        out.push(format!("  repository loadout not used: the user config has [loadout.{REPOSITORY_LOADOUT}]"));
+    }
+    out.push(format!("  agents: {}", panes.iter().filter(|p| p.kind != "shell").count()));
+    for p in panes.iter().filter(|_| !shadowed) {
         out.push(format!(
             "  member {}: kind {}, job {}, profile {}, pool {}, cwd {}",
             or_dash(&p.name),

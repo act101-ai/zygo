@@ -576,6 +576,47 @@ fn summary_with_an_unexpandable_pool_names_the_refusal_of_zygo_up() {
     assert!(out.lines().any(|l| l == refused), "{refused:?} not in {out}");
 }
 
+#[test] // R§10 (WD-15 review round 2, finding 2): a user `[loadout.repository]` replaces the repository loadout in the summary
+fn summary_with_a_user_repository_loadout_counts_what_zygo_up_starts() {
+    let f = fx(&[(WS, POOL_WS.as_bytes()), (".zygo/profiles/p.toml", POOL_P.as_bytes())]);
+    let p = pool(&f);
+    let user = format!(
+        "{}[loadout.repository]\n[[loadout.repository.window]]\n[[loadout.repository.window.pane]]\nkind = \"shell\"\n",
+        pool_toml(&p)
+    );
+    let h = home(&f, &user);
+    let o = approve(&f, &h, &["--yes"], None, &[]);
+    let out = text(&o.stdout);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    for line in [
+        "  repository loadout not used: the user config has [loadout.repository]",
+        "  agents: 0",
+        "  profile p: overrides -; disabled design",
+    ] {
+        assert!(out.lines().any(|l| l == line), "{line:?} not in {out}");
+    }
+    assert!(!out.lines().any(|l| l == "  agents: 1"), "{out}");
+    assert!(!out.contains("  member w:"), "{out}");
+    assert!(!out.contains("run in passthrough"), "{out}");
+
+    // A user `[loadout.repository]` with a pool member: the passthrough line names the user pane.
+    let f = fx(&[(WS, POOL_WS.as_bytes()), (".zygo/profiles/p.toml", POOL_P.as_bytes())]);
+    let p = pool(&f);
+    let user = format!(
+        "{}[loadout.repository]\n[[loadout.repository.window]]\n[[loadout.repository.window.pane]]\nkind = \"shell\"\n[[loadout.repository.window.pane]]\nkind = \"claude-code\"\nname = \"u\"\npool = true\n",
+        pool_toml(&p)
+    );
+    let h = home(&f, &user);
+    let o = approve(&f, &h, &["--yes"], None, &[]);
+    let out = text(&o.stdout);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let pt = format!("  u run in passthrough on pool {}", zygo_core::esc(&p.display().to_string()));
+    for line in ["  agents: 1", pt.as_str()] {
+        assert!(out.lines().any(|l| l == line), "{line:?} not in {out}");
+    }
+    assert!(!out.contains("  member w:") && !out.contains("w run in passthrough"), "{out}");
+}
+
 #[test] // R§11 "Approvals file invalid"
 fn invalid_approvals_file_is_left_as_it_is() {
     let f = min();

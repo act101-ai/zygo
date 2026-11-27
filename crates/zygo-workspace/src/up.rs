@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use zygo_config::repo_def::{apply_to_config, check_default, short, GitRunner, SystemGit, Use, REPOSITORY_LOADOUT};
+use zygo_config::repo_def::{apply_to_config, check_default, short, Definition, GitRunner, SystemGit, Use, REPOSITORY_LOADOUT};
 use zygo_config::{Config, Severity, BUILTIN_LOADOUT};
 use zygo_core::esc;
 use zygo_core::paths::Paths;
@@ -871,6 +871,12 @@ fn apply_pool(opts: &UpOpts, plan: &mut loadout::Plan) -> Result<Option<String>,
     Ok(Some(line))
 }
 
+/// R§10: true when the user config has `[loadout.repository]`, which replaces the repository loadout of the approved
+/// `def`, so `zygo up` plans the user loadout. The decision of `choose`, also used by the approve summary.
+pub fn loadout_shadowed(config: &Config, def: &Definition) -> bool {
+    apply_to_config(&mut config.clone(), def).loadout_shadowed
+}
+
 /// The loadout of W§8.1 step 7, first case (R§10 `up` row): `--loadout`; else `[workspace] default_loadout` when the
 /// user config file sets it; else `repository` when the default branch has an approved `.zygo/workspace.toml`; else
 /// `solo`. The repository plan comes from one checked read (R§7.3) and each pane gets its pin (R§7.4). A choice by
@@ -908,10 +914,11 @@ fn choose(opts: &UpOpts, t: &Target, repo_read: bool, err: &mut dyn Write) -> Re
     };
     let line = match check_default(&t.main_root, &t.id, &opts.paths.approvals_file, git) {
         Use::Approved { pin, def, .. } if def.workspace.is_some() => {
-            let mut cfg = opts.config.clone();
-            if apply_to_config(&mut cfg, &def).loadout_shadowed {
+            if loadout_shadowed(&opts.config, &def) {
                 return user(REPOSITORY_LOADOUT);
             }
+            let mut cfg = opts.config.clone();
+            apply_to_config(&mut cfg, &def);
             let plan = loadout::resolve_repository(&cfg.loadout[REPOSITORY_LOADOUT], &pin, &t.main_root, &t.worktrees)
                 .map_err(resolve_err)?;
             check_max(&plan, opts.config.limits.max_members)?;
