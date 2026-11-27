@@ -225,7 +225,7 @@ Session text (T, SX nodes):
 | FX-25 | `zygo up` reads the definition at the current checkout; `find_checkout` keeps a failed or timed-out `git worktree list` (exit 1) | WD-15 | DONE | implementation | a8092a70^..3c511812 · acceptance pass (up_definition 42, up 82, workspace_approve 29) · PR #226 |
 | FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | TODO | implementation | — |
 | FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | DONE | judgment | 343897e2^..a9b6f61c · acceptance pass (renamed_host_ack_goes_with_only_acked_link_and_gitlink_entries 1 passed) · PR #231 |
-| FX-28 | A remote send during `ws forget` is lost uncounted | FX-24 | TODO | judgment | — |
+| FX-28 | A remote send during `ws forget` is lost uncounted | FX-24 | PLANNED | judgment | — |
 
 ## Log
 
@@ -454,3 +454,5 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-27 BLOCKED: failed 3 review rounds; round 3: the member-gated prune (R2 D-B) leaves delivered mail after a member rename, a cross-pass member duplicate is never acked, member_names is quadratic; branch discarded, re-plan · PR #230 closed |
 | 2026-11-26 | FX-27 PLANNED (re-plan), author's call: R1 ack = (old ∪ acked ∪ own-ack union) ∩ folder ULIDs; R2 old ack goes with no message file, every ULID listed, registry gone; R3 prune unchanged; R4 drop-host counts message files; invariant: one delivery per ULID |
 | 2026-11-26 | FX-27 DONE: ULID-keyed re-plan R1–R4; review rounds 1–2 fixed tests and spec text; author's calls: non-address folders are documented as operator-only removal; planner's call: non-ULID names do not keep the ack. |
+| 2026-11-27 | FX-28 BLOCKED: failed 3 review rounds; round 3: mail/lock released after the remote_send_before_link hook passes every test; CI definition_hooks p2: outbox.rs names zygo_workspace::up; branch discarded, diff saved · PR #232 closed |
+| 2026-11-27 | FX-28 PLANNED (re-plan): send hooks before Delivery::begin and both sides of the link; timing-free tests; fire_point in zygo_workspace::mail, not up; open_regular/activity name the path; CLI lines start with zygo:; review rounds reset to 0 |
