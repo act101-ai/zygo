@@ -102,6 +102,14 @@ fn make_dirs(mail_dir: &Path, md: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// [`make_dirs`] for the maildir of `key`, after the key check. It takes no `mail/lock`; production callers use
+/// [`super::Delivery::make_maildir`] (M§5 P1).
+pub(crate) fn make_maildir(mail_dir: &Path, key: &str) -> Result<(), MailError> {
+    let md = maildir(mail_dir, key)?;
+    make_dirs(mail_dir, &md)?;
+    Ok(())
+}
+
 /// Opens `path` for reading with no link follow and no wait on a FIFO; `None` unless it is a regular file of at
 /// most `FILE_MAX` bytes.
 fn open_regular(path: &Path) -> Option<File> {
@@ -180,7 +188,8 @@ pub fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 /// Moves `staged` (written with `write_synced` under `mail_dir`) into `mail/<key>/new/<id>.json` without reading
 /// or rewriting its bytes (M§5; S§8.5 step 3). `Ok(false)`, and the staged file removed, when the id is already in
-/// `new/` or `cur/`. A full `new/` returns the M§5 error and leaves the staged file in place.
+/// `new/` or `cur/`. A full `new/` returns the M§5 error and leaves the staged file in place. It takes no
+/// `mail/lock`; production callers use [`super::Delivery::deliver_staged`] (M§5 P1).
 pub fn deliver_staged(mail_dir: &Path, key: &str, id: &str, staged: &Path, max_unread: u32) -> Result<bool, MailError> {
     let md = maildir(mail_dir, key)?;
     if !valid_id(id) {
@@ -259,7 +268,8 @@ pub fn read(mail_dir: &Path, key: &str, max: usize) -> Result<Vec<Message>, Mail
 }
 
 /// [`read`], waiting at most `bound` for `mail/lock`: a lock held for the whole bound is `Busy`. A missing `mail/`
-/// takes no lock and is not made.
+/// takes no lock and is not made. A locked file that is no longer the file at `mail/lock` (a forget renamed the state
+/// folder while this waited; FX-24 review R2 F3) has no messages, as a missing `mail/`.
 pub fn read_within(mail_dir: &Path, key: &str, max: usize, bound: Duration) -> Result<Vec<Message>, MailError> {
     let md = maildir(mail_dir, key)?;
     let (new, cur) = (md.join("new"), md.join("cur"));
@@ -270,12 +280,18 @@ pub fn read_within(mail_dir: &Path, key: &str, max: usize, bound: Duration) -> R
     if !real_dir(mail_dir)? {
         return Ok(Vec::new());
     }
-    let _lock = match crate::state::lock_file_as(&mail_dir.join("lock"), bound, true) {
+    // Held until the end of the read (M§5 P1).
+    let lock = match crate::state::lock_file_as(&mail_dir.join("lock"), bound, true) {
         Ok(Some(f)) => f,
         Ok(None) => return Err(MailError::Busy),
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
+    let state_dir = mail_dir.parent().unwrap_or(mail_dir);
+    crate::up::fire(state_dir, "mail_read_after_lock").map_err(|e| std::io::Error::other(e.to_string()))?;
+    if !crate::state::lock_is_at(&lock, &mail_dir.join("lock")) {
+        return Ok(Vec::new());
+    }
     for dir in [md.as_path(), new.as_path()] {
         if !real_dir(dir)? {
             return Ok(Vec::new());
@@ -285,7 +301,6 @@ pub fn read_within(mail_dir: &Path, key: &str, max: usize, bound: Duration) -> R
     if !ids.is_empty() {
         // M§5 P1: a read never makes mail/<key>/. Only cur/ is made, in a maildir that exists; a maildir removed since
         // the listing has nothing to return.
-        let state_dir = mail_dir.parent().unwrap_or(mail_dir);
         crate::up::fire(state_dir, "mail_read_before_dirs").map_err(|e| std::io::Error::other(e.to_string()))?;
         match real_dir(&md) {
             Ok(false) => return Ok(Vec::new()),

@@ -10,14 +10,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use ulid::Ulid;
 use zygo_config::{sync_for, Config, LoadContext, SyncOff, SyncSettings};
 use zygo_work::repo::Flow;
-use zygo_workspace::mail::{names, store, Message};
-use zygo_workspace::state::{Store, Workspace};
+use zygo_workspace::mail::{names, store, Delivery, MailError, Message, MAIL_LOCK_WAIT};
+use zygo_workspace::state::{lock_is_at, Store, Workspace};
 
 use crate::address;
 use crate::branch::{self, BranchError, Change, Fetched, Pushed};
 use crate::env::{Clock, Crash, Env, Verdict};
 use crate::identity::{self, own_hosts, read_meta, TipMeta};
 use crate::import::{self, Target};
+use crate::outbox::NoticeError;
 use crate::prune::{self, Pruned};
 use crate::public;
 use crate::secret::{self, Outcome};
@@ -375,25 +376,11 @@ pub(crate) fn locked<T>(env: &Env, ws_id: &str, f: impl FnOnce(&Ctx) -> Result<T
     out
 }
 
-/// S§8.3 step 3 (MS-21 review R2-2): the locked file `lock` is the file at `path` now (unix: the same device and
-/// inode, `path` read with no link followed). A forget unlinks the lock file a waiting sync opened, so that sync can
-/// lock the old file while another sync locks a new one at `path`. The check is unix only: on other platforms it
-/// is always `true` (`zygo ws forget` does not run there: every workspace verb exits 2, OP5).
-fn lock_is_at(lock: &File, path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        let open = file_id(lock.metadata());
-        open.is_some() && open == file_id(std::fs::symlink_metadata(path))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (lock, path);
-        true
-    }
-}
-
 /// S§8.3 step 3: the lock on `mail/sync/lock`. Held by another (`Ok(None)`): at once for a child; the CLI tries each
-/// 5 ms until [`LOCK_WAIT`] has passed on the injected clock. A folder, open or lock error is the `lock` stop.
+/// 5 ms until [`LOCK_WAIT`] has passed on the injected clock. A folder, open or lock error is the `lock` stop. A lock
+/// file that is a link or not a regular file is never opened as the lock (no link followed, `O_NONBLOCK` so a FIFO
+/// does not wait, the handle checked), so no sync holds it and `zygo ws forget` goes on without it (S§7.6 step 1,
+/// FX-24 review R2 F4).
 fn take_lock(sp: &SyncPaths, mode: Mode, clock: &dyn Clock) -> Result<Option<File>, Fail> {
     let fail = || stop("lock");
     for d in [&sp.mail, &sp.sync] {
@@ -404,9 +391,12 @@ fn take_lock(sp: &SyncPaths, mode: Mode, clock: &dyn Clock) -> Result<Option<Fil
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        o.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        o.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
     }
     let f = o.open(&sp.lock).map_err(|_| fail())?;
+    if !f.metadata().is_ok_and(|m| m.is_file()) {
+        return Err(fail());
+    }
     let start = clock.now();
     loop {
         match fs4::FileExt::try_lock(&f) {
@@ -430,7 +420,7 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
     // The same deadline on the injected clock (S-C9), checked before each secret check of the outbox step.
     let pass_end = env.clock.now() + PASS_DEADLINE;
     let mut log = |l: &str| c.log(l);
-    import::finish_incoming(sp, &sp.mail).map_err(|_| stop("incoming"))?;
+    import::finish_incoming(sp, &c.store).map_err(|_| stop("incoming"))?;
     if first {
         public_check(c, report, deadline)?;
     }
@@ -470,18 +460,18 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
         let targets: Vec<Target> = names::members(&c.ws).into_iter()
             .filter_map(|t| Some(Target { name: t.name?, pane_key: t.key }))
             .collect();
-        let imp = import::run(sp, &sp.mail, wt, &tip, &own, &targets, &own_ack, c.cfg.mail.max_unread, deadline,
+        let imp = import::run(sp, &c.store, wt, &tip, &own, &targets, &own_ack, c.cfg.mail.max_unread, deadline,
             &*env.seam, &mut log)?;
         report.delivered += imp.delivered.len();
         let mut keys: Vec<String> = imp.delivered.iter().map(|(k, _)| k.clone()).collect();
         keys.sort();
         keys.dedup();
-        wake(c, &keys);
-        let mut notified = Vec::new();
+        wake(c, imp.read.as_ref(), &keys);
+        let mut notified = Notified::default();
         let (mut changes, sent) = outbox(c, &tip, fetched.then_some(&meta), (deadline, pass_end), &mut notified)?;
-        notified.sort();
-        notified.dedup();
-        wake(c, &notified);
+        notified.keys.sort();
+        notified.keys.dedup();
+        wake(c, notified.read.as_ref(), &notified.keys);
         let files = own_files(wt, &tip, &own, deadline)?;
         changes.extend(own_changes(c, &meta, &identity, &own, &files, &imp.acked));
         if changes.is_empty() {
@@ -588,7 +578,7 @@ pub(crate) fn public_check(c: &Ctx, report: &mut Report, deadline: Instant) -> R
 /// the push); a finding, the move to `refused/` and the notice to the sender, whose keys go into `notified`; could
 /// not run, the file stays.
 fn outbox(c: &Ctx, tip: &str, meta: Option<&TipMeta>, (deadline, pass_end): (Instant, SystemTime),
-    notified: &mut Vec<String>) -> Result<(Vec<Change>, Vec<PathBuf>), Fail> {
+    notified: &mut Notified) -> Result<(Vec<Change>, Vec<PathBuf>), Fail> {
     let (sp, wt) = (&c.sp, &c.sp.worktree);
     let (mut items, mut no_host) = (Vec::new(), Vec::new());
     for (id, p) in outbox_entries(sp).map_err(|_| stop("outbox"))? {
@@ -663,23 +653,75 @@ fn read_host(meta: &TipMeta, h: &str) -> bool {
 /// The host part of the address `to`.
 fn host_of(to: &str) -> &str { to.split_once('@').map_or("", |(_, h)| h) }
 
-/// S§8.6 "At commit": moves `outbox/<id>.json` to `refused/` and sends the notice to its sender, whose keys go into
-/// `notified`; `body` replaces the secret-pass notice body (`ids`) for another reason. A failed move or notice
-/// writes the log line `notice`.
-fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut Vec<String>) {
+/// S§8.6 "At commit": sends the notice to the sender of `outbox/<id>.json`, whose keys go into `notified`, then
+/// moves the file to `refused/` (FX-24 review F5: in that order); `body` replaces the secret-pass notice body
+/// (`ids`) for another reason. The notice is one M§5 P1 delivery (S§8.6): `mail/lock` held shared for at most
+/// [`MAIL_LOCK_WAIT`], the target the sender's name resolved on the member records read under it (not the gate's
+/// read), and the lock dropped before the next git call. A notice whose [`Delivery::begin`] fails (review R3 F3:
+/// [`begin_error`]: a lock not taken, the lock I/O, a bad state or `mail/`, no workspace) writes the log line `notice`
+/// and leaves the file in the outbox for the next pass. A notice that no pass can deliver (review R2 F1, R3 F3:
+/// [`write_error`]) moves the file all the same, with the log line `notice: <reason>`: `full` (the sender's `new/` is
+/// at `max_unread`), `no-record` (that read does not have the sender's name: no notice and no maildir, as `cli`),
+/// `maildir` or `io` (the write into the sender's maildir failed) or `moved` (review R2 F5, R3 F1: the pass's first
+/// read `c.ws` also has the name and maps it to other keys, so it was renamed or another member holds the name now;
+/// the notice goes to no one). A name that `c.ws` does not have is notified at the keys of the read under the lock. A
+/// failed move writes the line `notice` too.
+fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut Notified) {
     let now = c.env.clock.now();
-    let mut notify = |sender: &str, subject: &str, secret_body: &str| -> std::io::Result<()> {
-        let fail = |_| std::io::Error::other("notice not delivered");
-        for t in names::resolve(&c.ws, sender, None).map_err(fail)? {
-            let label = t.name.clone().unwrap_or_else(|| t.key.clone());
-            let msg = Message::new("zygo", &label, subject, body.unwrap_or(secret_body), now).map_err(fail)?;
-            store::deliver(&c.sp.mail, &t.key, &label, &msg, c.cfg.mail.max_unread).map_err(fail)?;
-            notified.push(t.key);
+    let mut notify = |sender: &str, subject: &str, secret_body: &str| -> Result<(), NoticeError> {
+        let d = Delivery::begin(&c.store, MAIL_LOCK_WAIT).map_err(begin_error)?;
+        let targets = names::resolve(d.workspace(), sender, None).map_err(write_error)?;
+        // FX-24 review R2 F5, R3 F1: the target is the sender's name resolved in the read under the lock. Only when
+        // the pass's first read also has the name and maps it to other keys (renamed, or now held by another member)
+        // is it not that member: no notice. A name the first read does not have (a member that renamed itself and
+        // kept its key, or joined during the run) is notified at the key of the read under the lock.
+        let keys = |t: &[names::Target]| t.iter().map(|t| t.key.clone()).collect::<Vec<_>>();
+        if names::resolve(&c.ws, sender, None).is_ok_and(|first| keys(&first) != keys(&targets)) {
+            return Err(NoticeError::Never("moved"));
         }
-        Ok(())
+        let mut sent = false;
+        let each = || -> Result<(), NoticeError> {
+            for t in targets {
+                let label = t.name.clone().unwrap_or_else(|| t.key.clone());
+                let msg = Message::new("zygo", &label, subject, body.unwrap_or(secret_body), now).map_err(write_error)?;
+                d.deliver(&t.key, &label, &msg, c.cfg.mail.max_unread).map_err(write_error)?;
+                notified.keys.push(t.key);
+                sent = true;
+            }
+            Ok(())
+        };
+        let r = each();
+        if sent {
+            notified.read = Some(d.into_workspace()); // FX-24 review F2: the wake uses this read
+        }
+        r
     };
-    if crate::outbox::refuse(&c.sp, id, ids, &mut notify, now).is_err() {
-        c.log(&format!("mail sync: outbox {id}: notice"));
+    match crate::outbox::refuse(&c.sp, id, ids, &mut notify, now) {
+        Ok(None) => {}
+        Ok(Some(why)) => c.log(&format!("mail sync: outbox {id}: notice: {why}")),
+        Err(_) => c.log(&format!("mail sync: outbox {id}: notice")),
+    }
+}
+
+/// S§8.6 (FX-24 review R3 F3): an error of [`Delivery::begin`] for the notice (a busy lock, the lock I/O, a bad state,
+/// a bad `mail/`, no workspace) is one that a later pass can clear: the message stays in the outbox.
+fn begin_error(e: MailError) -> NoticeError { NoticeError::Later(std::io::Error::other(e.to_string())) }
+
+/// S§8.6 (FX-24 review R2 F1, R3 F3): an error after [`Delivery::begin`] (the sender's name resolved in the read under
+/// the lock, the notice made and written into the sender's maildir) is lasting, so the message moves with no notice,
+/// with the reason: `full` (the sender's inbox is at `max_unread`, and only the sender's reads can clear it),
+/// `no-record` (the read under the lock does not have the sender: `UnknownTarget` or `NoRecord`), `maildir` (the
+/// sender's maildir is not made of real folders: the store's check of a link or an entry that is not a folder at
+/// `mail/<key>/` or one of its folders, `InvalidInput`, or a path part that is not a folder, `NotADirectory`) and
+/// `io` (every other error of the write).
+fn write_error(e: MailError) -> NoticeError {
+    match e {
+        MailError::Full { .. } => NoticeError::Never("full"),
+        MailError::UnknownTarget { .. } | MailError::NoRecord { .. } => NoticeError::Never("no-record"),
+        MailError::Io(e) if matches!(e.kind(), std::io::ErrorKind::InvalidInput | std::io::ErrorKind::NotADirectory) => {
+            NoticeError::Never("maildir")
+        }
+        _ => NoticeError::Never("io"),
     }
 }
 
@@ -753,11 +795,22 @@ fn read_message(p: &Path) -> Option<(Vec<u8>, serde_json::Value, String)> {
     Some((bytes, value, to))
 }
 
-/// S§10.1: the wake of `keys`, when there are any, at the injected time.
-fn wake(c: &Ctx, keys: &[String]) {
-    if !keys.is_empty() {
-        c.env.wake.wake(&c.env.paths, &c.ws, keys, &c.cfg.mail, c.env.clock.now());
+/// S§10.1: the wake of `keys`, when there are any, at the injected time, with the member records `read` that the
+/// deliveries read under `mail/lock` (FX-24 review F2; not the gate's read). No read: nothing was delivered.
+fn wake(c: &Ctx, read: Option<&Workspace>, keys: &[String]) {
+    if let Some(ws) = read
+        && !keys.is_empty()
+    {
+        c.env.wake.wake(&c.env.paths, ws, keys, &c.cfg.mail, c.env.clock.now());
     }
+}
+
+/// The members that the notices of a pass went to, and the state read under `mail/lock` at the last notice that was
+/// delivered (the wake uses it, S§10.1; FX-24 review F2).
+#[derive(Default)]
+struct Notified {
+    keys: Vec<String>,
+    read: Option<Workspace>,
 }
 
 /// The valid ack of host `h` with this identity at the tip.
