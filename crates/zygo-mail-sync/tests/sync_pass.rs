@@ -1422,3 +1422,28 @@ fn notice_to_a_full_sender_inbox_moves_the_message_to_refused() {
     assert_eq!(lines(a.errors()), once, "a later pass wrote about the moved message");
     assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none());
 }
+
+#[test] // FX-24 review R3 F1, S§8.6: a sender whose name the pass's first read does not have (here: alice renamed herself
+// to alicia after the gate and kept her key) is notified at the key of the read under the lock
+fn notice_to_a_sender_renamed_after_the_gate_with_the_same_key_is_sent() {
+    let _g = exclusive();
+    let (r, a, _b) = pair();
+    let id = send(&a, "alicia", ("bob", "b"), "say zz-forbidden-zz now");
+    a.config(Some("a"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
+    let w = Store::open(&a.paths, WS_ID);
+    let h = after_gate(move || {
+        w.update(Duration::from_secs(10), &mut |ws| {
+            ws.members.get_mut(ALICE).unwrap().name = Some("alicia".into());
+            Ok(())
+        })
+        .unwrap();
+    });
+    let e = env(&a, h, Clock::at(T0), Verdict::Local, StubWake { idle: true, typed: Typed::default() }, far_policy());
+    run(&e, WS_ID, Mode::Cli).unwrap();
+    let log = a.errors();
+    assert_eq!(new_count(&a, ALICE), 1, "the same member (same key) got no notice; log: {log}");
+    assert!(a.sp().refused.join(format!("{id}.json")).is_file(), "{log}");
+    assert!(fs::symlink_metadata(a.sp().outbox.join(format!("{id}.json"))).is_err(), "{log}");
+    assert!(!log.lines().any(|l| l.contains(&format!("mail sync: outbox {id}: notice"))), "{log}");
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none());
+}

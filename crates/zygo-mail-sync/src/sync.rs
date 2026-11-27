@@ -655,23 +655,26 @@ fn host_of(to: &str) -> &str { to.split_once('@').map_or("", |(_, h)| h) }
 /// S§8.6 "At commit": sends the notice to the sender of `outbox/<id>.json`, whose keys go into `notified`, then
 /// moves the file to `refused/` (FX-24 review F5: in that order); `body` replaces the secret-pass notice body
 /// (`ids`) for another reason. The notice is one M§5 P1 delivery (S§8.6): `mail/lock` held shared for at most
-/// [`MAIL_LOCK_WAIT`], the sender resolved on the member records read under it (not the gate's read), and the lock
-/// dropped before the next git call. A notice that a later pass can deliver (a lock not taken, an I/O error) writes
-/// the log line `notice` and leaves the file in the outbox for the next pass. A notice that no pass can deliver
-/// (FX-24 review R2 F1: [`notice_error`]) moves the file all the same, with the log line `notice: <reason>`: `full`
-/// (the sender's `new/` is at `max_unread`), `no-record` (the sender has no record in that read: no notice and no
-/// maildir, as `cli`) or `moved` (review R2 F5: the sender's name maps to other keys in that read than in the pass's
-/// first read `c.ws`, so it was renamed or another member holds the name now; the notice goes to no one). A failed
+/// [`MAIL_LOCK_WAIT`], the target the sender's name resolved on the member records read under it (not the gate's
+/// read), and the lock dropped before the next git call. A notice that a later pass can deliver (a lock not taken, an
+/// I/O error) writes the log line `notice` and leaves the file in the outbox for the next pass. A notice that no pass
+/// can deliver (FX-24 review R2 F1: [`notice_error`]) moves the file all the same, with the log line
+/// `notice: <reason>`: `full` (the sender's `new/` is at `max_unread`), `no-record` (that read does not have the
+/// sender's name: no notice and no maildir, as `cli`) or `moved` (review R2 F5, R3 F1: the pass's first read `c.ws`
+/// also has the name and maps it to other keys, so it was renamed or another member holds the name now; the notice
+/// goes to no one). A name that `c.ws` does not have is notified at the keys of the read under the lock. A failed
 /// move writes the line `notice` too.
 fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut Notified) {
     let now = c.env.clock.now();
     let mut notify = |sender: &str, subject: &str, secret_body: &str| -> Result<(), NoticeError> {
         let d = Delivery::begin(&c.store, MAIL_LOCK_WAIT).map_err(notice_error)?;
         let targets = names::resolve(d.workspace(), sender, None).map_err(notice_error)?;
-        // FX-24 review R2 F5: the sender is the member that held the name in the pass's first read. A name that maps
-        // to other keys under the lock (renamed, or now held by another member) is not that member: no notice.
+        // FX-24 review R2 F5, R3 F1: the target is the sender's name resolved in the read under the lock. Only when
+        // the pass's first read also has the name and maps it to other keys (renamed, or now held by another member)
+        // is it not that member: no notice. A name the first read does not have (a member that renamed itself and
+        // kept its key, or joined during the run) is notified at the key of the read under the lock.
         let keys = |t: &[names::Target]| t.iter().map(|t| t.key.clone()).collect::<Vec<_>>();
-        if names::resolve(&c.ws, sender, None).map(|first| keys(&first)).ok() != Some(keys(&targets)) {
+        if names::resolve(&c.ws, sender, None).is_ok_and(|first| keys(&first) != keys(&targets)) {
             return Err(NoticeError::Never("moved"));
         }
         let mut sent = false;
