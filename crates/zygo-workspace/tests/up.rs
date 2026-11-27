@@ -576,6 +576,27 @@ fn bare_folder_with_its_main_worktree_gone_exits_1() {
     );
 }
 
+#[test] // FX-25 review R2 F5, W§8.1 step 3: from the bare folder, a `rev-parse` of the main worktree that the deadline
+        // stops is the timeout, not "no checkout"
+fn bare_folder_main_worktree_read_timed_out_exits_1_timed_out() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let far = Duration::from_secs(3600);
+    repo(t, "w");
+    git(t, &["clone", "-q", "--bare", "w", "repo.git"]);
+    git(&t.join("repo.git"), &["worktree", "add", "-q", "--detach", "../one", "main"]);
+    // The probe list gets one hour; the read of the main worktree `one` gets no time, so no git starts for it.
+    let bounds = up::Bounds { all: far, main: Some(Duration::ZERO), list: None };
+    assert_eq!(
+        up::find_checkout_by(&t.join("repo.git"), bounds, OsStr::new("git"), &cache(t)).err(),
+        Some(Exit { code: 1, message: "git worktree list timed out".into() })
+    );
+    // With time, the same lookup finds `one`.
+    let found = up::find_checkout_by(&t.join("repo.git"), up::Bounds::all(far), OsStr::new("git"), &cache(t));
+    assert_eq!(found.map(|(co, _, main)| (co.top, main)).ok(), Some((t.join("one"), t.join("one"))));
+}
+
 #[test] // W§18 #3, #11, #29, AU2, AU20, AU25, AU77, D1, D4, D5
 #[ignore = "timing: stand-in tmux and git under the fixed 2 s tmux and 5 s git bounds"]
 fn preflight_finds_the_workspace() {

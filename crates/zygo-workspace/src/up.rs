@@ -369,7 +369,8 @@ pub fn socket_is_private(_path: &Path, _create_parent: bool) -> Result<(), Strin
 /// from the cwd, code 2 `BARE` for a list with no non-bare entry; code 1 with the reason for a failed or timed-out
 /// `git worktree list` (`git worktree list failed[: <text>]`, `git worktree list timed out`), no program `git`
 /// (`git not found`; another start error is `git worktree list failed: cannot start git: <error>`) and a main worktree
-/// with no checkout (`no checkout at the main worktree <path>`). A code-1 message
+/// with no checkout (`no checkout at the main worktree <path>`; when the deadline stopped that read, `git worktree list
+/// timed out`, FX-25 review round 2 F5). A code-1 message
 /// has no `zygo:` prefix and is not escaped: each caller adds its prefix and escapes.
 /// `cache` is zygo's workspaces cache folder (`Paths::workspace_cache_dir`): a worktree inside it (the mail-sync
 /// worktree) is never the main worktree (D1, [`crate::identity::valid_worktree`]).
@@ -382,9 +383,36 @@ pub fn find_checkout(cwd: &Path, bound: Duration, cache: &Path) -> Result<(Check
 /// of `zygo_work::repo::checkout` keep the `git` of the `PATH`. Production calls go through [`find_checkout`].
 #[doc(hidden)]
 pub fn find_checkout_with(cwd: &Path, bound: Duration, git: &OsStr, cache: &Path) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
+    find_checkout_by(cwd, Bounds::all(bound), git, cache)
+}
+
+/// The deadlines of the git calls of [`find_checkout_by`]: the seam of a test that times out one call and not the
+/// others (FX-25 review round 2 F5, F8). Production calls use [`Bounds::all`], one shared deadline.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Bounds {
+    /// Every git call of the lookup ends by `Instant::now() + all`, taken once when the lookup starts.
+    pub all: Duration,
+    /// When set: the `rev-parse` of the main worktree (from a bare repository's own folder) ends by its own deadline,
+    /// `Instant::now() + main` taken when that call starts.
+    pub main: Option<Duration>,
+    /// When set: the `git worktree list` of the found checkout ends by its own deadline, `Instant::now() + list` taken
+    /// when that call starts.
+    pub list: Option<Duration>,
+}
+
+impl Bounds {
+    /// One deadline, `Instant::now() + bound` at the start, for every git call of the lookup.
+    pub fn all(bound: Duration) -> Bounds { Bounds { all: bound, main: None, list: None } }
+}
+
+/// [`find_checkout_with`] with the deadlines of `bounds`. Production calls go through [`find_checkout`].
+#[doc(hidden)]
+pub fn find_checkout_by(cwd: &Path, bounds: Bounds, git: &OsStr, cache: &Path) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
     let usage = |m: &str| Exit { code: 2, message: m.to_string() };
     let failed = |e: ListError| fail(e.to_string());
-    let deadline = Instant::now() + bound;
+    let deadline = Instant::now() + bounds.all;
+    let own = |bound: Option<Duration>| bound.map_or(deadline, |b| Instant::now() + b);
     let co = match checkout(cwd, deadline) {
         Some(c) => c,
         None => {
@@ -399,9 +427,16 @@ pub fn find_checkout_with(cwd: &Path, bound: Duration, git: &OsStr, cache: &Path
                 return Err(usage(NOT_A_REPO));
             }
             let main = main_of(&list, cache)?;
-            checkout(&main, deadline).ok_or_else(|| no_checkout_at(&main))?
+            let main_deadline = own(bounds.main);
+            match checkout(&main, main_deadline) {
+                Some(c) => c,
+                // F5: a read that the deadline stopped is the timeout, not a main worktree with no checkout.
+                None if Instant::now() >= main_deadline => return Err(failed(ListError::TimedOut)),
+                None => return Err(no_checkout_at(&main)),
+            }
         }
     };
+    let co = Checkout { deadline: own(bounds.list), ..co };
     // `rev-parse` found this checkout, so "not a git repository" here is a failed read (as `zygo_work::repo`).
     let list = worktrees_with(git, &co).map_err(|e| match e {
         ListError::NotARepository => failed(ListError::Failed(String::new())),
