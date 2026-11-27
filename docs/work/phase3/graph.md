@@ -460,3 +460,5 @@ Session text (T, SX nodes):
 | 2026-11-27 | FX-30 created from FX-26 review round 2 F-1; deps FX-26, FX-28 (author's call: every node that edits the mail-sync spec is on one dependency path); the FX-28 → FX-26 edge is added on phase3/FX-28 (PR #234) |
 | 2026-11-27 | FX-28 deps FX-26 added on phase3/FX-26 (FX-26 re-plan review round 1 F2): both change the mail-sync spec; author's call: phase3/FX-28 (PR #234) takes this row when it re-syncs, so phase-3 stays valid when FX-26 merges |
 | 2026-11-27 | Correction of the FX-30 line: the FX-28 → FX-26 edge is set on phase3/FX-26 (graph row and nodes/FX-28.md Row), not on phase3/FX-28; author's call: FX-28's implementation waits until FX-26 merges (FX-26 re-plan review round 2 F6) |
+| 2026-11-27 | FX-26 BLOCKED (re-plan 1: 3 rounds; #235 closed); round 3: the sweep's name allowance in the sync worktree, S§19 #24 contradicted itself, FX-30 cited a lost commit; saved in ~/.cache/fx26-old2 |
+| 2026-11-27 | FX-26 re-plan 2: sweep allows no marked name (S§6.3 no-checkout); reviewed work re-applied (patches 0001-0012 of 86ed9358, no docs/work); steps a-f done |
