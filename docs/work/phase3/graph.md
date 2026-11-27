@@ -463,3 +463,4 @@ Session text (T, SX nodes):
 | 2026-11-27 | FX-26 BLOCKED (re-plan 1: 3 rounds; #235 closed); round 3: the sweep's name allowance in the sync worktree, S§19 #24 contradicted itself, FX-30 cited a lost commit; saved in ~/.cache/fx26-old2 |
 | 2026-11-27 | FX-26 re-plan 2: sweep allows no marked name (S§6.3 no-checkout); reviewed work re-applied (patches 0001-0012 of 86ed9358, no docs/work); steps a-f done |
 | 2026-11-27 | FX-26 IN-PROGRESS: re-plan 2 review round 1 fixes (exact #4 notice; #5, #9, #15 fully walked; FX-28 merge note for both orders; change-log rounds; S-C9 live-premise build; run_with keeps 120 s; CI permission-case check) |
+| 2026-11-27 | FX-26 IN-PROGRESS: re-plan 2 review round 2 fixes (#12 none delivered and its write set; run_with lower bound; test-hooks comment); author's call: no Row line in nodes/FX-28.md and FX-30.md (graph-format §3: deps live in this table) |

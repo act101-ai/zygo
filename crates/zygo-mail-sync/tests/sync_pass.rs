@@ -335,6 +335,14 @@ fn pass_deadline_seam_bounds_the_pass() {
     assert_eq!(e, SyncError::Stopped { line: "zygo: mail sync stopped (deadline); the outbox is kept".into(), check: "deadline" });
     assert_eq!(git(&r.bare, &["rev-parse", &format!("refs/heads/{BRANCH}")]), tip2);
     assert!(a.sp().outbox.join(format!("{id3}.json")).is_file());
+    // FX-26 re-plan 2 review round 2 F2: the lower bound. With the injected clock at `T0 + PASS_DEADLINE - 1 s` at
+    // the `pass_end` check, `run_with` does not stop (`deadline`): the pass pushes the kept message. So `run_with`'s
+    // pass deadline is `PASS_DEADLINE`, not less and (above) not more.
+    let rep = run_with(&jump(T0, T0 + PASS_DEADLINE.as_secs() - 1), WS_ID, Mode::Cli, &Opts::default())
+        .expect("run_with stopped before PASS_DEADLINE");
+    assert_eq!(rep.pushed, 1);
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id3}.json")).is_some());
+    assert!(!a.sp().outbox.join(format!("{id3}.json")).exists());
 }
 
 #[test] // S§19 #1, S-G1, S§7.3, S§14 Normal, S-C4

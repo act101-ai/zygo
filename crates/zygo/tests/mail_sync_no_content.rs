@@ -5,7 +5,7 @@
 #![cfg(unix)]
 mod common;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -647,6 +647,38 @@ fn add_entries(bare: &Path, folder: &str, lines: &[String]) -> String {
         .collect();
     let tree = git_in(bare, &["mktree", "--missing"], format!("{}\n", top.join("\n")).as_bytes());
     test_commit(bare, &tree)
+}
+
+/// FX-26 re-plan 2 review round 2 F1: each entry under `root` (`root` left out, links not followed, git object stores
+/// left out as in [`marked_files`]) with its kind and its content: the bytes of a file, the target of a link, nothing
+/// for a folder. A read error fails with the path.
+fn tree_state(root: &Path) -> BTreeMap<PathBuf, (char, Vec<u8>)> {
+    let mut all = BTreeMap::new();
+    for e in walk(root, "snapshot") {
+        let rel = e.path().strip_prefix(root).unwrap();
+        if e.depth() == 0 || in_object_store(rel) {
+            continue;
+        }
+        let t = e.file_type();
+        let v = if t.is_file() {
+            ('f', read_file(e.path(), "snapshot"))
+        } else if t.is_symlink() {
+            let to = std::fs::read_link(e.path()).unwrap_or_else(|err| panic!("{}: the snapshot cannot read it ({err})", e.path().display()));
+            ('l', to.into_os_string().into_encoded_bytes())
+        } else {
+            ('d', Vec::new())
+        };
+        all.insert(e.path().to_path_buf(), v);
+    }
+    all
+}
+
+/// F1: each path that is new, changed (kind or content) or gone in `after` against `before`, sorted.
+fn changed(before: &BTreeMap<PathBuf, (char, Vec<u8>)>, after: &BTreeMap<PathBuf, (char, Vec<u8>)>) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = after.iter().filter(|(p, v)| before.get(*p) != Some(*v)).map(|(p, _)| p.clone()).collect();
+    out.extend(before.keys().filter(|p| !after.contains_key(*p)).cloned());
+    out.sort();
+    out
 }
 
 /// S§19 #12, registry half: `registry/<HOST_R1>.json` with 257 names and `registry/<HOST_R2>.json` whose `host` is
@@ -1709,9 +1741,29 @@ fn no_mail_content_after_the_scenarios() {
     // The registry half: a registry with 257 names, and one whose `host` is not its name (MS-22 review F2).
     let (many, other, rc) = bad_registries(&r.bare);
     made.insert(rc);
+    // FX-26 re-plan 2 review round 2 F1: "None is delivered" (bob's `new/` is the same after the pass) and "no file is
+    // written outside bob's maildir and mail/sync/" (every path of B's home that the pass adds, changes or removes).
+    // The pass also writes, by design, what S§19 #12 names besides: the `errors.log` lines (an append of exactly the
+    // eight lines below), and the git files of its fetch, commit and push of `ack/<host>.json`: the remote-tracking
+    // ref `refs/remotes/origin/zygo/mail` (S§6.5, S§8.3 step 15) and the sync worktree's own `HEAD` and index (S§6.3,
+    // S§15), each with the reflog that git keeps for it. Object stores are left out (`tree_state`).
+    let new12 = new_ids(&b, BOB);
+    let (log12, home12) = (errors(&b), tree_state(b.root()));
     let o = sync_bin(&b, &[]);
     assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    assert_eq!(new_ids(&b, BOB), new12, "#12: a hostile entry was delivered");
+    let (s12, gd) = (sp(&b), b.repo().join(".git"));
+    let admin = PathBuf::from(std::fs::read_to_string(s12.worktree.join(".git")).unwrap().strip_prefix("gitdir: ").unwrap().trim_end());
+    let ws_log = b.store(WS_ID).dir().join("errors.log");
+    let by_design = [ws_log.clone(), gd.join("refs/remotes/origin/zygo/mail"), gd.join("logs/refs/remotes/origin/zygo/mail"),
+        admin.join("HEAD"), admin.join("index"), admin.join("logs/HEAD")];
+    let outside: Vec<PathBuf> = changed(&home12, &tree_state(b.root())).into_iter()
+        .filter(|p| !(p.starts_with(mail_dir(&b.paths, WS_ID).join(BOB)) || p.starts_with(&s12.sync) || by_design.contains(p)))
+        .collect();
+    assert_eq!(outside, Vec::<PathBuf>::new(), "#12: the pass wrote outside bob's maildir, mail/sync/ and its git files");
     let log = errors(&b);
+    let added: Vec<&str> = log.strip_prefix(log12.as_str()).unwrap_or_else(|| panic!("#12: errors.log was not appended to: {log}")).lines().collect();
+    assert_eq!(added.len(), 8, "#12: one errors.log line for each hostile entry and each refused registry: {added:?}");
     for (id, check) in hs.iter().zip(["mode", "mode", "size", "id", "to", "json"]) {
         assert!(log.lines().any(|l| l.ends_with(&format!("mail sync: import {id}: {check}"))), "{id} {check}: {log}");
     }
