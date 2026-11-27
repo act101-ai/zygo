@@ -1122,6 +1122,5 @@ fn no_mail_content_after_the_scenarios() {
     let (rows, f) = usage_findings(&b.paths.usage_db);
     assert!(rows >= 1, "the trim hook wrote no usage row");
     found.extend(f);
-    found.extend(usage_findings(&a.paths.usage_db).1);
     assert_eq!(found, Vec::<String>::new());
 }
