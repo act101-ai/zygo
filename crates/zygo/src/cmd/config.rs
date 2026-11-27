@@ -255,7 +255,7 @@ fn run_in(tokens: &[String], ctx: &LoadContext, s: &dyn SecretStore, team: &dyn 
             // R§10 `config check`: an invalid definition is one warning, so the exit status stays that of the config;
             // an unread one is its line on stderr; the other states print nothing here.
             match &v.state {
-                State::Invalid { why } => violations.push(Violation {
+                State::Invalid { why, .. } => violations.push(Violation {
                     severity: Severity::Warning,
                     path: "workspace files".into(),
                     message: why.clone(),

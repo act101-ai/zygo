@@ -377,7 +377,7 @@ mod unix {
 
     #[test]
     fn loadout_list_labels_the_repository_loadout_in_each_state() { // R§10 row as rewritten 2026-11-26
-        let cases: [(Fx, &str, bool, &str); 5] = [
+        let cases: [(Fx, &str, bool, &str); 7] = [
             (fx(&[(WS, MIN)]), "", true, "repository  workspace-files\nsolo  built-in\n"),
             (fx(&[(WS, MIN)]), "", false, "repository  workspace-files, not approved\nsolo  built-in\n"),
             (fx(&[(WS, INVALID)]), "", false, "repository  workspace-files, invalid\nsolo  built-in\n"),
@@ -388,6 +388,10 @@ mod unix {
                 "repository  user\nrepository  workspace-files, shadowed\nsolo  built-in\n",
             ),
             (fx(&[(PROF, RUST)]), "", false, "solo  built-in\n"),
+            // Review F4: an invalid read with no `.zygo/workspace.toml` gives no row (the reviewer's probe); with one,
+            // an invalid profile still gives the row.
+            (fx(&[(PROF, "prompt = \"x\"\n")]), "", false, "solo  built-in\n"),
+            (fx(&[(WS, MIN), (PROF, "prompt = \"x\"\n")]), "", false, "repository  workspace-files, invalid\nsolo  built-in\n"),
         ];
         for (f, user, approve, want) in &cases {
             let (so, se) = list(f, user, *approve);

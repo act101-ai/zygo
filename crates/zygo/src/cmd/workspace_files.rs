@@ -21,8 +21,8 @@ pub(crate) enum State {
     Absent,
     Unread,
     /// `why`: the R§6.4 violation as the read gives it (not escaped).
-    Invalid { why: String },
-    /// `workspace`: the read has `.zygo/workspace.toml`.
+    /// `workspace`, here and below: the read has `.zygo/workspace.toml` (review F4).
+    Invalid { why: String, workspace: bool },
     NotApproved { workspace: bool },
     Approved { workspace: bool },
 }
@@ -73,13 +73,13 @@ pub(crate) fn view_of(merged: &Merged, found: Option<Use>) -> View {
             State::Unread,
             Some(format!("zygo: this repository's workspace files were not read ({}); not shown", esc(&why))),
         ),
-        Use::Invalid { full_ref, why, .. } => {
+        Use::Invalid { full_ref, why, workspace, .. } => {
             let line = format!(
                 "zygo: this repository's workspace files ({}) are invalid ({}); not shown",
                 esc(full_ref.as_deref().unwrap_or_default()),
                 esc(&why)
             );
-            unchanged(State::Invalid { why }, Some(line))
+            unchanged(State::Invalid { why, workspace }, Some(line))
         }
         Use::NotApproved { full_ref, digest, def, .. } => unchanged(
             State::NotApproved { workspace: def.workspace.is_some() },

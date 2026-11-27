@@ -392,8 +392,9 @@ pub fn run(a: &LoadoutArgs) -> i32 {
     match &a.sub {
         LoadoutCmd::List => {
             // R§10 `zygo loadout list`: the approved files add `repository` (source `workspace-files`); a not-approved,
-            // invalid or shadowed repository loadout is one more `repository` row after the others of that name. Only
-            // an unread read prints its line; the other states are the text of that row.
+            // invalid or shadowed repository loadout is one more `repository` row after the others of that name, only
+            // when the read has `.zygo/workspace.toml` (review F4: a profile-only read gives no row). Only an unread
+            // read prints its line; the other states are the text of that row.
             let v = here(&m, &paths.approvals_file, false);
             if let (State::Unread, Some(line)) = (&v.state, &v.line) {
                 print_err(&format!("{line}\n"));
@@ -412,7 +413,7 @@ pub fn run(a: &LoadoutArgs) -> i32 {
                 .collect();
             let extra = match &v.state {
                 State::NotApproved { workspace: true } => Some("workspace-files, not approved"),
-                State::Invalid { .. } => Some("workspace-files, invalid"),
+                State::Invalid { workspace: true, .. } => Some("workspace-files, invalid"),
                 State::Approved { workspace: true } if !from_files => Some("workspace-files, shadowed"),
                 _ => None,
             };

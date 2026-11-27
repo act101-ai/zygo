@@ -27,7 +27,8 @@ impl Pin {
 pub enum Use {
     Absent { full_ref: String },
     Unread { why: String },
-    Invalid { full_ref: Option<String>, commit: String, why: String },
+    /// `workspace`: the read has `.zygo/workspace.toml` (as `Read::Invalid`; WD-16 review F4).
+    Invalid { full_ref: Option<String>, commit: String, why: String, workspace: bool },
     NotApproved { full_ref: String, files: Files, digest: String, def: Definition },
     Approved { full_ref: String, pin: Pin, files: Files, def: Definition },
 }
@@ -38,7 +39,7 @@ pub fn check_default(top: &Path, ws_id: &str, approvals: &Path, git: &dyn GitRun
     let files = match read_default(top, git) {
         Read::Absent { full_ref } => return Use::Absent { full_ref: full_ref.unwrap_or_default() },
         Read::Unread { why } => return Use::Unread { why },
-        Read::Invalid { full_ref, commit, why } => return Use::Invalid { full_ref, commit, why },
+        Read::Invalid { full_ref, commit, why, workspace } => return Use::Invalid { full_ref, commit, why, workspace },
         Read::Gone { commit } => {
             return Use::Unread { why: format!("commit {commit} or one of its objects is missing") };
         }
@@ -46,7 +47,10 @@ pub fn check_default(top: &Path, ws_id: &str, approvals: &Path, git: &dyn GitRun
     };
     let def = match parse(&files) {
         Ok(def) => def,
-        Err(why) => return Use::Invalid { full_ref: files.full_ref, commit: files.commit, why },
+        Err(why) => {
+            let workspace = files.workspace.is_some();
+            return Use::Invalid { full_ref: files.full_ref, commit: files.commit, why, workspace };
+        }
     };
     let digest = digest(&files);
     let full_ref = files.full_ref.clone().unwrap_or_default();
