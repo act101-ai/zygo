@@ -214,7 +214,6 @@ Session text (T, SX nodes):
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
 | OS-46 | Bound the hook's usage-store wait per Bash call | — | DONE | judgment | 75339a21 · d6be5653 · c727ff0e · 68f8e48c · acceptance pass (busy_wait_total/open_bounded_total 7, rollback_journal 1, zygo-usage, zygo-hooks, readbacks) · PR #205 |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
-| FX-8 | zygo usage reads summary and savings from one snapshot | OS-8 | DONE | implementation | 4636d2ee, 73cffb55 · report_snapshot 1/0, usage_doctor 45/0 ; floor green · PR #105 |
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
 | FX-10 | HUD spec lists the member name and unread mail segments and the ✉ glyph | ML-15, RT-3 | DONE | mechanical | 8b19ed30, daf5faed · ✉ 4 ; floor green · PR #123 |
 | FX-11 | zygo doctor icon line shows the ✉ mail glyph | ML-15, RT-3 | DONE | implementation | 1921d4ca, a7ac8924 · usage_doctor 45/0, statusline_render 37/0 ; floor green · PR #122 |
@@ -229,7 +228,7 @@ Session text (T, SX nodes):
 | FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | DONE | mechanical | 96868305 · c98ea5fa · cc948a96 · acceptance pass (live selftest: ok (85)) · PR #194 |
 | FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | DONE | implementation | 569e61a9^..9ac65902 · acceptance pass (shape_clean 35 passed) · PR #211 |
 | FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
-| FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | TODO | implementation | — |
+| FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | DONE | implementation | bb21eadf^..c99eeb95 · acceptance pass (offline: 7 test files, 0 failed) · PR #220 |
 | FX-24 | Mail sync deliveries and ws forget take the M§5 mail lock | FX-13, MS-21 | TODO | judgment | — |
 
 ## Log
@@ -441,3 +440,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-13: agent-written operator gate in the node contract deleted (no operator citation; same kind as FX-16's, PR #208); P1 mail/lock and P2 split taken as author's call (lead) for operator review |
 | 2026-11-26 | FX-13 DONE: deliveries, reads and maildir removals take mail/lock (shared/exclusive) and read records under it; no maildir without a record; R1 F1-F5, R2 R1-2..R1-5 fixed, R1-1 recorded · PR #219 |
 | 2026-11-26 | FX-24 added: FX-13 P2: mail-sync deliveries (sync.rs, import.rs) and ws forget take the M§5 mail lock |
+| 2026-11-26 | FX-23 DONE: shared harness turns the built-in marketplace off by default (NO_MARKETPLACE) and fails any run that syncs; 90 tests in 6 files had synced; R1 F1 F2 F4 F5 fixed, F3 DNS leak of the offline form recorded · PR #220 |

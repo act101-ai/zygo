@@ -199,7 +199,7 @@ mod unix {
     }
 
     fn config(h: &Harness, body: &str) {
-        std::fs::write(h.root().join("config.toml"), body).unwrap();
+        h.config(body);
     }
 
     fn exists(p: &Path) -> bool {

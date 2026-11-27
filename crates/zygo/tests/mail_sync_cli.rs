@@ -67,7 +67,7 @@ fn remote() -> Remote {
 /// `extra` as it is (so `extra` keys land in `[mail.workspace.app]`).
 fn config(h: &Harness, host: Option<&str>, extra: &str) {
     let host = host.map(|x| format!("host = \"{x}\"\n")).unwrap_or_default();
-    std::fs::write(h.root().join("config.toml"), format!("[mail]\n{host}[mail.workspace.app]\nsync = \"zygo/mail\"\n{extra}")).unwrap();
+    h.config(&format!("[mail]\n{host}[mail.workspace.app]\nsync = \"zygo/mail\"\n{extra}"));
 }
 
 /// One machine (D13): a scratch home whose `repo` is a clone of `r`, `git` linked into `bin`, the config of `host`,
@@ -207,7 +207,7 @@ fn sync_off_exits_1_with_its_reason() { // T3
         ("[mail]\nhost = \"a\"\n[mail.workspace.app]\nsync = \"main\"\n", "zygo: mail sync is off: sync in [mail.workspace.app] is not zygo/ and 1 to 32 of a-z, 0-9 and -"),
         ("[mail]\nhost = \"a\"\nsync_gap = \"x\"\n[mail.workspace.app]\nsync = \"zygo/mail\"\n", "zygo: mail sync is off: sync_gap in [mail] is not <n>s, <n>m or <n>h"),
     ] {
-        std::fs::write(a.root().join("config.toml"), cfg).unwrap();
+        a.config(cfg);
         let o = zygo(&a, &["mail", "sync"], &[], None);
         assert_eq!((o.status.code(), err(&o), out(&o)), (Some(1), format!("{line}\n"), String::new()), "{cfg}");
         assert!(!sp(&a).sync.exists(), "{cfg}");
@@ -242,7 +242,7 @@ fn background_is_silent_and_exits_0_when_the_lock_is_held() { // T6
     assert!(s.again.exists()); // S§8.3 step 2: the holder sees the mark
     drop(f);
     assert!(tip_paths(&r).is_empty());
-    std::fs::write(a.root().join("config.toml"), "").unwrap();
+    a.config("");
     for id in [WS_ID, "../x"] {
         let o = zygo(&a, &["mail", "sync", "--ws-id", id, "--background"], &[], None);
         assert_eq!((o.status.code(), out(&o), err(&o)), (Some(0), String::new(), String::new()), "{id}");
@@ -268,7 +268,7 @@ fn background_errors_go_to_errors_log_as_check_names() { // T7
 fn results_sweep_skips_the_background_form_only() { // T11
     let r = remote();
     let a = machine(&r, "a", &[(ALICE, "alice")]);
-    std::fs::write(a.root().join("config.toml"), "").unwrap();
+    a.config("");
     let old = stale(&a, "old-s");
     let o = zygo(&a, &["mail", "sync", "--ws-id", WS_ID, "--background"], &[], None);
     assert_eq!(o.status.code(), Some(0));
@@ -365,7 +365,7 @@ fn ci_note_prints_at_the_first_cli_sync_only() { // T10
 fn mail_sweep_deletes_old_refused_and_tmp_files_at_command_start() { // T14
     let r = remote();
     let a = machine(&r, "a", &[(ALICE, "alice")]);
-    std::fs::write(a.root().join("config.toml"), "[mail]\nhost = \"a\"\nkeep = \"1d\"\n").unwrap();
+    a.config("[mail]\nhost = \"a\"\nkeep = \"1d\"\n");
     let s = sp(&a);
     for d in [&s.refused, &s.outbox_tmp] { std::fs::create_dir_all(d).unwrap(); }
     let now = SystemTime::now();

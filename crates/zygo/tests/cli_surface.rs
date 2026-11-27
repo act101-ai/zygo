@@ -688,6 +688,7 @@ fn claude_config_dir_missing_exits_2() {
     let h = tempfile::tempdir().unwrap();
     let bin = tempfile::tempdir().unwrap();
     let absent = h.path().join("absent");
+    std::fs::write(h.path().join("config.toml"), common::NO_MARKETPLACE).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
     common::scratch_home(&mut cmd, h.path());
     let o = cmd.args(["claude", "--config-dir"]).arg(&absent).env("PATH", bin.path()).env_remove("ZYGO_SESSION_DIR").env_remove("ZYGO_AGENT")
@@ -695,6 +696,7 @@ fn claude_config_dir_missing_exits_2() {
     let err = String::from_utf8_lossy(&o.stderr);
     assert_eq!(o.status.code(), Some(2), "{err}");
     assert!(err.contains("not a directory") && err.lines().count() == 1, "{err:?}");
+    common::assert_no_marketplace_sync(h.path());
 }
 
 // ---- N72: verb and config errors are escaped ----

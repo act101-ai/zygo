@@ -11,6 +11,19 @@ pub fn scratch_home<'a>(cmd: &'a mut Command, home: &Path) -> &'a mut Command {
     cmd.env("HOME", home).env("LOCALAPPDATA", home).env("APPDATA", home).env("ZYGO_CONFIG", home.join("config.toml"))
 }
 
+/// The user config that turns the built-in marketplace off (FX-23; WD-14 review F1). A user `act101` entry with an
+/// empty `ref` (the built-in source stays, §15.1), and sync skips a built-in entry without a `ref` (`zygo-plugins`
+/// `sync.rs` `engine`), so no launch clones `github:act101-ai/act101` or reaches the network. Its `[[marketplace]]`
+/// header closes any open table, so it goes after the other keys of a config.
+pub const NO_MARKETPLACE: &str = "[[marketplace]]\nname = \"act101\"\nref = \"\"\n";
+
+/// FX-23 review F1: no `zygo` run with the scratch home `home` ([`scratch_home`]) ran a marketplace sync. A sync takes
+/// `<marketplaces_dir>/<name>.lock` (`zygo-plugins` `sync.rs` `lock_marketplace`), which makes the folder.
+pub fn assert_no_marketplace_sync(home: &Path) {
+    let d = if cfg!(windows) { home.join("zygo").join("cache").join("marketplaces") } else { home.join(".cache/zygo/marketplaces") };
+    assert!(!d.exists(), "a marketplace sync ran (FX-23): {} exists", d.display());
+}
+
 /// The stub agent in `dir`, or the message that names the command which builds it.
 pub fn stub_agent_in(dir: &Path) -> Result<PathBuf, String> {
     let p = dir.join(format!("stub-agent{EXE_SUFFIX}"));
