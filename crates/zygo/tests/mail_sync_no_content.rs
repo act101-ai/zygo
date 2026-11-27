@@ -51,8 +51,6 @@ const HOST_R3: &str = "hazel-q7x"; // the `host` of that registry
 const SUBJ: &str = "subj-q7x"; // every subject starts with it
 const BODY: &str = "body-q7x"; // every body holds it
 const MARKERS: [&str; 12] = [SUBJ, BODY, A_NAME, B_NAME, HOST_A, HOST_B, HOST_B2, HOST_A2, HOST_A3, HOST_R1, HOST_R2, HOST_R3];
-/// The user-config head of `crates/zygo/tests/workspace_definition.rs:142`: no marketplace is fetched.
-const NO_MARKETPLACE: &str = "[[marketplace]]\nname = \"act101\"\nref = \"\"\n";
 /// S§6.5: the message of every commit that zygo writes.
 const MESSAGE: &str = "zygo mail [skip ci]\n";
 /// S§6.5: the author and the committer of every commit that zygo writes.
@@ -164,11 +162,10 @@ fn remote() -> Remote {
     Remote { _t: t, bare, url }
 }
 
-/// The user config of `h`: no marketplace, `[mail]` with `host` and `mail_keys`, `[mail.workspace.app]` sync on,
-/// then `tables`.
+/// The user config of `h`: `[mail]` with `host` and `mail_keys`, `[mail.workspace.app]` sync on, then `tables`; then
+/// the shared `common::NO_MARKETPLACE` (`Harness::config`, FX-23), so no marketplace is fetched.
 fn config(h: &Harness, host: &str, mail_keys: &str, tables: &str) {
-    let text = format!("{NO_MARKETPLACE}[mail]\nhost = \"{host}\"\n{mail_keys}[mail.workspace.app]\nsync = \"zygo/mail\"\n{tables}");
-    std::fs::write(h.root().join("config.toml"), text).unwrap();
+    h.config(&format!("[mail]\nhost = \"{host}\"\n{mail_keys}[mail.workspace.app]\nsync = \"zygo/mail\"\n{tables}"));
 }
 
 /// One machine: a scratch home whose `repo` is a clone of `r`, `git` linked into `bin`, the config of `host`, and the
@@ -188,14 +185,21 @@ fn machine(r: &Remote, host: &str, key: &str, name: &str) -> Harness {
     h
 }
 
-/// `h.zygo(args, …)` with `ZYGO_WORKSPACE = WS_ID`; `input` fed to stdin (none: the null device).
+/// `h.zygo(args, …)` with `ZYGO_WORKSPACE = WS_ID`; `input` fed to stdin (none: the null device). After the run, no
+/// marketplace sync ran (`common::assert_no_marketplace_sync`, FX-23).
 fn zygo(h: &Harness, args: &[&str], input: Option<&[u8]>) -> Output {
     let mut c = h.zygo(args, &[("ZYGO_WORKSPACE", OsStr::new(WS_ID))]);
-    let Some(bytes) = input else { return c.output().unwrap() };
-    c.stdin(Stdio::piped());
-    let mut child = c.spawn().unwrap();
-    feed_stdin(child.stdin.take().unwrap(), bytes);
-    child.wait_with_output().unwrap()
+    let o = match input {
+        None => c.output().unwrap(),
+        Some(bytes) => {
+            c.stdin(Stdio::piped());
+            let mut child = c.spawn().unwrap();
+            feed_stdin(child.stdin.take().unwrap(), bytes);
+            child.wait_with_output().unwrap()
+        }
+    };
+    common::assert_no_marketplace_sync(h.root());
+    o
 }
 fn out_of(o: &Output) -> String { String::from_utf8_lossy(&o.stdout).into_owned() }
 fn err_of(o: &Output) -> String { String::from_utf8_lossy(&o.stderr).into_owned() }
@@ -1069,6 +1073,7 @@ fn no_mail_content_after_the_scenarios() {
     let mut child = trim.spawn().unwrap();
     feed_stdin(child.stdin.take().unwrap(), &serde_json::to_vec(&event).unwrap());
     let o = child.wait_with_output().unwrap();
+    common::assert_no_marketplace_sync(b.root());
     assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
     assert!(out_of(&o).contains("[zygo trimmed this output:"), "{} {}", out_of(&o), err_of(&o));
 
