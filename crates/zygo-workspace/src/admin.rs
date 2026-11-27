@@ -404,7 +404,7 @@ pub fn status(paths: &Paths, cwd: &Path, zygo_workspace: Option<&OsStr>) -> anyh
             (id.to_string(), true)
         }
         None => {
-            let (co, _, _) = find_checkout(cwd, STATUS_GIT_BOUND).map_err(|_| anyhow!(NO_STATUS))?;
+            let (co, _, _) = find_checkout(cwd, STATUS_GIT_BOUND, &paths.workspace_cache_dir()).map_err(|_| anyhow!(NO_STATUS))?;
             (workspace_id(&co.common_dir), false)
         }
     };
@@ -992,7 +992,7 @@ fn pane_workspace(paths: &Paths, name: Option<&str>, cwd: &Path, no_folder: &str
             Found::Link(id) => return Err(link_line(&id)),
         },
         None => {
-            let (co, _, _) = find_checkout(cwd, GIT_BOUND).map_err(|_| no_folder.to_string())?;
+            let (co, _, _) = find_checkout(cwd, GIT_BOUND, &paths.workspace_cache_dir()).map_err(|_| no_folder.to_string())?;
             let id = workspace_id(&co.common_dir);
             match state_kind(paths, &id) {
                 Kind::Real => {}

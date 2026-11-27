@@ -6,7 +6,7 @@
 #![cfg(unix)]
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Read;
 use std::os::fd::FromRawFd;
@@ -386,6 +386,265 @@ fn preflight_tmux_version() {
     let odd = version_tmux(t.path(), "tmuxm", "tmux master");
     assert!(matches!(preflight(&o.paths, &odd, None, &r), Err(Exit { code: 2, message }) if message.starts_with("zygo: cannot read the tmux version: ")));
     assert!(!o.paths.workspaces_dir().exists());
+}
+
+/// zygo's workspaces cache folder of [`paths`]`(t)` (`Paths::workspace_cache_dir`), where the mail-sync worktree lives.
+fn cache(t: &Path) -> PathBuf { paths(t).workspace_cache_dir() }
+
+/// The first `git` file on the `PATH` of the test process (read only: no test changes that `PATH`).
+fn real_git() -> PathBuf {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&path).map(|d| d.join("git")).find(|g| g.is_file()).expect("git on PATH")
+}
+
+/// `<dir>/<sub>/git` (by `script`): a call whose arguments hold `worktree list` prints `line` (no `'`) to stderr and
+/// exits 1; every other call is `exec '<real_git()>' "$@"`. Returns the program, for the `git` seam of
+/// `up::find_checkout_with` and `up::preflight_with`.
+fn failing_list_git(dir: &Path, sub: &str, line: &str) -> PathBuf { list_git(dir, sub, &format!("echo '{line}' >&2; exit 1")) }
+
+/// `<dir>/<sub>/git` (by `script`): a call whose arguments hold `worktree list` runs the shell code `list`; every other
+/// call is `exec '<real_git()>' "$@"`. Returns the program.
+fn list_git(dir: &Path, sub: &str, list: &str) -> PathBuf {
+    let bin = dir.join(sub);
+    fs::create_dir_all(&bin).unwrap();
+    let body = format!("case \" $* \" in *\" worktree list \"*) {list};; esac\nexec '{}' \"$@\"", real_git().display());
+    script(&bin, "git", &body)
+}
+
+#[test] // FX-25 review R2 F7, W§8.1 step 3: a failed list shows only git's first non-empty stderr line, cut to 200
+        // characters and `…`; here from 64 KiB of stderr in many lines, at both list sites
+fn failed_list_shows_the_first_stderr_line_cut_to_200_characters() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let r = repo(t, "app");
+    repo(t, "w");
+    git(t, &["clone", "-q", "--bare", "w", "repo.git"]);
+    // An empty line, then one line of 250 two-byte characters, then lines of `y` past 64 KiB in all.
+    let first = "\u{e4}".repeat(250);
+    let mut text = format!("\n  \n  {first}  \n");
+    while text.len() <= 64 * 1024 {
+        text.push_str(&format!("{}\n", "y".repeat(99)));
+    }
+    let err = t.join("stderr.txt");
+    fs::write(&err, &text).unwrap();
+    let stub = list_git(t, "long", &format!("cat '{}' >&2; exit 1", err.display()));
+    let want = Some(Exit { code: 1, message: format!("git worktree list failed: {}\u{2026}", "\u{e4}".repeat(200)) });
+    let far = Duration::from_secs(3600);
+    assert_eq!(up::find_checkout_with(&r, far, stub.as_os_str(), &cache(t)).err(), want);
+    assert_eq!(up::find_checkout_with(&t.join("repo.git"), far, stub.as_os_str(), &cache(t)).err(), want);
+    // A line of 200 characters or less is kept whole, with no `…`.
+    let short = "\u{e4}".repeat(200);
+    let stub = failing_list_git(t, "short", &format!("{short}\nsecond line"));
+    assert_eq!(
+        up::find_checkout_with(&r, far, stub.as_os_str(), &cache(t)).err(),
+        Some(Exit { code: 1, message: format!("git worktree list failed: {short}") })
+    );
+}
+
+#[test] // FX-25 review F6, W§8.1 step 3: only git's "not a git repository" is "not a repository"; another phrase of
+        // `zygo_config::repo_file::GIT_ABSENT` from `worktree list` is a failed list with its text, exit 1
+fn other_absent_phrase_of_worktree_list_exits_1_with_the_text() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    repo(t, "w");
+    git(t, &["clone", "-q", "--bare", "w", "repo.git"]);
+    let stub = failing_list_git(t, "invalid", "fatal: invalid object name x");
+    // The probe list in a bare repository's own folder, where `rev-parse` finds no work tree.
+    assert_eq!(
+        up::find_checkout_with(&t.join("repo.git"), Duration::from_secs(3600), stub.as_os_str(), &cache(t)).err(),
+        Some(Exit { code: 1, message: "git worktree list failed: fatal: invalid object name x".into() })
+    );
+}
+
+#[test] // FX-25 review R2 F6, W§8.1 step 3: after `rev-parse` found the checkout, git's "not a git repository" from its
+        // list is a failed list that keeps git's text
+fn not_a_repository_from_the_found_checkout_list_keeps_the_text() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let r = repo(t, "app");
+    // git's own answer for a folder in no repository (the one `GIT_ABSENT` phrase of `ListError::NotARepository`).
+    let line = "fatal: not a git repository (or any of the parent directories): .git";
+    let stub = failing_list_git(t, "nar", line);
+    assert_eq!(
+        up::find_checkout_with(&r, Duration::from_secs(3600), stub.as_os_str(), &cache(t)).err(),
+        Some(Exit { code: 1, message: format!("git worktree list failed: {line}") })
+    );
+}
+
+#[test] // FX-25 f6, W§8.1 step 3, AU25: a failed or timed-out list keeps its reason, exit 1, no write
+fn worktree_list_failure_exits_1_with_the_reason() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let r = repo(t, "app");
+    let far = Duration::from_secs(3600);
+    // Timed out: with no time left, no git starts.
+    assert_eq!(up::find_checkout(&r, Duration::ZERO, &cache(t)).err(), Some(Exit { code: 1, message: "git worktree list timed out".into() }));
+    // Failed: the list of the checkout found from a work tree, and the probe list in a bare repository's own folder.
+    let stub = failing_list_git(t, "bin", "fatal: stub");
+    let failed = Some(Exit { code: 1, message: "git worktree list failed: fatal: stub".into() });
+    assert_eq!(up::find_checkout_with(&r, far, stub.as_os_str(), &cache(t)).err(), failed);
+    git(t, &["clone", "-q", "--bare", "app", "repo.git"]);
+    assert_eq!(up::find_checkout_with(&t.join("repo.git"), far, stub.as_os_str(), &cache(t)).err(), failed);
+    // `zygo up` (and attach, down) prints the reason with its `zygo: ` prefix, and writes nothing.
+    let o = opts(t, &r, &version_tmux(t, "tmux34", "tmux 3.4"), &t.join("zygo"));
+    assert_eq!(
+        up::preflight_with(&o.paths, &o.tmux, None, &r, stub.as_os_str()).err(),
+        Some(Exit { code: 1, message: "zygo: git worktree list failed: fatal: stub".into() })
+    );
+    assert!(!o.paths.workspaces_dir().exists());
+    // No git: the program cannot start.
+    let missing = t.join("empty").join("git");
+    assert_eq!(up::find_checkout_with(&r, far, missing.as_os_str(), &cache(t)).err(), Some(Exit { code: 1, message: "git not found".into() }));
+}
+
+/// The folder that [`find_checkout_child`] looks up; set on the child process only.
+const CHILD_DIR: &str = "ZYGO_TEST_FIND_CHECKOUT_DIR";
+
+/// `up::find_checkout(<dir>, 1 h)`, run by [`find_checkout_child`] in a child process of this test binary with `env`
+/// added to that child only, so every git call of the lookup (`rev-parse` and `worktree list`) gets `env` and no test
+/// changes the environment of its own process. `None` when the lookup succeeds.
+fn find_checkout_in_child(dir: &Path, env: &[(&str, &OsStr)]) -> Option<Exit> {
+    let mut c = Command::new(std::env::current_exe().unwrap());
+    c.args(["--exact", "find_checkout_child", "--ignored", "--nocapture", "--test-threads=1"]).env(CHILD_DIR, dir);
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    let o = c.stdin(Stdio::null()).output().unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
+    // The harness prints `test find_checkout_child ... ` before the line of the child on the same line.
+    let line = out.lines().find_map(|l| l.split_once("FIND_CHECKOUT ").map(|(_, r)| r)).unwrap_or_else(|| panic!("no result: {out}"));
+    match line.split_once('\t') {
+        Some((code, message)) => Some(Exit { code: code.parse().unwrap(), message: message.into() }),
+        None => {
+            assert_eq!(line, "ok");
+            None
+        }
+    }
+}
+
+#[test]
+#[ignore = "the child run of find_checkout_in_child; does nothing without its folder"]
+fn find_checkout_child() {
+    let _g = serial();
+    let Some(dir) = std::env::var_os(CHILD_DIR) else { return };
+    match up::find_checkout(Path::new(&dir), Duration::from_secs(3600), &Path::new(&dir).join("no-cache")) {
+        Ok(_) => println!("FIND_CHECKOUT ok"),
+        Err(e) => println!("FIND_CHECKOUT {}\t{}", e.code, e.message),
+    }
+}
+
+#[test] // AU25, AU77 unchanged: not a repository and a bare repository with no worktree exit 2
+fn not_a_repository_and_a_bare_repository_exit_2() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    // FX-25 review F5d: on the git children only, so a TMPDIR inside a repository cannot change the result.
+    let ceiling = [("GIT_CEILING_DIRECTORIES", t.parent().unwrap().as_os_str())];
+    let plain = t.join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    assert_eq!(find_checkout_in_child(&plain, &ceiling), Some(Exit { code: 2, message: "zygo up needs a git repository".into() }));
+    repo(t, "w");
+    git(t, &["clone", "-q", "--bare", "w", "repo.git"]);
+    assert_eq!(
+        find_checkout_in_child(&t.join("repo.git"), &ceiling),
+        Some(Exit { code: 2, message: "zygo up needs a worktree; this repository is bare".into() })
+    );
+}
+
+#[test] // FX-25 review F5a, W§8.1 step 3: no git at all (neither `rev-parse` nor the probe list can start) is exit 1
+fn no_git_at_all_exits_1_git_not_found() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let r = repo(t, "app");
+    let empty = t.join("empty");
+    fs::create_dir_all(&empty).unwrap();
+    assert_eq!(find_checkout_in_child(&r, &[]), None);
+    assert_eq!(
+        find_checkout_in_child(&r, &[("PATH", empty.as_os_str())]),
+        Some(Exit { code: 1, message: "git not found".into() })
+    );
+}
+
+/// `<dir>/slow/git` (by `script`): a call whose arguments hold `worktree list` adds its arguments as one line to
+/// `<dir>/slow/list.log`, then opens the FIFO `<dir>/slow/fifo`, which no one writes, so it never ends by itself; every
+/// other call is `exec '<real_git()>' "$@"`. Returns the program and the log.
+fn blocking_list_git(dir: &Path) -> (PathBuf, PathBuf) {
+    let bin = dir.join("slow");
+    fs::create_dir_all(&bin).unwrap();
+    let (fifo, log) = (bin.join("fifo"), bin.join("list.log"));
+    let made = Command::new("mkfifo").arg(&fifo).status().unwrap();
+    assert!(made.success());
+    let body = format!(
+        "case \" $* \" in *\" worktree list \"*) printf '%s\\n' \"$*\" >> '{}'; exec cat '{}';; esac\nexec '{}' \"$@\"",
+        log.display(),
+        fifo.display(),
+        real_git().display()
+    );
+    (script(&bin, "git", &body), log)
+}
+
+#[test] // FX-25 review F5b, W§8.1 step 3: the list of the checkout found from the cwd times out: exit 1 with the reason
+fn worktree_list_of_the_found_checkout_timed_out_exits_1() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let r = repo(t, "app");
+    let sub = r.join("sub");
+    fs::create_dir_all(&sub).unwrap();
+    let (stub, log) = blocking_list_git(t);
+    // FX-25 review R2 F8: `rev-parse` (the real git) has one hour, so its time never decides the result; the list of
+    // `r` has its own 2 s bound (`up::Bounds::list`), which starts when that list starts, and the stub waits past it.
+    let bounds = up::Bounds { all: Duration::from_secs(3600), main: None, list: Some(Duration::from_secs(2)) };
+    assert_eq!(
+        up::find_checkout_by(&sub, bounds, stub.as_os_str(), &cache(t)).err(),
+        Some(Exit { code: 1, message: "git worktree list timed out".into() })
+    );
+    // One list ran, in the found checkout `r` (the second site), not the probe in the cwd `sub`.
+    let calls = fs::read_to_string(&log).unwrap();
+    assert_eq!(calls.lines().collect::<Vec<_>>(), [format!("-c core.fsmonitor=false -C {} worktree list --porcelain", r.display())]);
+}
+
+#[test] // FX-25 f6, W§8.1 step 3: from the bare folder, a main worktree with no checkout is exit 1
+fn bare_folder_with_its_main_worktree_gone_exits_1() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let far = Duration::from_secs(3600);
+    repo(t, "w");
+    git(t, &["clone", "-q", "--bare", "w", "repo.git"]);
+    git(&t.join("repo.git"), &["worktree", "add", "-q", "--detach", "../one", "main"]);
+    fs::remove_dir_all(t.join("one")).unwrap();
+    assert_eq!(
+        up::find_checkout(&t.join("repo.git"), far, &cache(t)).err(),
+        Some(Exit { code: 1, message: format!("no checkout at the main worktree {}", t.join("one").display()) })
+    );
+}
+
+#[test] // FX-25 review R2 F5, W§8.1 step 3: from the bare folder, a `rev-parse` of the main worktree that the deadline
+        // stops is the timeout, not "no checkout"
+fn bare_folder_main_worktree_read_timed_out_exits_1_timed_out() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let far = Duration::from_secs(3600);
+    repo(t, "w");
+    git(t, &["clone", "-q", "--bare", "w", "repo.git"]);
+    git(&t.join("repo.git"), &["worktree", "add", "-q", "--detach", "../one", "main"]);
+    // The probe list gets one hour; the read of the main worktree `one` gets no time, so no git starts for it.
+    let bounds = up::Bounds { all: far, main: Some(Duration::ZERO), list: None };
+    assert_eq!(
+        up::find_checkout_by(&t.join("repo.git"), bounds, OsStr::new("git"), &cache(t)).err(),
+        Some(Exit { code: 1, message: "git worktree list timed out".into() })
+    );
+    // With time, the same lookup finds `one`.
+    let found = up::find_checkout_by(&t.join("repo.git"), up::Bounds::all(far), OsStr::new("git"), &cache(t));
+    assert_eq!(found.map(|(co, _, main)| (co.top, main)).ok(), Some((t.join("one"), t.join("one"))));
 }
 
 #[test] // W§18 #3, #11, #29, AU2, AU20, AU25, AU77, D1, D4, D5

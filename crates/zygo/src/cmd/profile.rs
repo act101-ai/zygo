@@ -21,7 +21,7 @@ fn listed(ctx: &VerbCtx) -> anyhow::Result<Merged> {
     }
     // `here` reads nothing with the slash flag set either (review F2), so the read stays out of reach of the slash
     // form if this guard moves.
-    let v = super::workspace_files::here(&m, &ctx.paths.approvals_file, ctx.slash);
+    let v = super::workspace_files::here(&m, &ctx.paths.approvals_file, &ctx.paths.workspace_cache_dir(), ctx.slash);
     if let Some(line) = &v.line {
         super::print_err(&format!("{line}\n"));
     }

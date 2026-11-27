@@ -29,7 +29,7 @@ use crate::mux::{check_path, parse_pane_line, Multiplexer, MuxError, SessionAnsw
 use crate::repair::{check_saved_socket, repair, repair_failure};
 use crate::snapshot::{self, SkipReason, SnapshotOutcome, OP_WAIT};
 use crate::state::{list_all, MemberRecord, MemberState, OpLock, Phase, StateError, Store, Subagent, Workspace};
-use crate::up::{self, check_server, not_owned, preflight, socket_is_private, unreachable, Exit};
+use crate::up::{self, check_server, not_owned, socket_is_private, unreachable, Exit};
 
 /// What the AU18 guard compares for a process: its mount and pid namespaces and its command name (round 2 item 6).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,6 +142,8 @@ trait Probe {
     fn fire(&self, point: &str);
     /// The fault set for the write or step `name` (round 2 item 2); `None` lets it run.
     fn fault(&self, name: &str) -> Option<StateError>;
+    /// The program of each `git worktree list` of the lookup (FX-25 close); `git` in production.
+    fn git(&self) -> OsString;
 }
 
 /// The real clock and no hook.
@@ -163,6 +165,8 @@ impl Probe for Real {
     fn fire(&self, _point: &str) {}
 
     fn fault(&self, _name: &str) -> Option<StateError> { None }
+
+    fn git(&self) -> OsString { OsString::from("git") }
 }
 
 /// Test hooks (D24). Only the `test-hooks` feature builds them.
@@ -170,6 +174,7 @@ impl Probe for Real {
 pub mod testing {
     use std::cell::Cell;
     use std::collections::BTreeMap;
+    use std::ffi::OsString;
     use std::io::Write;
     use std::time::{Duration, SystemTime};
 
@@ -196,6 +201,8 @@ pub mod testing {
         /// `draining`, `gone` (the `phase = down` write of a gone session), `stopping`, `stopping_fallback`,
         /// `members` (step 8), `down` (step 11), `revert` (timeout, cancel and refused snapshot), `snapshot` (step 4).
         pub faults: BTreeMap<&'static str, Box<dyn Fn() -> Option<Fault>>>,
+        /// The program of each `git worktree list` of the lookup (FX-25 close); `None` is `git`.
+        pub git: Option<OsString>,
     }
 
     /// A fault of [`Hooks::faults`].
@@ -210,7 +217,7 @@ pub mod testing {
     impl Hooks {
         /// No hook, no point, no fault.
         pub fn new(start: SystemTime) -> Hooks {
-            Hooks { start, on_poll: None, status: None, points: BTreeMap::new(), faults: BTreeMap::new() }
+            Hooks { start, on_poll: None, status: None, points: BTreeMap::new(), faults: BTreeMap::new(), git: None }
         }
     }
 
@@ -243,6 +250,8 @@ pub mod testing {
                 Fault::Error(text) => StateError::Io(std::io::Error::other(text)),
             })
         }
+
+        fn git(&self) -> OsString { self.hooks.git.clone().unwrap_or_else(|| OsString::from("git")) }
     }
 
     /// [`super::run`] with the hooks and a new virtual clock.
@@ -380,7 +389,7 @@ fn tmux_check(tmux: &Path) -> Result<(), Exit> {
 
 /// The targets and the base exit code (1 when `--all` skipped a state), or the exit code of a `down` that ends here
 /// (its lines are printed).
-fn resolve(opts: &DownOpts, out: &mut dyn Write, err: &mut dyn Write) -> Result<(Vec<Workspace>, i32), i32> {
+fn resolve(opts: &DownOpts, git: &OsStr, out: &mut dyn Write, err: &mut dyn Write) -> Result<(Vec<Workspace>, i32), i32> {
     let name: Option<String> = match &opts.target {
         DownTarget::All => return resolve_all(opts, out, err),
         DownTarget::Session(None) => {
@@ -411,7 +420,7 @@ fn resolve(opts: &DownOpts, out: &mut dyn Write, err: &mut dyn Write) -> Result<
         DownTarget::Name(n) => Some(n.clone()),
         DownTarget::Cwd => None,
     };
-    let t = preflight(&opts.paths, &opts.tmux, name.as_deref(), &opts.cwd).map_err(|e| {
+    let t = up::preflight_saved(&opts.paths, &opts.tmux, name.as_deref(), &opts.cwd, git).map_err(|e| {
         say(err, &e.message);
         e.code
     })?;
@@ -1505,7 +1514,7 @@ impl Run<'_> {
 
 /// W§9.3 with the given probe (D23 exit codes).
 fn run_inner(opts: &DownOpts, probe: &dyn Probe, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    let (mut targets, mut base) = match resolve(opts, out, err) {
+    let (mut targets, mut base) = match resolve(opts, &probe.git(), out, err) {
         Ok(t) => t,
         Err(code) => return code,
     };

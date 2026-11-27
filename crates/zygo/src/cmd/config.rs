@@ -223,7 +223,7 @@ fn run_in(tokens: &[String], ctx: &LoadContext, s: &dyn SecretStore, team: &dyn 
         (Sub::Show { .. }, Which::Layer(_)) => None,
         _ => ctx.repo.as_deref(),
     };
-    let v = view(&merged, folder, &ctx.paths.approvals_file, &SystemGit);
+    let v = view(&merged, folder, &ctx.paths.approvals_file, &ctx.paths.workspace_cache_dir(), &SystemGit);
     // D6: the pane folders by `zygo up`'s own lookup, only when there is a loadout (no git run otherwise) and the output
     // can show one: only the user layer holds `[loadout]` (the team layer drops it, `layers.rs:86`; the repository file
     // may not set it, `layers.rs:499`), so `show --layer <other>` needs no lookup (review round 2, finding 6)
@@ -235,7 +235,7 @@ fn run_in(tokens: &[String], ctx: &LoadContext, s: &dyn SecretStore, team: &dyn 
     let base = if cfg.loadout.is_empty() || !shows_loadouts {
         PaneBase { main_root: PathBuf::new(), worktrees: vec![] }
     } else {
-        let (base, warning) = PaneBase::from_folder(ctx.repo.as_deref().unwrap_or(Path::new("")));
+        let (base, warning) = PaneBase::from_folder(ctx.repo.as_deref().unwrap_or(Path::new("")), &ctx.paths.workspace_cache_dir());
         if let Some(m) = warning {
             print_folder_warning(&m);
         }

@@ -22,8 +22,8 @@ fn plain(kind: PaneKind) -> PlanPane { // the defaults of `zygo claude` and `zyg
 }
 fn trees() -> Vec<Worktree> {
     vec![
-        Worktree { path: root(), branch: Some("main".into()), bare: false },
-        Worktree { path: root().join("wt-x"), branch: Some("feature-x".into()), bare: false },
+        Worktree { path: root(), branch: Some("main".into()), bare: false, prunable: false },
+        Worktree { path: root().join("wt-x"), branch: Some("feature-x".into()), bare: false, prunable: false },
     ]
 }
 

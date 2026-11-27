@@ -293,8 +293,8 @@ pub(crate) struct PaneBase {
 impl PaneBase {
     /// The base of the repository of `here`, by `zygo up`'s own lookup (`find_checkout`). When it fails: `here` with no
     /// worktree, and the reason.
-    pub(crate) fn from_folder(here: &Path) -> (PaneBase, Option<String>) {
-        match find_checkout(here, GIT_BOUND) {
+    pub(crate) fn from_folder(here: &Path, cache: &Path) -> (PaneBase, Option<String>) {
+        match find_checkout(here, GIT_BOUND, cache) {
             Ok((_, list, main)) => (PaneBase { main_root: main, worktrees: list }, None),
             Err(e) => (PaneBase { main_root: here.to_path_buf(), worktrees: vec![] }, Some(e.message)),
         }
@@ -395,7 +395,7 @@ pub fn run(a: &LoadoutArgs) -> i32 {
             // invalid or shadowed repository loadout is one more `repository` row after the others of that name, only
             // when the read has `.zygo/workspace.toml` (review F4: a profile-only read gives no row). Only an unread
             // read prints its line; the other states are the text of that row.
-            let v = here(&m, &paths.approvals_file, false);
+            let v = here(&m, &paths.approvals_file, &paths.workspace_cache_dir(), false);
             if let (State::Unread, Some(line)) = (&v.state, &v.line) {
                 print_err(&format!("{line}\n"));
             }
@@ -433,7 +433,7 @@ pub fn run(a: &LoadoutArgs) -> i32 {
                 Some(l) => l.clone(),
                 None if name == BUILTIN_LOADOUT => loadout::builtin_solo(),
                 None if name == REPOSITORY_LOADOUT => {
-                    let v = here(&m, &paths.approvals_file, false);
+                    let v = here(&m, &paths.approvals_file, &paths.workspace_cache_dir(), false);
                     match (v.merged.config.loadout.get(name), &v.line) {
                         (Some(l), _) => l.clone(),
                         (None, Some(line)) => {
@@ -459,7 +459,7 @@ pub fn run(a: &LoadoutArgs) -> i32 {
                 }
             };
             // D6: the same lookup as `config show` and `config check`
-            let (base, warning) = PaneBase::from_folder(&here);
+            let (base, warning) = PaneBase::from_folder(&here, &paths.workspace_cache_dir());
             if let Some(m) = warning {
                 print_folder_warning(&m);
             }

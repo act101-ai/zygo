@@ -217,14 +217,13 @@ Session text (T, SX nodes):
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | DONE | judgment | 87a292d6^..da0207f1 · acceptance pass (mail_lifecycle 23 passed) · PR #219 |
 | FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | DONE | implementation | 19fbf580^..b0212f6c · acceptance pass (shape_clean 29 passed) · PR #209 |
-| FX-18 | live-mail.sh fixture head line doubles the word zygo | ML-19 | DONE | mechanical | plan 02a12d2d · node fad4e150 · acceptance pass (sh scripts/premises/live-selftest.sh: live selftest: ok (77)) · PR #187 |
 | FX-19 | PO2 row states what its run observed | OS-34 | DONE | mechanical | plan b2c8ca97 · node b5fa4c27, efbcccae · acceptance pass (check-premises ok; po2_ 3 passed) · PR #188 |
 | FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | DONE | mechanical | 96868305 · c98ea5fa · cc948a96 · acceptance pass (live selftest: ok (85)) · PR #194 |
 | FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | DONE | implementation | 569e61a9^..9ac65902 · acceptance pass (shape_clean 35 passed) · PR #211 |
 | FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
 | FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | DONE | implementation | bb21eadf^..c99eeb95 · acceptance pass (offline: 7 test files, 0 failed) · PR #220 |
 | FX-24 | Mail sync deliveries and ws forget take the M§5 mail lock | FX-13, MS-21 | DONE | judgment | f1661e09^..f20d5502 · acceptance pass (import 32, sync_pass 57, admin 40) · PR #224 |
-| FX-25 | `zygo up` reads the definition at the current checkout; `find_checkout` keeps a failed or timed-out `git worktree list` (exit 1) | WD-15 | TODO | implementation | — |
+| FX-25 | `zygo up` reads the definition at the current checkout; `find_checkout` keeps a failed or timed-out `git worktree list` (exit 1) | WD-15 | DONE | implementation | a8092a70^..3c511812 · acceptance pass (up_definition 42, up 82, workspace_approve 29) · PR #226 |
 | FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | TODO | implementation | — |
 | FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | TODO | judgment | — |
 | FX-28 | A remote send during `ws forget` is lost uncounted | FX-24 | TODO | judgment | — |
@@ -451,3 +450,5 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-24 DONE: mail-sync import, staged retry, refusal notice and ws forget take mail/lock in the lock order; every taker checks the lock inode; R1–R3 fixed (no lost staged mail, notice only to the same key); FX-28 added · PR #224 |
 | 2026-11-26 | OS-39 PLANNED: 16 steps; §10.1, §10.7, §14 final text from the merged code; O§12, O§6.5 item 3, O§6.6 rewritten (author's call): OpenCode trims bash only, shaped view over 8 KiB below threshold, results on/off override, full open users, usage none/unknown lines |
 | 2026-11-26 | OS-39 DONE: base spec §10.1, §10.7, §14 state the merged output shaping and saving accounting (views, raw text, measure, net figures, read-backs, retention); O§12 and O§6.5 rewritten to the code; §20 item 14 names its input · PR #229 |
+| 2026-11-26 | FX-25 PLANNED: R§10 up row and W§8.1 step 3 rewritten; author's calls: up reads at Target.top (by name: main_root); worktrees returns ListError, git's "not a git repository" alone is exit 2; failed/timed-out list, no git, gone main worktree exit 1 |
+| 2026-11-26 | FX-25 DONE: zygo up reads at the current checkout; main worktree = first valid (not prunable, not zygo's sync worktree) and a valid saved one wins, moves announced; failed or timed-out worktree list exits 1 with git's reason · PR #226 |

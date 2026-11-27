@@ -37,35 +37,65 @@ pub(crate) struct View {
 
 /// R§7.3: one read of the default branch at the top of the checkout of `cwd`, keyed by the workspace id of its git
 /// common dir (the read of `zygo workspace approve` and `zygo doctor`). `Err`: the lookup error of `find_checkout`.
-pub(crate) fn read_here(cwd: &Path, approvals: &Path, git: &dyn GitRunner) -> Result<Use, Exit> {
-    let (co, ..) = find_checkout(cwd, GIT_BOUND)?;
+/// `cache`: zygo's workspaces cache folder (`Paths::workspace_cache_dir`), whose mail-sync worktrees are never the
+/// main worktree (FX-25 review round 2 D1).
+pub(crate) fn read_here(cwd: &Path, approvals: &Path, cache: &Path, git: &dyn GitRunner) -> Result<Use, Exit> {
+    let (co, ..) = find_checkout(cwd, GIT_BOUND, cache)?;
     Ok(check_default(&co.top, &workspace_id(&co.common_dir), approvals, git))
 }
 
-/// The read of `read_here` as the verbs and `zygo doctor` show it (WD-16 review F1). `None` only for the exit 2 of
-/// `find_checkout`, `zygo up`'s "not a repository" (also a bare repository with no checkout): outside, no line. Any
-/// other lookup error (a git that fails, times out or cannot start) is `Use::Unread` with its reason. Decided by the
-/// exit code, not the message.
-pub(crate) fn found(r: Result<Use, Exit>) -> Option<Use> {
+/// What [`read_here`] gave, as the verbs and `zygo doctor` show it (WD-16 review F1, FX-25 close).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Found {
+    /// No folder, or the exit 2 of `find_checkout` (`zygo up`'s "not a repository", also a bare repository with no
+    /// checkout): no line.
+    Outside,
+    /// Any other lookup error of `find_checkout` (a git that fails, times out or cannot start; a main worktree with no
+    /// checkout), with its reason (not escaped). zygo does not know that the folder is a repository, so the line of
+    /// the verbs names none.
+    LookupFailed(String),
+    /// A checkout was found and read.
+    Read(Use),
+}
+
+impl Found {
+    /// The read as `zygo doctor` shows it: `None` outside; a lookup failure is `Use::Unread` with its reason.
+    pub(crate) fn into_use(self) -> Option<Use> {
+        match self {
+            Found::Outside => None,
+            Found::LookupFailed(why) => Some(Use::Unread { why }),
+            Found::Read(u) => Some(u),
+        }
+    }
+}
+
+/// [`Found`] of a `read_here` result. Decided by the exit code, not the message.
+pub(crate) fn found(r: Result<Use, Exit>) -> Found {
     match r {
-        Ok(u) => Some(u),
-        Err(e) if e.code == 2 => None,
-        Err(e) => Some(Use::Unread { why: e.message }),
+        Ok(u) => Found::Read(u),
+        Err(e) if e.code == 2 => Found::Outside,
+        Err(e) => Found::LookupFailed(e.message),
     }
 }
 
 /// The R§10 view of `merged` at `cwd`: [`view_of`] of [`found`] of `read_here`; no folder gives `State::Outside`.
-pub(crate) fn view(merged: &Merged, cwd: Option<&Path>, approvals: &Path, git: &dyn GitRunner) -> View {
-    view_of(merged, cwd.and_then(|d| found(read_here(d, approvals, git))))
+pub(crate) fn view(merged: &Merged, cwd: Option<&Path>, approvals: &Path, cache: &Path, git: &dyn GitRunner) -> View {
+    view_of(merged, cwd.map_or(Found::Outside, |d| found(read_here(d, approvals, cache, git))))
 }
 
-/// The R§10 view of `merged` for one read; `None` gives `State::Outside` (plan call 7).
+/// The R§10 view of `merged` for one read; `Found::Outside` gives `State::Outside` (plan call 7).
 /// Only an approved read changes `merged` (R-C2); the other states show the full ref, the short digest and the
-/// violation, each through `esc` (R-C7, R§6.4), and no key or value of the files.
-pub(crate) fn view_of(merged: &Merged, found: Option<Use>) -> View {
+/// violation, each through `esc` (R-C7, R§6.4), and no key or value of the files. A lookup failure is
+/// `State::Unread` with the line `zygo: workspace files were not read (<reason>); not shown`; the "this repository's"
+/// line is only for a checkout whose read failed (FX-25 close).
+pub(crate) fn view_of(merged: &Merged, found: Found) -> View {
     let unchanged = |state: State, line: Option<String>| View { merged: merged.clone(), state, line };
-    let Some(found) = found else {
-        return unchanged(State::Outside, None);
+    let found = match found {
+        Found::Outside => return unchanged(State::Outside, None),
+        Found::LookupFailed(why) => {
+            return unchanged(State::Unread, Some(format!("zygo: workspace files were not read ({}); not shown", esc(&why))))
+        }
+        Found::Read(u) => u,
     };
     match found {
         Use::Absent { .. } => unchanged(State::Absent, None),
@@ -100,8 +130,8 @@ pub(crate) fn view_of(merged: &Merged, found: Option<Use>) -> View {
 
 /// [`here_in`] at `std::env::current_dir()` with `SystemGit`: the call of `profile.rs`, which may not name the read,
 /// and of `loadout.rs`. `slash`: the verb runs as a slash verb in the hook process.
-pub(crate) fn here(merged: &Merged, approvals: &Path, slash: bool) -> View {
-    here_in(merged, approvals, slash, &|| std::env::current_dir().ok(), &SystemGit)
+pub(crate) fn here(merged: &Merged, approvals: &Path, cache: &Path, slash: bool) -> View {
+    here_in(merged, approvals, cache, slash, &|| std::env::current_dir().ok(), &SystemGit)
 }
 
 /// `view` at `cwd()` with `git`. With `slash` set it reads nothing, finds no folder and calls no git: `State::Slash`,
@@ -109,6 +139,7 @@ pub(crate) fn here(merged: &Merged, approvals: &Path, slash: bool) -> View {
 pub(crate) fn here_in(
     merged: &Merged,
     approvals: &Path,
+    cache: &Path,
     slash: bool,
     cwd: &dyn Fn() -> Option<PathBuf>,
     git: &dyn GitRunner,
@@ -116,7 +147,7 @@ pub(crate) fn here_in(
     if slash {
         return View { merged: merged.clone(), state: State::Slash, line: None };
     }
-    view(merged, cwd().as_deref(), approvals, git)
+    view(merged, cwd().as_deref(), approvals, cache, git)
 }
 
 #[cfg(test)]
@@ -191,7 +222,7 @@ mod tests {
     fn view_with_no_folder_reads_nothing() {
         let t = tempfile::tempdir().unwrap();
         let m = merged(t.path());
-        let v = view(&m, None, &t.path().join("approvals.toml"), &Panics);
+        let v = view(&m, None, &t.path().join("approvals.toml"), &t.path().join("cache/workspaces"), &Panics);
         assert_eq!(v.state, State::Outside);
         assert_eq!(v.line, None);
         assert_eq!(v.merged.config.profile, m.config.profile);
@@ -201,7 +232,7 @@ mod tests {
     fn view_of_a_failed_read_gives_the_unread_line() {
         let (t, r) = repo();
         let m = merged(t.path());
-        let v = view(&m, Some(&r), &t.path().join("approvals.toml"), &Fails("timed out"));
+        let v = view(&m, Some(&r), &t.path().join("approvals.toml"), &t.path().join("cache/workspaces"), &Fails("timed out"));
         assert_eq!(v.state, State::Unread);
         let line = v.line.expect("an unread line");
         assert!(line.starts_with("zygo: this repository's workspace files were not read ("), "{line}");
@@ -215,14 +246,12 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let m = merged(t.path());
         let exit = |code: i32, message: &str| Exit { code, message: message.to_string() };
-        assert_eq!(found(Err(exit(2, zygo_workspace::up::NOT_A_REPO))), None);
-        assert_eq!(found(Err(exit(2, "git worktree list: failed"))), None);
+        assert_eq!(found(Err(exit(2, zygo_workspace::up::NOT_A_REPO))), Found::Outside);
+        assert_eq!(found(Err(exit(2, "git worktree list: failed"))), Found::Outside);
         let v = view_of(&m, found(Err(exit(1, "git worktree list: failed\u{1b}[2J"))));
         assert_eq!(v.state, State::Unread);
-        assert_eq!(
-            v.line.as_deref(),
-            Some("zygo: this repository's workspace files were not read (git worktree list: failed\\u{1b}[2J); not shown")
-        );
+        // FX-25 close: a lookup failure names no repository; zygo does not know that the folder is one.
+        assert_eq!(v.line.as_deref(), Some("zygo: workspace files were not read (git worktree list: failed\\u{1b}[2J); not shown"));
         let v = view_of(&m, found(Err(exit(1, zygo_workspace::up::NOT_A_REPO))));
         assert_eq!(v.state, State::Unread, "decided by the exit code, not the message");
     }
@@ -233,12 +262,12 @@ mod tests {
         let (t, r) = repo();
         let m = merged(t.path());
         let no_cwd = || -> Option<PathBuf> { panic!("a slash call looked up the folder") };
-        let v = here_in(&m, &t.path().join("approvals.toml"), true, &no_cwd, &Panics);
+        let v = here_in(&m, &t.path().join("approvals.toml"), &t.path().join("cache/workspaces"), true, &no_cwd, &Panics);
         assert_eq!(v.state, State::Slash);
         assert_eq!(v.line, None);
         assert_eq!(v.merged.config.profile, m.config.profile);
         // Control: the same call with `slash` unset reaches the runner.
-        let v = here_in(&m, &t.path().join("approvals.toml"), false, &|| Some(r.clone()), &Fails("ran"));
+        let v = here_in(&m, &t.path().join("approvals.toml"), &t.path().join("cache/workspaces"), false, &|| Some(r.clone()), &Fails("ran"));
         assert_eq!(v.state, State::Unread);
     }
 
@@ -246,7 +275,7 @@ mod tests {
     fn view_escapes_the_reason() {
         let (t, r) = repo();
         let m = merged(t.path());
-        let v = view(&m, Some(&r), &t.path().join("approvals.toml"), &Fails("x\u{1b}[2J\u{202e}"));
+        let v = view(&m, Some(&r), &t.path().join("approvals.toml"), &t.path().join("cache/workspaces"), &Fails("x\u{1b}[2J\u{202e}"));
         let line = v.line.expect("an unread line");
         assert!(line.contains("\\u{1b}[2J\\u{202e}"), "{line}");
         assert!(!line.contains('\u{1b}') && !line.contains('\u{202e}'), "{line:?}");

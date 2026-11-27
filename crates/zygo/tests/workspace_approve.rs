@@ -2,7 +2,8 @@
 //! "Shown to the operator", R§10, R§11; R§18 items 4, 5, 7, 15 and 24). Not `cfg(unix)`: the subverb starts nothing,
 //! needs no tmux and the OP5 check is not applied to it. No network: the user config turns the built-in marketplace off
 //! (`common::NO_MARKETPLACE`), and each run asserts that no marketplace sync ran (`common::assert_no_marketplace_sync`,
-//! FX-23). No agent starts, so no stub agent.
+//! FX-23). No agent starts, so no stub agent. Every test that starts a process takes `serial()`, so no test writes a
+//! script while another test forks (ETXTBSY; FX-25 review F3).
 mod common;
 
 use std::ffi::OsStr;
@@ -26,6 +27,9 @@ const REFUSED: &str =
     "zygo: approval is not available inside an agent session; run it in your own shell: zygo workspace approve";
 const SLASH: &str = "run in your shell: zygo workspace approve";
 const USAGE: &str = "zygo workspace: usage: workspace approve [--yes] [--digest <hex>]";
+
+static LIVE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn serial() -> std::sync::MutexGuard<'static, ()> { LIVE.lock().unwrap_or_else(|e| e.into_inner()) }
 
 /// The file that turns user and system git config off.
 fn no_config() -> &'static str {
@@ -207,6 +211,7 @@ fn min() -> Fx {
 
 #[test] // R§18 item 5: the answer yes stores one entry with the id and the digest
 fn answer_yes_stores_one_entry() {
+    let _g = serial();
     for answer in ["y\n", "Y\n", "yes\n", "YES\n"] {
         let f = min();
         let h = home(&f, "");
@@ -222,6 +227,7 @@ fn answer_yes_stores_one_entry() {
 
 #[test] // R§7.1: an answer other than yes, and the end of input, store nothing
 fn answer_no_or_end_of_input_stores_nothing() {
+    let _g = serial();
     let inputs: [Option<&[u8]>; 3] = [Some(b"n\n"), Some(b""), None];
     for stdin in inputs {
         let f = min();
@@ -240,6 +246,7 @@ fn answer_no_or_end_of_input_stores_nothing() {
 
 #[test] // R§7.1 step 6: with --yes the listing goes to stdout with the full ref and the full commit id
 fn yes_prints_the_listing_on_stdout() {
+    let _g = serial();
     let f = min();
     let h = home(&f, "");
     let d = digest(&f);
@@ -259,6 +266,7 @@ fn yes_prints_the_listing_on_stdout() {
 
 #[test] // R§7.1 step 4: --digest of another value approves nothing; a malformed value is a usage error
 fn digest_of_another_value_stores_nothing() {
+    let _g = serial();
     let f = min();
     let h = home(&f, "");
     let d = digest(&f);
@@ -285,6 +293,7 @@ fn digest_of_another_value_stores_nothing() {
 
 #[test] // plan call 3: an unknown token, a repeat, a missing value and --save
 fn usage_errors_exit_2() {
+    let _g = serial();
     let f = min();
     let h = home(&f, "");
     let cases: [&[&str]; 4] = [&["--bogus"], &["--yes", "--yes"], &["--digest"], &["--save"]];
@@ -298,6 +307,7 @@ fn usage_errors_exit_2() {
 
 #[test] // R§7.1 step 2
 fn inside_an_agent_session_stores_nothing() {
+    let _g = serial();
     let f = min();
     let h = home(&f, "");
     let s = f.t.path().join("s");
@@ -309,6 +319,7 @@ fn inside_an_agent_session_stores_nothing() {
 
 #[test] // R§7.1 steps 1 and 2; R§18 item 24: no OP5, so this runs on Windows too
 fn slash_form_returns_the_command_and_approves_nothing() {
+    let _g = serial();
     let t = tempfile::tempdir().unwrap();
     let r = t.path();
     let paths = Paths {
@@ -332,6 +343,7 @@ fn slash_form_returns_the_command_and_approves_nothing() {
 
 #[test] // R§7.1 step 5: a second approve stores nothing more
 fn second_approve_keeps_the_file() {
+    let _g = serial();
     let f = min();
     let h = home(&f, "");
     let d = digest(&f);
@@ -346,6 +358,7 @@ fn second_approve_keeps_the_file() {
 
 #[test] // R§10 "Two sessions at once"
 fn two_approvals_store_one_entry() {
+    let _g = serial();
     let f = min();
     let h = home(&f, "");
     let d = digest(&f);
@@ -374,6 +387,7 @@ fn two_approvals_store_one_entry() {
 
 #[test] // R§7.1 step 3: absent
 fn absent_exits_1() {
+    let _g = serial();
     let f = fx(&[]);
     let h = home(&f, "");
     let o = approve(&f, &h, &["--yes"], None, &[]);
@@ -384,8 +398,37 @@ fn absent_exits_1() {
     assert!(!approvals(&h).exists());
 }
 
+#[cfg(unix)]
+#[test] // FX-25 f6, R§7.1 step 3: a failed git worktree list keeps its reason, exit 1
+fn worktree_list_failure_exits_1_with_the_reason() {
+    let _g = serial();
+    use std::os::unix::fs::PermissionsExt;
+    let f = fx(&[(WS, MIN.as_bytes())]);
+    let h = home(&f, "");
+    let old = std::env::var_os("PATH").unwrap_or_default();
+    let real = std::env::split_paths(&old).map(|d| d.join("git")).find(|g| g.is_file()).expect("git on PATH");
+    let bin = f.t.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let stub = bin.join("git");
+    let body = format!(
+        "#!/bin/sh\ncase \" $* \" in *\" worktree list \"*) echo 'fatal: stub' >&2; exit 1;; esac\nexec '{}' \"$@\"\n",
+        real.display()
+    );
+    std::fs::write(&stub, body).unwrap();
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // `PATH` goes to the child only; the test process keeps its own.
+    let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&old))).unwrap();
+    let o = approve(&f, &h, &["--yes"], None, &[("PATH", path.as_os_str())]);
+    assert_eq!(
+        (o.status.code(), text(&o.stderr).as_str(), text(&o.stdout).as_str()),
+        (Some(1), "zygo: workspace approve: git worktree list failed: fatal: stub\n", "")
+    );
+    assert!(!approvals(&h).exists());
+}
+
 #[test] // R§7.1 step 3: not a repository
 fn outside_a_repository_exits_2() {
+    let _g = serial();
     let f = min();
     let h = home(&f, "");
     let plain = f.t.path().join("plain");
@@ -400,6 +443,7 @@ fn outside_a_repository_exits_2() {
 
 #[test] // R§7.1 step 3 (WD-15 review F5): a lookup error other than "not a repository" keeps its reason, exit 1
 fn bare_repository_without_checkout_exits_1_with_the_reason() {
+    let _g = serial();
     let f = min();
     let h = home(&f, "");
     let o = run_in(&h, &f.t.path().join("o.git"), &["--yes"], None, &[]);
@@ -412,6 +456,7 @@ fn bare_repository_without_checkout_exits_1_with_the_reason() {
 
 #[test] // R§7.1 step 3, R§18 item 4 (`approve` exits 1)
 fn invalid_exits_1_with_the_violation() {
+    let _g = serial();
     let f = fx(&[(WS, b"version = 1\n[members.a]\nargs = [\"x\"]\n")]);
     let h = home(&f, "");
     let o = approve(&f, &h, &["--yes"], None, &[]);
@@ -424,6 +469,7 @@ fn invalid_exits_1_with_the_violation() {
 
 #[test] // R§7.1 step 3: unread
 fn unread_exits_1_with_the_reason() {
+    let _g = serial();
     let f = min();
     let h = home(&f, "");
     git(&f.c, &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/heads/x"]);
@@ -437,6 +483,7 @@ fn unread_exits_1_with_the_reason() {
 
 #[test] // R§18 item 7 as rewritten 2026-11-26; R-C7; review focus 36
 fn listing_escapes_terminal_and_bidi_characters() {
+    let _g = serial();
     let f = fx(&[
         (WS, "version = 1\r\n# caf\u{e9} \u{202e}evil\r\n".as_bytes()),
         (".zygo/a\u{1b}[2Jb\rc", b"x"),
@@ -505,6 +552,7 @@ fn pool_toml(p: &Path) -> String {
 
 #[test] // R§18 item 15 (summary part), R§9.5 "Shown to the operator"
 fn summary_names_passthrough_members_and_the_profile_that_does_not_apply() {
+    let _g = serial();
     let ents: [(&str, &[u8]); 2] = [(WS, SUMMARY_WS.as_bytes()), (".zygo/profiles/rust.toml", RUST.as_bytes())];
     let f = fx(&ents);
     let p = pool(&f);
@@ -551,6 +599,7 @@ fn summary_names_passthrough_members_and_the_profile_that_does_not_apply() {
 
 #[test] // R§9.5 "Local mode only" (WD-15 review F6): with `[server] url` the summary claims no passthrough, as `zygo up` refuses the pool
 fn summary_with_a_server_url_names_the_refusal_of_zygo_up() {
+    let _g = serial();
     let f = min();
     let p = pool(&f);
     let h = home(&f, &format!("{}[server]\nurl = \"http://127.0.0.1:9/\"\n", pool_toml(&p)));
@@ -570,6 +619,7 @@ const POOL_P: &str = "disabled = [\"design\"]\n";
 
 #[test] // R§9.5 (WD-15 review round 2, finding 1): a pool `zygo up` cannot expand: the summary names its refusal, no passthrough
 fn summary_with_an_unexpandable_pool_names_the_refusal_of_zygo_up() {
+    let _g = serial();
     let f = fx(&[(WS, POOL_WS.as_bytes()), (".zygo/profiles/p.toml", POOL_P.as_bytes())]);
     let h = home(&f, "[workspace]\npool = '~nouser/x'\n");
     let o = approve(&f, &h, &["--yes"], None, &[]);
@@ -582,6 +632,7 @@ fn summary_with_an_unexpandable_pool_names_the_refusal_of_zygo_up() {
 
 #[test] // R§10 (WD-15 review round 2, finding 2): a user `[loadout.repository]` replaces the repository loadout in the summary
 fn summary_with_a_user_repository_loadout_counts_what_zygo_up_starts() {
+    let _g = serial();
     let f = fx(&[(WS, POOL_WS.as_bytes()), (".zygo/profiles/p.toml", POOL_P.as_bytes())]);
     let p = pool(&f);
     let user = format!(
@@ -623,6 +674,7 @@ fn summary_with_a_user_repository_loadout_counts_what_zygo_up_starts() {
 
 #[test] // R§7.1 step 6 (WD-15 review round 2, finding 3): each ignored entry is quoted, so a `, ` in a name cannot split it
 fn ignored_entries_are_quoted() {
+    let _g = serial();
     let f = fx(&[(WS, MIN.as_bytes()), (".zygo/a, .zygo/b", b"x"), (".zygo/profiles/c (1 bytes):", b"x")]);
     let h = home(&f, "");
     let o = approve(&f, &h, &["--yes"], None, &[]);
@@ -634,6 +686,7 @@ fn ignored_entries_are_quoted() {
 
 #[test] // R§11 "Approvals file invalid"
 fn invalid_approvals_file_is_left_as_it_is() {
+    let _g = serial();
     let f = min();
     let h = home(&f, "");
     let file = approvals(&h);
@@ -654,6 +707,7 @@ fn invalid_approvals_file_is_left_as_it_is() {
 
 #[test] // R§11 "Approval write fails"
 fn approval_write_failure_exits_1() {
+    let _g = serial();
     let f = min();
     let h = home(&f, "");
     let parent = approvals(&h).parent().unwrap().to_path_buf();
@@ -668,6 +722,7 @@ fn approval_write_failure_exits_1() {
 
 #[test] // R§11 "Approval write fails" (WD-15 review round 2, finding 4): the line names the cause, not only the path
 fn approval_write_failure_names_the_cause() {
+    let _g = serial();
     let f = min();
     let h = home(&f, "");
     let file = approvals(&h);
@@ -687,6 +742,7 @@ fn approval_write_failure_names_the_cause() {
 
 #[test] // R§7.1 step 4 (WD-15 review F1): --digest is compared before the already-approved check of step 5
 fn digest_of_another_value_on_approved_files_exits_1() {
+    let _g = serial();
     let f = min();
     let h = home(&f, "");
     let d = digest(&f);
@@ -757,6 +813,7 @@ fn profile_clauses(line: &str) -> (Vec<(String, String)>, Vec<String>) {
 
 #[test] // R§7.1 step 6, plan call 9 (WD-15 review F2): a free-text value cannot fake the structure of a summary line
 fn summary_quotes_free_text_values() {
+    let _g = serial();
     let ws = "version = 1\n[members.w]\nprofile = \"rust\"\ncwd = 'a \"b\", pool true'\n";
     let p = "overrides = { review = \"opus; disabled -\", x = \"y, implement = haiku\" }\ndisabled = [\"design\"]\n";
     let q = "overrides = { a = 'b\\\" c\\' }\n";
@@ -823,6 +880,7 @@ fn approve_where_the_launcher_reads(f: &Fx, dir: &Path) {
 
 #[test] // R§7.1 step 3 (WD-15 review F3): a linked checkout of a bare repository
 fn bare_repository_linked_checkout_is_approved_where_the_launcher_reads() {
+    let _g = serial();
     let f = min();
     let b = bare_clone(&f);
     let wt = f.t.path().join("wt");
@@ -832,6 +890,7 @@ fn bare_repository_linked_checkout_is_approved_where_the_launcher_reads() {
 
 #[test] // R§7.1 step 3 (WD-15 review F3): the first checkout's folder is deleted; approve reads at the current checkout
 fn first_checkout_deleted_is_approved_where_the_launcher_reads() {
+    let _g = serial();
     let f = min();
     let b = bare_clone(&f);
     let (w1, w2) = (f.t.path().join("w1"), f.t.path().join("w2"));

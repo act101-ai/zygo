@@ -20,7 +20,8 @@ use zygo_work::repo::{checkout, Checkout};
 use crate::args::{bypass_flags, filter_from, has_user_info};
 use crate::env::{cleaned, REMOVE_ALWAYS, REMOVE_INSIDE_AGENT};
 use crate::identity::{
-    main_worktree, new_pane_key, slug, unique_name, valid_name, valid_pane_key, workspace_id, worktrees, Worktree,
+    first_user_worktree, main_worktree, new_pane_key, slug, unique_name, valid_name, valid_pane_key, valid_worktree, workspace_id, worktrees_with,
+    ListError, Worktree,
 };
 use crate::loadout::{self, LoadoutError, PaneKind as PlanKind, PlanPane};
 use crate::mail::{self, MAIL_LOCK_WAIT, mail_dir, not_pruned_line, store as mail_store};
@@ -103,7 +104,16 @@ pub struct Target {
     pub id: String,
     pub name: String,
     pub common_dir: PathBuf,
+    /// The main worktree (AU77), the base of the pane folders (W§11). For a workspace with a saved state, by name or
+    /// from any checkout of its repository: the saved `main_root` while it is a valid worktree
+    /// ([`crate::identity::valid_worktree`]), else the first valid worktree of the list (FX-25 review round 2 D2).
     pub main_root: PathBuf,
+    /// The saved `main_root` that is no longer a valid worktree, when `main_root` replaced it (D3): `zygo up` prints
+    /// `zygo: the main worktree <old> is gone; panes start in <new>`.
+    pub moved_from: Option<PathBuf>,
+    /// The folder of the definition read (workspace definition design R§10, `zygo up` row): `Checkout.top` of the
+    /// checkout found from the cwd; `main_root` for a workspace found by name.
+    pub top: PathBuf,
     pub worktrees: Vec<Worktree>,
     pub state: Result<Option<Workspace>, String>,
 }
@@ -172,7 +182,14 @@ pub mod testing {
     }
 
     /// [`super::up`] with the given writers.
-    pub fn run_with(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 { super::run(opts, out, err) }
+    pub fn run_with(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+        super::run(opts, OsStr::new("git"), out, err)
+    }
+
+    /// [`run_with`] with `git` as the program of each `git worktree list` of `preflight` (FX-25 close).
+    pub fn run_git_with(opts: &UpOpts, git: &OsStr, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+        super::run(opts, git, out, err)
+    }
 
     /// [`super::up_all`] with the given writers.
     pub fn run_all_with(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 { super::run_all(opts, out, err) }
@@ -194,7 +211,16 @@ pub mod testing {
         paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path, out: &mut dyn Write,
         err: &mut dyn Write,
     ) -> i32 {
-        super::attach_to(paths, tmux, tmux_env, name, cwd, out, err)
+        super::attach_to(paths, tmux, tmux_env, name, cwd, OsStr::new("git"), out, err)
+    }
+
+    /// [`attach_with`] with `git` as the program of each `git worktree list` of the lookup (FX-25 close).
+    #[allow(clippy::too_many_arguments)]
+    pub fn attach_git_with(
+        paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path, git: &OsStr,
+        out: &mut dyn Write, err: &mut dyn Write,
+    ) -> i32 {
+        super::attach_to(paths, tmux, tmux_env, name, cwd, git, out, err)
     }
 }
 
@@ -363,25 +389,158 @@ pub fn socket_is_private(_path: &Path, _create_parent: bool) -> Result<(), Strin
 /// The checkout of `cwd`, the worktree list and the main worktree (AU25, AU77, D4). Every git call ends by
 /// `Instant::now() + bound` (W8 D23).
 /// Also used by zygo config check and show, and zygo loadout show (FIX-27).
-pub fn find_checkout(cwd: &Path, bound: Duration) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
+/// Exits (W§8.1 step 3, FX-25): code 2 [`NOT_A_REPO`] only for git's "not a git repository" answer or an empty list
+/// from the cwd, code 2 `BARE` for a list with no non-bare entry; code 1 with the reason for a failed or timed-out
+/// `git worktree list` (`git worktree list failed[: <text>]`, `git worktree list timed out`), no program `git`
+/// (`git not found`; another start error is `git worktree list failed: cannot start git: <error>`) and a main worktree
+/// with no checkout (`no checkout at the main worktree <path>`; when the deadline stopped that read, `git worktree list
+/// timed out`, FX-25 review round 2 F5). A code-1 message
+/// has no `zygo:` prefix and is not escaped: each caller adds its prefix and escapes.
+/// `cache` is zygo's workspaces cache folder (`Paths::workspace_cache_dir`): a worktree inside it (the mail-sync
+/// worktree) is never the main worktree (D1, [`crate::identity::valid_worktree`]).
+pub fn find_checkout(cwd: &Path, bound: Duration, cache: &Path) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
+    find_checkout_with(cwd, bound, OsStr::new("git"), cache)
+}
+
+/// [`find_checkout`] with `git` as the program of each `git worktree list` (`identity::worktrees_with`): the seam of
+/// a test's failing or missing `git` (FX-25), so no test changes the `PATH` of its own process. The `rev-parse` calls
+/// of `zygo_work::repo::checkout` keep the `git` of the `PATH`. Production calls go through [`find_checkout`].
+#[doc(hidden)]
+pub fn find_checkout_with(cwd: &Path, bound: Duration, git: &OsStr, cache: &Path) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
+    find_checkout_by(cwd, Bounds::all(bound), git, cache)
+}
+
+/// The deadlines of the git calls of [`find_checkout_by`]: the seam of a test that times out one call and not the
+/// others (FX-25 review round 2 F5, F8). Production calls use [`Bounds::all`], one shared deadline.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Bounds {
+    /// Every git call of the lookup ends by `Instant::now() + all`, taken once when the lookup starts.
+    pub all: Duration,
+    /// When set: the `rev-parse` of the main worktree (from a bare repository's own folder) ends by its own deadline,
+    /// `Instant::now() + main` taken when that call starts.
+    pub main: Option<Duration>,
+    /// When set: the `git worktree list` of the found checkout ends by its own deadline, `Instant::now() + list` taken
+    /// when that call starts.
+    pub list: Option<Duration>,
+}
+
+impl Bounds {
+    /// One deadline, `Instant::now() + bound` at the start, for every git call of the lookup.
+    pub fn all(bound: Duration) -> Bounds { Bounds { all: bound, main: None, list: None } }
+}
+
+/// [`find_checkout_with`] with the deadlines of `bounds`. Production calls go through [`find_checkout`].
+#[doc(hidden)]
+pub fn find_checkout_by(cwd: &Path, bounds: Bounds, git: &OsStr, cache: &Path) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
     let usage = |m: &str| Exit { code: 2, message: m.to_string() };
-    let deadline = Instant::now() + bound;
+    let failed = |e: ListError| fail(e.to_string());
+    let deadline = Instant::now() + bounds.all;
+    let own = |bound: Option<Duration>| bound.map_or(deadline, |b| Instant::now() + b);
     let co = match checkout(cwd, deadline) {
         Some(c) => c,
         None => {
             // A bare repository's own folder: `rev-parse --show-toplevel` fails there (finding 8).
             let probe = Checkout { top: cwd.to_path_buf(), common_dir: cwd.to_path_buf(), main_root: cwd.to_path_buf(), deadline };
-            let list = worktrees(&probe).map_err(|_| usage(NOT_A_REPO))?;
+            let list = match worktrees_with(git, &probe) {
+                Ok(list) => list,
+                Err(ListError::NotARepository(_)) => return Err(usage(NOT_A_REPO)),
+                Err(e) => return Err(failed(e)),
+            };
             if list.is_empty() {
                 return Err(usage(NOT_A_REPO));
             }
-            let main = main_worktree(&list).ok_or_else(|| usage(BARE))?;
-            checkout(&main.path, deadline).ok_or_else(|| usage(NOT_A_REPO))?
+            let main = main_of(&list, cache)?;
+            let main_deadline = own(bounds.main);
+            match checkout(&main, main_deadline) {
+                Some(c) => c,
+                // F5: a read that the deadline stopped is the timeout, not a main worktree with no checkout.
+                None if Instant::now() >= main_deadline => return Err(failed(ListError::TimedOut)),
+                None => return Err(no_checkout_at(&main)),
+            }
         }
     };
-    let list = worktrees(&co).map_err(|_| usage(NOT_A_REPO))?;
-    let main = main_worktree(&list).ok_or_else(|| usage(BARE))?.path.clone();
+    let co = Checkout { deadline: own(bounds.list), ..co };
+    // `rev-parse` found this checkout, so "not a git repository" here is a failed read (as `zygo_work::repo`), with
+    // git's text (F6).
+    let list = worktrees_with(git, &co).map_err(|e| match e {
+        ListError::NotARepository(text) => failed(ListError::Failed(text)),
+        e => failed(e),
+    })?;
+    let main = main_of(&list, cache)?;
     Ok((co, list, main))
+}
+
+/// The code-1 `Exit` of a main worktree with no checkout (W§8.1 step 3); no prefix, not escaped.
+fn no_checkout_at(main: &Path) -> Exit { fail(format!("no checkout at the main worktree {}", main.display())) }
+
+/// The main worktree of `list` (AU77, [`main_worktree`]: the first valid worktree, D1). With no entry that is neither
+/// bare nor inside `cache`: code 2 `BARE`. With such entries, all marked `prunable`: code 1, no checkout at the first.
+fn main_of(list: &[Worktree], cache: &Path) -> Result<PathBuf, Exit> {
+    if let Some(main) = main_worktree(list, cache) {
+        return Ok(main.path.clone());
+    }
+    match first_user_worktree(list, cache) {
+        Some(first) => Err(no_checkout_at(&first.path)),
+        None => Err(Exit { code: 2, message: BARE.to_string() }),
+    }
+}
+
+/// The main worktree of a workspace (D2): the saved `main_root` while it is a valid worktree of `list`
+/// ([`valid_worktree`]); else the first valid worktree ([`main_worktree`]), with the saved `main_root` that it replaces
+/// (D3). None when `list` has no valid worktree.
+fn keep_saved(saved: Option<&Path>, list: &[Worktree], cache: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
+    if let Some(s) = saved
+        && list.iter().any(|w| w.path == s && valid_worktree(w, cache))
+    {
+        return Some((s.to_path_buf(), None));
+    }
+    let first = main_worktree(list, cache)?.path.clone();
+    Some((first, saved.map(Path::to_path_buf)))
+}
+
+/// The D3 line of a saved `main_root` that is no longer a valid worktree; paths escaped.
+fn moved_line(old: &Path, new: &Path) -> String {
+    format!("zygo: the main worktree {} is gone; panes start in {}", esc(&old.to_string_lossy()), esc(&new.to_string_lossy()))
+}
+
+/// The code-1 `Exit` of [`find_checkout`] as `zygo up` prints it: `zygo: ` and the escaped message; code 2 as it is.
+fn prefixed(e: Exit) -> Exit { if e.code == 1 { fail(format!("zygo: {}", esc(&e.message))) } else { e } }
+
+/// What [`main_by_name`] found for a workspace found by name.
+struct ByName {
+    main_root: PathBuf,
+    worktrees: Vec<Worktree>,
+    moved_from: Option<PathBuf>,
+}
+
+/// Whether the lookup of a workspace found by name reads the worktree list of its saved `common_dir` (FX-25 close).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ByNameList {
+    /// `zygo up` and `zygo up --all`: the list gives the main worktree (D2, D3) and D4.
+    Read,
+    /// `zygo down` and `zygo attach`: the saved state only, so a user can always stop a workspace, also when its
+    /// folders are gone or the list fails or times out.
+    Skip,
+}
+
+/// The main worktree, the worktree list and the replaced `main_root` (D3) of a workspace found by name (W§8.1 step 3,
+/// AU20), from the list that git gives in the saved `common_dir` ([`keep_saved`], D2). D4: with no valid worktree in
+/// that list, exit 1 `zygo: no checkout at the main worktree <saved main_root>`; a list that fails or times out exits
+/// 1 with its reason, as from the cwd. With [`ByNameList::Skip`], or a saved `common_dir` that does not exist (the
+/// fallback of FX-25 review round 1, kept for states whose repository is not on this machine): the saved `main_root`
+/// and no list.
+fn main_by_name(git: &OsStr, common_dir: &Path, main_root: &Path, cache: &Path, list: ByNameList) -> Result<ByName, Exit> {
+    if list == ByNameList::Skip || !common_dir.exists() {
+        return Ok(ByName { main_root: main_root.to_path_buf(), worktrees: Vec::new(), moved_from: None });
+    }
+    let deadline = Instant::now() + GIT_BOUND;
+    let co = Checkout { top: common_dir.to_path_buf(), common_dir: common_dir.to_path_buf(), main_root: main_root.to_path_buf(), deadline };
+    let list = worktrees_with(git, &co).map_err(|e| prefixed(fail(e.to_string())))?;
+    match keep_saved(Some(main_root), &list, cache) {
+        Some((main, moved_from)) => Ok(ByName { main_root: main, worktrees: list, moved_from }),
+        None => Err(prefixed(no_checkout_at(main_root))),
+    }
 }
 
 /// The tmux version check of W§8.1 step 2 (code 2): tmux missing, older than 3.2, or a version that cannot be read
@@ -398,21 +557,37 @@ pub(crate) fn tmux_check(tmux: &Path) -> Result<(), Exit> {
 
 /// W§8.1 steps 2-3 and the id of step 4 (D1, D4, D5).
 pub fn preflight(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path) -> Result<Target, Exit> {
+    preflight_with(paths, tmux, name, cwd, OsStr::new("git"))
+}
+
+/// [`preflight`] with `git` as the program of each `git worktree list` (see [`find_checkout_with`]; FX-25). Production
+/// calls go through [`preflight`].
+#[doc(hidden)]
+pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, git: &OsStr) -> Result<Target, Exit> {
+    preflight_by(paths, tmux, name, cwd, git, ByNameList::Read)
+}
+
+/// The lookup of `zygo down` and `zygo attach` (FX-25 close): as [`preflight_with`], but a workspace found by name
+/// uses its saved state and runs no `git worktree list` (`main_root` and `top` are the saved `main_root`, `worktrees`
+/// is empty), so neither a list that fails or times out nor D4 stops it. From the cwd, as [`preflight_with`].
+pub(crate) fn preflight_saved(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, git: &OsStr) -> Result<Target, Exit> {
+    preflight_by(paths, tmux, name, cwd, git, ByNameList::Skip)
+}
+
+fn preflight_by(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, git: &OsStr, by_name: ByNameList) -> Result<Target, Exit> {
     tmux_check(tmux)?;
     let all = list_all(paths);
     if let Some(n) = name {
-        let tree = |common_dir: &Path, main_root: &Path| {
-            let deadline = Instant::now() + GIT_BOUND;
-            let co = Checkout { top: main_root.to_path_buf(), common_dir: common_dir.to_path_buf(), main_root: main_root.to_path_buf(), deadline };
-            worktrees(&co).unwrap_or_default()
-        };
         if let Some(ws) = all.iter().find_map(|(_, r)| r.as_ref().ok().filter(|ws| ws.name == n)) {
+            let b = main_by_name(git, &ws.common_dir, &ws.main_root, &paths.workspace_cache_dir(), by_name)?;
             return Ok(Target {
                 id: ws.id.clone(),
                 name: ws.name.clone(),
                 common_dir: ws.common_dir.clone(),
-                main_root: ws.main_root.clone(),
-                worktrees: tree(&ws.common_dir, &ws.main_root),
+                top: b.main_root.clone(),
+                main_root: b.main_root,
+                moved_from: b.moved_from,
+                worktrees: b.worktrees,
                 state: Ok(Some(ws.clone())),
             });
         }
@@ -451,13 +626,17 @@ pub fn preflight(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path) -> 
             [] => return Err(fail(format!("zygo: no workspace named {}", esc(n)))),
             [(_, StateError::Newer { .. }, _, _)] => return Err(fail(NEWER.into())),
             [(id, e, _, v)] => {
-                let (common_dir, main_root) = (PathBuf::from(text_of(v, "common_dir")), PathBuf::from(text_of(v, "main_root")));
+                let common_dir = PathBuf::from(text_of(v, "common_dir"));
+                let main_root = text_of(v, "main_root");
+                let b = main_by_name(git, &common_dir, Path::new(&main_root), &paths.workspace_cache_dir(), by_name)?;
                 return Ok(Target {
                     id: (*id).clone(),
                     name: n.to_string(),
-                    worktrees: tree(&common_dir, &main_root),
+                    worktrees: b.worktrees,
                     common_dir,
-                    main_root,
+                    top: b.main_root.clone(),
+                    main_root: b.main_root,
+                    moved_from: b.moved_from,
                     state: Err(e.to_string()),
                 });
             }
@@ -467,11 +646,13 @@ pub fn preflight(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path) -> 
             }
         }
     }
-    let (co, list, main_root) = find_checkout(cwd, GIT_BOUND)?;
+    let cache = paths.workspace_cache_dir();
+    let (co, list, first) = find_checkout_with(cwd, GIT_BOUND, git, &cache).map_err(prefixed)?;
     let id = workspace_id(&co.common_dir);
     let taken: BTreeSet<String> =
         all.iter().filter(|(i, _)| *i != id).filter_map(|(_, r)| r.as_ref().ok().map(|w| w.name.clone())).collect();
-    let folder = main_root.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+    // A new workspace is named after its main worktree, the first valid one (AU2); a name, once given, does not change.
+    let folder = first.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
     let fresh_name = || unique_name(&slug(&folder), &|n| taken.contains(n));
     let (name, state) = match Store::open(paths, &id).read() {
         Ok(Some(ws)) => (ws.name.clone(), Ok(Some(ws))),
@@ -480,7 +661,10 @@ pub fn preflight(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path) -> 
         Err(e @ StateError::Invalid { .. }) => (fresh_name(), Err(e.to_string())),
         Err(e) => return Err(fail(format!("zygo: {e}"))),
     };
-    Ok(Target { id, name, common_dir: co.common_dir, main_root, worktrees: list, state })
+    // D2: a saved `main_root` wins while it is valid, from any checkout of the repository (the same workspace id).
+    let saved = state.as_ref().ok().and_then(|s| s.as_ref()).map(|ws| ws.main_root.as_path());
+    let (main_root, moved_from) = keep_saved(saved, &list, &cache).unwrap_or((first, None));
+    Ok(Target { id, name, common_dir: co.common_dir, main_root, moved_from, top: co.top, worktrees: list, state })
 }
 
 /// `<zygo> ws run --ws-id <id> --pane <key>`, then `--shell` for a shell pane (AU15, AU46).
@@ -923,7 +1107,7 @@ fn choose(opts: &UpOpts, t: &Target, repo_read: bool, err: &mut dyn Write) -> Re
         Some(g) => g.as_ref(),
         None => &SystemGit,
     };
-    let line = match check_default(&t.main_root, &t.id, &opts.paths.approvals_file, git) {
+    let line = match check_default(&t.top, &t.id, &opts.paths.approvals_file, git) {
         Use::Approved { pin, def, .. } if def.workspace.is_some() => {
             if loadout_shadowed(&opts.config, &def) {
                 return user(REPOSITORY_LOADOUT);
@@ -1175,6 +1359,10 @@ fn attach_step(
 pub(crate) fn up_target(
     opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write, attach: bool, repo_read: bool,
 ) -> i32 {
+    // D3: one line when the saved `main_root` is no longer a valid worktree and this `up` replaces it.
+    if let Some(old) = &target.moved_from {
+        say(err, &moved_line(old, &target.main_root));
+    }
     match build(opts, target, out, err, attach, repo_read) {
         Ok(code) => code,
         Err(e) => {
@@ -1687,8 +1875,8 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
     Ok(if attach { attach_step(&mux, &name, &socket, opts.tmux_env.as_deref(), quiet, out, err) } else { 0 })
 }
 
-fn run(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    match preflight(&opts.paths, &opts.tmux, opts.name.as_deref(), &opts.cwd) {
+fn run(opts: &UpOpts, git: &OsStr, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    match preflight_with(&opts.paths, &opts.tmux, opts.name.as_deref(), &opts.cwd, git) {
         Err(e) => {
             say(err, &e.message);
             e.code
@@ -1700,7 +1888,7 @@ fn run(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
 /// `zygo up` for one workspace (W§8.1 steps 2-13), on the process stdout and stderr.
 pub fn up(opts: &UpOpts) -> i32 {
     let (stdout, stderr) = (std::io::stdout(), std::io::stderr());
-    run(opts, &mut stdout.lock(), &mut stderr.lock())
+    run(opts, OsStr::new("git"), &mut stdout.lock(), &mut stderr.lock())
 }
 
 const ALL_FLAGS: &str = "zygo: up --all takes no workspace name, --loadout or --reset";
@@ -1875,14 +2063,15 @@ fn clear_down_all(opts: &UpOpts, ws: &Workspace, mux: &dyn Multiplexer, err: &mu
 /// `zygo attach` (W§12, D21), on the process stdout and stderr.
 pub fn attach(paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path) -> i32 {
     let (stdout, stderr) = (std::io::stdout(), std::io::stderr());
-    attach_to(paths, tmux, tmux_env, name, cwd, &mut stdout.lock(), &mut stderr.lock())
+    attach_to(paths, tmux, tmux_env, name, cwd, OsStr::new("git"), &mut stdout.lock(), &mut stderr.lock())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn attach_to(
-    paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path, out: &mut dyn Write,
-    err: &mut dyn Write,
+    paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path, git: &OsStr,
+    out: &mut dyn Write, err: &mut dyn Write,
 ) -> i32 {
-    let t = match preflight(paths, tmux, name, cwd) {
+    let t = match preflight_saved(paths, tmux, name, cwd, git) {
         Ok(t) => t,
         Err(e) => {
             say(err, &e.message);
