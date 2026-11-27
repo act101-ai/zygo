@@ -1283,10 +1283,10 @@ fn notice_to_a_sender_whose_record_went_makes_no_maildir() {
     assert!(log.lines().any(|l| l.ends_with(&format!("mail sync: outbox {id}: notice"))), "{log}");
 }
 
-#[test] // d1 (FX-24), S§8.6 "At commit": a notice that cannot take mail/lock in its 2 s bound is not sent
-fn notice_that_cannot_take_mail_lock_is_not_sent() {
+#[test] // d1 (FX-24), review F5, S§8.6 "At commit": a notice that cannot take mail/lock keeps the message for the next pass
+fn notice_that_cannot_take_mail_lock_keeps_the_message_for_the_next_pass() {
     let _g = exclusive();
-    let (_r, a, _b) = pair();
+    let (r, a, _b) = pair();
     let id = send(&a, "alice", ("bob", "b"), "say zz-forbidden-zz now");
     a.config(Some("a"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
     let held = {
@@ -1298,9 +1298,18 @@ fn notice_that_cannot_take_mail_lock_is_not_sent() {
     };
     sync(&a);
     drop(held);
-    assert!(a.sp().refused.join(format!("{id}.json")).is_file());
-    assert!(fs::symlink_metadata(a.sp().mail.join(ALICE)).is_err());
+    let (queued, refused) = (a.sp().outbox.join(format!("{id}.json")), a.sp().refused.join(format!("{id}.json")));
+    assert!(queued.is_file(), "the message left the outbox with no notice");
+    assert!(fs::symlink_metadata(&refused).is_err());
+    assert!(fs::symlink_metadata(a.sp().mail.join(ALICE)).is_err(), "a notice was delivered under a held lock");
     assert!(a.errors().lines().any(|l| l.ends_with(&format!("mail sync: outbox {id}: notice"))));
+    // The lock is free: the next pass sends the notice, then moves the message to refused/, once.
+    sync(&a);
+    sync(&a);
+    assert!(fs::symlink_metadata(&queued).is_err());
+    assert!(refused.is_file());
+    assert_eq!(fs::read_dir(a.sp().mail.join(ALICE).join("new")).unwrap().count(), 1);
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none());
 }
 
 /// The new pane key of `bob` and of `alice` in the FX-24 review F2 tests.

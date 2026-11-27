@@ -285,7 +285,7 @@ fn notify_can_deliver_the_notice_from_zygo() {
     assert_eq!((l[0].from.as_str(), l[0].subject.clone()), ("zygo", format!("not sent: {id}")));
 }
 
-#[test] // crash after the link, before the outbox name was removed
+#[test] // crash after the notice and the link, before the outbox name was removed: one more notice (S§8.6 accepted cost)
 fn refuse_again_after_a_partial_move_notifies_once() {
     let f = fx();
     let id = outbox_file(&f, "alice@a");
@@ -449,12 +449,18 @@ fn refuse_of_an_unparsable_file_moves_it_without_notice() {
     assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (0, 1));
 }
 
-#[test] // the move is done before the notice; a failed notice is the caller's error
-fn notify_error_after_the_move_keeps_the_file_refused() {
+#[test] // S§8.6 (FX-24 review F5): the notice comes before the move; a notice not delivered leaves the message queued
+fn notify_error_keeps_the_message_in_the_outbox_for_the_next_pass() {
     let f = fx();
     let id = outbox_file(&f, "alice@a");
-    let e = refuse(&f.sp, id, &aws_ids(), &mut |_: &str, _: &str, _: &str| Err(std::io::Error::other("no inbox")), now()).unwrap_err();
-    assert_eq!(e.to_string(), "no inbox");
+    let before = fs::read(f.sp.outbox.join(format!("{id}.json"))).unwrap();
+    let e = refuse(&f.sp, id, &aws_ids(), &mut |_: &str, _: &str, _: &str| Err(std::io::Error::other("busy")), now()).unwrap_err();
+    assert_eq!(e.to_string(), "busy");
+    assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (1, 0));
+    assert_eq!(fs::read(f.sp.outbox.join(format!("{id}.json"))).unwrap(), before);
+    let mut n = 0;
+    refuse(&f.sp, id, &aws_ids(), &mut |_: &str, _: &str, _: &str| { n += 1; Ok(()) }, now()).unwrap();
+    assert_eq!(n, 1);
     assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (0, 1));
 }
 

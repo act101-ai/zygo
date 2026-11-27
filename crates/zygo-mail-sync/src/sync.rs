@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use ulid::Ulid;
 use zygo_config::{sync_for, Config, LoadContext, SyncOff, SyncSettings};
 use zygo_work::repo::Flow;
-use zygo_workspace::mail::{names, store, Delivery, Message, MAIL_LOCK_WAIT};
+use zygo_workspace::mail::{names, store, Delivery, MailError, Message, MAIL_LOCK_WAIT};
 use zygo_workspace::state::{Store, Workspace};
 
 use crate::address;
@@ -662,19 +662,31 @@ fn read_host(meta: &TipMeta, h: &str) -> bool {
 /// The host part of the address `to`.
 fn host_of(to: &str) -> &str { to.split_once('@').map_or("", |(_, h)| h) }
 
-/// S§8.6 "At commit": moves `outbox/<id>.json` to `refused/` and sends the notice to its sender, whose keys go into
-/// `notified`; `body` replaces the secret-pass notice body (`ids`) for another reason. A failed move or notice
-/// writes the log line `notice`. The notice is one M§5 P1 delivery (S§8.6): `mail/lock` held shared for at most
+/// S§8.6 "At commit": sends the notice to the sender of `outbox/<id>.json`, whose keys go into `notified`, then
+/// moves the file to `refused/` (FX-24 review F5: in that order); `body` replaces the secret-pass notice body
+/// (`ids`) for another reason. The notice is one M§5 P1 delivery (S§8.6): `mail/lock` held shared for at most
 /// [`MAIL_LOCK_WAIT`], the sender resolved on the member records read under it (not the gate's read), and the lock
-/// dropped before the next git call; a lock not taken, or a sender with no record in that read, sends no notice.
+/// dropped before the next git call. A notice not delivered (a lock not taken, or another error) writes the log line
+/// `notice` and leaves the file in the outbox for the next pass. A sender with no record in that read gets no notice
+/// and no maildir: the file moves, with the log line `notice`. A failed move writes the line `notice` too.
 fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut Notified) {
     let now = c.env.clock.now();
+    let mut no_sender = false;
     let mut notify = |sender: &str, subject: &str, secret_body: &str| -> std::io::Result<()> {
         let fail = |_| std::io::Error::other("notice not delivered");
         let d = Delivery::begin(&c.store, MAIL_LOCK_WAIT).map_err(fail)?;
+        let targets = match names::resolve(d.workspace(), sender, None) {
+            Ok(t) => t,
+            // The sender went for good during the pass: no inbox, as `cli`; the message is still refused.
+            Err(MailError::UnknownTarget { .. }) => {
+                no_sender = true;
+                return Ok(());
+            }
+            Err(e) => return Err(fail(e)),
+        };
         let mut sent = false;
-        let mut each = || -> std::io::Result<()> {
-            for t in names::resolve(d.workspace(), sender, None).map_err(fail)? {
+        let each = || -> std::io::Result<()> {
+            for t in targets {
                 let label = t.name.clone().unwrap_or_else(|| t.key.clone());
                 let msg = Message::new("zygo", &label, subject, body.unwrap_or(secret_body), now).map_err(fail)?;
                 d.deliver(&t.key, &label, &msg, c.cfg.mail.max_unread).map_err(fail)?;
@@ -689,7 +701,7 @@ fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut 
         }
         r
     };
-    if crate::outbox::refuse(&c.sp, id, ids, &mut notify, now).is_err() {
+    if crate::outbox::refuse(&c.sp, id, ids, &mut notify, now).is_err() || no_sender {
         c.log(&format!("mail sync: outbox {id}: notice"));
     }
 }
