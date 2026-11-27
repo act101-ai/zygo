@@ -616,13 +616,17 @@ fn find(paths: &Paths, arg: &str, for_pane: bool) -> Result<Found, Exit> {
 /// prints `zygo: <label> not forgotten` on `out` (exit 0, nothing deleted); `Err(reason)` refuses with
 /// `zygo: cannot forget <label>: <reason>` (exit 1, nothing deleted). After `Ok(true)`, `mail/lock` is taken exclusive
 /// and held across the state rename ([`mail_lock`]; M§5 P1, S§7.6 step 4); held by a delivery for the whole
-/// [`MAIL_LOCK_WAIT`]: `zygo: cannot forget <label>: mail is busy; try again` (exit 1, nothing deleted).
+/// [`MAIL_LOCK_WAIT`]: `zygo: cannot forget <label>: mail is busy; try again` (exit 1, nothing deleted). After
+/// `mail/lock` is taken (or found to be no lock), `before_rename` runs on the state, right before the rename (S§7.6
+/// step 4, FX-28): `Err(reason)` refuses with `zygo: cannot forget <label>: <reason>` (exit 1, nothing deleted).
+#[allow(clippy::too_many_arguments)]
 pub fn forget(
     paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: &str,
-    before_remove: &mut dyn FnMut(&Workspace) -> Result<bool, String>, out: &mut dyn Write, err: &mut dyn Write,
+    before_remove: &mut dyn FnMut(&Workspace) -> Result<bool, String>,
+    before_rename: &mut dyn FnMut(&Workspace) -> Result<(), String>, out: &mut dyn Write, err: &mut dyn Write,
 ) -> i32 {
     sweep(paths);
-    match forget_run(paths, tmux, tmux_env, name, before_remove) {
+    match forget_run(paths, tmux, tmux_env, name, before_remove, before_rename) {
         Ok(line) => {
             say(out, &line);
             0
@@ -637,6 +641,7 @@ pub fn forget(
 fn forget_run(
     paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, arg: &str,
     before_remove: &mut dyn FnMut(&Workspace) -> Result<bool, String>,
+    before_rename: &mut dyn FnMut(&Workspace) -> Result<(), String>,
 ) -> Result<String, ForgetError> {
     let found = find(paths, arg, false).map_err(|e| e.message)?;
     let (id, first_label) = match &found {
@@ -677,6 +682,8 @@ fn forget_run(
     }
     // S§7.6 step 4, M§5 P1: held across the rename; `remove` releases it before `op.lock` (review F7).
     let mail = mail_lock(&store, &label)?;
+    // S§7.6 step 4 (FX-28): under `mail/lock`, before the rename; an `Err` drops `mail` before `op` (review F7).
+    before_rename(&ws).map_err(|reason| ForgetError::Line(format!("zygo: cannot forget {label}: {reason}")))?;
     remove(paths, &store, &id, &label, op, mail).map_err(ForgetError::Line)
 }
 
