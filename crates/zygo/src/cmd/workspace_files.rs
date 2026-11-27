@@ -44,30 +44,58 @@ pub(crate) fn read_here(cwd: &Path, approvals: &Path, cache: &Path, git: &dyn Gi
     Ok(check_default(&co.top, &workspace_id(&co.common_dir), approvals, git))
 }
 
-/// The read of `read_here` as the verbs and `zygo doctor` show it (WD-16 review F1). `None` only for the exit 2 of
-/// `find_checkout`, `zygo up`'s "not a repository" (also a bare repository with no checkout): outside, no line. Any
-/// other lookup error (a git that fails, times out or cannot start) is `Use::Unread` with its reason. Decided by the
-/// exit code, not the message.
-pub(crate) fn found(r: Result<Use, Exit>) -> Option<Use> {
+/// What [`read_here`] gave, as the verbs and `zygo doctor` show it (WD-16 review F1, FX-25 close).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Found {
+    /// No folder, or the exit 2 of `find_checkout` (`zygo up`'s "not a repository", also a bare repository with no
+    /// checkout): no line.
+    Outside,
+    /// Any other lookup error of `find_checkout` (a git that fails, times out or cannot start; a main worktree with no
+    /// checkout), with its reason (not escaped). zygo does not know that the folder is a repository, so the line of
+    /// the verbs names none.
+    LookupFailed(String),
+    /// A checkout was found and read.
+    Read(Use),
+}
+
+impl Found {
+    /// The read as `zygo doctor` shows it: `None` outside; a lookup failure is `Use::Unread` with its reason.
+    pub(crate) fn into_use(self) -> Option<Use> {
+        match self {
+            Found::Outside => None,
+            Found::LookupFailed(why) => Some(Use::Unread { why }),
+            Found::Read(u) => Some(u),
+        }
+    }
+}
+
+/// [`Found`] of a `read_here` result. Decided by the exit code, not the message.
+pub(crate) fn found(r: Result<Use, Exit>) -> Found {
     match r {
-        Ok(u) => Some(u),
-        Err(e) if e.code == 2 => None,
-        Err(e) => Some(Use::Unread { why: e.message }),
+        Ok(u) => Found::Read(u),
+        Err(e) if e.code == 2 => Found::Outside,
+        Err(e) => Found::LookupFailed(e.message),
     }
 }
 
 /// The R§10 view of `merged` at `cwd`: [`view_of`] of [`found`] of `read_here`; no folder gives `State::Outside`.
 pub(crate) fn view(merged: &Merged, cwd: Option<&Path>, approvals: &Path, cache: &Path, git: &dyn GitRunner) -> View {
-    view_of(merged, cwd.and_then(|d| found(read_here(d, approvals, cache, git))))
+    view_of(merged, cwd.map_or(Found::Outside, |d| found(read_here(d, approvals, cache, git))))
 }
 
-/// The R§10 view of `merged` for one read; `None` gives `State::Outside` (plan call 7).
+/// The R§10 view of `merged` for one read; `Found::Outside` gives `State::Outside` (plan call 7).
 /// Only an approved read changes `merged` (R-C2); the other states show the full ref, the short digest and the
-/// violation, each through `esc` (R-C7, R§6.4), and no key or value of the files.
-pub(crate) fn view_of(merged: &Merged, found: Option<Use>) -> View {
+/// violation, each through `esc` (R-C7, R§6.4), and no key or value of the files. A lookup failure is
+/// `State::Unread` with the line `zygo: workspace files were not read (<reason>); not shown`; the "this repository's"
+/// line is only for a checkout whose read failed (FX-25 close).
+pub(crate) fn view_of(merged: &Merged, found: Found) -> View {
     let unchanged = |state: State, line: Option<String>| View { merged: merged.clone(), state, line };
-    let Some(found) = found else {
-        return unchanged(State::Outside, None);
+    let found = match found {
+        Found::Outside => return unchanged(State::Outside, None),
+        Found::LookupFailed(why) => {
+            return unchanged(State::Unread, Some(format!("zygo: workspace files were not read ({}); not shown", esc(&why))))
+        }
+        Found::Read(u) => u,
     };
     match found {
         Use::Absent { .. } => unchanged(State::Absent, None),
@@ -218,14 +246,12 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let m = merged(t.path());
         let exit = |code: i32, message: &str| Exit { code, message: message.to_string() };
-        assert_eq!(found(Err(exit(2, zygo_workspace::up::NOT_A_REPO))), None);
-        assert_eq!(found(Err(exit(2, "git worktree list: failed"))), None);
+        assert_eq!(found(Err(exit(2, zygo_workspace::up::NOT_A_REPO))), Found::Outside);
+        assert_eq!(found(Err(exit(2, "git worktree list: failed"))), Found::Outside);
         let v = view_of(&m, found(Err(exit(1, "git worktree list: failed\u{1b}[2J"))));
         assert_eq!(v.state, State::Unread);
-        assert_eq!(
-            v.line.as_deref(),
-            Some("zygo: this repository's workspace files were not read (git worktree list: failed\\u{1b}[2J); not shown")
-        );
+        // FX-25 close: a lookup failure names no repository; zygo does not know that the folder is one.
+        assert_eq!(v.line.as_deref(), Some("zygo: workspace files were not read (git worktree list: failed\\u{1b}[2J); not shown"));
         let v = view_of(&m, found(Err(exit(1, zygo_workspace::up::NOT_A_REPO))));
         assert_eq!(v.state, State::Unread, "decided by the exit code, not the message");
     }

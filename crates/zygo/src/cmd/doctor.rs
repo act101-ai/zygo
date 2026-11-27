@@ -258,7 +258,7 @@ pub fn definition_lines(cwd: &Path, merged: &Merged, approvals: &Path, cache: &P
     // The checkout of `zygo up` (a bare repository's folder and `.git` give the main worktree). Only its exit 2, up's
     // "not a repository" (also a bare repository with no checkout), gives no workspace-files line; any other lookup
     // error is the unread line with its reason (WD-16 review F1, `workspace_files::found`).
-    let found = super::workspace_files::found(super::workspace_files::read_here(cwd, approvals, cache, git));
+    let found = super::workspace_files::found(super::workspace_files::read_here(cwd, approvals, cache, git)).into_use();
     // R§10 `up` row: `[workspace] default_loadout` chooses only when the user config file sets it.
     let user_default =
         (merged.source_of("workspace.default_loadout") == Layer::User).then_some(&merged.config.workspace.default_loadout);
