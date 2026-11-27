@@ -90,6 +90,9 @@ const COLLISION: &str = "zygo: the mail host name is taken on the side branch by
 const TWIN: &str = "zygo: another workspace writes with this mail identity (copied state?); run zygo mail sync --new-identity here, and set another [mail] host";
 /// The S§8.2 `public` line (`crates/zygo-mail-sync/src/sync.rs:85`, `outbox.rs:43`), byte for byte.
 const PUBLIC: &str = "zygo: the remote can be read without a login; mail sync refused";
+/// The start of the S§8.2 `unknown` note: `sync::public_check` (`crates/zygo-mail-sync/src/sync.rs:579`) adds it to
+/// `Report.notes`, and `print_report` (`crates/zygo/src/cmd/mail.rs:572-574`) writes each note on stderr.
+const UNKNOWN_NOTE: &str = "zygo: cannot check if the remote is public";
 
 /// Author's call 7: both tests hold it, so no in-process lock meets a child that another test thread forks.
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -241,7 +244,15 @@ fn out_of(o: &Output) -> String { String::from_utf8_lossy(&o.stdout).into_owned(
 fn err_of(o: &Output) -> String { String::from_utf8_lossy(&o.stderr).into_owned() }
 
 fn sp(h: &Harness) -> SyncPaths { SyncPaths::new(&h.paths, WS_ID).unwrap() }
-fn errors(h: &Harness) -> String { std::fs::read_to_string(h.store(WS_ID).dir().join("errors.log")).unwrap_or_default() }
+/// The `errors.log` of `h`; empty when the file does not exist (`scan` asserts that it exists where the walk expects
+/// one). FX-26 re-plan review round 2 F4: a file that cannot be read, or that is not UTF-8, fails with its path.
+fn errors(h: &Harness) -> String {
+    let p = h.store(WS_ID).dir().join("errors.log");
+    if std::fs::symlink_metadata(&p).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+        return String::new();
+    }
+    String::from_utf8(read_file(&p, "scan")).unwrap_or_else(|e| panic!("{}: the scan cannot read it ({e})", p.display()))
+}
 
 /// Author's call 2: `zygo mail sync <args>` as the binary, with an empty outbox only (its secret pass has the
 /// 200 ms default budget). The caller asserts the exit code.
@@ -684,7 +695,8 @@ fn text_findings(what: &str, bytes: &[u8], markers: &[&str]) -> Vec<String> {
 /// `workspace.json` at `path`: each `members.*.name` and `panes[].name` whose value is in `own` is the record's own
 /// member name (M§6) and is removed; the rest is scanned for every marker.
 fn workspace_findings(path: &Path, own: &[&str]) -> Vec<String> {
-    let mut v: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    // FX-26 re-plan review round 2 F4: a read error fails the scan with the path.
+    let mut v: Value = serde_json::from_slice(&read_file(path, "scan")).unwrap();
     let own_name = |x: &Value| x.as_str().is_some_and(|s| own.contains(&s));
     if let Some(members) = v.get_mut("members").and_then(Value::as_object_mut) {
         for m in members.values_mut().filter_map(Value::as_object_mut) {
@@ -706,7 +718,8 @@ fn workspace_findings(path: &Path, own: &[&str]) -> Vec<String> {
 /// `mail/sync/state.json` at `path`: each key of `pushed` and `pending` that is not `registry/<h>.json` or
 /// `ack/<h>.json` with `h` in `own_hosts` is a finding (S§7.5); the rest is scanned for every marker.
 fn state_findings(path: &Path, own_hosts: &[&str]) -> Vec<String> {
-    let mut v: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    // FX-26 re-plan review round 2 F4: a read error fails the scan with the path.
+    let mut v: Value = serde_json::from_slice(&read_file(path, "scan")).unwrap();
     let what = path.display().to_string();
     let own = |k: &str| own_hosts.iter().any(|h| k == format!("registry/{h}.json") || k == format!("ack/{h}.json"));
     let mut found = Vec::new();
@@ -860,26 +873,30 @@ fn ref_findings(dir: &Path) -> (usize, Vec<String>) {
 }
 
 /// The usage store at `db`: the row count over all tables, and the findings of every text or blob value of every
-/// table and of the raw bytes of `db` and of `<db>-wal` when it exists. An absent file is `(0, [])`.
+/// table and of the raw bytes of `db` and of `<db>-wal` when it exists. An absent file is `(0, [])`. FX-26 re-plan
+/// review round 2 F4: any other read error, of the files or of the database, fails the scan with the path.
 fn usage_findings(db: &Path) -> (usize, Vec<String>) {
-    if !db.exists() {
+    let absent = |p: &Path| std::fs::symlink_metadata(p).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
+    if absent(db) {
         return (0, vec![]);
     }
     let what = db.display().to_string();
+    let raw = read_file(db, "scan");
+    let cannot = |e: rusqlite::Error| -> ! { panic!("{what}: the scan cannot read it ({e})") };
     let mut found = Vec::new();
     let mut rows = 0;
     {
-        let c = rusqlite::Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-        let tables: Vec<String> = c.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").unwrap()
-            .query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        let c = rusqlite::Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap_or_else(|e| cannot(e));
+        let tables: Vec<String> = c.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").unwrap_or_else(|e| cannot(e))
+            .query_map([], |r| r.get(0)).unwrap_or_else(|e| cannot(e)).map(|r| r.unwrap_or_else(|e| cannot(e))).collect();
         for t in tables {
-            let mut st = c.prepare(&format!("SELECT * FROM \"{}\"", t.replace('"', "\"\""))).unwrap();
+            let mut st = c.prepare(&format!("SELECT * FROM \"{}\"", t.replace('"', "\"\""))).unwrap_or_else(|e| cannot(e));
             let n = st.column_count();
-            let mut q = st.query([]).unwrap();
-            while let Some(r) = q.next().unwrap() {
+            let mut q = st.query([]).unwrap_or_else(|e| cannot(e));
+            while let Some(r) = q.next().unwrap_or_else(|e| cannot(e)) {
                 rows += 1;
                 for i in 0..n {
-                    let bytes = match r.get_ref(i).unwrap() {
+                    let bytes = match r.get_ref(i).unwrap_or_else(|e| cannot(e)) {
                         rusqlite::types::ValueRef::Text(b) | rusqlite::types::ValueRef::Blob(b) => b,
                         _ => continue,
                     };
@@ -892,10 +909,10 @@ fn usage_findings(db: &Path) -> (usize, Vec<String>) {
             }
         }
     }
-    found.extend(text_findings(&what, &std::fs::read(db).unwrap(), &MARKERS));
+    found.extend(text_findings(&what, &raw, &MARKERS));
     let wal = PathBuf::from(format!("{what}-wal"));
-    if wal.exists() {
-        found.extend(text_findings(&wal.display().to_string(), &std::fs::read(&wal).unwrap(), &MARKERS));
+    if !absent(&wal) {
+        found.extend(text_findings(&wal.display().to_string(), &read_file(&wal, "scan"), &MARKERS));
     }
     (rows, found)
 }
@@ -926,14 +943,25 @@ fn zygo_ref(repo: &Path, bare: bool) -> Option<String> {
     o.status.success().then(|| out_of(&o).trim_end().to_string())
 }
 
-/// The session logs `<root>/sess-*/session.log` of `h` that exist.
+/// The session logs `<root>/sess-*/session.log` of `h` that exist. FX-26 re-plan review round 2 F4: a home that cannot
+/// be listed, or a `session.log` path that cannot be looked up (other than a missing one), fails the scan with its path.
 fn session_logs(h: &Harness) -> Vec<PathBuf> {
-    let mut logs: Vec<PathBuf> = std::fs::read_dir(h.root()).unwrap()
-        .map(|e| e.unwrap())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("sess-"))
-        .map(|e| e.path().join("session.log"))
-        .filter(|p| p.is_file())
-        .collect();
+    let root = h.root();
+    let cannot = |p: &Path, e: std::io::Error| -> ! { panic!("{}: the scan cannot read it ({e})", p.display()) };
+    let mut logs = Vec::new();
+    for e in std::fs::read_dir(root).unwrap_or_else(|e| cannot(root, e)) {
+        let e = e.unwrap_or_else(|e| cannot(root, e));
+        if !e.file_name().to_string_lossy().starts_with("sess-") || e.file_type().unwrap_or_else(|err| cannot(&e.path(), err)).is_file() {
+            continue;
+        }
+        let log = e.path().join("session.log");
+        match std::fs::metadata(&log) {
+            Ok(m) if m.is_file() => logs.push(log),
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => cannot(&log, err),
+        }
+    }
     logs.sort();
     logs
 }
@@ -1088,7 +1116,9 @@ fn marked_files(root: &Path, known: &[PathBuf], dirs: &[PathBuf]) -> Marked {
 /// index of the sync worktree, a maildir file (`mail/<key>/{new,cur,tmp}/`), the outbox with `refused/`, `incoming/`,
 /// `members.json`, the config inputs (`config.toml`, `team/team.toml`), `workspace.json` with its own member names
 /// only, `state.json` with its own hosts only, and the results store `sess-*/results/`. Any other file is a finding.
-/// FX-26 re-plan review round 1 F7: so is any file, folder or link whose name or link target holds a marker.
+/// FX-26 re-plan review round 1 F7: so is any file, folder or link whose name or link target holds a marker, except a
+/// name or link target with no subject or body inside the sync worktree folder below a top folder `<name>@<host>` (the
+/// S-C2 paths of the synced tree; FX-26 re-plan review round 2 F3).
 fn sweep_machine(m: &Scanned) -> Vec<String> {
     let (h, s) = (m.h, sp(m.h));
     let maildir = mail_dir(&h.paths, WS_ID);
@@ -1107,14 +1137,27 @@ fn sweep_machine(m: &Scanned) -> Vec<String> {
     }
     let mut found = Vec::new();
     let marked = marked_files(h.root(), &known, &m.folders);
-    // F7: no name and no link target in the home holds a marker; the S-C2 set allows content only.
+    // F7: a name or a link target that holds a marker is a finding. FX-26 re-plan review round 2 F3 (author's call):
+    // except where S-C2 allows it, the paths of the synced tree: an entry inside the sync worktree folder (not its
+    // `.git`) below a top folder `<name>@<host>`, whose name or link target holds no subject or body (S-C2: no subject
+    // or body goes into a path).
+    let in_synced_tree = |p: &Path, hits: &[&str]| {
+        let top = p.strip_prefix(&s.worktree).ok().and_then(|rel| rel.iter().next()).and_then(OsStr::to_str);
+        let address = top.is_some_and(|t| t != ".git"
+            && t.split_once('@').is_some_and(|(n, host)| !n.is_empty() && !host.is_empty() && !host.contains('@')));
+        address && hits.iter().all(|x| !CONTENT.contains(x))
+    };
     for (p, hits) in marked.names {
-        found.push(format!("{} {} has a name or link target that holds {hits:?}", m.label, p.display()));
+        if !in_synced_tree(&p, &hits) {
+            found.push(format!("{} {} has a name or link target that holds {hits:?}", m.label, p.display()));
+        }
     }
     for (p, hits) in marked.files {
+        // FX-26 re-plan review round 2 F2: `mail/outbox/` is allowed whole below (`s.outbox`), so this rule names
+        // only `sync`.
         let in_maildir = p.strip_prefix(&maildir).ok().is_some_and(|rel| {
             let c: Vec<&OsStr> = rel.iter().collect();
-            c.len() == 3 && c[0] != "sync" && c[0] != "outbox" && ["new", "cur", "tmp"].iter().any(|d| c[1] == *d)
+            c.len() == 3 && c[0] != "sync" && ["new", "cur", "tmp"].iter().any(|d| c[1] == *d)
         });
         let in_results = p.strip_prefix(h.root()).ok().is_some_and(|rel| {
             let c: Vec<&OsStr> = rel.iter().collect();
@@ -1147,6 +1190,33 @@ fn sweep_remote(r: &Remote) -> Vec<String> {
             .filter(|(p, _)| *p != input)
             .map(|(p, hits)| format!("{} holds {hits:?} and is not a test input", p.display())))
         .collect()
+}
+
+/// FX-26 re-plan review round 2 F7: whether `p` (a file or a folder that a planted case just made unreadable) can still
+/// be read. As root it can; then that case's assertion is skipped, and one line says why.
+fn still_readable(p: &Path) -> bool {
+    let read = match std::fs::symlink_metadata(p) {
+        Ok(m) if m.is_dir() => std::fs::read_dir(p).is_ok(),
+        _ => std::fs::File::open(p).is_ok(),
+    };
+    if read {
+        println!("{}: still readable after its mode change (the tests run as root), so this case's assertion is skipped", p.display());
+    }
+    read
+}
+
+/// F7: sets the mode of `p` to `mode`, runs `f` unless `p` stays readable ([`still_readable`]), sets the mode back to
+/// `back`, and gives the panic message of `f`; `None` when `f` did not run. A run of `f` that does not fail panics with
+/// `what`.
+fn failure_at_mode<T>(p: &Path, mode: u32, back: u32, what: &str, f: impl FnOnce() -> T) -> Option<String> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
+    let r = (!still_readable(p)).then(|| std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
+    std::fs::set_permissions(p, std::fs::Permissions::from_mode(back)).unwrap();
+    r.map(|r| match r {
+        Ok(_) => panic!("{what}"),
+        Err(e) => e.downcast::<String>().map(|s| *s).unwrap_or_default(),
+    })
 }
 
 #[test] // author's call 6: each scanner reports a planted marker and passes the allowed form
@@ -1255,6 +1325,11 @@ fn scanners_find_a_planted_marker() {
     put(&h.root().join("old.git/objects/pack/p.pack"), HOST_B2);
     let results = h.root().join("sess-x/results");
     put(&results.join("r.json"), SUBJ);
+    // FX-26 re-plan review round 2 F3: a name of the S-C2 form `<name>@<host>/…` inside the sync worktree folder (the
+    // synced tree, outside its `.git`) is allowed.
+    assert!(s.worktree.starts_with(h.root()), "{}", s.worktree.display());
+    let tree_dir = s.worktree.join(format!("{B_NAME}@{HOST_B}"));
+    put(&tree_dir.join("01JQ0000000000000000000000.json"), "x");
     let m = Scanned { label: "X", h: &h, own_names: vec![A_NAME], own_hosts: vec![HOST_A.into()], synced: false,
         errors_log: false, zygo_commits: false,
         folders: vec![mail_dir(&h.paths, WS_ID).join(ALICE).join("new"), s.incoming.clone(), h.root().join("sess-x"), results.clone()] };
@@ -1278,6 +1353,12 @@ fn scanners_find_a_planted_marker() {
         (mail_dir(&h.paths, WS_ID).join(ALICE).join("new/x/f"), HOST_B),
         (s.sync.join("new/f"), HOST_A2),
         (h.root().join("team/other.toml"), HOST_R3),
+        // FX-26 re-plan review round 2 F2: one plant past each boundary of the maildir and results rules: a folder of
+        // `mail/<key>/` that is not `new`, `cur` or `tmp`; a folder of `sess-x/` that is not `results`; a `results/`
+        // whose parent is not a `sess-*` folder.
+        (mail_dir(&h.paths, WS_ID).join(ALICE).join("other/f"), HOST_B),
+        (h.root().join("sess-x/other/f"), SUBJ),
+        (h.root().join("x/results/f"), BODY),
     ];
     for (p, hit) in &planted {
         put(p, hit);
@@ -1291,8 +1372,21 @@ fn scanners_find_a_planted_marker() {
     let link = h.root().join("ln");
     std::os::unix::fs::symlink(format!("/nonexistent/{HOST_A3}"), &link).unwrap();
     let named = [(named_file, HOST_B), (named_dir, HOST_A2), (link, HOST_A3)];
+    // FX-26 re-plan review round 2 F3: the same `<name>@<host>` folder outside the sync worktree folder is a finding.
+    // Inside it, so is a name that is not below a top folder `<name>@<host>`, and a name that holds a subject (S-C2:
+    // no subject or body goes into a path).
+    let outside = h.root().join(format!("{B_NAME}@{HOST_B}"));
+    put(&outside.join("f"), "x");
+    let loose = s.worktree.join(format!("note-{HOST_A2}"));
+    put(&loose, "x");
+    let subject_name = tree_dir.join(format!("{SUBJ}.json"));
+    put(&subject_name, "x");
+    let tree_names = [(outside, vec![B_NAME, HOST_B]), (loose, vec![HOST_A2]), (subject_name, vec![SUBJ])];
     let f = sweep_machine(&m);
-    assert_eq!(f.len(), planted.len() + named.len(), "{f:?}");
+    assert_eq!(f.len(), planted.len() + named.len() + tree_names.len(), "{f:?}");
+    for (p, hits) in &tree_names {
+        assert!(f.contains(&format!("X {} has a name or link target that holds {hits:?}", p.display())), "{p:?}: {f:?}");
+    }
     for (p, hit) in &planted {
         assert!(f.contains(&format!("X {} holds [{hit:?}] and is not in the S-C2 allowed set", p.display())), "{p:?}: {f:?}");
     }
@@ -1311,45 +1405,74 @@ fn scanners_find_a_planted_marker() {
     let msg = r.expect_err("a known folder with no file read").downcast::<String>().map(|s| *s).unwrap_or_default();
     assert!(msg.contains(&format!("{}: the sweep of {} read no file in it", quiet.join("new").display(), quiet.display())), "{msg}");
     // FX-26 R3-1: a folder that the sweep cannot read fails it, and the failure names that folder (the walk error is
-    // not dropped). The mode goes back to 0700 before the temp folder drops.
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let locked = h.root().join("locked");
-        put(&locked.join("leak"), B_NAME);
-        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sweep_machine(&m)));
-        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let msg = r.expect_err("the sweep read past a folder it cannot read").downcast::<String>().map(|s| *s).unwrap_or_default();
+    // not dropped). The mode goes back to 0700 before the temp folder drops. FX-26 re-plan review round 2 F7: each
+    // case below runs its assertion only when its file or folder is unreadable at that mode (not as root).
+    let locked = h.root().join("locked");
+    put(&locked.join("leak"), B_NAME);
+    if let Some(msg) = failure_at_mode(&locked, 0o000, 0o700, "the sweep read past a folder it cannot read", || sweep_machine(&m)) {
         assert!(msg.contains(&format!("{}: the sweep cannot read it", locked.display())), "{msg}");
-        std::fs::remove_dir_all(&locked).unwrap();
-        // FX-26 re-plan review round 1 F6: a regular file that the sweep cannot read fails it, and the failure names
-        // that file. The mode goes back to 0600 before the file is removed.
-        let sealed = h.root().join("sealed");
-        put(&sealed, B_NAME);
-        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sweep_machine(&m)));
-        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o600)).unwrap();
-        let msg = r.expect_err("the sweep read past a file it cannot read").downcast::<String>().map(|s| *s).unwrap_or_default();
-        assert!(msg.contains(&format!("{}: the sweep cannot read it", sealed.display())), "{msg}");
-        std::fs::remove_file(&sealed).unwrap();
-        // F6: `files_findings` drops no walk error either: a folder that it cannot read fails it, with its path.
-        let closed = d.path().join("closed");
-        put(&closed.join("f"), "x");
-        std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let r = std::panic::catch_unwind(|| files_findings(std::slice::from_ref(&closed), &MARKERS));
-        std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let msg = r.expect_err("files_findings read past a folder it cannot read").downcast::<String>().map(|s| *s).unwrap_or_default();
-        assert!(msg.contains(&format!("{}: the scan cannot read it", closed.display())), "{msg}");
-        // F6: nor does `git_meta_findings`: a folder in a linked-worktree admin folder that it cannot read fails it.
-        let shut = r2.join(".git/worktrees/wt/shut");
-        put(&shut.join("f"), "x");
-        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let r = std::panic::catch_unwind(|| git_meta_findings(&r2));
-        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let msg = r.expect_err("git_meta_findings read past a folder it cannot read").downcast::<String>().map(|s| *s).unwrap_or_default();
-        assert!(msg.contains(&format!("{}: the scan cannot read it", shut.display())), "{msg}");
-        std::fs::remove_dir_all(&shut).unwrap();
     }
+    std::fs::remove_dir_all(&locked).unwrap();
+    // FX-26 re-plan review round 1 F6: a regular file that the sweep cannot read fails it, and the failure names that
+    // file. The mode goes back to 0600 before the file is removed.
+    let sealed = h.root().join("sealed");
+    put(&sealed, B_NAME);
+    if let Some(msg) = failure_at_mode(&sealed, 0o000, 0o600, "the sweep read past a file it cannot read", || sweep_machine(&m)) {
+        assert!(msg.contains(&format!("{}: the sweep cannot read it", sealed.display())), "{msg}");
+    }
+    std::fs::remove_file(&sealed).unwrap();
+    // F6: `files_findings` drops no walk error either: a folder that it cannot read fails it, with its path.
+    let closed = d.path().join("closed");
+    put(&closed.join("f"), "x");
+    if let Some(msg) = failure_at_mode(&closed, 0o000, 0o700, "files_findings read past a folder it cannot read",
+        || files_findings(std::slice::from_ref(&closed), &MARKERS)) {
+        assert!(msg.contains(&format!("{}: the scan cannot read it", closed.display())), "{msg}");
+    }
+    // F6: nor does `git_meta_findings`: a folder in a linked-worktree admin folder that it cannot read fails it.
+    let shut = r2.join(".git/worktrees/wt/shut");
+    put(&shut.join("f"), "x");
+    if let Some(msg) = failure_at_mode(&shut, 0o000, 0o700, "git_meta_findings read past a folder it cannot read", || git_meta_findings(&r2)) {
+        assert!(msg.contains(&format!("{}: the scan cannot read it", shut.display())), "{msg}");
+    }
+    std::fs::remove_dir_all(&shut).unwrap();
+    // FX-26 re-plan review round 2 F4: every other read of the scan fails with the path too. `errors.log`: a file that
+    // cannot be read, and a file that is not UTF-8; a missing one reads as empty (the scan asserts where one must be).
+    let log = h.store(WS_ID).dir().join("errors.log");
+    assert_eq!(errors(&h), "");
+    put(&log, "x\n");
+    if let Some(msg) = failure_at_mode(&log, 0o000, 0o600, "errors() read past an errors.log it cannot read", || errors(&h)) {
+        assert!(msg.contains(&format!("{}: the scan cannot read it", log.display())), "{msg}");
+    }
+    std::fs::write(&log, [b'x', 0xff, b'\n']).unwrap();
+    let msg = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| errors(&h))).expect_err("errors() read an errors.log that is not UTF-8")
+        .downcast::<String>().map(|s| *s).unwrap_or_default();
+    assert!(msg.contains(&format!("{}: the scan cannot read it", log.display())), "{msg}");
+    std::fs::remove_file(&log).unwrap();
+    // `workspace.json`, `state.json` and the usage store that cannot be read.
+    for (p, what) in [(&ws, "workspace_findings"), (&st, "state_findings"), (&db, "usage_findings")] {
+        let f = || match what {
+            "workspace_findings" => workspace_findings(p, &[]).len(),
+            "state_findings" => state_findings(p, &[]).len(),
+            _ => usage_findings(p).1.len(),
+        };
+        if let Some(msg) = failure_at_mode(p, 0o000, 0o600, &format!("{what} read past a file it cannot read"), f) {
+            assert!(msg.contains(&format!("{}: the scan cannot read it", p.display())), "{what}: {msg}");
+        }
+    }
+    // The session logs: a home whose entries cannot be listed, and a `sess-*` folder that cannot be read.
+    let home_mode = {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(h.root()).unwrap().permissions().mode() & 0o7777
+    };
+    if let Some(msg) = failure_at_mode(h.root(), 0o300, home_mode, "session_logs read past a home it cannot list", || session_logs(&h)) {
+        assert!(msg.contains(&format!("{}: the scan cannot read it", h.root().display())), "{msg}");
+    }
+    let sess = h.root().join("sess-shut");
+    put(&sess.join("session.log"), "x");
+    if let Some(msg) = failure_at_mode(&sess, 0o000, 0o700, "session_logs read past a sess-* folder it cannot read", || session_logs(&h)) {
+        assert!(msg.contains(&format!("{}: the scan cannot read it", sess.join("session.log").display())), "{msg}");
+    }
+    std::fs::remove_dir_all(&sess).unwrap();
     // FX-26 review round 2 F-5: on a remote, only `seed/.zygo.toml` may hold a marker; the object store is left out.
     let r = remote();
     let root = r.bare.parent().unwrap();
@@ -2405,6 +2528,8 @@ fn no_mail_content_after_the_hook_wake_and_text_scenarios() {
     // the URL that `git remote get-url [--push]` gives for a remote name) or argument list names `example.invalid`.
     // It logs the call to `refused` and exits 128 without running the real git, so a later change that makes this
     // pass commit something still asks no network host.
+    // FX-26 re-plan review round 2 F1: the answer runs in a subshell, and the stub then logs `done <exit code>`, so the
+    // record of a probe that the 10 s probe limit killed (its process group) has no `done` line.
     let refused = a.root().join("refused-calls");
     const STUB: &str = r#"#!/bin/sh
 sub=
@@ -2435,7 +2560,10 @@ if [ "$sub" = ls-remote ]; then
     for f in "$HOME"/* "$HOME"/.[!.]* "$HOME"/..?*; do [ -e "$f" ] && e=not-empty; done
     printf 'HOME is %s\n' "$e"
   } >> '@CALLS@'
-  @ANSWER@
+  ( @ANSWER@ )
+  rc=$?
+  printf 'done %s\n' "$rc" >> '@CALLS@'
+  exit "$rc"
 fi
 exec '@REAL@' "$@"
 "#;
@@ -2470,18 +2598,28 @@ exec '@REAL@' "$@"
     let o = probe_run();
     assert_eq!((o.status.code(), out_of(&o), err_of(&o)), (Some(1), String::new(), format!("{PUBLIC}\n")));
     assert_eq!(git(&r.bare, &["for-each-ref"]), refs0);
-    // `private`: the S§8.2 step 4 text and exit 128. The sync goes on.
+    let public_log = std::fs::read_to_string(&calls).unwrap();
+    // `private`: the S§8.2 step 4 text and exit 128. The sync goes on. FX-26 re-plan review round 2 F1: an `Unknown`
+    // verdict also lets the sync go on (`sync::public_check` only adds a note), so the run's whole result is asserted:
+    // exit 0, the summary line as the only stdout, no `unknown` note on stderr, and one probe that ran to its end.
     git(&a.repo(), &["remote", "set-url", "--push", "origin", "https://example.invalid/q.git"]);
     stub("echo 'remote: Repository not found.' >&2; exit 128");
     let o = probe_run();
-    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
-    assert!(out_of(&o).lines().any(|l| l == "zygo: mail sync: 0 sent, 0 delivered"), "{}", out_of(&o));
-    // Each run asked once, with the arguments that `probe_command` builds for the `https` form (no user info) and the
-    // S§8.2 step 3 environment: no ask-pass, no prompt, no global or system config, `HOME` an empty folder.
+    assert_eq!((o.status.code(), out_of(&o)), (Some(0), "zygo: mail sync: 0 sent, 0 delivered\n".to_string()), "{}", err_of(&o));
+    assert!(!err_of(&o).contains(UNKNOWN_NOTE), "{}", err_of(&o));
+    // Each run asked once, and that probe ran to its end (its `done` line), with the arguments that `probe_command`
+    // builds for the `https` form (no user info) and the S§8.2 step 3 environment: no ask-pass, no prompt, no global or
+    // system config, `HOME` an empty folder.
     let log = std::fs::read_to_string(&calls).unwrap();
+    let private_log = log.strip_prefix(&public_log).unwrap_or_else(|| panic!("{log}"));
+    for (run, rc) in [(&public_log[..], 0), (private_log, 128)] {
+        let recs: Vec<&str> = run.split("argv\n").filter(|r| !r.is_empty()).collect();
+        assert_eq!(recs.len(), 1, "{run}");
+        assert!(recs[0].ends_with(&format!("\ndone {rc}\n")), "{run}");
+    }
     let records: Vec<&str> = log.split("argv\n").filter(|r| !r.is_empty()).collect();
     assert_eq!(records.len(), 2, "{log}");
-    for (rec, url) in records.iter().zip(["https://example.invalid/p.git", "https://example.invalid/q.git"]) {
+    for ((rec, url), rc) in records.iter().zip(["https://example.invalid/p.git", "https://example.invalid/q.git"]).zip([0, 128]) {
         let lines: Vec<&str> = rec.lines().collect();
         let k = lines.iter().position(|l| l.starts_with("GIT_ASKPASS=")).unwrap_or_else(|| panic!("{rec}"));
         let want: Vec<String> = probe_command(url, Path::new("/unused")).get_args().map(|x| x.to_string_lossy().into_owned()).collect();
@@ -2493,7 +2631,7 @@ exec '@REAL@' "$@"
         assert_eq!(lines[k..k + n], env_want, "{rec}");
         let home = Path::new(lines[k + n].strip_prefix("HOME=").unwrap_or_else(|| panic!("{rec}")));
         assert!(home.starts_with(&tmp) && home != tmp, "{rec}");
-        assert_eq!(lines[k + n + 1..], ["HOME is empty"], "{rec}");
+        assert_eq!(lines[k + n + 1..], ["HOME is empty".to_string(), format!("done {rc}")], "{rec}");
     }
     // F-8: neither run that must stay local tried a push or a fetch to an `example.invalid` URL.
     assert!(!refused.exists(), "{}", std::fs::read_to_string(&refused).unwrap_or_default());
