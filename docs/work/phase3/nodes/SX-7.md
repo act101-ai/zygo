@@ -98,3 +98,5 @@ Each edit is an exact string replacement in `docs/specs/2026-11-18-zygo-design.m
 4. Review focus: no review-focus line names SX-7.
 5. Proportion: the plan is the text to write; no code.
 6. Live code: every path and line above was opened at `c8ed1282`; the anchors of steps 1 to 5 each occur once (`grep -noE`, planning); the baseline of step 10 passed.
+
+Review round 1: F1–F9 fixed (e5d709aa).
