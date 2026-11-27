@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use zygo_config::repo_def::{apply_to_config, check_default, short, GitRunner, SystemGit, Use, REPOSITORY_LOADOUT};
+use zygo_config::repo_def::{apply_to_config, check_default, short, Definition, GitRunner, SystemGit, Use, REPOSITORY_LOADOUT};
 use zygo_config::{Config, Severity, BUILTIN_LOADOUT};
 use zygo_core::esc;
 use zygo_core::paths::Paths;
@@ -56,7 +56,9 @@ const SESSION_HOOKS: [&str; 4] = ["after-new-window", "after-split-window", "cli
 const WINDOW_HOOKS: [&str; 4] = ["window-layout-changed", "window-renamed", "pane-exited", "window-unlinked"];
 
 const NO_TMUX: &str = "zygo: workspaces need tmux; install tmux 3.2 or later";
-const NOT_A_REPO: &str = "zygo up needs a git repository";
+/// The `Exit.message` of [`find_checkout`] when the folder is not in a git repository; its other errors keep their
+/// own reason.
+pub const NOT_A_REPO: &str = "zygo up needs a git repository";
 const BARE: &str = "zygo up needs a worktree; this repository is bare";
 const NEWER: &str = "zygo: workspace state is from a newer zygo; run zygo update";
 const AU98: &str = "zygo: --server holds user info; this agent is not saved by the workspace";
@@ -818,6 +820,23 @@ fn check_jobs(cfg: &Config, name: &str) -> Result<(), Exit> {
     }
 }
 
+/// R§9.5: true when a pane takes a pool directory and runs in passthrough at a fresh build: `pool = true` on a
+/// claude-code pane whose server holds no user info. The rule of `apply_pool`, also used by the approve summary.
+pub fn pool_member(pool: bool, claude_code: bool, server: Option<&str>) -> bool {
+    pool && claude_code && !server.is_some_and(has_user_info)
+}
+
+/// R§9.5 "Local mode only": the reason `zygo up` refuses a pool with at least one member, or `None` when it does not.
+pub fn pool_refused(config: &Config) -> Option<&'static str> {
+    config.server.url.is_some().then_some("passthrough is local mode only, and [server] url is set")
+}
+
+/// R§9.5: the refusal of a `[workspace] pool` that `pool::expand` refuses with `why`, as `pool <text>: <why>`. `zygo up`
+/// ends it with `; nothing started`; the approve summary with `; zygo up starts nothing`.
+pub fn pool_unexpanded(text: &str, why: &str) -> String {
+    format!("pool {}: {}", esc(text), esc(why))
+}
+
 /// R§9.5 at a fresh build: the pool members (`pool = true` on a claude-code pane that gets a member record) take the
 /// directories of `[workspace] pool` in turn and run in passthrough. Checks the pool before any write; `Some` is the
 /// line for the operator. No pool member, or no pool: the pool is not read.
@@ -828,19 +847,15 @@ fn apply_pool(opts: &UpOpts, plan: &mut loadout::Plan) -> Result<Option<String>,
         .flat_map(|w| w.panes.iter_mut())
         .enumerate()
         .filter(|(_, pp)| {
-            pp.pool
-                && pp.kind == PlanKind::Agent(zygo_core::Agent::ClaudeCode)
-                && !pp.server.as_deref().is_some_and(has_user_info)
+            pool_member(pp.pool, pp.kind == PlanKind::Agent(zygo_core::Agent::ClaudeCode), pp.server.as_deref())
         })
         .collect();
     let Some(text) = opts.config.workspace.pool.as_deref().filter(|_| !members.is_empty()) else { return Ok(None) };
     let home = pool::home_in(|k| opts.vars.get(OsStr::new(k)).cloned());
-    let dir = pool::expand(text, home.as_deref()).map_err(|r| fail(format!("zygo: pool {}: {r}; nothing started", esc(text))))?;
+    let dir = pool::expand(text, home.as_deref()).map_err(|r| fail(format!("zygo: {}; nothing started", pool_unexpanded(text, &r))))?;
     let shown = esc(&dir.to_string_lossy());
-    if opts.config.server.url.is_some() {
-        return Err(fail(format!(
-            "zygo: pool {shown}: passthrough is local mode only, and [server] url is set; nothing started"
-        )));
+    if let Some(why) = pool_refused(&opts.config) {
+        return Err(fail(format!("zygo: pool {shown}: {why}; nothing started")));
     }
     let dirs = pool::list(&dir).map_err(|r| fail(format!("zygo: pool {shown}: {}; nothing started", esc(&r))))?;
     let names: Vec<Option<String>> = members.iter().map(|(_, pp)| pp.name.clone()).collect();
@@ -865,6 +880,12 @@ fn apply_pool(opts: &UpOpts, plan: &mut loadout::Plan) -> Result<Option<String>,
         }
     }
     Ok(Some(line))
+}
+
+/// R§10: true when the user config has `[loadout.repository]`, which replaces the repository loadout of the approved
+/// `def`, so `zygo up` plans the user loadout. The decision of `choose`, also used by the approve summary.
+pub fn loadout_shadowed(config: &Config, def: &Definition) -> bool {
+    apply_to_config(&mut config.clone(), def).loadout_shadowed
 }
 
 /// The loadout of W§8.1 step 7, first case (R§10 `up` row): `--loadout`; else `[workspace] default_loadout` when the
@@ -904,10 +925,11 @@ fn choose(opts: &UpOpts, t: &Target, repo_read: bool, err: &mut dyn Write) -> Re
     };
     let line = match check_default(&t.main_root, &t.id, &opts.paths.approvals_file, git) {
         Use::Approved { pin, def, .. } if def.workspace.is_some() => {
-            let mut cfg = opts.config.clone();
-            if apply_to_config(&mut cfg, &def).loadout_shadowed {
+            if loadout_shadowed(&opts.config, &def) {
                 return user(REPOSITORY_LOADOUT);
             }
+            let mut cfg = opts.config.clone();
+            apply_to_config(&mut cfg, &def);
             let plan = loadout::resolve_repository(&cfg.loadout[REPOSITORY_LOADOUT], &pin, &t.main_root, &t.worktrees)
                 .map_err(resolve_err)?;
             check_max(&plan, opts.config.limits.max_members)?;

@@ -73,7 +73,7 @@ fn machine(r: &Remote, host: &str, members: &[(&str, &str)]) -> Harness {
     let h = Harness::no_tmux();
     git(h.root(), &["clone", "-q", &r.url, "repo"]);
     std::os::unix::fs::symlink(which::which("git").unwrap(), h.bin.join("git")).unwrap();
-    std::fs::write(h.root().join("config.toml"), format!("[mail]\nhost = \"{host}\"\n[mail.workspace.app]\nsync = \"zygo/mail\"\n")).unwrap();
+    h.config(&format!("[mail]\nhost = \"{host}\"\n[mail.workspace.app]\nsync = \"zygo/mail\"\n"));
     seed_down(&h, members);
     h
 }
@@ -164,7 +164,7 @@ fn forget_with_an_empty_outbox_asks_nothing_and_needs_no_mail_config() {
     let a = machine(&r, "a", &[(ALICE, "alice")]);
     sync(&a);
     assert_eq!(worktrees(&a.repo()).iter().filter(|e| is_sync(e, &a)).count(), 1);
-    std::fs::write(a.root().join("config.toml"), "").unwrap();
+    a.config("");
     let o = zygo(&a, &["ws", "forget", "app"], None);
     assert_eq!(code_out_err(&o), (Some(0), "zygo: forgot app\n".to_string(), String::new()));
     let after = worktrees(&a.repo());

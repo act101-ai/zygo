@@ -621,3 +621,55 @@ fn take_host_does_not_mask_a_twin() {
     assert_eq!(new_identity(&env(&a), WS_ID).unwrap().passes, 1);
     assert_eq!(json(&r, "registry/a4.json")["identity"], ident(&a));
 }
+
+/// The keys of `pushed` and of `pending` in the `state.json` of `m`.
+fn state_keys(m: &Machine) -> (BTreeSet<String>, BTreeSet<String>) {
+    let st = state::load(&m.sp()).unwrap();
+    (st.pushed.into_keys().collect(), st.pending.into_keys().collect())
+}
+
+/// The S§7.5 own-file keys `registry/<h>.json` and `ack/<h>.json` of each host of `hosts`.
+fn own_keys(hosts: &[&str]) -> BTreeSet<String> {
+    hosts.iter().flat_map(|h| [format!("registry/{h}.json"), format!("ack/{h}.json")]).collect()
+}
+
+#[test] // S§7.5 Own hosts, S§8.3, S-C2 (MS-22 review F1): a pass keeps no key of a host that is no longer an own host
+fn pass_forgets_the_keys_of_an_old_host() {
+    let (r, a, b) = pair();
+    send(&a, "alice", ("bob", "b"));
+    sync(&a);
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert!(file(&r, "ack/b.json").is_some()); // the file waits at the tip: b is still an own host
+    let (pushed, pending) = state_keys(&b);
+    assert!(pushed.is_subset(&own_keys(&["b", "b2"])) && pending.is_empty(), "{pushed:?} {pending:?}");
+    prune_now(&b);
+    sync(&b);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(state_keys(&b), (own_keys(&["b2"]), BTreeSet::new()));
+    sync(&b); // no twin, no collision
+}
+
+#[test] // S§7.6 --drop-host, S§7.5 (MS-22 review F1): a drop of an old own host removes its keys in the drop's state write
+fn drop_of_an_old_own_host_forgets_its_keys() {
+    let (r, a, b) = pair();
+    send(&a, "alice", ("bob", "b"));
+    sync(&a);
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert!(file(&r, "ack/b.json").is_some());
+    assert_eq!(drop_host(&env(&b), WS_ID, "b", &mut |_| true), Ok(Some(0)));
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(state_keys(&b), (own_keys(&["b2"]), BTreeSet::new()));
+    sync(&b); // no twin, no collision
+}
+
+#[test] // S§7.6 --take-host, S§7.5 (MS-22 review F1): after a take-host the keys are those of the own hosts only
+fn take_host_forgets_the_keys_of_the_old_host() {
+    let (r, _a, b) = pair();
+    b.config(Some("a"), "");
+    assert_eq!(stopped(run(&env(&b), WS_ID, Mode::Cli).unwrap_err()).1, "collision");
+    take_host(&env(&b), WS_ID).unwrap();
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(state_keys(&b), (own_keys(&["a"]), BTreeSet::new()));
+}

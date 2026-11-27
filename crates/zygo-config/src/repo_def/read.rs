@@ -62,7 +62,9 @@ pub struct Files {
 pub enum Read {
     Absent { full_ref: Option<String> },
     Unread { why: String },
-    Invalid { full_ref: Option<String>, commit: String, why: String },
+    /// `workspace`: the read lists a `.zygo/workspace.toml` entry (WD-16 review F4: `zygo loadout list` names an
+    /// invalid repository loadout only then).
+    Invalid { full_ref: Option<String>, commit: String, why: String, workspace: bool },
     Gone { commit: String },
     Found { files: Files },
 }
@@ -219,7 +221,10 @@ fn steps(top: &Path, git: &dyn GitRunner, full_ref: Option<String>, commit: Stri
 }
 
 fn files(top: &Path, git: &dyn GitRunner, full_ref: &Option<String>, commit: &str, d: Instant) -> Result<Files, Stop> {
-    let invalid = |why: String| Stop::Read(Read::Invalid { full_ref: full_ref.clone(), commit: commit.to_string(), why });
+    // `workspace`: the read lists a `.zygo/workspace.toml` entry, whatever its type (WD-16 review F4).
+    let invalid = |why: String, workspace: bool| {
+        Stop::Read(Read::Invalid { full_ref: full_ref.clone(), commit: commit.to_string(), why, workspace })
+    };
     let list = |spec: &str, oid: Option<&str>, prefix: &[u8]| list(top, git, commit, spec, oid, prefix, d);
 
     // Step 3, then the step 4 checks in order.
@@ -229,7 +234,7 @@ fn files(top: &Path, git: &dyn GitRunner, full_ref: &Option<String>, commit: &st
         return Err(Fail { why: "git ls-tree: failed".into(), oid: None }.into());
     }
     if !zygo.tree() {
-        return Err(invalid(".zygo is not a directory".into()));
+        return Err(invalid(".zygo is not a directory".into(), false));
     }
     let (mut workspace, mut dir, mut ignored) = (None, None, Vec::new());
     for e in list(".zygo/", Some(&zygo.oid), b".zygo/")? {
@@ -239,13 +244,14 @@ fn files(top: &Path, git: &dyn GitRunner, full_ref: &Option<String>, commit: &st
             _ => ignored.push(e.name()),
         }
     }
+    let ws = workspace.is_some();
     if workspace.as_ref().is_some_and(|w| !w.regular()) {
-        return Err(invalid(".zygo/workspace.toml is not a regular file".into()));
+        return Err(invalid(".zygo/workspace.toml is not a regular file".into(), ws));
     }
     let mut profiles = Vec::new();
     if let Some(dir) = &dir {
         if !dir.tree() {
-            return Err(invalid(".zygo/profiles is not a directory".into()));
+            return Err(invalid(".zygo/profiles is not a directory".into(), ws));
         }
         for e in list(".zygo/profiles/", Some(&dir.oid), b".zygo/profiles/")? {
             if e.path.ends_with(b".toml") {
@@ -258,24 +264,24 @@ fn files(top: &Path, git: &dyn GitRunner, full_ref: &Option<String>, commit: &st
     for e in &profiles {
         let shown = esc(&e.name());
         if !e.regular() {
-            return Err(invalid(format!("{shown} is not a regular file")));
+            return Err(invalid(format!("{shown} is not a regular file"), ws));
         }
         let stem = &e.path[b".zygo/profiles/".len()..e.path.len() - b".toml".len()];
         if !(1..=32).contains(&stem.len()) || !stem.iter().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-')) {
-            return Err(invalid(format!("{shown}: a profile file name must match ^[a-z0-9-]{{1,32}}\\.toml$")));
+            return Err(invalid(format!("{shown}: a profile file name must match ^[a-z0-9-]{{1,32}}\\.toml$"), ws));
         }
         if stem == b"none" {
-            return Err(invalid(format!("{shown}: the profile name none is reserved")));
+            return Err(invalid(format!("{shown}: the profile name none is reserved"), ws));
         }
     }
     let sized = workspace.iter().map(|e| (e, WORKSPACE_MAX)).chain(profiles.iter().map(|e| (e, PROFILE_MAX)));
     for (e, max) in sized {
         if e.size > max {
-            return Err(invalid(format!("{} is larger than {max} bytes", esc(&e.name()))));
+            return Err(invalid(format!("{} is larger than {max} bytes", esc(&e.name())), ws));
         }
     }
     if profiles.len() > PROFILES_MAX {
-        return Err(invalid(format!(".zygo/profiles holds more than {PROFILES_MAX} profile files")));
+        return Err(invalid(format!(".zygo/profiles holds more than {PROFILES_MAX} profile files"), ws));
     }
     if workspace.is_none() && profiles.is_empty() {
         return Err(Stop::Read(Read::Absent { full_ref: full_ref.clone() }));
@@ -290,10 +296,10 @@ fn files(top: &Path, git: &dyn GitRunner, full_ref: &Option<String>, commit: &st
         }
         let shown = esc(&e.name());
         if o.stdout.len() as u64 != e.size {
-            return Err(invalid(format!("{shown}: read {} bytes, listed {}", o.stdout.len(), e.size)));
+            return Err(invalid(format!("{shown}: read {} bytes, listed {}", o.stdout.len(), e.size), ws));
         }
         if std::str::from_utf8(&o.stdout).is_err() {
-            return Err(invalid(format!("{shown} is not UTF-8")));
+            return Err(invalid(format!("{shown} is not UTF-8"), ws));
         }
         Ok(o.stdout)
     };

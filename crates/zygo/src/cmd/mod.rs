@@ -42,6 +42,8 @@ pub mod usage;
 pub mod verbs;
 pub mod work;
 pub mod workspace;
+mod workspace_approve;
+mod workspace_files;
 pub mod ws;
 
 pub use zygo_config::display::EscapedLines;
@@ -120,17 +122,27 @@ pub(crate) fn usable_session_id(env: &dyn Fn(&str) -> Option<std::ffi::OsString>
     env("ZYGO_SESSION").filter(|v| !v.is_empty())
 }
 
+/// The merged user config only (D3, AU10, AU22): no repository and no team layer.
+pub(crate) fn user_merged(paths: &Paths) -> Result<zygo_config::Merged, zygo_config::ConfigError> {
+    zygo_config::load(&zygo_config::LoadContext { paths: paths.clone(), repo: None, team: None })
+}
+
+/// `user_merged` for a CLI arm (D3): a load error prints `zygo <verb>: <error escaped>` and gives exit 11.
+pub(crate) fn user_merged_or_exit(paths: &Paths, verb: &str) -> Result<zygo_config::Merged, i32> {
+    user_merged(paths).map_err(|e| {
+        print_err(&format!("zygo {verb}: {}\n", zygo_core::esc(&e.to_string())));
+        ExitCode::ConfigInvalid as i32
+    })
+}
+
 /// The user config only (D3, AU10, AU22): no repository and no team layer.
 pub(crate) fn user_config(paths: &Paths) -> Result<zygo_config::Config, zygo_config::ConfigError> {
-    zygo_config::load(&zygo_config::LoadContext { paths: paths.clone(), repo: None, team: None }).map(|m| m.config)
+    user_merged(paths).map(|m| m.config)
 }
 
 /// `user_config` for a CLI arm (D3): a load error prints `zygo <verb>: <error escaped>` and gives exit 11.
 pub(crate) fn user_config_or_exit(paths: &Paths, verb: &str) -> Result<zygo_config::Config, i32> {
-    user_config(paths).map_err(|e| {
-        print_err(&format!("zygo {verb}: {}\n", zygo_core::esc(&e.to_string())));
-        ExitCode::ConfigInvalid as i32
-    })
+    user_merged_or_exit(paths, verb).map(|m| m.config)
 }
 
 /// The D10 text of a failed `std::env::current_dir()`, without the `zygo: ` prefix.
@@ -377,8 +389,8 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Status of this session's or this folder's workspace
-    Workspace,
+    /// Status of this session's or this folder's workspace; approve: approve this repository's workspace files
+    Workspace(VerbArgs),
     /// Workspace tools: forget, forget-pane
     Ws(ws::WsArgs),
     /// Workspace mail: send, read, ls, watch, sync
@@ -610,9 +622,9 @@ pub fn run() -> i32 {
         Cmd::Attach(a) => return attach::run(a),
         Cmd::Loadout(a) => return loadout::run(a),
         Cmd::Decision { args } => return decision::run(args),
-        Cmd::Workspace => return finish(workspace::verb(&cli_ctx(), &[])),
         Cmd::Ws(_) => unreachable!("taken above"),
         Cmd::Mail(_) => unreachable!("taken above"),
+        Cmd::Workspace(_) => "workspace",
         Cmd::Status => "status",
         Cmd::Compact { .. } => "compact",
         Cmd::Profile { .. } => "profile",

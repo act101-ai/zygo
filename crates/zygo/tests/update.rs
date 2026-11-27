@@ -732,6 +732,7 @@ mod start {
         let s = setup();
         let empty = s.dir.path().join("no-agents");
         std::fs::create_dir(&empty).unwrap();
+        std::fs::write(s.dir.path().join("config.toml"), common::NO_MARKETPLACE).unwrap();
         let mut cmd = Command::new(&s.copy);
         cmd.arg(agent)
             .env("ZYGO_RELEASE_BASE", f.base())
@@ -743,7 +744,7 @@ mod start {
             .env_remove("ZYGO_SESSION")
             .env_remove("ZYGO_WORKSPACE")
             .env_remove("ZYGO_NO_UPDATE_CHECK")
-            .env_remove("ZYGO_CONFIG")
+            .env("ZYGO_CONFIG", s.dir.path().join("config.toml"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -756,6 +757,7 @@ mod start {
         assert_eq!(err(&o), format!("{} updated to {NEW}; relaunch zygo\n", prompt(NEW)));
         assert_eq!(out(&o), "");
         assert_eq!(std::fs::read(&s.copy).unwrap(), b"fixture-binary");
+        common::assert_no_marketplace_sync(s.dir.path());
     }
 
     /// `zygo <agent>` with an empty `ZYGO_SESSION`, on a TTY (`ZYGO_TEST_ASSUME_TTY=1`): the check skips (M5 round 2
@@ -765,6 +767,7 @@ mod start {
         let dir = tempfile::tempdir().unwrap();
         let empty = dir.path().join("no-agents");
         std::fs::create_dir(&empty).unwrap();
+        std::fs::write(dir.path().join("config.toml"), common::NO_MARKETPLACE).unwrap();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
         cmd.arg(agent)
             .env("ZYGO_RELEASE_BASE", f.base())
@@ -776,7 +779,7 @@ mod start {
             .env("PATH", &empty)
             .env_remove("ZYGO_WORKSPACE")
             .env_remove("ZYGO_NO_UPDATE_CHECK")
-            .env_remove("ZYGO_CONFIG")
+            .env("ZYGO_CONFIG", dir.path().join("config.toml"))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -787,6 +790,7 @@ mod start {
         assert!(!err(&o).contains("is available"), "{}", err(&o));
         assert!(f.requests().is_empty(), "{:?}", f.requests());
         assert!(!dir.path().join(".cache/zygo/update.json").exists());
+        common::assert_no_marketplace_sync(dir.path());
     }
 
     #[test]

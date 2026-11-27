@@ -51,7 +51,9 @@ fn embedded_has_one_command_per_verb() {
     assert!(!mail.contains("zygo mail $ARGUMENTS"), "{mail}");
     assert!(mail.contains("send and read are MCP tools"), "{mail}");
     assert!(!file("commands/ls.md").contains("argument-hint"));
-    assert!(!file("commands/workspace.md").contains("argument-hint"));
+    let workspace = file("commands/workspace.md");
+    // WD-15 (R§7.1): `workspace` takes `approve [--yes] [--digest <hex>]`, so its command file carries the hint.
+    assert!(workspace.contains("argument-hint: \"[approve [--yes] [--digest <hex>]]\"\n"), "{workspace}");
 }
 
 #[test]

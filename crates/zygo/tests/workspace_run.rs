@@ -1131,7 +1131,7 @@ fn w18_27_an_exit_after_the_callback_removes_only_pending() { // exit 12: the --
     let (out, mut env) = h.stub(Agent::ClaudeCode, "a");
     env.extend([("ZYGO_TEST_MEMBER_GATE", gate.clone().into()), ("ZYGO_TEAM_TOKEN", token.into())]);
     // Serve mode takes the team token from `[server] token` of the user config (`serve_client.rs:309-313`).
-    std::fs::write(h.root().join("config.toml"), "[server]\ntoken = \"env:ZYGO_TEAM_TOKEN\"\n").unwrap();
+    h.config("[server]\ntoken = \"env:ZYGO_TEAM_TOKEN\"\n");
     let child = spawn_ws_run(&h, &pairs(&env));
     assert!(until(Duration::from_secs(20), || gate.join("callback").exists()));
     assert!(member(&h).pending.is_some());

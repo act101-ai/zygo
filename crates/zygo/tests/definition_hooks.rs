@@ -7,7 +7,7 @@
 //! run: the fake `git` log (the output of each call, judged by a canary in each `.zygo/` file, and its arguments),
 //! the `repo_def` tripwire (`ZYGO_TEST_TRAP_REPO_DEF`, feature `test-hooks`) and, on Linux,
 //! an inotify watch of the working-tree `.zygo/`. No agent runs (R-C9), the built-in marketplace is off in the user
-//! config (`USER_CONFIG`), no test asserts a time.
+//! config (`Harness::config` adds `NO_MARKETPLACE`), no test asserts a time.
 mod common;
 
 use std::collections::BTreeSet;
@@ -264,9 +264,9 @@ mod unix {
     use crate::common::workspace::{ready_exe, wait_child, Guarded, Harness, WS_ID};
 
     const RUST: &str = "overrides = { code = \"claude-haiku-5-5\" }\ndisabled = [\"design\"]\n";
-    /// The user config: the built-in marketplace off (as `workspace_definition.rs:142`), so no run reaches the
-    /// network, and the `workspace_down` MCP tool on (review F6; `crates/zygo-mcp/src/tools/workspace_down.rs:39`).
-    const USER_CONFIG: &str = "[features]\nworkspace_tool = true\n\n[[marketplace]]\nname = \"act101\"\nref = \"\"\n";
+    /// The user config body: the `workspace_down` MCP tool on (review F6; `crates/zygo-mcp/src/tools/workspace_down.rs:39`).
+    /// [`Harness::config`] adds `NO_MARKETPLACE` (the built-in marketplace off), so no run reaches the network (FX-23).
+    const USER_CONFIG: &str = "[features]\nworkspace_tool = true\n";
     const KEY: &str = "kaaaaaaaa";
     const SID: &str = "01JTESTSESSIONAAAAAAAAAAAA";
     const OC_SID: &str = "ses_placeholder0001";
@@ -533,7 +533,7 @@ mod unix {
     /// set after the approval.
     fn fx(definition: bool) -> Fx {
         let h = Harness::no_tmux();
-        std::fs::write(h.root().join("config.toml"), USER_CONFIG).unwrap();
+        h.config(USER_CONFIG);
         let canary_file = format!(".zygo/{CANARY}.toml");
         let (workspace, rust) = (format!("{CANARY_LINE}version = 1\n"), format!("{CANARY_LINE}{RUST}"));
         let mut files = vec![(".zygo.toml", "version = 1\n"), ("README", "app\n")];
@@ -804,6 +804,43 @@ mod unix {
             .collect()
     }
 
+    /// `zygo hook prompt` with `/zygo:workspace approve` and `/zygo:workspace approve --yes` (WD-15 review F4): the
+    /// subverb that reads the definition in its CLI form replies with the shell command in the hook process.
+    fn approve_rows(fx: &Fx) -> Vec<Row> {
+        let base: Value = serde_json::from_slice(&cc(fx, "UserPromptSubmit-main.json")).unwrap();
+        ["/zygo:workspace approve", "/zygo:workspace approve --yes"]
+            .into_iter()
+            .map(|p| {
+                let mut v = base.clone();
+                v["prompt"] = json!(p);
+                (format!("hook prompt < {p}"), "hook prompt".to_string(), v.to_string().into_bytes())
+            })
+            .collect()
+    }
+
+    /// `zygo hook prompt` with each `/zygo:profile` form (WD-16 plan call 2; review F2): the CLI form of `list` and
+    /// `show` shows the approved workspace files; no slash form reads any, whether it lists, shows or fails.
+    const PROFILE_FORMS: [&str; 6] = [
+        "/zygo:profile",
+        "/zygo:profile list",
+        "/zygo:profile show",
+        "/zygo:profile show rust",
+        "/zygo:profile show x y",
+        "/zygo:profile --bad",
+    ];
+
+    fn profile_rows(fx: &Fx) -> Vec<Row> {
+        let base: Value = serde_json::from_slice(&cc(fx, "UserPromptSubmit-main.json")).unwrap();
+        PROFILE_FORMS
+            .into_iter()
+            .map(|p| {
+                let mut v = base.clone();
+                v["prompt"] = json!(p);
+                (format!("hook prompt < {p}"), "hook prompt".to_string(), v.to_string().into_bytes())
+            })
+            .collect()
+    }
+
     /// The registrations that a member adds (`claude_code.rs:489-525`) and the other `workspace` events
     /// (`crates/zygo-hooks/src/workspace.rs:41-42`).
     fn cc_member(fx: &Fx) -> Vec<Row> {
@@ -1068,9 +1105,29 @@ mod unix {
             let sd = session(fx, "s", Agent::ClaudeCode, false);
             let mut rows = cc_main(fx);
             rows.extend(verb_rows(fx));
+            rows.extend(approve_rows(fx));
+            rows.extend(profile_rows(fx));
             run_rows(fx, &sd, rows)
         });
-        assert_eq!(ran.len(), 22 + 19);
+        assert_eq!(ran.len(), 22 + 19 + 2 + PROFILE_FORMS.len());
+        // WD-15 review F4: `/zygo:workspace approve` ran no definition read (`run_as`: no tripwire line) and replied
+        // with the shell command.
+        for p in ["/zygo:workspace approve", "/zygo:workspace approve --yes"] {
+            let out = &ran_of(&ran, &format!("hook prompt < {p}")).1;
+            let v: Value = serde_json::from_str(out).unwrap_or_else(|e| panic!("{p}: {e}: {out}"));
+            assert_eq!(v["decision"], "block", "{p}: {out}");
+            assert_eq!(v["reason"], "zygo: run in your shell: zygo workspace approve", "{p}: {out}");
+        }
+        // WD-16 plan call 2, review F2: each `/zygo:profile` form ran no definition read (`run_as`: no tripwire line),
+        // replied, and showed no repository profile.
+        for p in PROFILE_FORMS {
+            let out = &ran_of(&ran, &format!("hook prompt < {p}")).1;
+            let v: Value = serde_json::from_str(out).unwrap_or_else(|e| panic!("{p}: {e}: {out}"));
+            assert_eq!(v["decision"], "block", "{p}: {out}");
+            assert!(!out.contains("workspace-files"), "{p}: {out}");
+        }
+        let out = &ran_of(&ran, "hook prompt < /zygo:profile show rust").1;
+        assert!(out.contains("profile rust: not found"), "{out}");
         // Control: the hook's `load` ran git through `bin/git`, so a definition read would be in the log.
         assert!(log_of(&ran, "hook guard < PreToolUse-Bash-main.json").iter().any(|l| l.contains(LOAD_READ)));
         // Control: each verb ran and replied (the prompt hook blocks the line with the verb's reply).
