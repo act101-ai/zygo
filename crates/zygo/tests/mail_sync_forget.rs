@@ -510,3 +510,46 @@ fn remote_send_during_forget_is_never_lost_uncounted() {
     }
     assert!(std::fs::symlink_metadata(&dir).is_err());
 }
+
+/// Whether an exclusive taker of `mail/lock` of `dir` is refused now (`WouldBlock`): a shared holder has it. The
+/// test's own handle is closed before this returns.
+fn mail_lock_is_held(dir: &Path) -> bool {
+    let lock = std::fs::OpenOptions::new().read(true).write(true).open(dir.join("mail/lock")).unwrap();
+    matches!(fs4::FileExt::try_lock(&lock), Err(fs4::TryLockError::WouldBlock))
+}
+
+#[test] // S§7.6 step 4, S§8.1 (FX-28, re-plan R3-F1): the remote send holds mail/lock shared on both sides of its link:
+        // at remote_send_before_link and at remote_send_after_link an exclusive taker is refused; no timing
+fn remote_send_holds_mail_lock_across_its_link() {
+    let h = Harness::no_tmux();
+    seed_down(&h, &[(ALICE, "alice")]);
+    unsynced(&h);
+    let dir = h.paths.workspaces_dir().join(WS_ID);
+    let _clear = ClearHooks { dir: &dir, points: &["remote_send_before_link", "remote_send_after_link"] };
+    let (tx, rx) = mpsc::channel::<Step>();
+    let mut threads = Threads::default();
+    let before = pause_at(&dir, "remote_send_before_link", &tx);
+    let after = pause_at(&dir, "remote_send_after_link", &tx);
+    threads.send(&h, &tx);
+    match threads.next(&rx, "the send stops at remote_send_before_link") {
+        Step::Paused("remote_send_before_link") => {}
+        other => panic!("the send did not stop at remote_send_before_link: {other:?}"),
+    }
+    assert_eq!(count(&sp(&h)).unwrap(), 0);
+    assert!(mail_lock_is_held(&dir), "an exclusive taker got mail/lock while the send was before its link");
+    before.send(()).expect("the send waits at remote_send_before_link");
+    match threads.next(&rx, "the send stops at remote_send_after_link") {
+        Step::Paused("remote_send_after_link") => {}
+        other => panic!("the send did not stop at remote_send_after_link: {other:?}"),
+    }
+    assert_eq!(count(&sp(&h)).unwrap(), 1);
+    assert!(mail_lock_is_held(&dir), "an exclusive taker got mail/lock while the send was after its link");
+    after.send(()).expect("the send waits at remote_send_after_link");
+    let id = match threads.next(&rx, "the send returns") {
+        Step::Sent(r) => r.expect("the send linked its file"),
+        other => panic!("the send did not return: {other:?}"),
+    };
+    threads.join_all();
+    assert!(sp(&h).outbox.join(format!("{id}.json")).is_file());
+    assert!(!mail_lock_is_held(&dir), "the send left mail/lock held");
+}
