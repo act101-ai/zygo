@@ -34,9 +34,10 @@ pub struct Target {
 }
 
 /// What one import pass did. `delivered` holds `(pane key, ULID)`; `acked` holds `(own host, ULID)`, each ULID once,
-/// in reading order, with the host of the `*@<host>/` folder of the acknowledged entry (S§7.4 "Owner"); `left` the seen candidates not finished, plus 1 when the reading stopped early; `read` the state read under
-/// `mail/lock` at the last delivery, which holds the record of each key in `delivered` that still has one (the wake
-/// uses it, S§10.1).
+/// in reading order, with the host of the `*@<host>/` folder of the acknowledged entry (S§7.4 "Owner"); `left` the
+/// seen candidates not finished, plus 1 when the reading stopped early; `read` the state read under `mail/lock` at
+/// the last delivery, which holds the record of each key in `delivered` that still has one (the wake uses it,
+/// S§10.1).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Imported {
     pub delivered: Vec<(String, ulid::Ulid)>,

@@ -1,5 +1,6 @@
-//! The prune (mail sync design S§9): an orphan commit of the base tree less each message file that the valid ack of
-//! its host lists, then the one force push zygo does, with the base as lease (S-C3). No clock and no keep (S-C8).
+//! The prune (mail sync design S§9): an orphan commit of the base tree less each message file of a member name that
+//! the valid ack of its host lists, then the one force push zygo does, with the base as lease (S-C3). No clock and
+//! no keep (S-C8).
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::Instant;
@@ -55,26 +56,42 @@ pub fn removable(e: &Entry) -> bool {
     e.kind == "blob" && matches!(e.mode.as_str(), "100644" | "100755")
 }
 
+/// S§7.3, S§9 Tree (FX-27 review round 2 F-B): the member names of the workspace with identity `identity`: the
+/// `members` of each valid registry of `meta` with that identity. A pass writes its registry from the member records
+/// that its import maps folder names with (`sync::own_names`), so a folder `<name>@<host>` whose name is not here is
+/// one that the import of that workspace never reads, and no pass acknowledges an entry in it.
+pub fn member_names<'m>(meta: &'m TipMeta, identity: &str) -> BTreeSet<&'m str> {
+    meta.registries.values()
+        .filter_map(|r| r.value.as_ref().ok())
+        .filter(|r| r.identity == identity)
+        .flat_map(|r| r.members.iter().map(String::as_str))
+        .collect()
+}
+
 /// S§9 Tree, Commit, Push, Only its own branch: a commit with no parent of the tree of `base` less each message file
-/// `<addr>/<ULID>.json` ([`removable`]) whose ULID the valid ack of the host of `<addr>` lists; a refused ack lists
-/// nothing (S§7.4 Validation). Just before the force push, `branch` must be a zygo branch name and `base` must have
-/// the marker (S-C3); else `Refused("branch")` or `Refused("marker")`. The push has `base` as lease: a failed lease is
-/// `LeaseLost`; any other failed push is `Git(Failed, "push")`.
+/// `<name>@<host>/<ULID>.json` ([`removable`]) whose ULID the valid ack of `<host>` lists and whose `<name>` is a
+/// member name of that ack's identity ([`member_names`]); a refused ack lists nothing (S§7.4 Validation). A file of
+/// another name is never removed (FX-27 review round 2 F-B). Just before the force push, `branch` must be a zygo
+/// branch name and `base` must have the marker (S-C3); else `Refused("branch")` or `Refused("marker")`. The push has
+/// `base` as lease: a failed lease is `LeaseLost`; any other failed push is `Git(Failed, "push")`.
 pub fn run(wt: &Path, remote: &str, branch: &str, base: &str, meta: &TipMeta, deadline: Instant)
     -> Result<Pruned, BranchError> {
-    let acked: BTreeMap<&str, &BTreeSet<Ulid>> = meta.acks.iter()
-        .filter_map(|(h, r)| r.value.as_ref().ok().map(|a| (h.as_str(), &a.imported)))
+    let acked: BTreeMap<&str, (&BTreeSet<Ulid>, BTreeSet<&str>)> = meta.acks.iter()
+        .filter_map(|(h, r)| r.value.as_ref().ok().map(|a| (h, a)))
+        .map(|(h, a)| (h.as_str(), (&a.imported, member_names(meta, &a.identity))))
         .collect();
     let mut folders = Vec::new();
     branch::ls(wt, base, None, deadline, &mut |e| {
-        if e.kind == "tree" && let Some(a) = address::parse(&e.path) && acked.contains_key(a.host.as_str()) {
+        if e.kind == "tree" && let Some(a) = address::parse(&e.path)
+            && acked.get(a.host.as_str()).is_some_and(|(_, names)| names.contains(a.name.as_str()))
+        {
             folders.push((e.path, a.host));
         }
         Flow::Go
     })?;
     let mut removes = Vec::new();
     for (f, host) in &folders {
-        let set = acked[host.as_str()];
+        let set = acked[host.as_str()].0;
         let prefix = format!("{f}/");
         branch::ls(wt, base, Some(&prefix), deadline, &mut |e| {
             let listed = e.path.strip_prefix(&prefix).and_then(address::ulid_file).is_some_and(|u| set.contains(&u));

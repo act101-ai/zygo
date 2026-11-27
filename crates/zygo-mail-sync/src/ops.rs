@@ -147,7 +147,8 @@ fn waiting(wt: &Path, tip: &str, meta: &TipMeta, host: &str, deadline: Instant)
     for folder in host_folders(wt, tip, host, deadline)? {
         let prefix = format!("{folder}/");
         branch::ls(wt, tip, Some(&prefix), deadline, &mut |e| {
-            let unlisted = e.path.strip_prefix(&prefix).and_then(address::ulid_file).is_some_and(|u| !acked.contains(&u));
+            let unlisted = e.path.strip_prefix(&prefix).and_then(address::ulid_file)
+                .is_some_and(|u| !acked.contains(&u));
             if prune::removable(&e) && unlisted {
                 out.insert(e.path);
             }

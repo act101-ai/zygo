@@ -472,7 +472,7 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
         notified.keys.sort();
         notified.keys.dedup();
         wake(c, notified.read.as_ref(), &notified.keys);
-        let files = own_files(wt, &tip, &own, deadline)?;
+        let files = own_files(wt, &tip, &own, &own_names(&c.ws), deadline)?;
         changes.extend(own_changes(c, &meta, &identity, &own, &files, &imp.acked));
         if changes.is_empty() {
             break (tip, meta);
@@ -859,20 +859,27 @@ struct HostFiles {
     all: BTreeSet<Ulid>,
     /// The ULID of each entry that a prune can remove ([`prune::removable`]).
     removable: BTreeSet<Ulid>,
+    /// The ULID of each entry in a folder `<name>@<h>` whose name is a member name ([`own_names`]): an entry that a
+    /// pass can acknowledge (S§8.5 Candidates).
+    members: BTreeSet<Ulid>,
+    /// The ULID of each entry in a folder whose name is not a member name: no pass acknowledges it (S§13 limit 2).
+    others: BTreeSet<Ulid>,
 }
 
-/// S§7.4, S§9 Tree: for each own host `h`, the entries of the `*@<h>/` folders at the tip ([`HostFiles`]).
-fn own_files(wt: &Path, tip: &str, own: &[String], deadline: Instant)
+/// S§7.4, S§9 Tree: for each own host `h`, the entries of the `*@<h>/` folders at the tip ([`HostFiles`]), with
+/// `names` the member names.
+fn own_files(wt: &Path, tip: &str, own: &[String], names: &[String], deadline: Instant)
     -> Result<BTreeMap<String, HostFiles>, BranchError> {
     let mut folders = Vec::new();
     branch::ls(wt, tip, None, deadline, &mut |e| {
         if e.kind == "tree" && let Some(a) = address::parse(&e.path) && own.contains(&a.host) {
-            folders.push((a.host, e.path));
+            let member = names.contains(&a.name);
+            folders.push((a.host, e.path, member));
         }
         Flow::Go
     })?;
     let mut out: BTreeMap<String, HostFiles> = own.iter().map(|h| (h.clone(), HostFiles::default())).collect();
-    for (h, folder) in folders {
+    for (h, folder, member) in folders {
         let prefix = format!("{folder}/");
         let set = out.entry(h).or_default();
         branch::ls(wt, tip, Some(&prefix), deadline, &mut |e| {
@@ -880,6 +887,11 @@ fn own_files(wt: &Path, tip: &str, own: &[String], deadline: Instant)
                 set.all.insert(u);
                 if prune::removable(&e) {
                     set.removable.insert(u);
+                }
+                if member {
+                    set.members.insert(u);
+                } else {
+                    set.others.insert(u);
                 }
             }
             Flow::Go
@@ -897,12 +909,15 @@ pub(crate) fn own_names(ws: &Workspace) -> Vec<String> {
 }
 
 /// S§8.3 step 12, S§7.3, S§7.4: the own registry when the tip's differs, and the ack of each own host `h` when it
-/// changes: (old ∪ the ULIDs that this pass acknowledged in a `*@<h>/` folder) ∩ the files of `h` at the tip. A ULID
-/// acknowledged in the folder of another host does not count for `h` (FX-27 review F1). The current host's ack is written
-/// when the tip has none of this identity (S§7.6). A file over its limit is not written; one line is logged (O3).
-/// After a rename (S§7.6 "Rename") it deletes the registry of an old own host, unless the new one is over its limit,
-/// and the ack of an old own host whose entries at the tip are none, or are all entries that no prune removes and
-/// that the ack lists, when it deletes that host's registry or the host has none.
+/// changes: (old ∪ here) ∩ the entries of `h` at the tip. `here` holds each ULID that this pass acknowledged in a
+/// `*@<h>/` folder, and each ULID that it acknowledged in the folder of another own host when a `*@<h>/` folder of
+/// a member name holds it (a member's duplicate, FX-27 review round 2 F-A). A ULID that `h` holds only in a folder
+/// of another name does not count for `h` (FX-27 review F1). The current host's ack is written when the tip has
+/// none of this identity (S§7.6). A file over its limit is not written; one line is logged (O3). After a rename
+/// (S§7.6 "Rename") it deletes the registry of an old own host, unless the new one is over its limit, and the ack
+/// of an old own host when that host's registry goes in this commit or it has none, and each `*@<h>/` entry at the
+/// tip is in a folder of a member name, is not one that a prune removes, and has its ULID in the new ack (FX-27
+/// review round 2 F-C).
 fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &BTreeMap<String, HostFiles>,
     acked: &[(String, Ulid)]) -> Vec<Change> {
     let host = c.s.host.as_str();
@@ -929,13 +944,19 @@ fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &
         let tip_ack = own_ack(meta, h, identity);
         let old = tip_ack.map(|a| a.imported.clone()).unwrap_or_default();
         let at = files.get(h).unwrap_or(&none);
-        let here: BTreeSet<Ulid> = acked.iter().filter(|(ah, _)| ah == h).map(|(_, u)| *u).collect();
+        // S§7.4 Owner: acknowledged in a folder of `h`, or a member's duplicate in `h` of one acknowledged elsewhere.
+        let here: BTreeSet<Ulid> = acked.iter()
+            .filter(|(ah, u)| ah == h || at.members.contains(u))
+            .map(|(_, u)| *u)
+            .collect();
         let new: BTreeSet<Ulid> = old.union(&here).filter(|u| at.all.contains(u)).copied().collect();
         // The old ack goes only with or after the old registry: `own_hosts` finds an old host by its ack (S-G5).
         let reg_stays = over
             && meta.registries.get(h).is_some_and(|r| r.value.as_ref().is_ok_and(|v| v.identity == identity));
-        // S§7.6 "Rename": no entry that a prune can remove, and every entry in the ack (MS-14 review F6 keeps them).
-        if h != host && at.removable.is_empty() && new == at.all && !reg_stays {
+        // S§7.6 "Rename": only member entries, none that a prune can remove, each in the ack (MS-14 review F6 keeps
+        // them). An entry of another name keeps the ack (S§13 limit 2).
+        let done = at.others.is_empty() && at.removable.is_empty() && at.members.is_subset(&new);
+        if h != host && done && !reg_stays {
             out.push(Change::Remove { path: format!("ack/{h}.json") });
             continue;
         }

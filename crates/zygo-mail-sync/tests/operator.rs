@@ -865,3 +865,91 @@ fn drop_count_is_zero_for_links_after_the_old_ack_is_gone() {
     assert_eq!(file(&r, "ack/b.json"), None);
     assert_eq!(waiting_for(&env(&b), WS_ID, "b"), Ok(0));
 }
+
+#[test] // S§7.4 Owner, S§8.5 Candidates, S§7.6 Rename (FX-27 review round 2 F-A): a member's duplicate is acked
+fn renamed_host_ack_goes_when_a_member_duplicate_was_acked_in_the_new_folder() {
+    let (r, _a, b) = pair();
+    let u = Ulid::from_parts(T0 * 1000, 21);
+    let target = blob(&r.bare, b"../ZYGO-MAIL");
+    let old = format!("bob@b/{u}.json");
+    put_entries(&r, &[("120000", &target, &old), ("120000", &target, &format!("bob@b2/{u}.json"))]);
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(imported(&r, "ack/b2.json"), BTreeSet::from([u.to_string()]));
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+    assert!(tip_paths(&r).contains(&old)); // MS-14 review F6: the link stays
+    sync(&b);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(state_keys(&b), (own_keys(&["b2"]), BTreeSet::new()));
+}
+
+#[test] // S§7.4 Owner, S§9 Tree (FX-27 review round 2 F-A): a member's duplicate message file is acked, then pruned
+fn member_duplicate_message_file_in_the_old_folder_is_acked_and_pruned() {
+    let (r, _a, b) = pair();
+    let u = Ulid::from_parts(T0 * 1000, 24);
+    let old = format!("bob@b/{u}.json");
+    let dup = blob(&r.bare, b"{\"duplicate\":true}");
+    let link = blob(&r.bare, b"../ZYGO-MAIL");
+    put_entries(&r, &[("100644", &dup, &old), ("120000", &link, &format!("bob@b2/{u}.json"))]);
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([u.to_string()]));
+    assert_eq!(imported(&r, "ack/b2.json"), BTreeSet::from([u.to_string()]));
+    assert!(prune_now(&b).notes.contains(&"pruned 1 files".to_string()));
+    assert!(!tip_paths(&r).contains(&old));
+    sync(&b);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+}
+
+#[test] // S§9 Tree, S§7.4 Meaning (FX-27 review round 2 F-B): no prune removes a non-member file of an acked ULID
+fn prune_keeps_a_non_member_message_file_whose_ulid_is_acked() {
+    let (r, a, b) = pair();
+    let u = Ulid::from_parts(T0 * 1000, 22);
+    let carol = format!("carol@b/{u}.json");
+    let msg = blob(&r.bare, b"not delivered");
+    let link = blob(&r.bare, b"../ZYGO-MAIL");
+    put_entries(&r, &[("120000", &link, &format!("bob@b/{u}.json")), ("100644", &msg, &carol)]);
+    sync(&b);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([u.to_string()]));
+    assert!(prune_now(&b).notes.contains(&"pruned 0 files".to_string()));
+    assert!(tip_paths(&r).contains(&carol));
+    sync(&a);
+    assert!(prune_now(&a).notes.contains(&"pruned 0 files".to_string())); // the prune of another machine, too
+    assert!(tip_paths(&r).contains(&carol));
+}
+
+#[test] // S§7.6 Rename, S§13 limit 2 (FX-27 review round 2 F-C): a non-member entry keeps the old ack, acked or not
+fn renamed_host_ack_stays_with_a_non_member_entry_of_an_acked_ulid() {
+    let (r, _a, b) = pair();
+    let u = Ulid::from_parts(T0 * 1000, 23);
+    let target = blob(&r.bare, b"../ZYGO-MAIL");
+    let (bob, carol) = (format!("bob@b/{u}.json"), format!("carol@b/{u}.json"));
+    put_entries(&r, &[("120000", &target, &bob), ("120000", &target, &carol)]);
+    sync(&b);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([u.to_string()]));
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([u.to_string()]));
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string(), "b".to_string()]);
+}
+
+#[test] // S§7.6 --drop-host, S§9 Tree (FX-27 review round 2): a gitlink and a tree are no message and are not counted
+fn drop_count_leaves_out_a_gitlink_and_a_tree() {
+    let (r, _a, b) = pair();
+    let (u1, u2) = (Ulid::from_parts(T0 * 1000, 25), Ulid::from_parts(T0 * 1000, 26));
+    put_tree(&r, &format!("{u1}.json"));
+    put_entries(&r, &[("160000", GITLINK, &format!("bob@b/{u2}.json"))]);
+    assert_eq!(waiting_for(&env(&b), WS_ID, "b"), Ok(0));
+}
+
+#[test] // S§7.6 --drop-host, S§9 Tree (FX-27 review round 2): a blob of mode 100755 is a message file and is counted
+fn drop_count_holds_a_100755_blob() {
+    let (r, _a, b) = pair();
+    let u = Ulid::from_parts(T0 * 1000, 27);
+    put_entries(&r, &[("100755", &blob(&r.bare, b"{}"), &format!("bob@b/{u}.json"))]);
+    assert_eq!(waiting_for(&env(&b), WS_ID, "b"), Ok(1));
+}
