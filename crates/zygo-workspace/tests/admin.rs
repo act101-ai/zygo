@@ -2192,6 +2192,13 @@ fn forget_refuses_while_a_mail_sync_holds_its_lock() {
 
 // ---- FX-24: ws forget holds mail/lock across the state rename (M§5 P1, S§7.6 step 4) ----
 
+/// What a delivery thread of a d4 test says: its hook holds `mail/lock` shared, or it ended with this result.
+#[derive(Debug)]
+enum Event {
+    Held,
+    Done(Result<(), MailError>),
+}
+
 /// A readable state `app` of workspace `ID` with the record of `kbbbbbbbb`.
 fn ws_with_bob(p: &Paths, t: &Path) -> Store {
     ws_state(p, ID, "app", &t.join("r/app"), |ws| {
@@ -2207,14 +2214,17 @@ fn forget_waits_for_a_delivery_in_flight_and_leaves_no_maildir() {
     let p = paths(t);
     let store = ws_with_bob(&p, t);
     let dir = p.workspaces_dir().join(ID);
-    let (held_tx, held_rx) = std::sync::mpsc::channel::<()>();
+    // Review F3: the delivery's result comes on the channel of the "held" signal, so a delivery that fails before its
+    // hook reaches the test as that error and the test never waits for a signal that cannot come.
+    let (ev_tx, ev_rx) = std::sync::mpsc::channel::<Event>();
     let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
     let go_rx = Mutex::new(go_rx);
+    let held_tx = Mutex::new(ev_tx.clone());
     up::testing::hook(
         &dir,
         "mail_delivery_after_read",
         Some(Box::new(move || {
-            let _ = held_tx.send(());
+            let _ = held_tx.lock().unwrap().send(Event::Held);
             let _ = go_rx.lock().unwrap().recv();
             Ok(())
         })),
@@ -2232,17 +2242,28 @@ fn forget_waits_for_a_delivery_in_flight_and_leaves_no_maildir() {
     }
     drop(go_tx);
     let thread = std::thread::spawn(move || {
-        Delivery::begin(&store, MAIL_LOCK_WAIT).and_then(|d| {
+        let r = Delivery::begin(&store, MAIL_LOCK_WAIT).and_then(|d| {
             d.deliver("kbbbbbbbb", "x", &Message::new("cli", "x", "s", "b", SystemTime::now()).unwrap(), 500)
-        })
+        });
+        let _ = ev_tx.send(Event::Done(r));
     });
-    held_rx.recv().unwrap();
+    let first = ev_rx.recv().unwrap();
+    if let Event::Done(r) = first {
+        for point in ["mail_delivery_after_read", "forget_before_mail_lock", "forget_before_tombstone_remove"] {
+            up::testing::hook(&dir, point, None);
+        }
+        panic!("the delivery ended before its hook: {r:?}");
+    }
     let forgot = forget_run(&p, &t.join("none"), None, "app");
     // Clearing the hooks drops every `go` sender, so the delivery never waits past a forget that failed early.
     for point in ["mail_delivery_after_read", "forget_before_mail_lock", "forget_before_tombstone_remove"] {
         up::testing::hook(&dir, point, None);
     }
-    let delivered = thread.join().unwrap();
+    let delivered = match ev_rx.recv().unwrap() {
+        Event::Done(r) => r,
+        Event::Held => panic!("a second held signal"),
+    };
+    thread.join().unwrap();
     assert_eq!(forgot, (0, "zygo: forgot app\n".to_string(), String::new()));
     assert!(delivered.is_ok(), "{delivered:?}");
     assert!(fs::symlink_metadata(&dir).is_err(), "a delivery made the state folder or its maildir again");
