@@ -440,7 +440,7 @@ const TMP_MAX_AGE: Duration = Duration::from_secs(60);
 const ERROR_LINE_MAX: usize = 1024;
 
 /// The state of one workspace: the files in `<workspaces_dir>/<id>`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Store {
     id: String,
     dir: PathBuf,

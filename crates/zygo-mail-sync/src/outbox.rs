@@ -10,7 +10,7 @@ use zygo_config::schema::{RedactionConfig, SyncOff, SyncSettings};
 use zygo_core::ids::valid_member_name;
 use zygo_redact::secret::DeadlinePolicy;
 use zygo_workspace::mail::store::{write_synced, FILE_MAX};
-use zygo_workspace::mail::{ensure_mail_dir, MailError, Message};
+use zygo_workspace::mail::{ensure_mail_dir, Delivery, MailError, Message, MAIL_LOCK_WAIT};
 
 use crate::address::{ulid_file, Address};
 use crate::registry::read_cache;
@@ -77,6 +77,10 @@ pub fn send_remote(
 /// `send_remote` with the deadline policy of the secret pass given. The rules run in the S§7.2 order (sender
 /// name, sync off, public, unknown address), then the M§5 limits, then the secret pass; a refusal writes nothing.
 /// The file is written in `outbox/tmp/` and linked into `outbox/` (M§5, M-C3).
+///
+/// `mail/lock` is held shared from before the first folder is made until the link (S§7.6 step 4, FX-28). These cases
+/// refuse with the `MailError` line, write nothing and make no state folder: a lock not taken in `MAIL_LOCK_WAIT`; a
+/// workspace that is gone, or that was forgotten while this send waited (`lock_is_at`); no `workspace.json`.
 #[allow(clippy::too_many_arguments)]
 pub fn send_remote_with(
     sp: &SyncPaths,
@@ -111,6 +115,8 @@ pub fn send_remote_with(
     }
     let id = msg.id.parse::<Ulid>().map_err(|e| io_err(io::Error::other(e)))?;
     let bytes = serde_json::to_vec(&msg).map_err(|e| io_err(io::Error::other(e)))?;
+    // S§7.6 step 4 (FX-28): held to the end, across the folder makes, the write and the link.
+    let _held = Delivery::begin(&sp.store, MAIL_LOCK_WAIT).map_err(|e| SendError::Io(e.to_string()))?;
     for d in [&sp.mail, &sp.outbox, &sp.outbox_tmp] {
         ensure_mail_dir(d).map_err(io_err)?;
     }

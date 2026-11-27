@@ -43,6 +43,8 @@ pub struct SyncPaths {
     pub last_start: PathBuf,
     /// `<workspace_cache_dir>/<id>/mail-sync`: the side-branch worktree (S§6.3).
     pub worktree: PathBuf,
+    /// The state of the workspace: the M§5 taker of `mail/lock` (FX-28).
+    pub store: zygo_workspace::state::Store,
 }
 
 impl SyncPaths {
@@ -70,6 +72,7 @@ impl SyncPaths {
             again: sync.join("again"),
             last_start: sync.join("last_start"),
             worktree: paths.workspace_cache_dir().join(ws_id).join("mail-sync"),
+            store: zygo_workspace::state::Store::open(paths, ws_id),
             mail: m,
             outbox,
             sync,

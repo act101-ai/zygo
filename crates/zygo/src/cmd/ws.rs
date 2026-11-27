@@ -87,20 +87,18 @@ pub fn dispatch(args: WsArgs) -> i32 {
     }
     let paths = Paths::from_env();
     match args.sub {
-        WsCmd::Forget { name, yes } => {
-            let mut input = std::io::stdin().lock();
-            // S§7.6: the question goes to stderr through its own handle (the std stderr lock is reentrant).
-            let mut before = |ws: &Workspace| forget_mail(&paths, ws, yes, &mut input, &mut std::io::stderr());
-            admin::forget(
-                &paths,
-                &tmux_program(),
-                std::env::var_os("TMUX").as_deref(),
-                &name,
-                &mut before,
-                &mut std::io::stdout().lock(),
-                &mut std::io::stderr().lock(),
-            )
-        }
+        // S§7.6: the question goes to stderr through its own handle (the std stderr lock is reentrant).
+        WsCmd::Forget { name, yes } => forget_cmd(
+            &paths,
+            &tmux_program(),
+            std::env::var_os("TMUX").as_deref(),
+            &name,
+            yes,
+            &mut std::io::stdin().lock(),
+            &mut std::io::stderr(),
+            &mut std::io::stdout().lock(),
+            &mut std::io::stderr().lock(),
+        ),
         WsCmd::ForgetPane { key, name } => {
             // D10: the folder names the workspace only when there is no `--name`; `forget_pane` does not read `cwd`
             // when it has a name, so a folder that cannot be read does not fail that form.
@@ -148,6 +146,18 @@ pub fn dispatch(args: WsArgs) -> i32 {
         }
         WsCmd::Run { ws_id, pane, shell } => run_cmd(&paths, &ws_id, &pane, shell),
     }
+}
+
+/// S§7.6 (MS-21): `zygo ws forget` with its inputs and writers given (a test seam; `dispatch` calls it). `input` gives
+/// the answer to the step 2 question, which goes to `ask`; `out` and `err` are the writers of `admin::forget`.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn forget_cmd(
+    paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: &str, yes: bool, input: &mut dyn BufRead,
+    ask: &mut dyn Write, out: &mut dyn Write, err: &mut dyn Write,
+) -> i32 {
+    let mut before = |ws: &Workspace| forget_mail(paths, ws, yes, input, ask);
+    admin::forget(paths, tmux, tmux_env, name, &mut before, out, err)
 }
 
 /// S§6.3 Remove (MS-21): the deadline of `git worktree remove`. The worktree has no checkout (S§6.3 Make), so the

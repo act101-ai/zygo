@@ -8,15 +8,20 @@ use std::ffi::OsStr;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
+use ulid::Ulid;
+use zygo::cmd::ws::forget_cmd;
 use zygo_config::{builtin_patterns, RedactionConfig, SyncSettings};
 use zygo_core::Agent;
 use zygo_mail_sync::address::Address;
-use zygo_mail_sync::outbox::{count, send_remote_with};
+use zygo_mail_sync::outbox::{count, send_remote_with, SendError};
+use zygo_mail_sync::registry::{write_cache, MemberCache};
 use zygo_mail_sync::state::SyncPaths;
 use zygo_redact::secret::DeadlinePolicy;
 use zygo_workspace::state::{MemberRecord, Phase};
+use zygo_workspace::up::testing::hook;
 
 use common::feed_stdin;
 use common::workspace::{ready_exe, Harness, WS_ID};
@@ -102,14 +107,28 @@ fn sp(h: &Harness) -> SyncPaths { SyncPaths::new(&h.paths, WS_ID).unwrap() }
 /// The state folder as the binary names it (`HOME = root`: `~/.local/state/zygo`, a link to the test's folder).
 fn state(h: &Harness) -> PathBuf { h.root().join(".local/state/zygo/workspaces").join(WS_ID) }
 
-/// One message from `from@own` to `to` in the outbox of `h` (as `tests/mail_sync_cli.rs:105-111`, time fixed).
-fn send(h: &Harness, own: &str, from: &str, to: (&str, &str)) {
+/// One message from `from@own` to `to` in the outbox of `sp` (as `tests/mail_sync_cli.rs:105-111`, time fixed), with
+/// `repo` as the main root; the result of the send.
+fn send_at(sp: &SyncPaths, repo: &Path, own: &str, from: &str, to: (&str, &str)) -> Result<Ulid, SendError> {
     let s = SyncSettings { branch: "zygo/mail".into(), remote: "origin".into(), host: own.into(), sync_gap: Duration::from_secs(60) };
     let policy = DeadlinePolicy { base: Duration::from_secs(3600), ..Default::default() };
     let red = RedactionConfig { pattern: builtin_patterns(), ..Default::default() };
     let to = Address { name: to.0.into(), host: to.1.into() };
     let now = SystemTime::UNIX_EPOCH + Duration::from_secs(SENT);
-    send_remote_with(&sp(h), Ok(&s), Some(from), &to, "s", "b", &red, &h.repo(), now, &policy).unwrap();
+    send_remote_with(sp, Ok(&s), Some(from), &to, "s", "b", &red, repo, now, &policy)
+}
+
+/// One message from `from@own` to `to` in the outbox of `h`, which must be sent.
+fn send(h: &Harness, own: &str, from: &str, to: (&str, &str)) {
+    send_at(&sp(h), &h.repo(), own, from, to).unwrap();
+}
+
+/// A workspace that never synced: the member cache knows `bob@b`, and the repository has a `.git` folder. There is no
+/// sync worktree, so the in-process forget runs no git; it runs no tmux, as the socket folder of [`seed_down`] does
+/// not exist.
+fn unsynced(h: &Harness) {
+    write_cache(&sp(h), &MemberCache { hosts: [("b".to_string(), vec!["bob".to_string()])].into() }).unwrap();
+    std::fs::create_dir_all(h.repo().join(".git")).unwrap();
 }
 
 /// `git worktree list --porcelain` in `repo`, one item per entry.
@@ -296,4 +315,38 @@ fn forget_refuses_an_outbox_that_cannot_be_read() {
     let line = format!("zygo: cannot forget app: the outbox cannot be read: {} is not a folder\n", state(&h).join("mail/outbox").display());
     assert_eq!(code_out_err(&o), (Some(1), String::new(), line));
     assert!(state(&h).join("workspace.json").exists());
+}
+
+#[test] // S§7.6 steps 2 and 4 (FX-28): a remote send after the count and before the rename is in a count, or the forget deletes nothing
+fn remote_send_during_forget_is_never_lost_uncounted() {
+    let h = Harness::no_tmux();
+    seed_down(&h, &[(ALICE, "alice")]);
+    unsynced(&h);
+    send(&h, "a", "alice", ("bob", "b"));
+    let dir = h.paths.workspaces_dir().join(WS_ID);
+    let sent: Arc<Mutex<Option<Result<Ulid, SendError>>>> = Arc::default();
+    let (hs, hsp, hrepo) = (Arc::clone(&sent), sp(&h), h.repo());
+    hook(&dir, "forget_before_mail_lock", Some(Box::new(move || {
+        *hs.lock().unwrap() = Some(send_at(&hsp, &hrepo, "a", "alice", ("bob", "b")));
+        Ok(())
+    })));
+    let (mut ask, mut out, mut err) = (Vec::new(), Vec::new(), Vec::new());
+    let code = forget_cmd(&h.paths, &h.root().join("none"), None, "app", true, &mut std::io::empty(), &mut ask, &mut out, &mut err);
+    hook(&dir, "forget_before_mail_lock", None);
+    let id = sent.lock().unwrap().take().expect("the hook ran").expect("the send ran before mail/lock");
+    assert_eq!(String::from_utf8(ask).unwrap(), "zygo: 1 unsent messages and 0 refused messages will be deleted. Forget the workspace? [y/N] y (--yes)\n");
+    assert_eq!(
+        (code, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap()),
+        (1, String::new(), "zygo: cannot forget app: the outbox changed after the count: 2 unsent messages and 0 refused messages now; try again\n".to_string())
+    );
+    assert!(sp(&h).outbox.join(format!("{id}.json")).is_file());
+    assert_eq!(count(&sp(&h)).unwrap(), 2);
+    assert!(dir.join("workspace.json").is_file());
+    let (mut ask, mut out, mut err) = (Vec::new(), Vec::new(), Vec::new());
+    let code = forget_cmd(&h.paths, &h.root().join("none"), None, "app", true, &mut std::io::empty(), &mut ask, &mut out, &mut err);
+    assert_eq!(
+        (code, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap(), String::from_utf8(ask).unwrap()),
+        (0, "zygo: forgot app\n".to_string(), String::new(), "zygo: 2 unsent messages and 0 refused messages will be deleted. Forget the workspace? [y/N] y (--yes)\n".to_string())
+    );
+    assert!(std::fs::symlink_metadata(&dir).is_err());
 }
