@@ -131,7 +131,7 @@ fn verbs_match_spec() {
         ("statusline", "[compact|verbose]"),
         ("down", "[--now] [--timeout <dur>] [--wait] [--all] [--] [<name>]"),
         ("ls", ""),
-        ("workspace", ""),
+        ("workspace", "[approve [--yes] [--digest <hex>]]"),
         ("decision", "ls|show|deps|check …"),
         ("mail", "send|read|ls …"),
     ];
