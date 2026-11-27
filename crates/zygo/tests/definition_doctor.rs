@@ -103,6 +103,10 @@ impl Fx {
     fn approvals(&self) -> PathBuf {
         self._t.path().join("approvals.toml")
     }
+    /// zygo's workspaces cache folder of this fixture (`Paths::workspace_cache_dir`).
+    fn cache(&self) -> PathBuf {
+        self._t.path().join("cache/workspaces")
+    }
 }
 
 /// `o.git` (bare), `w` with a `README` seed commit and then `ents` (not empty), pushed; `c` cloned `--no-checkout`.
@@ -198,7 +202,7 @@ fn appr(f: &Fx, d: &str) -> String {
 }
 
 fn lines(f: &Fx, m: &Merged) -> Vec<String> {
-    definition_lines(&f.c, m, &f.approvals(), &SystemGit)
+    definition_lines(&f.c, m, &f.approvals(), &f.cache(), &SystemGit)
 }
 
 /// `ls-tree` fails as when the tool is gone; every other command runs.
@@ -261,7 +265,7 @@ fn unread_when_ls_tree_fails() {
     let f = fx(&[(WS, MIN.as_bytes())]);
     let m = merged(f.root(), "");
     assert_eq!(
-        definition_lines(&f.c, &m, &f.approvals(), &FailLsTree),
+        definition_lines(&f.c, &m, &f.approvals(), &f.cache(), &FailLsTree),
         vec!["workspace files: unread (git ls-tree: tool not found)".to_string()]
     );
 }
@@ -274,7 +278,7 @@ fn pool_lines_outside_a_repository() {
     std::fs::create_dir_all(&cwd).unwrap();
     let approvals = root.join("approvals.toml");
     let p = pool(&root);
-    let run = |toml: &str| definition_lines(&cwd, &merged(&root, toml), &approvals, &SystemGit);
+    let run = |toml: &str| definition_lines(&cwd, &merged(&root, toml), &approvals, &root.join("cache/workspaces"), &SystemGit);
     assert_eq!(
         run(&pool_toml(&p)),
         vec![format!("pool: {}: 2 directories", p.display())]
@@ -403,7 +407,7 @@ fn approved_line_from_a_bare_repository_folder() {
         &d[..12]
     );
     assert_eq!(
-        definition_lines(&o, &merged(f.root(), ""), &f.approvals(), &SystemGit),
+        definition_lines(&o, &merged(f.root(), ""), &f.approvals(), &f.cache(), &SystemGit),
         vec![want]
     );
 }
@@ -418,6 +422,7 @@ fn approved_line_from_the_git_directory() {
             &f.c.join(".git"),
             &merged(f.root(), ""),
             &f.approvals(),
+            &f.cache(),
             &SystemGit
         ),
         vec![appr(&f, &d)]
@@ -503,6 +508,7 @@ fn shared_lines_of_a_user_loadout() {
             &cwd,
             &merged(&root, &user),
             &root.join("approvals.toml"),
+            &root.join("cache/workspaces"),
             &SystemGit
         ),
         vec![
@@ -536,6 +542,7 @@ fn pool_lines_use_the_names_up_keeps() {
             &cwd,
             &merged(&root, &user),
             &root.join("approvals.toml"),
+            &root.join("cache/workspaces"),
             &SystemGit,
         )
     };
@@ -601,6 +608,7 @@ fn pool_lines_skip_a_pane_with_user_info() {
             &cwd,
             &merged(&root, &user),
             &root.join("approvals.toml"),
+            &root.join("cache/workspaces"),
             &SystemGit,
         )
     };

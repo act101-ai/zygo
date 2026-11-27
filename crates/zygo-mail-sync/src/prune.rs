@@ -8,7 +8,7 @@ use ulid::Ulid;
 use zygo_work::repo::{Flow, RunError};
 
 use crate::address;
-use crate::branch::{self, BranchError, Change, Pushed};
+use crate::branch::{self, BranchError, Change, Entry, Pushed};
 use crate::identity::TipMeta;
 
 /// S§9 When: a base whose `git rev-list --count` is this or more is due for a prune.
@@ -49,8 +49,14 @@ pub fn due(wt: &Path, base: &str, own_ack_len: usize, forced: bool, deadline: In
     Ok(n >= COMMITS_DUE)
 }
 
+/// S§9 Tree (MS-14 review F6): whether `e` is a message file, a blob of mode `100644` or `100755`; a link
+/// (`120000`), a submodule (`160000`) or a tree is not one.
+pub fn removable(e: &Entry) -> bool {
+    e.kind == "blob" && matches!(e.mode.as_str(), "100644" | "100755")
+}
+
 /// S§9 Tree, Commit, Push, Only its own branch: a commit with no parent of the tree of `base` less each message file
-/// `<addr>/<ULID>.json` (a regular-file blob, mode `100644` or `100755`) whose ULID the valid ack of the host of `<addr>` lists; a refused ack lists
+/// `<addr>/<ULID>.json` ([`removable`]) whose ULID the valid ack of the host of `<addr>` lists; a refused ack lists
 /// nothing (S§7.4 Validation). Just before the force push, `branch` must be a zygo branch name and `base` must have
 /// the marker (S-C3); else `Refused("branch")` or `Refused("marker")`. The push has `base` as lease: a failed lease is
 /// `LeaseLost`; any other failed push is `Git(Failed, "push")`.
@@ -72,7 +78,7 @@ pub fn run(wt: &Path, remote: &str, branch: &str, base: &str, meta: &TipMeta, de
         let prefix = format!("{f}/");
         branch::ls(wt, base, Some(&prefix), deadline, &mut |e| {
             let listed = e.path.strip_prefix(&prefix).and_then(address::ulid_file).is_some_and(|u| set.contains(&u));
-            if e.kind == "blob" && matches!(e.mode.as_str(), "100644" | "100755") && listed {
+            if removable(&e) && listed {
                 removes.push(Change::Remove { path: e.path });
             }
             Flow::Go

@@ -1023,7 +1023,10 @@ fn doctor_cli_valid_config_exits_zero() {
     assert!(has(&l, "agent claude-code: not found") && has(&l, "act-lite: not found"), "{out}");
     assert!(has(&l, "tmux: not found"), "{out}");
     assert!(l.iter().any(|x| x.starts_with("provider acme: env:ZYGO_N35_KEY ")), "{out}");
-    assert_eq!(l.last().map(String::as_str), Some("repo policy: defaults"), "{out}");
+    // No git on `PATH`: the lookup of `zygo up` exits 1 `git not found` (W§8.1 step 3, FX-25), which R§10 shows as the
+    // unread line (WD-16 review F1); it comes after the policy line.
+    let tail: Vec<&str> = l.iter().rev().take(2).rev().map(String::as_str).collect();
+    assert_eq!(tail, ["repo policy: defaults", "workspace files: unread (git not found)"], "{out}");
 }
 
 /// D2 (plan review F7): `zygo doctor` looks for tmux only in the absolute entries of `PATH`. Kills: a `find_tmux` that

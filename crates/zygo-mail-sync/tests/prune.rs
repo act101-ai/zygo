@@ -550,3 +550,61 @@ fn t16_an_acknowledged_symlink_entry_stays() {
     assert!(at_tip(&r, "bob@b", u0));
     assert!(!at_tip(&r, "bob@b", u1));
 }
+
+#[test] // S§7.6 Rename (b), S§8.5 Checks (FX-27): a link that a full inbox left unacked keeps the old ack
+fn t17_renamed_host_ack_stays_while_a_full_inbox_leaves_a_link_unacked() {
+    let (r, a, b) = machines_with("", "max_unread = 1\n");
+    let m = send(&a, "alice", ("bob", "b"), "m");
+    sync(&a);
+    sync(&b);
+    assert_eq!(new_ids(&b, BOB), BTreeSet::from([format!("{m}.json")])); // the inbox is full
+    assert!(prune_now(&b, T0).notes.contains(&"pruned 1 files".to_string()));
+    assert!(!at_tip(&r, "bob@b", m));
+    let l = Ulid::from_parts(T0 * 1000, 7);
+    edit_tip(&r, &[("120000", &format!("bob@b/{l}.json"), b"../ZYGO-MAIL")], &[]);
+    write_config(&b, "b2", "max_unread = 1\n");
+    assert_eq!(sync(&b).delivered, 0);
+    assert_eq!(tip_file(&r, BRANCH, "registry/b.json"), None);
+    assert!(tip_file(&r, BRANCH, "ack/b.json").is_some());
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::new());
+    assert!(at_tip(&r, "bob@b", l));
+    let inbox = b.sp().mail.join(BOB);
+    fs::create_dir_all(inbox.join("cur")).unwrap();
+    fs::rename(inbox.join("new").join(format!("{m}.json")), inbox.join("cur").join(format!("{m}.json"))).unwrap();
+    sync(&b);
+    assert_eq!(tip_file(&r, BRANCH, "ack/b.json"), None);
+}
+
+#[test] // S§9 Tree, S§7.4 Meaning (FX-27 round-3 F1 guard): a member rename does not keep a delivered file
+fn t18_a_member_rename_does_not_keep_a_delivered_file_from_the_prune() {
+    let (r, a, b) = pair();
+    let m = send(&a, "alice", ("bob", "b"), "m");
+    sync(&a);
+    sync(&b);
+    assert!(imported(&r, "ack/b.json").contains(&m.to_string()));
+    b.workspace(&[(BOB, "robert")]);
+    sync(&b);
+    let reg: Value = serde_json::from_slice(&tip_file(&r, BRANCH, "registry/b.json").unwrap()).unwrap();
+    assert_eq!(reg["members"], serde_json::json!(["robert"]));
+    assert!(prune_now(&b, T0).notes.contains(&"pruned 1 files".to_string()));
+    assert!(!at_tip(&r, "bob@b", m));
+    assert_eq!(sync(&b).delivered, 0);
+    assert_eq!(new_ids(&b, BOB), BTreeSet::from([format!("{m}.json")]));
+}
+
+#[test] // S§9 Tree (MS-14 review F6, FX-27): a message file is a blob of mode 100644 or 100755
+fn t19_removable_is_a_message_file_blob_only() {
+    let e = |mode: &str, kind: &str| branch::Entry {
+        mode: mode.into(),
+        kind: kind.into(),
+        id: "0".repeat(40),
+        size: None,
+        path: "bob@b/x.json".into(),
+    };
+    assert!(prune::removable(&e("100644", "blob")));
+    assert!(prune::removable(&e("100755", "blob")));
+    assert!(!prune::removable(&e("120000", "blob")));
+    assert!(!prune::removable(&e("160000", "commit")));
+    assert!(!prune::removable(&e("040000", "tree")));
+    assert!(!prune::removable(&e("100644", "tree")));
+}

@@ -8,8 +8,10 @@ use std::time::Instant;
 use ulid::Ulid;
 use zygo_work::repo::{Flow, RunError};
 use zygo_workspace::identity::valid_pane_key;
-use zygo_workspace::mail::store::{deliver_staged, unread, write_synced};
-use zygo_workspace::mail::{ensure_mail_dir, Message, BODY_MAX, SUBJECT_MAX};
+use zygo_workspace::mail::store::{unread, write_synced};
+use zygo_workspace::mail::{ensure_mail_dir, Delivery, MailError, Message, BODY_MAX, MAIL_LOCK_WAIT, SUBJECT_MAX};
+use zygo_workspace::mail::names;
+use zygo_workspace::state::{Store, Workspace};
 
 use crate::address::{self, ulid_file};
 use crate::branch::{self, BranchError, Entry};
@@ -22,7 +24,9 @@ pub const CANDIDATE_CAP: usize = 500;
 /// S§8.5: the largest message blob read, the 8 MiB limit of the maildir reader.
 pub const MESSAGE_MAX: u64 = zygo_workspace::mail::store::FILE_MAX;
 
-/// A local member that can receive mail: its name (the folder `<name>@<own host>`) and its pane key.
+/// A local member that can receive mail: its name (the folder `<name>@<own host>`) and its pane key. The pane key is
+/// that of the pass's first read; it sets the folder's inbox room only, and each delivery maps the name to a key
+/// again on the read under `mail/lock` (FX-24 review F2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target {
     pub name: String,
@@ -30,12 +34,15 @@ pub struct Target {
 }
 
 /// What one import pass did. `delivered` holds `(pane key, ULID)`; `acked` each ULID once, in reading order;
-/// `left` the seen candidates not finished, plus 1 when the reading stopped early.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// `left` the seen candidates not finished, plus 1 when the reading stopped early; `read` the state read under
+/// `mail/lock` at the last delivery, which holds the record of each key in `delivered` that still has one (the wake
+/// uses it, S§10.1).
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Imported {
     pub delivered: Vec<(String, ulid::Ulid)>,
     pub acked: Vec<ulid::Ulid>,
     pub left: usize,
+    pub read: Option<Workspace>,
 }
 
 /// The `json` check: `bytes` parse as the maildir reader's message type, so every value, unknown keys included, is
@@ -88,9 +95,14 @@ pub fn check_message(folder: &str, file: &str, mode: &str, kind: &str, size: u64
 /// imported log when it is not there, then the file moves into `new/` (the inbox check passed before it was
 /// staged). A file whose ULID is not in the log may be torn by a crash during its write: unless its bytes parse as
 /// a message whose `id` is the file's ULID, it is deleted and not logged, and the next pass imports the branch copy
-/// again. A file whose ULID is in the log was synced before the append. Returns the count of files moved into `new/`. Other names and links are left alone; a file whose finish
-/// fails stays for the next pass. `Err` only when `incoming/` or the imported log cannot be read.
-pub fn finish_incoming(sp: &SyncPaths, mail_dir: &Path) -> std::io::Result<usize> {
+/// again. A file whose ULID is in the log was synced before the append. Returns the count of files moved into `new/`.
+/// Other names and links are left alone; a file whose finish fails stays for the next pass. Each file is one M§5 P1
+/// delivery under `mail/lock` of `store`'s workspace held shared. A file whose key has no record in the read under
+/// that lock stays while `mail/<key>/` exists (the record can come back, as at the undo write of `up`), and is
+/// deleted with the log unchanged when `mail/<key>/` is missing (M§5 removed the member's mail; the branch copy
+/// stays). A lock not taken in [`MAIL_LOCK_WAIT`] ends the finish for this pass, and the file stays. `Err` only when
+/// `incoming/` or the imported log cannot be read.
+pub fn finish_incoming(sp: &SyncPaths, store: &Store) -> std::io::Result<usize> {
     let entries = match std::fs::read_dir(&sp.incoming) {
         Ok(r) => r,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
@@ -104,6 +116,15 @@ pub fn finish_incoming(sp: &SyncPaths, mail_dir: &Path) -> std::io::Result<usize
         let Some((key, rest)) = name.to_str().and_then(|n| n.split_once('.')) else { continue };
         let Some(id) = ulid_file(rest).filter(|_| valid_pane_key(key)) else { continue };
         if !e.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        let Ok(d) = Delivery::begin(store, MAIL_LOCK_WAIT) else { break }; // S§8.5 step 5: the file stays
+        if !d.workspace().members.contains_key(key) {
+            // Author's call 3 (FX-24 review F1): a record can be out for a short time (`up` step 8 to its undo write);
+            // M§5 removes the maildir only after the record went for good, so only a missing maildir deletes.
+            if std::fs::symlink_metadata(sp.mail.join(key)).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+                let _ = std::fs::remove_file(e.path());
+            }
             continue;
         }
         if !seen.contains(&id) {
@@ -121,17 +142,54 @@ pub fn finish_incoming(sp: &SyncPaths, mail_dir: &Path) -> std::io::Result<usize
             }
             seen.insert(id);
         }
-        if let Ok(true) = deliver_staged(mail_dir, key, &id.to_string(), &e.path(), u32::MAX) {
+        if let Ok(true) = d.deliver_staged(key, &id.to_string(), &e.path(), u32::MAX) {
             moved += 1;
         }
     }
     Ok(moved)
 }
 
-/// One candidate of a pass: its ULID, the pane key it goes to, its folder and its tree entry.
+/// S§8.5 (FX-24 review F6): the check name of the log line of a delivery that could not begin: `busy` (`mail/lock`
+/// held for the whole bound), `no-workspace` (no state folder or no `workspace.json`), `state` (a state folder that
+/// is a link or not a folder, or a state that does not read as valid), `mail` (FX-24 review R2 F2: `mail/` that
+/// cannot be made or checked, such as a link or an entry that is not a folder), `io` (any other error). The kind
+/// comes from the `MailError` variant of [`Delivery::begin`], not from an `io::ErrorKind`.
+fn begin_error(e: &MailError) -> &'static str {
+    match e {
+        MailError::Busy => "busy",
+        MailError::NoWorkspace => "no-workspace",
+        MailError::BadState(_) => "state",
+        MailError::BadMail(_) => "mail",
+        _ => "io",
+    }
+}
+
+/// The ULIDs of the staged files in `incoming/` (`<pane key>.<ULID>.json`, regular files; links and other names are
+/// left out); none when `incoming/` is missing.
+fn staged_ids(sp: &SyncPaths) -> std::io::Result<HashSet<Ulid>> {
+    let entries = match std::fs::read_dir(&sp.incoming) {
+        Ok(r) => r,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(HashSet::new()),
+        Err(e) => return Err(e),
+    };
+    let mut out = HashSet::new();
+    for e in entries {
+        let e = e?;
+        let name = e.file_name();
+        let Some((key, rest)) = name.to_str().and_then(|n| n.split_once('.')) else { continue };
+        if let Some(id) = ulid_file(rest).filter(|_| valid_pane_key(key))
+            && e.file_type().is_ok_and(|t| t.is_file())
+        {
+            out.insert(id);
+        }
+    }
+    Ok(out)
+}
+
+/// One candidate of a pass: its ULID, the member name of its folder, its folder and its tree entry.
 struct Candidate {
     id: Ulid,
-    key: String,
+    name: String,
     folder: String,
     entry: Entry,
 }
@@ -182,7 +240,7 @@ fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], ow
                     *room -= 1;
                 }
                 ids.insert(id);
-                out.push(Candidate { id, key: t.pane_key.clone(), folder: folder.clone(), entry: e });
+                out.push(Candidate { id, name: t.name.clone(), folder: folder.clone(), entry: e });
                 Flow::Go
             });
             match r {
@@ -206,14 +264,30 @@ fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], ow
 /// S§8.5: one import pass over the side-branch tree `tip` in worktree `wt`. Each candidate is checked; a refused
 /// one is logged (one line with its ULID and check name) and acknowledged, a passing one is delivered through
 /// `incoming/` (steps 1-4, with the seams `after_incoming`, `after_log`, `after_new`, `after_ack`). A full inbox
-/// leaves the message neither delivered nor acknowledged. `Err` only when a seam stops the run.
+/// leaves the message neither delivered nor acknowledged. Steps 1-3 of each candidate run under `mail/lock` of
+/// `store`'s workspace held shared (M§5 P1), taken after the candidate's git reads and dropped before the next. The
+/// folder's member name maps to its pane key, and the inbox check runs, on the read under that lock (`targets` gives
+/// the names and each folder's inbox room only); a name with no record in that read is left on the branch (not
+/// staged, logged or acknowledged; no line), and [`Imported::read`] keeps the read of the last delivery. A delivery
+/// that cannot begin (a lock not taken in [`MAIL_LOCK_WAIT`], no workspace, an invalid state, an I/O error) writes
+/// `mail sync: import <ULID>: <kind>` ([`begin_error`]) and stops the run. Step 1 makes the target's maildir before it writes the staged file. A candidate whose ULID is in the
+/// imported log is acknowledged, unless its staged file is still in `incoming/`: then it is left until step 5 of a
+/// later pass moves that file (S§8.5). `incoming/` that cannot be read writes `mail sync: import: incoming` and
+/// imports nothing. `Err` only when a seam stops the run.
 #[allow(clippy::too_many_arguments)]
-pub fn run(sp: &SyncPaths, mail_dir: &Path, wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target],
+pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target],
     own_ack: &BTreeSet<Ulid>, max_unread: u32, deadline: Instant, seam: &dyn Seam, log: &mut dyn FnMut(&str))
     -> Result<Imported, Crash> {
+    let mail_dir = store.dir().join("mail");
+    let mail_dir = mail_dir.as_path();
     let mut out = Imported::default();
     let Ok(mut seen) = imported_load(sp) else {
         log("mail sync: import: imported");
+        out.left = 1;
+        return Ok(out);
+    };
+    let Ok(staged_ids) = staged_ids(sp) else {
+        log("mail sync: import: incoming");
         out.left = 1;
         return Ok(out);
     };
@@ -224,7 +298,13 @@ pub fn run(sp: &SyncPaths, mail_dir: &Path, wt: &Path, tip: &str, own_hosts: &[S
         }
         let id = c.id;
         if seen.contains(&id) {
-            out.acked.push(id);
+            // FX-24 review F1: a logged ULID whose staged file is still in `incoming/` is not delivered yet; step 5 of
+            // a later pass moves it, and only then is it acknowledged.
+            if staged_ids.contains(&id) {
+                out.left += 1;
+            } else {
+                out.acked.push(id);
+            }
             continue;
         }
         let e = &c.entry;
@@ -257,12 +337,32 @@ pub fn run(sp: &SyncPaths, mail_dir: &Path, wt: &Path, tip: &str, own_hosts: &[S
                 continue;
             }
         };
-        if !unread(mail_dir, &c.key).is_ok_and(|n| n < max_unread as usize) {
+        // S§8.5 "Delivery, crash-safe": steps 1-3 of this one candidate under `mail/lock` shared (M§5 P1), taken after
+        // every git call of the candidate and dropped before the next one (author's call 1).
+        let d = match Delivery::begin(store, MAIL_LOCK_WAIT) {
+            Ok(d) => d,
+            Err(e) => {
+                log(&format!("mail sync: import {id}: {}", begin_error(&e)));
+                out.left += 1;
+                break;
+            }
+        };
+        // FX-24 review F2: the folder name maps to a pane key on the read under the lock, not on the pass's first
+        // read. A name with no record there is not staged, logged or acked: it waits on the branch (S§13 limit 2).
+        let Some(key) = names::members(d.workspace()).into_iter()
+            .find(|t| t.name.as_deref() == Some(c.name.as_str()) && valid_pane_key(&t.key))
+            .map(|t| t.key)
+        else {
+            continue;
+        };
+        if !unread(mail_dir, &key).is_ok_and(|n| n < max_unread as usize) {
             out.left += 1;
             continue;
         }
-        let staged = sp.incoming.join(format!("{}.{id}.json", c.key));
-        let wrote = [&sp.mail, &sp.sync, &sp.incoming].into_iter().try_for_each(|d| ensure_mail_dir(d))
+        let staged = sp.incoming.join(format!("{key}.{id}.json"));
+        // Step 1 makes the maildir first (FX-24 review F1): a staged file is kept while its maildir exists.
+        let wrote = d.make_maildir(&key).map_err(|e| std::io::Error::other(e.to_string()))
+            .and_then(|()| [&sp.mail, &sp.sync, &sp.incoming].into_iter().try_for_each(|d| ensure_mail_dir(d)))
             .and_then(|()| write_synced(&staged, &bytes));
         if wrote.is_err() {
             log(&format!("mail sync: import {id}: write"));
@@ -277,13 +377,15 @@ pub fn run(sp: &SyncPaths, mail_dir: &Path, wt: &Path, tip: &str, own_hosts: &[S
         }
         seen.insert(id);
         seam.at("after_log")?;
-        let Ok(moved) = deliver_staged(mail_dir, &c.key, &id.to_string(), &staged, max_unread) else {
+        let Ok(moved) = d.deliver_staged(&key, &id.to_string(), &staged, max_unread) else {
             out.left += 1;
             continue;
         };
+        let read = d.into_workspace(); // the lock is released here
         seam.at("after_new")?;
         if moved {
-            out.delivered.push((c.key.clone(), id));
+            out.delivered.push((key, id));
+            out.read = Some(read);
         }
         out.acked.push(id);
         seam.at("after_ack")?;

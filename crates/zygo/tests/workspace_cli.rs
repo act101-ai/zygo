@@ -93,7 +93,9 @@ fn w12_rows_parse_and_reach_the_library() {
         (&["attach", "app"], 2, "", NO_TMUX),
         (&["ls"], 0, "no workspaces\n", ""),
         (&["workspace"], 1, "", "no workspace for this session or folder\n"),
-        (&["loadout", "list"], 0, "solo  built-in\n", ""),
+        // No git on `PATH`: `git not found` (W§8.1 step 3, FX-25) is the unread line of R§10 (WD-16 review F1); zygo
+        // cannot know that the folder is a repository, so the line names none (FX-25 close).
+        (&["loadout", "list"], 0, "solo  built-in\n", "zygo: workspace files were not read (git not found); not shown\n"),
         (&["ws", "forget", "app"], 1, "", "zygo: no workspace named app\n"),
         (&["ws", "forget-pane", "kaaaaaaaa", "--name", "app"], 1, "", "zygo: no workspace named app\n"),
         (&["ws", "snapshot", "--ws-id", "0123456789abcdef", "--event", "window-layout-changed", "--force"], 0, "", ""),
