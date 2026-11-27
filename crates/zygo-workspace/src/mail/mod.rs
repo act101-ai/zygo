@@ -4,18 +4,25 @@ pub mod store;
 pub mod wake;
 
 use std::fmt;
-use std::path::PathBuf;
-use std::time::SystemTime;
+use std::fs;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use zygo_core::paths::Paths;
 
+use crate::identity::valid_pane_key;
+use crate::state::{Store, Workspace, lock_file_as};
+
 /// The largest subject in bytes (M§5).
 pub const SUBJECT_MAX: usize = 200;
 /// The largest body in bytes, 1 MiB (M§5).
 pub const BODY_MAX: usize = 1048576;
+/// The longest wait for `mail/lock`, by a delivery or by a removal (M§5 P1).
+pub const MAIL_LOCK_WAIT: Duration = Duration::from_secs(2);
 
 /// The message file, version 1 (M§5). Field order is the file's key order; unknown fields are kept (AU78).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -71,6 +78,12 @@ pub enum MailError {
     Full { label: String, max: u32 },
     Duplicate { id: String },
     UnknownTarget { known: Vec<String> },
+    /// `mail/lock` stayed held for the whole bound (M§5 P1).
+    Busy,
+    /// The workspace has no state folder or no `workspace.json` (M§5 P1).
+    NoWorkspace,
+    /// The key has no member record in the read under `mail/lock` (M§5 P1).
+    NoRecord { key: String },
     Io(std::io::Error),
 }
 
@@ -89,6 +102,9 @@ impl fmt::Display for MailError {
             MailError::UnknownTarget { known } => {
                 write!(f, "zygo: unknown target; known names: {}", known.join(", "))
             }
+            MailError::Busy => write!(f, "zygo: mail is busy; try again"),
+            MailError::NoWorkspace => write!(f, "zygo: the workspace has no state; nothing sent"),
+            MailError::NoRecord { key } => write!(f, "zygo: pane {key} has no member record; nothing delivered"),
             MailError::Io(e) => write!(f, "zygo: mail: {e}"),
         }
     }
@@ -120,11 +136,170 @@ pub fn ensure_mail_dir(dir: &std::path::Path) -> std::io::Result<()> {
     store::make_dir_in_place(dir)
 }
 
-/// One delivered message: its id and the pane key it went to.
+/// A delivery under `mail/lock` held shared (M§5 P1): the member records are read under the lock, and the lock is held
+/// until the value is dropped, so no removal of `mail/<key>/` runs between that read and the last link into `new/`.
+/// Deliveries do not wait for each other.
+pub struct Delivery {
+    mail_dir: PathBuf,
+    ws: Workspace,
+    _lock: fs::File,
+}
+
+impl fmt::Debug for Delivery {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Delivery").field("mail_dir", &self.mail_dir).field("ws", &self.ws.id).finish_non_exhaustive()
+    }
+}
+
+impl Delivery {
+    /// Takes `mail/lock` of `store`'s workspace shared, waiting at most `bound`, then reads the state under it. It
+    /// makes `mail/` (`0700`) when the state folder exists, never the state folder itself. A missing state folder,
+    /// `mail/` that cannot be made because the folder went away, or no `workspace.json` is `NoWorkspace`; a lock held
+    /// for the whole bound is `Busy`; a state folder that is a link or not a folder, and every other error, is `Io`.
+    pub fn begin(store: &Store, bound: Duration) -> Result<Delivery, MailError> {
+        match fs::symlink_metadata(store.dir()) {
+            Ok(m) if m.file_type().is_symlink() => {
+                let text = format!("{} is a link; it is not followed", store.dir().display());
+                return Err(std::io::Error::new(ErrorKind::InvalidInput, text).into());
+            }
+            Ok(m) if !m.is_dir() => {
+                let text = format!("{} is not a folder", store.dir().display());
+                return Err(std::io::Error::new(ErrorKind::InvalidInput, text).into());
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => return Err(MailError::NoWorkspace),
+            Err(e) => return Err(e.into()),
+        }
+        let mail = store.dir().join("mail");
+        match store::make_dir_in_place(&mail) {
+            Err(e) if e.kind() == ErrorKind::NotFound => return Err(MailError::NoWorkspace),
+            r => r?,
+        }
+        let lock = match lock_file_as(&mail.join("lock"), bound, true) {
+            Ok(Some(f)) => f,
+            Ok(None) => return Err(MailError::Busy),
+            Err(e) if e.kind() == ErrorKind::NotFound => return Err(MailError::NoWorkspace),
+            Err(e) => return Err(e.into()),
+        };
+        let ws = match store.read() {
+            Ok(Some(ws)) => ws,
+            Ok(None) => return Err(MailError::NoWorkspace),
+            Err(e) => return Err(std::io::Error::other(e.to_string()).into()),
+        };
+        crate::up::fire(store.dir(), "mail_delivery_after_read").map_err(|e| std::io::Error::other(e.to_string()))?;
+        Ok(Delivery { mail_dir: mail, ws, _lock: lock })
+    }
+
+    /// The state as read under the lock.
+    pub fn workspace(&self) -> &Workspace {
+        &self.ws
+    }
+
+    /// [`store::deliver`] to `key` when `key` has a member record in the read under the lock; else `NoRecord`, and
+    /// nothing is made.
+    pub fn deliver(&self, key: &str, label: &str, msg: &Message, max_unread: u32) -> Result<(), MailError> {
+        if !self.ws.members.contains_key(key) {
+            return Err(MailError::NoRecord { key: key.to_string() });
+        }
+        store::deliver(&self.mail_dir, key, label, msg, max_unread)
+    }
+}
+
+/// `mail/` of `store` checked with `symlink_metadata`; `None` when it is missing. A link or an entry that is not a
+/// folder is `InvalidInput` and is not followed.
+fn checked_mail(store: &Store) -> std::io::Result<Option<PathBuf>> {
+    let mail = store.dir().join("mail");
+    Ok(store::real_dir(&mail)?.then_some(mail))
+}
+
+/// Takes `mail/lock` exclusive (at most `bound`) and reads the state under it; `Ok(None)` when the state is gone. A
+/// lock held for the whole bound is `WouldBlock`.
+fn removal_lock(store: &Store, mail: &Path, bound: Duration) -> std::io::Result<Option<(fs::File, Workspace)>> {
+    let Some(lock) = lock_file_as(&mail.join("lock"), bound, false)? else {
+        let text = format!("{}/lock is held by another process", mail.display());
+        return Err(std::io::Error::new(ErrorKind::WouldBlock, text));
+    };
+    match store.read() {
+        Ok(Some(ws)) => Ok(Some((lock, ws))),
+        Ok(None) => Ok(None),
+        Err(e) => Err(std::io::Error::other(e.to_string())),
+    }
+}
+
+/// Removes `path` itself: a folder with its contents, a link as a link, any other entry as a file. `Ok(false)` when
+/// nothing was there. An error names the path.
+fn remove_entry(path: &Path) -> std::io::Result<bool> {
+    let named = |e: std::io::Error| std::io::Error::new(e.kind(), format!("{}: {e}", path.display()));
+    let meta = match fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(named(e)),
+    };
+    let r = if meta.is_dir() { fs::remove_dir_all(path) } else { fs::remove_file(path) };
+    match r {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(named(e)),
+    }
+}
+
+/// Removes `mail/<key>/` of `store`'s workspace when `key` has no member record (M§5 P1): it takes `mail/lock`
+/// exclusive (at most `bound`) and reads the state under it. `Ok(true)` when something was removed; `Ok(false)` when
+/// `mail/` or `mail/<key>` is missing, the key has a record, or the state is gone. A missing `mail/` takes no lock and
+/// is not made. A key that fails `^k[a-z2-7]{8}$` and a `mail/` that is a link or not a folder are `InvalidInput`; a
+/// lock held for the whole bound is `WouldBlock`, and the maildir stays for the next removal.
+pub fn remove_maildir(store: &Store, key: &str, bound: Duration) -> std::io::Result<bool> {
+    if !valid_pane_key(key) {
+        return Err(std::io::Error::new(ErrorKind::InvalidInput, "invalid pane key"));
+    }
+    let Some(mail) = checked_mail(store)? else { return Ok(false) };
+    let Some((_lock, ws)) = removal_lock(store, &mail, bound)? else { return Ok(false) };
+    if ws.members.contains_key(key) {
+        return Ok(false);
+    }
+    remove_entry(&mail.join(key))
+}
+
+/// Removes every `mail/<key>` of `store`'s workspace whose name is a pane key with no member record (M§5 P1), under
+/// `mail/lock` exclusive (at most `bound`) and the state read under it, in name order. Every entry is tried; it
+/// returns the removed keys, or the first error after trying all. Other names (`lock`, `sync/`, `outbox/`) are never
+/// touched. A missing `mail/` takes no lock and is not made; errors as [`remove_maildir`].
+pub fn prune(store: &Store, bound: Duration) -> std::io::Result<Vec<String>> {
+    let Some(mail) = checked_mail(store)? else { return Ok(Vec::new()) };
+    let Some((_lock, ws)) = removal_lock(store, &mail, bound)? else { return Ok(Vec::new()) };
+    let mut keys: Vec<String> = fs::read_dir(&mail)?
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|k| valid_pane_key(k) && !ws.members.contains_key(k))
+        .collect();
+    keys.sort();
+    let (mut removed, mut first) = (Vec::new(), None);
+    for k in keys {
+        match remove_entry(&mail.join(&k)) {
+            Ok(true) => removed.push(k),
+            Ok(false) => {}
+            Err(e) => {
+                first.get_or_insert(e);
+            }
+        }
+    }
+    match first {
+        Some(e) => Err(e),
+        None => Ok(removed),
+    }
+}
+
+/// The one line `up` and `repair` print when [`prune`] fails; the next removal tries again (M§5 P1).
+pub(crate) fn not_pruned_line(e: &std::io::Error) -> String {
+    format!("zygo: maildirs without a member record not removed: {e}")
+}
+
+/// One delivered message: its id, the pane key it went to, and its label: the target's name in the read under
+/// `mail/lock` or, with none, its pane key (the message's `to`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sent {
     pub id: String,
     pub key: String,
+    pub label: String,
 }
 
 /// One target `send` did not deliver to: its pane key and the error.
@@ -134,22 +309,28 @@ pub struct Refused {
     pub error: MailError,
 }
 
-/// What one `send` did: the messages delivered and the targets refused, each in target (key) order.
+/// What one `send` did: the messages delivered and the targets refused, each in target (key) order, and the state
+/// it read under `mail/lock`, on which it resolved the targets. A caller labels and wakes from this read, not from its
+/// own older one.
 #[derive(Debug)]
 pub struct SendReport {
     pub sent: Vec<Sent>,
     pub refused: Vec<Refused>,
+    pub workspace: Workspace,
 }
 
-/// Sends one message to each target of `to` (M§5, M§8). It checks the subject and body limits and `resolve`s `to`
-/// before it writes a file; those errors are its only `Err`. Then it writes one file per target, with `from` from
+/// Sends one message to each target of `to` (M§5, M§8). It checks the subject and body limits, then takes `mail/lock`
+/// shared and reads the member records under it ([`Delivery`], M§5 P1): `ws` gives only the workspace id, and `to`
+/// and the sender are resolved on that read, so a record removed after the caller's read gets no maildir; the report
+/// carries that read and each label for the caller's lines and wake. It
+/// `resolve`s `to` before it writes a file; those errors, and those of [`Delivery::begin`], are its only `Err`. Then it writes one file per target, with `from` from
 /// `names::sender` and `to` the target's name or, with none, its pane key. A target whose message it cannot make or
 /// deliver (for example `Full`, M§5 limit per target) goes into `refused`, and the send continues with the next
 /// target. It writes no log line, so the subject and body reach only `mail/` (M-C2).
 #[allow(clippy::too_many_arguments)]
 pub fn send(
     paths: &Paths,
-    ws: &crate::state::Workspace,
+    ws: &Workspace,
     sender_key: Option<&str>,
     to: &str,
     subject: &str,
@@ -158,21 +339,19 @@ pub fn send(
     now: SystemTime,
 ) -> Result<SendReport, MailError> {
     check_limits(subject, body)?;
-    let targets = names::resolve(ws, to, sender_key)?;
-    let from = names::sender(ws, sender_key);
-    let dir = mail_dir(paths, &ws.id);
-    let mut report = SendReport {
-        sent: Vec::with_capacity(targets.len()),
-        refused: Vec::new(),
-    };
+    let d = Delivery::begin(&Store::open(paths, &ws.id), MAIL_LOCK_WAIT)?;
+    let targets = names::resolve(d.workspace(), to, sender_key)?;
+    let from = names::sender(d.workspace(), sender_key);
+    let mut sent = Vec::with_capacity(targets.len());
+    let mut refused = Vec::new();
     for t in targets {
-        let label = t.name.as_deref().unwrap_or(&t.key);
-        let delivered = Message::new(&from, label, subject, body, now)
-            .and_then(|msg| store::deliver(&dir, &t.key, label, &msg, cfg.max_unread).map(|()| msg.id));
+        let label = t.name.unwrap_or_else(|| t.key.clone());
+        let delivered = Message::new(&from, &label, subject, body, now)
+            .and_then(|msg| d.deliver(&t.key, &label, &msg, cfg.max_unread).map(|()| msg.id));
         match delivered {
-            Ok(id) => report.sent.push(Sent { id, key: t.key }),
-            Err(error) => report.refused.push(Refused { key: t.key, error }),
+            Ok(id) => sent.push(Sent { id, key: t.key, label }),
+            Err(error) => refused.push(Refused { key: t.key, error }),
         }
     }
-    Ok(report)
+    Ok(SendReport { sent, refused, workspace: d.ws })
 }
