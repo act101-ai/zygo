@@ -773,18 +773,38 @@ fn git_dir(repo: &Path) -> PathBuf {
     if g.is_dir() { g } else { repo.to_path_buf() }
 }
 
+/// FX-26 re-plan review round 1 F6: each entry under `root` (`root` among them, links not followed). No walk error is
+/// dropped: an entry or a folder that cannot be read fails the `what` (`scan` or `sweep`) with its path. A `root`
+/// that does not exist gives no entry.
+fn walk(root: &Path, what: &str) -> Vec<walkdir::DirEntry> {
+    match std::fs::symlink_metadata(root) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(e) => panic!("{}: the {what} cannot read it ({e})", root.display()),
+        Ok(_) => {}
+    }
+    walkdir::WalkDir::new(root).follow_links(false).into_iter()
+        .map(|e| e.unwrap_or_else(|err| panic!("{}: the {what} cannot read it ({err})", err.path().unwrap_or(root).display())))
+        .collect()
+}
+
+/// F6: the bytes of the file `path`; a read error fails the `what` with the path.
+fn read_file(path: &Path, what: &str) -> Vec<u8> {
+    std::fs::read(path).unwrap_or_else(|e| panic!("{}: the {what} cannot read it ({e})", path.display()))
+}
+
 /// Each file of `paths` that exists, and each file under each folder of `paths` (links not followed): its path below
-/// the scanned path, then its bytes, scanned for `markers`. Returns the count of files read and the findings.
+/// the scanned path, then its bytes, scanned for `markers`. Returns the count of files read and the findings. A path
+/// that does not exist is skipped; any other read or walk error fails the scan with its path (F6).
 fn files_findings(paths: &[PathBuf], markers: &[&str]) -> (usize, Vec<String>) {
     let (mut n, mut found) = (0, Vec::new());
     for root in paths {
-        for e in walkdir::WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok) {
+        for e in walk(root, "scan") {
             if !e.file_type().is_file() {
                 continue;
             }
             let mut bytes = e.path().strip_prefix(root).unwrap().as_os_str().as_encoded_bytes().to_vec();
             bytes.push(b'\n');
-            bytes.extend(std::fs::read(e.path()).unwrap());
+            bytes.extend(read_file(e.path(), "scan"));
             n += 1;
             found.extend(text_findings(&e.path().display().to_string(), &bytes, markers));
         }
@@ -799,15 +819,20 @@ fn git_meta_findings(repo: &Path) -> (GitMeta, Vec<String>) {
     let gd = git_dir(repo);
     let (logs, mut found) = files_findings(&[gd.join("logs")], &MARKERS);
     let mut read = GitMeta { logs, admins: 0, indexes: 0 };
-    let Ok(rd) = std::fs::read_dir(gd.join("worktrees")) else { return (read, found) };
-    for w in rd.map(|e| e.unwrap().path()) {
+    let admins = gd.join("worktrees");
+    let rd = match std::fs::read_dir(&admins) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (read, found),
+        r => r.unwrap_or_else(|e| panic!("{}: the scan cannot read it ({e})", admins.display())),
+    };
+    for w in rd.map(|e| e.unwrap_or_else(|e| panic!("{}: the scan cannot read it ({e})", admins.display())).path()) {
         read.admins += 1;
         let index = w.join("index");
         if index.is_file() {
             read.indexes += 1;
-            found.extend(text_findings(&index.display().to_string(), &std::fs::read(&index).unwrap(), &CONTENT));
+            found.extend(text_findings(&index.display().to_string(), &read_file(&index, "scan"), &CONTENT));
         }
-        let rest: Vec<PathBuf> = walkdir::WalkDir::new(&w).follow_links(false).into_iter().filter_map(Result::ok)
+        // F6: no walk error of the admin folder is dropped.
+        let rest: Vec<PathBuf> = walk(&w, "scan").into_iter()
             .filter(|e| e.file_type().is_file() && e.path() != index)
             .map(|e| e.into_path())
             .collect();
@@ -986,10 +1011,33 @@ fn scan(remotes: &[&Remote], made: &BTreeSet<String>, ms: &[Scanned]) -> Vec<Str
     found
 }
 
-/// The markers that occur in the file `path`.
-fn file_markers(path: &Path) -> Vec<&'static str> {
-    let bytes = std::fs::read(path).unwrap();
+/// The markers that occur in `bytes`.
+fn markers_in(bytes: &[u8]) -> Vec<&'static str> {
     MARKERS.iter().copied().filter(|m| bytes.windows(m.len()).any(|w| w == m.as_bytes())).collect()
+}
+
+/// The markers that occur in the file `path`. FX-26 re-plan review round 1 F6: a file that cannot be read fails the
+/// sweep, and the failure names the file.
+fn file_markers(path: &Path) -> Vec<&'static str> { markers_in(&read_file(path, "sweep")) }
+
+/// F7: the markers in the name of the entry `e` and, for a link, in its target.
+fn name_markers(e: &walkdir::DirEntry) -> Vec<&'static str> {
+    let mut bytes = e.file_name().as_encoded_bytes().to_vec();
+    if e.path_is_symlink() {
+        let target = std::fs::read_link(e.path())
+            .unwrap_or_else(|err| panic!("{}: the sweep cannot read it ({err})", e.path().display()));
+        bytes.push(b'\n');
+        bytes.extend(target.as_os_str().as_encoded_bytes());
+    }
+    markers_in(&bytes)
+}
+
+/// What [`marked_files`] found: each file whose bytes hold a marker, and each entry (file, folder or link) whose name
+/// or link target holds one.
+#[derive(Debug)]
+struct Marked {
+    files: Vec<(PathBuf, Vec<&'static str>)>,
+    names: Vec<(PathBuf, Vec<&'static str>)>,
 }
 
 /// FX-26 review round 2 F-4: `rel` (a path below the swept root) is inside a git object store: under a folder
@@ -1005,19 +1053,26 @@ fn in_object_store(rel: &Path) -> bool {
 /// `known` (the files that the walk knows exist under `root`, at least one), so a sweep that reads nothing fails.
 /// FX-26 R3-1: an entry or a folder that the walk cannot read fails the sweep with its path (no error is dropped), and
 /// the sweep read at least one file in each folder of `dirs` (the folders that the walk knows hold a file).
-fn marked_files(root: &Path, known: &[PathBuf], dirs: &[PathBuf]) -> Vec<(PathBuf, Vec<&'static str>)> {
+/// FX-26 re-plan review round 1: a file that cannot be read fails the sweep with its path (F6); the name of each entry
+/// below `root` (object stores among them) and the target of each link are checked for markers too (F7).
+fn marked_files(root: &Path, known: &[PathBuf], dirs: &[PathBuf]) -> Marked {
     assert!(!known.is_empty(), "{}: no known file", root.display());
     let mut read = BTreeSet::new();
-    let mut marked = Vec::new();
-    for e in walkdir::WalkDir::new(root).follow_links(false) {
-        let e = e.unwrap_or_else(|err| panic!("{}: the sweep cannot read it ({err})", err.path().unwrap_or(root).display()));
+    let mut marked = Marked { files: Vec::new(), names: Vec::new() };
+    for e in walk(root, "sweep") {
+        if e.depth() > 0 {
+            let hits = name_markers(&e);
+            if !hits.is_empty() {
+                marked.names.push((e.path().to_path_buf(), hits));
+            }
+        }
         if !e.file_type().is_file() || in_object_store(e.path().strip_prefix(root).unwrap()) {
             continue;
         }
         let hits = file_markers(e.path());
         read.insert(e.path().to_path_buf());
         if !hits.is_empty() {
-            marked.push((e.into_path(), hits));
+            marked.files.push((e.into_path(), hits));
         }
     }
     for k in known {
@@ -1033,6 +1088,7 @@ fn marked_files(root: &Path, known: &[PathBuf], dirs: &[PathBuf]) -> Vec<(PathBu
 /// index of the sync worktree, a maildir file (`mail/<key>/{new,cur,tmp}/`), the outbox with `refused/`, `incoming/`,
 /// `members.json`, the config inputs (`config.toml`, `team/team.toml`), `workspace.json` with its own member names
 /// only, `state.json` with its own hosts only, and the results store `sess-*/results/`. Any other file is a finding.
+/// FX-26 re-plan review round 1 F7: so is any file, folder or link whose name or link target holds a marker.
 fn sweep_machine(m: &Scanned) -> Vec<String> {
     let (h, s) = (m.h, sp(m.h));
     let maildir = mail_dir(&h.paths, WS_ID);
@@ -1050,7 +1106,12 @@ fn sweep_machine(m: &Scanned) -> Vec<String> {
         known.extend([ws_json.clone(), s.state.clone(), s.identity.clone(), h.repo().join(".git/HEAD")]);
     }
     let mut found = Vec::new();
-    for (p, hits) in marked_files(h.root(), &known, &m.folders) {
+    let marked = marked_files(h.root(), &known, &m.folders);
+    // F7: no name and no link target in the home holds a marker; the S-C2 set allows content only.
+    for (p, hits) in marked.names {
+        found.push(format!("{} {} has a name or link target that holds {hits:?}", m.label, p.display()));
+    }
+    for (p, hits) in marked.files {
         let in_maildir = p.strip_prefix(&maildir).ok().is_some_and(|rel| {
             let c: Vec<&OsStr> = rel.iter().collect();
             c.len() == 3 && c[0] != "sync" && c[0] != "outbox" && ["new", "cur", "tmp"].iter().any(|d| c[1] == *d)
@@ -1079,9 +1140,12 @@ fn sweep_remote(r: &Remote) -> Vec<String> {
     let root = r.bare.parent().unwrap();
     let input = root.join("seed/.zygo.toml");
     let known = [r.bare.join("HEAD"), r.bare.join("config"), root.join("seed/README"), root.join("seed/.git/HEAD")];
-    marked_files(root, &known, &[]).into_iter()
-        .filter(|(p, _)| *p != input)
-        .map(|(p, hits)| format!("{} holds {hits:?} and is not a test input", p.display()))
+    let marked = marked_files(root, &known, &[]);
+    marked.names.into_iter()
+        .map(|(p, hits)| format!("{} has a name or link target that holds {hits:?}", p.display()))
+        .chain(marked.files.into_iter()
+            .filter(|(p, _)| *p != input)
+            .map(|(p, hits)| format!("{} holds {hits:?} and is not a test input", p.display())))
         .collect()
 }
 
@@ -1209,14 +1273,31 @@ fn scanners_find_a_planted_marker() {
         (h.root().join("objects/o"), HOST_A3),
         (h.root().join("cache/objects/ab/cdef"), HOST_R1),
         (h.root().join("repo/objects/ab/cdef"), HOST_R2), // `objects` in a checkout's work tree, not in `.git/`
+        // FX-26 re-plan review round 1 F7: a maildir file one level deeper; a file in the `new/` of `mail/sync/` (the
+        // `c[0] != "sync"` rule); a sibling of `team/team.toml`.
+        (mail_dir(&h.paths, WS_ID).join(ALICE).join("new/x/f"), HOST_B),
+        (s.sync.join("new/f"), HOST_A2),
+        (h.root().join("team/other.toml"), HOST_R3),
     ];
     for (p, hit) in &planted {
         put(p, hit);
     }
+    // FX-26 re-plan review round 1 F7: a marker in a file name, in a folder name and in a link target, each with no
+    // marker in its bytes.
+    let named_file = h.root().join(format!("note-{HOST_B}"));
+    put(&named_file, "x");
+    let named_dir = h.root().join(format!("dir-{HOST_A2}"));
+    put(&named_dir.join("f"), "x");
+    let link = h.root().join("ln");
+    std::os::unix::fs::symlink(format!("/nonexistent/{HOST_A3}"), &link).unwrap();
+    let named = [(named_file, HOST_B), (named_dir, HOST_A2), (link, HOST_A3)];
     let f = sweep_machine(&m);
-    assert_eq!(f.len(), planted.len(), "{f:?}");
+    assert_eq!(f.len(), planted.len() + named.len(), "{f:?}");
     for (p, hit) in &planted {
         assert!(f.contains(&format!("X {} holds [{hit:?}] and is not in the S-C2 allowed set", p.display())), "{p:?}: {f:?}");
+    }
+    for (p, hit) in &named {
+        assert!(f.contains(&format!("X {} has a name or link target that holds [{hit:?}]", p.display())), "{p:?}: {f:?}");
     }
     // FX-26 review round 2 F-4: a sweep that does not read a file the walk knows exists fails.
     let empty = d.path().join("empty");
@@ -1241,6 +1322,33 @@ fn scanners_find_a_planted_marker() {
         let msg = r.expect_err("the sweep read past a folder it cannot read").downcast::<String>().map(|s| *s).unwrap_or_default();
         assert!(msg.contains(&format!("{}: the sweep cannot read it", locked.display())), "{msg}");
         std::fs::remove_dir_all(&locked).unwrap();
+        // FX-26 re-plan review round 1 F6: a regular file that the sweep cannot read fails it, and the failure names
+        // that file. The mode goes back to 0600 before the file is removed.
+        let sealed = h.root().join("sealed");
+        put(&sealed, B_NAME);
+        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sweep_machine(&m)));
+        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let msg = r.expect_err("the sweep read past a file it cannot read").downcast::<String>().map(|s| *s).unwrap_or_default();
+        assert!(msg.contains(&format!("{}: the sweep cannot read it", sealed.display())), "{msg}");
+        std::fs::remove_file(&sealed).unwrap();
+        // F6: `files_findings` drops no walk error either: a folder that it cannot read fails it, with its path.
+        let closed = d.path().join("closed");
+        put(&closed.join("f"), "x");
+        std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let r = std::panic::catch_unwind(|| files_findings(std::slice::from_ref(&closed), &MARKERS));
+        std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let msg = r.expect_err("files_findings read past a folder it cannot read").downcast::<String>().map(|s| *s).unwrap_or_default();
+        assert!(msg.contains(&format!("{}: the scan cannot read it", closed.display())), "{msg}");
+        // F6: nor does `git_meta_findings`: a folder in a linked-worktree admin folder that it cannot read fails it.
+        let shut = r2.join(".git/worktrees/wt/shut");
+        put(&shut.join("f"), "x");
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let r = std::panic::catch_unwind(|| git_meta_findings(&r2));
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let msg = r.expect_err("git_meta_findings read past a folder it cannot read").downcast::<String>().map(|s| *s).unwrap_or_default();
+        assert!(msg.contains(&format!("{}: the scan cannot read it", shut.display())), "{msg}");
+        std::fs::remove_dir_all(&shut).unwrap();
     }
     // FX-26 review round 2 F-5: on a remote, only `seed/.zygo.toml` may hold a marker; the object store is left out.
     let r = remote();
@@ -1258,6 +1366,10 @@ fn scanners_find_a_planted_marker() {
         put(p, hit);
     }
     let mut want: Vec<String> = planted.iter().map(|(p, hit)| format!("{} holds [{hit:?}] and is not a test input", p.display())).collect();
+    // FX-26 re-plan review round 1 F7: a marker in a file name on a remote.
+    let named = root.join(format!("seed/{HOST_R2}.txt"));
+    put(&named, "x");
+    want.push(format!("{} has a name or link target that holds [{HOST_R2:?}]", named.display()));
     let mut got = sweep_remote(&r);
     want.sort();
     got.sort();
@@ -1774,6 +1886,28 @@ fn acked(r: &Remote, host: &str) -> Vec<String> {
     ack["imported"].as_array().unwrap().iter().map(|u| u.as_str().unwrap().to_string()).collect()
 }
 
+/// The ULIDs that the ack blob `oid` lists, read in the sync worktree of `h` (its objects are the repository's).
+fn ack_blob(h: &Harness, oid: &str) -> Vec<String> {
+    let ack: Value = serde_json::from_str(&git(&sp(h).worktree, &["cat-file", "blob", oid])).unwrap();
+    ack["imported"].as_array().unwrap().iter().map(|u| u.as_str().unwrap().to_string()).collect()
+}
+
+/// FX-26 re-plan review round 1 F8: the ULIDs that `ack/<host>.json` lists in the index of the sync worktree of `h`
+/// (what the next `branch::commit` starts from), and in each blob that `state.json` records for that path (`pushed`
+/// and `pending`, S§7.5). Each of the index entry and the `pushed` record must exist.
+fn local_acks(h: &Harness, host: &str) -> (Vec<String>, Vec<String>) {
+    let path = format!("ack/{host}.json");
+    let line = git(&sp(h).worktree, &["ls-files", "-s", "--", &path]);
+    let oid = line.split_whitespace().nth(1).unwrap_or_else(|| panic!("no {path} in the sync index: {line:?}"));
+    let st: Value = serde_json::from_slice(&std::fs::read(sp(h).state).unwrap()).unwrap();
+    assert!(st["pushed"][&path].is_string(), "no pushed {path}: {st}");
+    let recorded: Vec<String> = ["pushed", "pending"].iter()
+        .filter_map(|m| st[m][&path].as_str())
+        .flat_map(|o| ack_blob(h, o))
+        .collect();
+    (ack_blob(h, oid), recorded)
+}
+
 /// How often the imported log of `h` lists `id`.
 fn imported_times(h: &Harness, id: &str) -> usize {
     std::fs::read_to_string(sp(h).imported).unwrap().lines().filter(|l| *l == id).count()
@@ -1853,6 +1987,7 @@ fn no_mail_content_after_the_import_and_prune_scenarios() {
     for (n, point) in (31..).zip(["after_incoming", "after_log", "after_new", "after_ack"]) {
         let v = send_ok(&a, ALICE, &to_b, n);
         assert_eq!(sync_in(&a).pushed, 1);
+        let acks0 = local_acks(&b, HOST_B);
         let e = run_with_deadline(&env_in(&b, Box::new(crash_once(point)), far()), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap_err();
         assert_eq!(e, SyncError::Stopped { line: format!("zygo: stopped at seam {point}"), check: "seam" });
         // FX-26 R3-13: the state that each crash point leaves, in the step order of `import::run` (`import.rs`): the
@@ -1860,11 +1995,19 @@ fn no_mail_content_after_the_import_and_prune_scenarios() {
         // the move into `new/`, then `after_new`; the ULID added to the acked list in memory, then `after_ack`. The own
         // ack reaches the branch only with the pass's commit, which no crash point reaches, so at each point the tip's
         // `ack/<host>.json` does not list the ULID.
+        // FX-26 re-plan review round 1 F8: `after_new` and `after_ack` are equal on disk. Between them `import::run`
+        // only pushes to `out.delivered`, sets `out.read` and pushes to `out.acked` (`import.rs:386-391`), all in
+        // memory, and the crash drops them; so the same state is asserted for both. The ack is written nowhere: the
+        // sync worktree's index and each blob that `state.json` records for `ack/<host>.json` stay as they were
+        // before the crashed run and do not list the ULID, and neither does the remote tip.
         let staged = sp(&b).incoming.join(format!("{BOB}.{v}.json"));
         let in_new = new_ids(&b, BOB).iter().filter(|i| **i == v).count();
         let want = match point { "after_incoming" => (true, 0, 0), "after_log" => (true, 0, 1), _ => (false, 1, 1) };
         assert_eq!((staged.is_file(), in_new, imported_times(&b, &v)), want, "{point}");
         assert!(!acked(&r, HOST_B).contains(&v), "{point}");
+        let acks = local_acks(&b, HOST_B);
+        assert_eq!(acks, acks0, "{point}");
+        assert!(!acks.0.contains(&v) && !acks.1.contains(&v), "{point}: {acks:?}");
         // FX-26 review round 2 F-2: the recovery runs through the pass, as in production (S§8.3 step 5, then step 9).
         // Its `delivered` and its wake are not asserted here: the pass drops the count of `import::finish_incoming`,
         // and a message that reached `new/` in the crashed run is only acknowledged, so the recovered message gets no
@@ -1873,6 +2016,10 @@ fn no_mail_content_after_the_import_and_prune_scenarios() {
         assert_eq!(new_ids(&b, BOB).iter().filter(|i| **i == v).count(), 1, "{point}");
         assert_eq!(imported_times(&b, &v), 1, "{point}");
         assert_eq!(std::fs::read_dir(sp(&b).incoming).map_or(0, Iterator::count), 0, "{point}");
+        // F8: the reads above can see an ack: after the recovery pass the ULID is in the tip's ack, in the sync index
+        // and in the recorded blob.
+        let acks = local_acks(&b, HOST_B);
+        assert!(acked(&r, HOST_B).contains(&v) && acks.0.contains(&v) && acks.1.contains(&v), "{point}: {acks:?}");
         assert_eq!(sync_in(&b).delivered, 0, "{point}");
     }
 
@@ -2245,10 +2392,15 @@ fn no_mail_content_after_the_hook_wake_and_text_scenarios() {
     let tmp = a.root().join("tmp"); // the binary's TMPDIR: `LsRemote` makes its empty home here
     std::fs::create_dir(&tmp).unwrap();
     // FX-26 review round 2 F-7, R3-12: each proxy variable is recorded too; S§8.2 step 3 keeps the proxy variables.
-    const PROXIES: [(&str, &str); 4] = [("HTTPS_PROXY", "http://proxy.invalid:3128"), ("HTTP_PROXY", "http://proxy-http.invalid:3128"),
-        ("ALL_PROXY", "socks5://proxy-all.invalid:1080"), ("NO_PROXY", "a.invalid,b.invalid,.c.invalid")];
-    let probe_env = ["GIT_ASKPASS", "SSH_ASKPASS", "GIT_TERMINAL_PROMPT", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
-        "GIT_CONFIG_SYSTEM", PROXIES[0].0, PROXIES[1].0, PROXIES[2].0, PROXIES[3].0];
+    // FX-26 re-plan review round 1 F5: the lower-case forms too (git and curl read `http_proxy`, `https_proxy`,
+    // `all_proxy` and `no_proxy`), each with its own value.
+    const PROXIES: [(&str, &str); 8] = [("HTTPS_PROXY", "http://proxy.invalid:3128"), ("HTTP_PROXY", "http://proxy-http.invalid:3128"),
+        ("ALL_PROXY", "socks5://proxy-all.invalid:1080"), ("NO_PROXY", "a.invalid,b.invalid,.c.invalid"),
+        ("https_proxy", "http://lc-proxy.invalid:3128"), ("http_proxy", "http://lc-proxy-http.invalid:3128"),
+        ("all_proxy", "socks5://lc-proxy-all.invalid:1080"), ("no_proxy", "d.invalid,e.invalid,.f.invalid")];
+    let mut probe_env = vec!["GIT_ASKPASS", "SSH_ASKPASS", "GIT_TERMINAL_PROMPT", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM"];
+    probe_env.extend(PROXIES.map(|(k, _)| k));
     // FX-26 review round 2 F-8: the stub refuses a `push` or a `fetch` whose remote URL (the argument after `--`, or
     // the URL that `git remote get-url [--push]` gives for a remote name) or argument list names `example.invalid`.
     // It logs the call to `refused` and exits 128 without running the real git, so a later change that makes this
