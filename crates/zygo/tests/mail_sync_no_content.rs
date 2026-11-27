@@ -1,6 +1,7 @@
 //! MS-22: no mail content in logs, state, usage rows, commits or refs (mail sync design S-C2, S§6.5, S§19 #24 as
-//! rewritten 2026-11-26). Two machines are two scratch homes on one `file://` bare repository; no agent runs; no wall
-//! clock is read for a result.
+//! rewritten 2026-11-26). Three machines (A, B, and C, which runs a copy of A's state folder for #11) are three
+//! scratch homes on one `file://` bare repository; no agent runs; no network host is asked; no wall clock is read for a
+//! result.
 #![cfg(unix)]
 mod common;
 
@@ -27,7 +28,9 @@ use zygo_mcp::tools::mail::tools_with_sync;
 use zygo_mcp::{McpCtx, Tool, ToolError};
 use zygo_redact::act_lite_store;
 use zygo_redact::secret::DeadlinePolicy;
+use zygo_workspace::mail::wake::{after_send_with, Probe as IdleProbe};
 use zygo_workspace::mail::{mail_dir, store};
+use zygo_workspace::mux::{HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split};
 use zygo_workspace::state::{MemberRecord, Phase, Workspace};
 
 use common::feed_stdin;
@@ -40,10 +43,14 @@ const B_NAME: &str = "bob-q7x";
 const HOST_A: &str = "apple-q7x"; // A's host
 const HOST_B: &str = "birch-q7x"; // B's host
 const HOST_B2: &str = "cedar-q7x"; // B's host after #19
-const HOST_A2: &str = "delta-q7x"; // A's host after #9
+const HOST_A2: &str = "delta-q7x"; // A's host after #9, and C's (the copy of A's state) in #11
+const HOST_A3: &str = "elm-q7x"; // A's host after #11
+const HOST_R1: &str = "fir-q7x"; // the file name of the #12 registry with 257 names
+const HOST_R2: &str = "gum-q7x"; // the file name of the #12 registry whose `host` is not its name
+const HOST_R3: &str = "hazel-q7x"; // the `host` of that registry
 const SUBJ: &str = "subj-q7x"; // every subject starts with it
 const BODY: &str = "body-q7x"; // every body holds it
-const MARKERS: [&str; 8] = [SUBJ, BODY, A_NAME, B_NAME, HOST_A, HOST_B, HOST_B2, HOST_A2];
+const MARKERS: [&str; 12] = [SUBJ, BODY, A_NAME, B_NAME, HOST_A, HOST_B, HOST_B2, HOST_A2, HOST_A3, HOST_R1, HOST_R2, HOST_R3];
 /// The user-config head of `crates/zygo/tests/workspace_definition.rs:142`: no marketplace is fetched.
 const NO_MARKETPLACE: &str = "[[marketplace]]\nname = \"act101\"\nref = \"\"\n";
 /// S§6.5: the message of every commit that zygo writes.
@@ -54,6 +61,10 @@ const ZYGO_ID: &str = "zygo <zygo@zygo.invalid>";
 const SHIP: &str = "zz-forbidden-zz";
 /// The line of `crates/zygo/tests/mail_sync_cli.rs:29`, byte for byte.
 const COLLISION: &str = "zygo: the mail host name is taken on the side branch by another identity. If that is another machine, set another [mail] host. If it is this workspace from before (a moved repository, a ws forget, a restored backup), run zygo mail sync --take-host.";
+/// The S§7.5 twin line (`crates/zygo-mail-sync/src/identity.rs:22`), byte for byte.
+const TWIN: &str = "zygo: another workspace writes with this mail identity (copied state?); run zygo mail sync --new-identity here, and set another [mail] host";
+/// The S§8.2 `public` line (`crates/zygo-mail-sync/src/sync.rs:85`, `outbox.rs:43`), byte for byte.
+const PUBLIC: &str = "zygo: the remote can be read without a login; mail sync refused";
 
 /// Author's call 7: both tests hold it, so no in-process lock meets a child that another test thread forks.
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -197,9 +208,84 @@ impl Probe for NoProbe { fn probe(&self, _: &str) -> Verdict { panic!("no public
 /// Author's call 1: the spawn seam starts nothing.
 struct NoSpawn;
 impl Spawner for NoSpawn { fn spawn_sync(&self, _: &str) -> std::io::Result<()> { Ok(()) } }
+/// #6: the injected public probe gives this verdict; no network host is asked.
+struct Says(Verdict);
+impl Probe for Says { fn probe(&self, _: &str) -> Verdict { self.0.clone() } }
+/// #22: the sync child does not start.
+struct FailSpawn;
+impl Spawner for FailSpawn {
+    fn spawn_sync(&self, _: &str) -> std::io::Result<()> { Err(std::io::Error::from(std::io::ErrorKind::NotFound)) }
+}
 /// The wake seam does nothing.
 struct NoWake;
 impl Wake for NoWake { fn wake(&self, _: &Paths, _: &Workspace, _: &[String], _: &MailConfig, _: SystemTime) {} }
+
+/// #23: the M§7.3 wake of each key with a `wake_gap` that does not parse, an idle member and a pane that takes no
+/// text ([`FailMux`]).
+struct FailWake;
+impl Wake for FailWake {
+    fn wake(&self, paths: &Paths, ws: &Workspace, keys: &[String], cfg: &MailConfig, now: SystemTime) {
+        let cfg = MailConfig { wake_gap: "soon".into(), ..cfg.clone() };
+        for k in keys {
+            after_send_with(paths, ws, std::slice::from_ref(k), &cfg, &FailMux(k.clone()), &Idle(now), now);
+        }
+    }
+}
+/// The idle rule of a wake: idle, at the clock of the sync.
+struct Idle(SystemTime);
+impl IdleProbe for Idle {
+    fn idle(&self, _: &Path) -> bool { true }
+    fn now(&self) -> SystemTime { self.0 }
+}
+/// The error of every [`FailMux`] send.
+fn mux_error() -> MuxError { MuxError::Failed { message: "no server running".into() } }
+/// A session `@zygo-ws` = [`WS_ID`] with one pane `%3` that holds the key (the line of
+/// `crates/zygo-mail-sync/tests/sync_pass.rs:120`); a send fails with [`mux_error`].
+struct FailMux(String);
+impl Multiplexer for FailMux {
+    fn socket(&self) -> Option<&Path> { None }
+    fn version(&self) -> Result<(u32, u32), MuxError> { unreachable!() }
+    fn socket_path(&self, _: &str) -> Result<PathBuf, MuxError> { unreachable!() }
+    fn session_exists(&self, _: &str) -> SessionAnswer { unreachable!() }
+    fn new_session(&self, _: &NewSession<'_>) -> Result<u32, MuxError> { unreachable!() }
+    fn resize_window(&self, _: &str, _: u32, _: u32, _: u32) -> Result<(), MuxError> { unreachable!() }
+    fn unset_window_option(&self, _: &str, _: u32, _: &str) -> Result<(), MuxError> { unreachable!() }
+    fn set_window_option(&self, _: &str, _: &str, _: &str) -> Result<(), MuxError> { unreachable!() }
+    fn set_env(&self, _: &str, _: &str, _: &str) -> Result<(), MuxError> { unreachable!() }
+    fn hide_env(&self, _: &str, _: &str) -> Result<(), MuxError> { unreachable!() }
+    fn set_session_option(&self, _: &str, _: &str, _: &str) -> Result<(), MuxError> { unreachable!() }
+    fn show_session_option(&self, _: &str, _: &str) -> Result<Option<String>, MuxError> { Ok(Some(WS_ID.into())) }
+    fn set_hook(&self, _: &str, _: HookScope, _: &str, _: &str) -> Result<(), MuxError> { unreachable!() }
+    fn new_window(&self, _: &NewWindow<'_>) -> Result<u32, MuxError> { unreachable!() }
+    fn rename_window(&self, _: &str, _: u32, _: &str) -> Result<(), MuxError> { unreachable!() }
+    fn split_window(&self, _: &Split<'_>) -> Result<String, MuxError> { unreachable!() }
+    fn select_layout(&self, _: &str, _: u32, _: &str) -> Result<(), MuxError> { unreachable!() }
+    fn select_window(&self, _: &str, _: u32) -> Result<(), MuxError> { unreachable!() }
+    fn select_pane(&self, _: &str) -> Result<(), MuxError> { unreachable!() }
+    fn zoom(&self, _: &str) -> Result<(), MuxError> { unreachable!() }
+    fn list_panes(&self, _: &str) -> Result<Vec<String>, MuxError> {
+        Ok(vec![format!("0|w|1|l|80|24|1|0|%3|0|1|{}|/srv/app", self.0)])
+    }
+    fn show_pane_option(&self, _: &str, _: &str) -> Result<Option<String>, MuxError> { Ok(Some(self.0.clone())) }
+    fn set_pane_option(&self, _: &str, _: &str, _: &str) -> Result<(), MuxError> { unreachable!() }
+    fn display(&self, _: &str, _: &str) -> Result<String, MuxError> { unreachable!() }
+    fn kill_session(&self, _: &str) -> Result<(), MuxError> { unreachable!() }
+    fn attach(&self, _: &str) -> Result<i32, MuxError> { unreachable!() }
+    fn switch_client(&self, _: &str) -> Result<(), MuxError> { unreachable!() }
+    fn send_keys_literal(&self, _: &str, _: &str) -> Result<(), MuxError> { Err(mux_error()) }
+    fn send_enter(&self, _: &str) -> Result<(), MuxError> { Err(mux_error()) }
+}
+
+/// #23: a live session `<sessions_dir>/<id>` (`token` and a held lock on `pid`) while the file lives
+/// (`crates/zygo-mail-sync/tests/common/mod.rs:285-292`).
+fn live(paths: &Paths, id: &str) -> std::fs::File {
+    let dir = paths.sessions_dir.join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("token"), "t").unwrap();
+    let f = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(dir.join("pid")).unwrap();
+    fs4::FileExt::try_lock(&f).unwrap();
+    f
+}
 /// A seam that runs a closure at each named point.
 type HookFn = Box<dyn FnMut(&'static str) -> Result<(), Crash> + Send>;
 struct Hook(Mutex<HookFn>);
@@ -211,15 +297,12 @@ impl Seam for Hook {
 }
 
 fn env_paths(paths: Paths, seam: Box<dyn Seam>, policy: DeadlinePolicy) -> Env {
-    Env {
-        paths,
-        clock: Box::new(Fixed(t0())),
-        probe: Box::new(NoProbe),
-        seam,
-        spawner: Box::new(NoSpawn),
-        wake: Box::new(NoWake),
-        secret_policy: policy,
-    }
+    env_full(paths, seam, policy, Box::new(NoProbe), Box::new(NoSpawn), Box::new(NoWake))
+}
+/// The env of `paths` at [`t0`] with every seam given.
+fn env_full(paths: Paths, seam: Box<dyn Seam>, policy: DeadlinePolicy, probe: Box<dyn Probe>, spawner: Box<dyn Spawner>,
+    wake: Box<dyn Wake>) -> Env {
+    Env { paths, clock: Box::new(Fixed(t0())), probe, seam, spawner, wake, secret_policy: policy }
 }
 fn env_in(h: &Harness, seam: Box<dyn Seam>, policy: DeadlinePolicy) -> Env { env_paths(h.paths.clone(), seam, policy) }
 /// An hour of secret-pass budget: no clock decides the test.
@@ -235,12 +318,16 @@ fn cfg(h: &Harness) -> Config {
     zygo_config::load(&LoadContext { paths: h.paths.clone(), repo: None, team: None }).unwrap().config
 }
 
-/// `send_cli` from `key` with subject `{SUBJ}-{n}` and `body`: (exit code, stdout, stderr).
-fn send_with(h: &Harness, key: &str, to: &str, n: u32, body: &str) -> (i32, String, String) {
+/// `send_cli` in `env` from `key` with subject `{SUBJ}-{n}` and `body`: (exit code, stdout, stderr).
+fn send_env(env: &Env, h: &Harness, key: &str, to: &str, n: u32, body: &str) -> (i32, String, String) {
     let ws = h.store(WS_ID).read().unwrap().unwrap();
     let (mut o, mut e) = (Vec::new(), Vec::new());
-    let code = send_cli(&env_in(h, Box::new(NoSeam), far()), &ws, Some(key), to, &format!("{SUBJ}-{n}"), body, &cfg(h), &mut o, &mut e);
+    let code = send_cli(env, &ws, Some(key), to, &format!("{SUBJ}-{n}"), body, &cfg(h), &mut o, &mut e);
     (code, String::from_utf8(o).unwrap(), String::from_utf8(e).unwrap())
+}
+/// [`send_env`] with no seam.
+fn send_with(h: &Harness, key: &str, to: &str, n: u32, body: &str) -> (i32, String, String) {
+    send_env(&env_in(h, Box::new(NoSeam), far()), h, key, to, n, body)
 }
 fn send(h: &Harness, key: &str, to: &str, n: u32) -> (i32, String, String) { send_with(h, key, to, n, &format!("{BODY}-{n}")) }
 
@@ -254,7 +341,9 @@ fn send_body(h: &Harness, key: &str, to: &str, n: u32, body: &str) -> String {
 fn send_ok(h: &Harness, key: &str, to: &str, n: u32) -> String { send_body(h, key, to, n, &format!("{BODY}-{n}")) }
 
 /// The MCP mail tools of member `key` of `h` (author's call 1: the spawn seam starts nothing).
-fn tools(h: &Harness, key: &str) -> Vec<Box<dyn Tool>> {
+fn tools(h: &Harness, key: &str) -> Vec<Box<dyn Tool>> { tools_spawn(h, key, Box::new(NoSpawn)) }
+/// [`tools`] with the spawn seam `spawner`.
+fn tools_spawn(h: &Harness, key: &str, spawner: Box<dyn Spawner>) -> Vec<Box<dyn Tool>> {
     let sd = SessionDir::new(h.root().join(format!("sess-{key}")));
     sd.create().unwrap();
     SessionView {
@@ -264,7 +353,7 @@ fn tools(h: &Harness, key: &str) -> Vec<Box<dyn Tool>> {
     }.save(&sd).unwrap();
     let ctx = McpCtx { agent: Agent::ClaudeCode, features: Features { mail: true, ..Default::default() }, session_dir: Some(sd) };
     tools_with_sync(&ctx, h.paths.clone(), cfg(h).mail, Arc::new(t0),
-        Arc::new(|_: &Paths, _: &Workspace, _: &[String], _: &MailConfig| {}), Box::new(NoSpawn), far())
+        Arc::new(|_: &Paths, _: &Workspace, _: &[String], _: &MailConfig| {}), spawner, far())
 }
 fn call(t: &[Box<dyn Tool>], name: &str, args: Value) -> Result<Value, ToolError> {
     t.iter().find(|t| t.def().name == name).unwrap_or_else(|| panic!("no tool {name}")).call(args)
@@ -319,17 +408,35 @@ fn hostile(bare: &Path, host: &str) -> ([String; 6], String) {
         ("100644", "blob", blob(&msg(&ids[4], &format!("eve@{host}")))),
         ("100644", "blob", blob(b"{not json")),
     ];
-    let folder = format!("{B_NAME}@{host}");
-    let mut lines = git(bare, &["ls-tree", &format!("refs/heads/zygo/mail:{folder}")]);
-    for ((mode, kind, id), name) in entries.iter().zip(&ids) {
-        lines.push_str(&format!("\n{mode} {kind} {id}\t{name}.json"));
+    let lines: Vec<String> = entries.iter().zip(&ids).map(|((mode, kind, id), name)| format!("{mode} {kind} {id}\t{name}.json")).collect();
+    (ids.clone(), add_entries(bare, &format!("{B_NAME}@{host}"), &lines))
+}
+
+/// A test commit on the tip whose top-level folder `folder` (at the tip) also holds the `git mktree` lines `lines`;
+/// returns its id.
+fn add_entries(bare: &Path, folder: &str, lines: &[String]) -> String {
+    let mut all = git(bare, &["ls-tree", &format!("refs/heads/zygo/mail:{folder}")]);
+    for l in lines {
+        all.push_str(&format!("\n{l}"));
     }
-    let sub = git_in(bare, &["mktree", "--missing"], format!("{}\n", lines.trim_start()).as_bytes());
+    let sub = git_in(bare, &["mktree", "--missing"], format!("{}\n", all.trim_start()).as_bytes());
     let top: Vec<String> = git(bare, &["ls-tree", "refs/heads/zygo/mail"]).lines()
         .map(|l| if l.ends_with(&format!("\t{folder}")) { format!("040000 tree {sub}\t{folder}") } else { l.to_string() })
         .collect();
     let tree = git_in(bare, &["mktree", "--missing"], format!("{}\n", top.join("\n")).as_bytes());
-    (ids, test_commit(bare, &tree))
+    test_commit(bare, &tree)
+}
+
+/// S§19 #12, registry half: `registry/<HOST_R1>.json` with 257 names and `registry/<HOST_R2>.json` whose `host` is
+/// `HOST_R3`, each of a valid form otherwise. Returns their blob ids and the commit id.
+fn bad_registries(bare: &Path) -> (String, String, String) {
+    let reg = |host: &str, members: Vec<String>| {
+        serde_json::to_vec(&json!({"version": 1, "host": host, "identity": "0".repeat(32), "members": members})).unwrap()
+    };
+    let many = git_in(bare, &["hash-object", "-w", "--stdin"], &reg(HOST_R1, (0..257).map(|i| format!("{A_NAME}-{i:03}")).collect()));
+    let other = git_in(bare, &["hash-object", "-w", "--stdin"], &reg(HOST_R3, vec![B_NAME.into()]));
+    let c = add_entries(bare, "registry", &[format!("100644 blob {many}\t{HOST_R1}.json"), format!("100644 blob {other}\t{HOST_R2}.json")]);
+    (many, other, c)
 }
 
 /// S§7.5 Own hosts of `h` at the tip of `r`: `host` (its current host), then each other host whose ack at the tip
@@ -508,9 +615,10 @@ fn scanners_find_a_planted_marker() {
     assert!(rows >= 1 && f.iter().any(|l| l.ends_with(&format!("holds {BODY}"))), "{rows} {f:?}");
 }
 
-#[test] // S-C2, S§6.5, S§19 #24 (as rewritten): after #1, #3, #4, #5, #12, #15, #19, #9 and #20 on two machines through
-        // the CLI and the MCP tool, and one usage row, no marker is in a log, a state file, the usage store, a commit
-        // or a ref name, and every zygo commit has the S§6.5 message and identity
+#[test] // S-C2, S§6.5, S§19 #24 (as rewritten): after #1, #3, #4, #5, #12, #15, #19, #9, #20, #11, #6, #22, #23 and a
+        // `ws forget` answered yes, on three machines through the CLI and the MCP tool, and one usage row, no marker is
+        // in a log, a state file, the usage store, a commit or a ref name, and every zygo commit has the S§6.5 message
+        // and identity
 fn no_mail_content_after_the_scenarios() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     hermetic();
@@ -653,12 +761,20 @@ fn no_mail_content_after_the_scenarios() {
     // #12 (hostile tip, imported by the binary on B), in the folder of B's host after #19 (implementer's note, step 6).
     let (hs, hc) = hostile(&r.bare, HOST_B2);
     made.insert(hc);
+    // The registry half: a registry with 257 names, and one whose `host` is not its name (MS-22 review F2).
+    let (many, other, rc) = bad_registries(&r.bare);
+    made.insert(rc);
     let o = sync_bin(&b, &[]);
     assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
     let log = errors(&b);
     for (id, check) in hs.iter().zip(["mode", "mode", "size", "id", "to", "json"]) {
         assert!(log.lines().any(|l| l.ends_with(&format!("mail sync: import {id}: {check}"))), "{id} {check}: {log}");
     }
+    for (blob, check) in [(&many, "members"), (&other, "host")] {
+        assert!(log.lines().any(|l| l.ends_with(&format!("mail sync: registry file refused: check {check}, object {blob}"))), "{check}: {log}");
+    }
+    let cache = std::fs::read(&sp(&b).members).unwrap();
+    assert_eq!(text_findings("B members.json", &cache, &[HOST_R1, HOST_R2, HOST_R3]), Vec::<String>::new());
     let ack: Value = serde_json::from_slice(&tip_blob(&r, &format!("ack/{HOST_B2}.json")).unwrap()).unwrap();
     for id in &hs {
         assert!(ack["imported"].as_array().unwrap().iter().any(|u| u == id.as_str()), "{id}: {ack}");
@@ -697,6 +813,101 @@ fn no_mail_content_after_the_scenarios() {
     let after = tip_paths(&r);
     assert!(after.iter().all(|p| !p.starts_with(&format!("{B_NAME}@{HOST_A}/")) && *p != format!("registry/{HOST_A}.json") && *p != format!("ack/{HOST_A}.json")), "{after:?}");
 
+    // The findings of the state files at a stop (`last_error`, the public cache), which a later pass clears.
+    let mut mid = Vec::new();
+
+    // #11 (twin: machine C runs a copy of A's state folder and writes the ack; A's next pass stops with the twin line;
+    // --new-identity with a new host then syncs). B writes its files again after #20 and reads A's host first.
+    let o = sync_bin(&b, &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    let it = send_ok(&b, BOB, &format!("{A_NAME}@{HOST_A2}"), 20);
+    assert_eq!(sync_in(&b).pushed, 1);
+    let c = machine(&r, HOST_A2, ALICE, A_NAME);
+    for d in [sp(&c).mail, sp(&c).sync] {
+        zygo_workspace::mail::ensure_mail_root(&d).unwrap();
+    }
+    std::fs::copy(sp(&a).identity, sp(&c).identity).unwrap();
+    std::fs::copy(sp(&a).state, sp(&c).state).unwrap();
+    let o = sync_bin(&c, &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    assert!(mail_dir(&c.paths, WS_ID).join(ALICE).join("new").join(format!("{it}.json")).is_file());
+    let o = sync_bin(&a, &[]);
+    assert_eq!((o.status.code(), err_of(&o)), (Some(1), format!("{TWIN}\n")));
+    assert!(errors(&a).lines().any(|l| l.ends_with("mail sync: stopped: twin")), "{}", errors(&a));
+    let st: Value = serde_json::from_slice(&std::fs::read(sp(&a).state).unwrap()).unwrap();
+    assert_eq!(st["last_error"], "twin");
+    mid.extend(state_findings(&sp(&a).state, &[HOST_A2]));
+    config(&a, HOST_A3, "", "");
+    let o = sync_bin(&a, &["--new-identity"]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    assert!(tip_paths(&r).contains(&format!("registry/{HOST_A3}.json")));
+
+    // #6 (public check, the `public` verdict of the injected probe: no network host is asked): the sync stops before
+    // any fetch, the bare repository's refs do not change, and a remote send is refused.
+    git(&a.repo(), &["remote", "set-url", "--push", "origin", &format!("https://example.invalid/{B_NAME}/r.git")]);
+    let refs0 = git(&r.bare, &["for-each-ref"]);
+    let public = env_full(a.paths.clone(), Box::new(NoSeam), far(), Box::new(Says(Verdict::Public)), Box::new(NoSpawn), Box::new(NoWake));
+    let e = run_with(&public, WS_ID, Mode::Cli, &Opts::default()).unwrap_err();
+    assert_eq!(e, SyncError::Stopped { line: PUBLIC.into(), check: "public" });
+    assert_eq!(git(&r.bare, &["for-each-ref"]), refs0);
+    let (code, out, err) = send(&a, ALICE, &format!("{B_NAME}@{HOST_A}"), 21);
+    assert_eq!((code, out.as_str(), err), (1, "", format!("{PUBLIC}\n")));
+    assert!(errors(&a).lines().any(|l| l.ends_with("mail sync: stopped: public")), "{}", errors(&a));
+    let st: Value = serde_json::from_slice(&std::fs::read(sp(&a).state).unwrap()).unwrap();
+    assert_eq!((&st["last_error"], &st["public"]["verdict"]), (&json!("public"), &json!("public")));
+    mid.extend(state_findings(&sp(&a).state, &[HOST_A3]));
+    git(&a.repo(), &["config", "--unset", "remote.origin.pushurl"]);
+    sync_in(&a); // the check runs again on the file URL: `local`
+
+    // #22 (a sync child that does not start): the CLI send, the MCP send and the watch step each log one line.
+    let fail = env_full(a.paths.clone(), Box::new(NoSeam), far(), Box::new(NoProbe), Box::new(FailSpawn), Box::new(NoWake));
+    let (code, _, err) = send_env(&fail, &a, ALICE, &format!("{B_NAME}@{HOST_A}"), 22, &format!("{BODY}-22"));
+    assert_eq!((code, err.as_str()), (0, ""));
+    call(&tools_spawn(&a, ALICE, Box::new(FailSpawn)), "mail_send", json!({"to": format!("{B_NAME}@{HOST_A}"), "subject": format!("{SUBJ}-23"), "body": format!("{BODY}-23")})).unwrap();
+    let ws = a.store(WS_ID).read().unwrap().unwrap();
+    zygo::cmd::mail::watch_sync_step(&fail, &ws)();
+    let not_started = std::io::Error::from(std::io::ErrorKind::NotFound);
+    for who in ["mail send", "mail_send", "mail watch"] {
+        let line = format!("{who}: cannot start the mail sync child: {not_started}");
+        assert!(errors(&a).lines().any(|l| l.ends_with(&line)), "{line}: {}", errors(&a));
+    }
+    assert_eq!(sync_in(&a).pushed, 2);
+
+    // #23 (a wake that fails, after B's import): a `wake_gap` that does not parse, a `wake.json` that cannot be
+    // written, and a pane that takes no text each log one line.
+    b.store(WS_ID).update(Duration::from_secs(5), &mut |w| {
+        w.members.get_mut(BOB).unwrap().zygo_session = Some("sbob".into());
+        Ok(())
+    }).unwrap();
+    let held = live(&b.paths, "sbob");
+    let wake_json = mail_dir(&b.paths, WS_ID).join(BOB).join("wake.json");
+    std::fs::create_dir(&wake_json).unwrap();
+    let woke = env_full(b.paths.clone(), Box::new(NoSeam), far(), Box::new(NoProbe), Box::new(NoSpawn), Box::new(FailWake));
+    assert_eq!(run_with(&woke, WS_ID, Mode::Cli, &Opts::default()).unwrap().delivered, 2);
+    let log = errors(&b);
+    let gap_line = "mail wake: [mail] wake_gap \"soon\" is not <n>s, <n>m, <n>h or <n>d; using 30s".to_string();
+    assert!(log.lines().any(|l| l.ends_with(&gap_line)), "{log}");
+    assert!(log.lines().any(|l| l.contains(&format!("mail wake {BOB}: wake.json not written: "))), "{log}");
+    assert!(log.lines().any(|l| l.ends_with(&format!("mail wake {BOB}: {}", mux_error()))), "{log}");
+    std::fs::remove_dir(&wake_json).unwrap();
+    drop(held);
+
+    // `zygo ws forget` answered yes, on C. Its stores are scanned first, as the forget removes them.
+    let ec = errors(&c);
+    assert!(!ec.is_empty());
+    mid.extend(text_findings("C errors.log", ec.as_bytes(), &MARKERS));
+    mid.extend(workspace_findings(&c.store(WS_ID).dir().join("workspace.json"), &[A_NAME]));
+    let own_c = own_hosts_at_tip(&r, &c, HOST_A2);
+    assert_eq!(own_c, vec![HOST_A2.to_string()]);
+    mid.extend(state_findings(&sp(&c).state, &[HOST_A2]));
+    for n in [24, 25] {
+        send_ok(&c, ALICE, &format!("{B_NAME}@{HOST_A}"), n);
+    }
+    let prompt = "zygo: 2 unsent messages and 0 refused messages will be deleted. Forget the workspace? [y/N]";
+    let o = zygo(&c, &["ws", "forget", "app"], Some(b"y\n"));
+    assert_eq!((o.status.code(), out_of(&o), err_of(&o)), (Some(0), "zygo: forgot app\n".into(), format!("{prompt} ")));
+    assert!(std::fs::symlink_metadata(c.store(WS_ID).dir()).is_err());
+
     // Usage row (author's call 5), on B.
     let sd = SessionDir::new(b.root().join("sess-u"));
     sd.create().unwrap();
@@ -704,12 +915,12 @@ fn no_mail_content_after_the_scenarios() {
     drop(zygo_usage::Store::open(&b.paths.usage_db).unwrap()); // the database as the launcher leaves it (hook_trim.rs:30)
     // Each line numbered, so the shaper counts no repeated lines and the size trim stores the output (implementer's
     // note, step 6).
-    let stdout: String = (0..400).map(|i| format!("{i:03} {SUBJ}-u {BODY}-u {A_NAME}@{HOST_A} {B_NAME}@{HOST_B} {HOST_B2} {HOST_A2}\n")).collect();
+    let stdout: String = (0..400).map(|i| format!("{i:03} {SUBJ}-u {BODY}-u {A_NAME}@{HOST_A} {B_NAME}@{HOST_B} {}\n", MARKERS[6..].join(" "))).collect();
     let event = json!({"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {"command": format!("zygo mail read --name {B_NAME}")},
         "tool_response": {"stdout": stdout, "stderr": "", "interrupted": false, "isImage": false, "noOutputExpected": false}});
-    let mut c = b.zygo(&["hook", "trim"], &[("ZYGO_SESSION_DIR", sd.root.as_os_str())]);
-    c.stdin(Stdio::piped());
-    let mut child = c.spawn().unwrap();
+    let mut trim = b.zygo(&["hook", "trim"], &[("ZYGO_SESSION_DIR", sd.root.as_os_str())]);
+    trim.stdin(Stdio::piped());
+    let mut child = trim.spawn().unwrap();
     feed_stdin(child.stdin.take().unwrap(), &serde_json::to_vec(&event).unwrap());
     let o = child.wait_with_output().unwrap();
     assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
@@ -725,8 +936,8 @@ fn no_mail_content_after_the_scenarios() {
     found.extend(workspace_findings(&b.store(WS_ID).dir().join("workspace.json"), &[B_NAME]));
     // S§7.5 own hosts at the end of the walk (MS-22 review F1): A has its current host only; B has its current host
     // and each old host whose ack still holds its identity.
-    let (own_a, own_b) = (own_hosts_at_tip(&r, &a, HOST_A2), own_hosts_at_tip(&r, &b, HOST_A));
-    assert_eq!(own_a, vec![HOST_A2.to_string()]);
+    let (own_a, own_b) = (own_hosts_at_tip(&r, &a, HOST_A3), own_hosts_at_tip(&r, &b, HOST_A));
+    assert_eq!(own_a, vec![HOST_A3.to_string()]);
     assert_eq!(own_b[0], HOST_A);
     assert!(!own_b.iter().any(|h| h == HOST_B), "{own_b:?}");
     for (h, own) in [(&a, &own_a), (&b, &own_b)] {
@@ -735,10 +946,11 @@ fn no_mail_content_after_the_scenarios() {
         let own: Vec<&str> = own.iter().map(String::as_str).collect();
         found.extend(state_findings(&sp(h).state, &own));
     }
-    for repo in [r.bare.clone(), a.repo(), b.repo()] {
+    for repo in [r.bare.clone(), a.repo(), b.repo(), c.repo()] {
         found.extend(commit_findings(&repo, &made));
         found.extend(ref_findings(&repo));
     }
+    found.extend(mid);
     let (rows, f) = usage_findings(&b.paths.usage_db);
     assert!(rows >= 1, "the trim hook wrote no usage row");
     found.extend(f);
