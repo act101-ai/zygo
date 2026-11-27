@@ -191,7 +191,6 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | DONE | judgment | e8f19e67..5bc5249b · acceptance pass (operator 22 passed) · PR #190 |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | DONE | implementation | 0167648d..826c59f6 · acceptance pass (mail_sync_cli 14 passed, cli_surface 21 passed) · PR #210 |
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | DONE | implementation | 37139e44^..e21d5e0b · acceptance pass (mail_remote 16 passed) · PR #212 |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
@@ -209,7 +208,7 @@ Session text (T, SX nodes):
 | MS-22 | No mail content in logs, state, usage rows, commits or refs | MS-18, MS-19, MS-21 | DONE | judgment | e2b744fe^..91edeada · acceptance pass (mail_sync_no_content 2 passed) · PR #222 |
 | WD-15 | `zygo workspace approve [--yes] [--digest <hex>]` | WD-14, DR-3, MS-21 | DONE | judgment | a923b915^..fe86a15d · acceptance pass (workspace_approve 28 passed) · PR #223 |
 | WD-16 | `config show/check`, `profile list/show`, `loadout list/show` show the repository files | WD-15, WD-24 | DONE | implementation | 4e0686e5^..b5991ee0 · acceptance pass (definition_surfaces 22 passed) · PR #225 |
-| WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | TODO | mechanical | — |
+| WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | DONE | mechanical | cff91852^..b884b0b7 · acceptance pass (docs_readme_and_passthrough_md 1 passed, cli_surface 21 passed) · PR #228 |
 | SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | DONE | implementation | 1b49483c^..7b96c5b5 · acceptance pass (builtin 13, check-premises ok) · PR #227 |
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | DONE | mechanical | fc991ad1^..7018a2f3 · acceptance pass (builtin 13, check-premises ok) · PR #229 |
 | OS-46 | Bound the hook's usage-store wait per Bash call | — | DONE | judgment | 75339a21 · d6be5653 · c727ff0e · 68f8e48c · acceptance pass (busy_wait_total/open_bounded_total 7, rollback_journal 1, zygo-usage, zygo-hooks, readbacks) · PR #205 |
@@ -226,6 +225,8 @@ Session text (T, SX nodes):
 | FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | TODO | implementation | — |
 | FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | DONE | judgment | 343897e2^..a9b6f61c · acceptance pass (renamed_host_ack_goes_with_only_acked_link_and_gitlink_entries 1 passed) · PR #231 |
 | FX-28 | A remote send during `ws forget` is lost uncounted | FX-24 | TODO | judgment | — |
+| FX-29 | config check rejects default_loadout = "repository" that zygo up accepts | WD-20 | TODO | implementation | — |
+| FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | TODO | judgment | — |
 
 ## Log
 
@@ -443,6 +444,7 @@ Session text (T, SX nodes):
 | 2026-11-26 | MS-22 DONE: no mail content in any store, log, commit or ref after the walked S§19 scenarios on three machines; R1 fixed stale host keys in state.json (forget_hosts); S-C2, S§7.5, S§19 #24 rewritten; FX-26, FX-27 added · PR #222 |
 | 2026-11-26 | WD-16 PLANNED: R§10 loadout row follows the `<name>  <source>` format; /zygo:profile reads nothing (R-C8); one CLI-only read module for config, profile, loadout and doctor; workspace_approve.rs left to FX-25 (shared file) |
 | 2026-11-26 | WD-16 DONE: config show/check, profile list/show and loadout list/show show the repository files through one CLI-only read (workspace_files.rs); unapproved files show only ref, digest and state; R1 F1–F5 fixed · PR #225 |
+| 2026-11-26 | WD-20 PLANNED: README section and passthrough.md pool section, exact text checked on a hermetic fixture; R§6.2 names and R§10 up row follow the code (default_loadout=repository refuses); no new doc page or test; FX-25 behaviour left out |
 | 2026-11-26 | SX-7 PLANNED: 11 steps; T§13 rewritten to the merged code (author's call): OpenCode zygo-<role> prompt kept until ST4, trim gives the post-compaction copy, no-main-role case, flag skips zygo- and bad ids; stale reinject.rs:22 line citation added to Files |
 | 2026-11-26 | SX-7 DONE: base spec §8.5, §8.6 item 7 and last paragraph, §8.7 N33, §10.6 state what the merged session-text code does (effective role, ST4-conditional OpenCode delivery, trim after compaction); T§13 rewritten to the code; W§9.1 aligned · PR #227 |
 | 2026-11-26 | FX-24 PLANNED: d1-d4 hold at 6b283c74; import, incoming finish, notice under mail/lock per delivery; forget holds it excl across rename, after before_remove; order op<sync<mail<state; S§8.5/8.6/7.6, M§5 rewritten; author's calls in node |
@@ -454,3 +456,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-27 BLOCKED: failed 3 review rounds; round 3: the member-gated prune (R2 D-B) leaves delivered mail after a member rename, a cross-pass member duplicate is never acked, member_names is quadratic; branch discarded, re-plan · PR #230 closed |
 | 2026-11-26 | FX-27 PLANNED (re-plan), author's call: R1 ack = (old ∪ acked ∪ own-ack union) ∩ folder ULIDs; R2 old ack goes with no message file, every ULID listed, registry gone; R3 prune unchanged; R4 drop-host counts message files; invariant: one delivery per ULID |
 | 2026-11-26 | FX-27 DONE: ULID-keyed re-plan R1–R4; review rounds 1–2 fixed tests and spec text; author's calls: non-address folders are documented as operator-only removal; planner's call: non-ULID names do not keep the ack. |
+| 2026-11-27 | WD-20 DONE: user docs for workspace files, approval, members, pool, passthrough; R1 fixed H1-H2, M1-M4, L1-L9; C6 (L9 split into docs/workspace-files.md); FX-29 and FX-31 created from the found issues; MS-15 row archived · PR #228 |
