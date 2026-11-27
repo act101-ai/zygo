@@ -550,3 +550,20 @@ fn t16_an_acknowledged_symlink_entry_stays() {
     assert!(at_tip(&r, "bob@b", u0));
     assert!(!at_tip(&r, "bob@b", u1));
 }
+
+#[test] // S§9 Tree (MS-14 review F6, FX-27): a message file is a blob of mode 100644 or 100755
+fn t19_removable_is_a_message_file_blob_only() {
+    let e = |mode: &str, kind: &str| branch::Entry {
+        mode: mode.into(),
+        kind: kind.into(),
+        id: "0".repeat(40),
+        size: None,
+        path: "bob@b/x.json".into(),
+    };
+    assert!(prune::removable(&e("100644", "blob")));
+    assert!(prune::removable(&e("100755", "blob")));
+    assert!(!prune::removable(&e("120000", "blob")));
+    assert!(!prune::removable(&e("160000", "commit")));
+    assert!(!prune::removable(&e("040000", "tree")));
+    assert!(!prune::removable(&e("100644", "tree")));
+}
