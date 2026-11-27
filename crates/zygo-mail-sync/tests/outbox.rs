@@ -15,6 +15,7 @@ use zygo_mail_sync::state::{save, PublicCache, State, SyncPaths};
 use zygo_redact::DeadlinePolicy;
 use zygo_workspace::mail::store::{deliver, list, FILE_MAX};
 use zygo_workspace::mail::{Message, BODY_MAX};
+use zygo_workspace::state::{Phase, Store};
 
 const ID: &str = "0123456789abcdef";
 const KEY: &str = "kaaaaaaaa";
@@ -55,18 +56,50 @@ struct Fx { _t: TempDir, sp: SyncPaths, root: PathBuf }
 fn fx() -> Fx {
     let t = TempDir::new().unwrap();
     let sp = SyncPaths::new(&paths(t.path()), ID).unwrap();
-    fs::create_dir_all(sp.mail.parent().unwrap()).unwrap(); // the workspace exists (MS-21 review R2-1)
+    let root = t.path().join("repo");
+    // The workspace exists (MS-21 review R2-1) with a state: a remote send is an M§5 taker of mail/lock (FX-28).
+    Store::open(&paths(t.path()), ID).update(Duration::from_secs(10), &mut |w| {
+        w.name = "app".into();
+        w.common_dir = root.join(".git");
+        w.main_root = root.clone();
+        w.tmux_session = "zygo-app".into();
+        w.loadout = "solo".into();
+        w.phase = Phase::Up;
+        Ok(())
+    }).unwrap();
     let mut c = MemberCache::default();
     c.hosts.insert("b".into(), vec!["bob".into()]);
     c.hosts.insert("c".into(), vec!["carol".into()]);
     write_cache(&sp, &c).unwrap();
-    let root = t.path().join("repo");
     fs::create_dir_all(root.join(".git")).unwrap();
     Fx { _t: t, sp, root }
 }
 
 fn send(f: &Fx, from: Option<&str>, to: &Address, body: &str) -> Result<Ulid, SendError> {
     send_remote_with(&f.sp, Ok(&on()), from, to, "status", body, &builtin(), &f.root, now(), &far())
+}
+
+#[test] // S§7.6 step 4, S§8.1 (FX-28): a remote send takes mail/lock as an M§5 taker; no workspace.json: refused, nothing written
+fn send_writes_nothing_when_the_workspace_has_no_state() {
+    let f = fx();
+    fs::remove_file(f.sp.mail.parent().unwrap().join("workspace.json")).unwrap();
+    let e = send(&f, Some("alice"), &addr("bob", "b"), "hi").unwrap_err();
+    assert_eq!(e.line(), "zygo: the workspace has no state; nothing sent");
+    assert_eq!(count(&f.sp).unwrap(), 0);
+    assert!(fs::symlink_metadata(&f.sp.outbox).is_err());
+}
+
+#[test] // S§7.6 step 4 (FX-28): a forget that holds mail/lock for the whole 2 s bound refuses the send; nothing written
+fn send_writes_nothing_while_mail_lock_is_held_exclusive() {
+    let f = fx();
+    fs::create_dir_all(&f.sp.mail).unwrap();
+    let lock = fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(f.sp.mail.join("lock")).unwrap();
+    fs4::FileExt::try_lock(&lock).unwrap();
+    let e = send(&f, Some("alice"), &addr("bob", "b"), "hi").unwrap_err();
+    drop(lock);
+    assert_eq!(e.line(), "zygo: mail is busy; try again");
+    assert_eq!(count(&f.sp).unwrap(), 0);
+    assert!(fs::symlink_metadata(&f.sp.outbox).is_err());
 }
 
 /// One message file in `outbox/`, as `send_remote` writes it.
