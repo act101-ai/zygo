@@ -2214,11 +2214,101 @@ fn forget_refuses_while_a_mail_sync_holds_its_lock() {
 
 // ---- FX-24: ws forget holds mail/lock across the state rename (M§5 P1, S§7.6 step 4) ----
 
-/// What a delivery thread of a d4 test says: its hook holds `mail/lock` shared, or it ended with this result.
-#[derive(Debug)]
-enum Event {
+/// What a paused thread of an FX-24 test says: it is at its hook point (it holds `mail/lock`), its body ended with
+/// this value, or its body panicked with this text (review R3 F5).
+enum Event<T> {
     Held,
-    Done(Result<(), MailError>),
+    Done(T),
+    Panicked(String),
+}
+
+/// The text of a caught panic.
+fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
+    match (p.downcast_ref::<&str>(), p.downcast_ref::<String>()) {
+        (Some(s), _) => (*s).to_string(),
+        (_, Some(s)) => s.clone(),
+        _ => "a panic with no text".to_string(),
+    }
+}
+
+/// A thread of an FX-24 test that runs `body` and pauses at the hook point `point` of the state folder `dir` until
+/// [`Paused::release`]. Review F3: the body's value comes on the channel of the "held" signal, so a body that ends
+/// before its hook reaches the test as that value. Review R3 F5: the body runs in `catch_unwind` and its panic comes
+/// on that channel too, so a panic fails the test and never hangs it; the drop clears the hook (with its copy of the
+/// sender) and releases the thread on every exit path of the test.
+struct Paused<T> {
+    dir: PathBuf,
+    point: &'static str,
+    ev_rx: std::sync::mpsc::Receiver<Event<T>>,
+    go_tx: Option<std::sync::mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl<T: Send + std::fmt::Debug + 'static> Paused<T> {
+    fn start(dir: &Path, point: &'static str, body: impl FnOnce() -> T + Send + 'static) -> Paused<T> {
+        let (ev_tx, ev_rx) = std::sync::mpsc::channel::<Event<T>>();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let (go_rx, held_tx) = (Mutex::new(go_rx), Mutex::new(ev_tx.clone()));
+        up::testing::hook(
+            dir,
+            point,
+            Some(Box::new(move || {
+                let _ = held_tx.lock().unwrap_or_else(|e| e.into_inner()).send(Event::Held);
+                let _ = go_rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                Ok(())
+            })),
+        );
+        let thread = std::thread::spawn(move || {
+            let ev = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
+                Ok(v) => Event::Done(v),
+                Err(p) => Event::Panicked(panic_text(&*p)),
+            };
+            let _ = ev_tx.send(ev);
+        });
+        Paused { dir: dir.to_path_buf(), point, ev_rx, go_tx: Some(go_tx), thread: Some(thread) }
+    }
+
+    /// Waits, with no time bound, until the thread is at its hook point; a body that ended or panicked first fails the
+    /// test with its value or its panic.
+    fn held(&self) {
+        match self.ev_rx.recv() {
+            Ok(Event::Held) => {}
+            Ok(Event::Done(v)) => panic!("the thread ended before its hook: {v:?}"),
+            Ok(Event::Panicked(m)) => panic!("the thread panicked before its hook: {m}"),
+            Err(_) => panic!("the thread ended with no event"),
+        }
+    }
+
+    /// Releases the thread from its hook and waits, with no time bound, for the value of its body.
+    fn release(mut self) -> T {
+        drop(self.go_tx.take());
+        let v = match self.ev_rx.recv() {
+            Ok(Event::Done(v)) => v,
+            Ok(Event::Held) => panic!("a second held signal"),
+            Ok(Event::Panicked(m)) => panic!("the thread panicked: {m}"),
+            Err(_) => panic!("the thread ended with no event"),
+        };
+        if let Some(t) = self.thread.take() {
+            t.join().unwrap();
+        }
+        v
+    }
+}
+
+impl<T> Drop for Paused<T> {
+    fn drop(&mut self) {
+        up::testing::hook(&self.dir, self.point, None);
+        drop(self.go_tx.take());
+    }
+}
+
+/// The body of a d4 delivery thread: one delivery to `kbbbbbbbb` of `store`'s workspace.
+fn deliver_to_bob(store: Store) -> impl FnOnce() -> Result<(), MailError> + Send + 'static {
+    move || {
+        Delivery::begin(&store, MAIL_LOCK_WAIT).and_then(|d| {
+            d.deliver("kbbbbbbbb", "x", &Message::new("cli", "x", "s", "b", SystemTime::now()).unwrap(), 500)
+        })
+    }
 }
 
 /// A readable state `app` of workspace `ID` with the record of `kbbbbbbbb`.
@@ -2236,42 +2326,13 @@ fn forget_waits_for_a_delivery_in_flight_and_leaves_no_maildir() {
     let p = paths(t);
     let store = ws_with_bob(&p, t);
     let dir = p.workspaces_dir().join(ID);
-    // Review F3: the delivery's result comes on the channel of the "held" signal, so a delivery that fails before its
-    // hook reaches the test as that error and the test never waits for a signal that cannot come.
-    let (ev_tx, ev_rx) = std::sync::mpsc::channel::<Event>();
-    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
-    let go_rx = Mutex::new(go_rx);
-    let held_tx = Mutex::new(ev_tx.clone());
-    up::testing::hook(
-        &dir,
-        "mail_delivery_after_read",
-        Some(Box::new(move || {
-            let _ = held_tx.lock().unwrap().send(Event::Held);
-            let _ = go_rx.lock().unwrap().recv();
-            Ok(())
-        })),
-    );
-    let thread = std::thread::spawn(move || {
-        let r = Delivery::begin(&store, MAIL_LOCK_WAIT).and_then(|d| {
-            d.deliver("kbbbbbbbb", "x", &Message::new("cli", "x", "s", "b", SystemTime::now()).unwrap(), 500)
-        });
-        let _ = ev_tx.send(Event::Done(r));
-    });
     // (a) The delivery holds mail/lock shared, paused after its record read.
-    if let Event::Done(r) = ev_rx.recv().unwrap() {
-        up::testing::hook(&dir, "mail_delivery_after_read", None);
-        panic!("the delivery ended before its hook: {r:?}");
-    }
+    let d = Paused::start(&dir, "mail_delivery_after_read", deliver_to_bob(store));
+    d.held();
     // (b) The lock stays held for the forget's whole bound: refused, nothing deleted.
     let busy = forget_run(&p, &t.join("none"), None, "app");
     // (c) Released, the delivery links and ends; the test waits for its result, with no time bound.
-    go_tx.send(()).unwrap();
-    let delivered = match ev_rx.recv().unwrap() {
-        Event::Done(r) => r,
-        Event::Held => panic!("a second held signal"),
-    };
-    thread.join().unwrap();
-    up::testing::hook(&dir, "mail_delivery_after_read", None);
+    let delivered = d.release();
     assert_eq!(busy, (1, String::new(), "zygo: cannot forget app: mail is busy; try again\n".to_string()));
     assert!(delivered.is_ok(), "{delivered:?}");
     assert_eq!(fs::read_dir(dir.join("mail/kbbbbbbbb/new")).unwrap().count(), 1);
@@ -2291,30 +2352,9 @@ fn delivery_that_locked_a_moved_mail_lock_finds_no_workspace() {
     let p = paths(t);
     let store = ws_with_bob(&p, t);
     let dir = p.workspaces_dir().join(ID);
-    let (ev_tx, ev_rx) = std::sync::mpsc::channel::<Event>();
-    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
-    let go_rx = Mutex::new(go_rx);
-    let held_tx = Mutex::new(ev_tx.clone());
-    up::testing::hook(
-        &dir,
-        "mail_delivery_after_lock",
-        Some(Box::new(move || {
-            let _ = held_tx.lock().unwrap().send(Event::Held);
-            let _ = go_rx.lock().unwrap().recv();
-            Ok(())
-        })),
-    );
-    let thread = std::thread::spawn(move || {
-        let r = Delivery::begin(&store, MAIL_LOCK_WAIT).and_then(|d| {
-            d.deliver("kbbbbbbbb", "x", &Message::new("cli", "x", "s", "b", SystemTime::now()).unwrap(), 500)
-        });
-        let _ = ev_tx.send(Event::Done(r));
-    });
     // (a) The delivery holds the lock of mail/lock, paused before it checks that file.
-    if let Event::Done(r) = ev_rx.recv().unwrap() {
-        up::testing::hook(&dir, "mail_delivery_after_lock", None);
-        panic!("the delivery ended before its hook: {r:?}");
-    }
+    let d = Paused::start(&dir, "mail_delivery_after_lock", deliver_to_bob(store));
+    d.held();
     // (b) A forget's rename moves the state folder (and the locked file) away; a new workspace of the same id writes a
     // new state folder with the record of kbbbbbbbb and a new mail/lock.
     let old = t.join("tombstone");
@@ -2323,13 +2363,7 @@ fn delivery_that_locked_a_moved_mail_lock_finds_no_workspace() {
     fs::create_dir(dir.join("mail")).unwrap();
     fs::write(dir.join("mail/lock"), b"").unwrap();
     // (c) Released, the delivery checks its locked file, finds it is not mail/lock, and writes nothing.
-    go_tx.send(()).unwrap();
-    let r = match ev_rx.recv().unwrap() {
-        Event::Done(r) => r,
-        Event::Held => panic!("a second held signal"),
-    };
-    thread.join().unwrap();
-    up::testing::hook(&dir, "mail_delivery_after_lock", None);
+    let r = d.release();
     assert!(matches!(r, Err(MailError::NoWorkspace)), "{r:?}");
     assert!(fs::symlink_metadata(dir.join("mail/kbbbbbbbb")).is_err(), "the delivery wrote into the new workspace");
     assert!(fs::symlink_metadata(old.join("mail/kbbbbbbbb")).is_err(), "the delivery wrote into the old workspace");
