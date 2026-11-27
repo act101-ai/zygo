@@ -57,14 +57,16 @@ pub(crate) fn run(ctx: &VerbCtx, args: &[String], input: &mut dyn BufRead, promp
     if ctx.session_dir.is_some() {
         bail!(IN_SESSION);
     }
-    // Plan call 5: the checkout lookup of `zygo up`; the read runs at the main worktree.
+    // Plan call 5 (WD-15 review F3): the checkout lookup of `zygo up`, whose first value is the checkout of the current
+    // folder (`zygo_work::repo::checkout`, the call of the launcher); the read runs at its top, the folder the launcher
+    // reads (R§8), so the digest and the id are the ones the launcher checks.
     let cwd = std::env::current_dir().map_err(|e| anyhow!("zygo: {}", cwd_error(&e)))?;
-    let (co, _, main) = find_checkout(&cwd, GIT_BOUND).map_err(|_| UsageError(NOT_A_REPO.into()))?;
+    let (co, _, _) = find_checkout(&cwd, GIT_BOUND).map_err(|_| UsageError(NOT_A_REPO.into()))?;
     let id = workspace_id(&co.common_dir);
     let file = &ctx.paths.approvals_file;
     // Plan call 6: the lines of R§7.1 step 3, each value escaped.
     // `read` is `None` when the files of the digest are approved already.
-    let (digest, read) = match check_default(&main, &id, file, &SystemGit) {
+    let (digest, read) = match check_default(&co.top, &id, file, &SystemGit) {
         Use::Absent { full_ref } => bail!("zygo: this repository has no workspace files at {}", esc(&full_ref)),
         Use::Unread { why } => bail!("zygo: this repository's workspace files are unread ({}); nothing approved", esc(&why)),
         Use::Invalid { full_ref, why, .. } => bail!(
@@ -89,7 +91,7 @@ pub(crate) fn run(ctx: &VerbCtx, args: &[String], input: &mut dyn BufRead, promp
         .map_err(|e| anyhow!("zygo: user config not read ({}); nothing approved", esc(&e.to_string())))?;
     let pool_text = cfg.workspace.pool.as_deref();
     let home = pool::home();
-    let shown_files = show(&main, &full_ref, &files, &digest, &def, pool_text, home.as_deref());
+    let shown_files = show(&co.top, &full_ref, &files, &digest, &def, pool_text, home.as_deref());
     // R§7.1 step 6: with `--yes` the listing is part of the result (stdout); else it and the question go to `prompt`.
     if !yes {
         let _ = write!(prompt, "{shown_files}\n{QUESTION}");

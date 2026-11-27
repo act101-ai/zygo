@@ -671,3 +671,54 @@ fn summary_quotes_free_text_values() {
         r#"  member w: kind claude-code, job worker, profile rust, pool false, cwd "a \"b\", pool true""#
     );
 }
+
+/// `f.t/b.git`: a bare clone of `o.git` with `refs/remotes/origin/*` fetched and `origin/HEAD` set to `main`.
+fn bare_clone(f: &Fx) -> PathBuf {
+    let t = f.t.path();
+    git(t, &["clone", "-q", "--bare", "o.git", "b.git"]);
+    let b = t.join("b.git");
+    git(&b, &["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]);
+    git(&b, &["fetch", "-q", "origin"]);
+    git(&b, &["remote", "set-head", "origin", "main"]);
+    b
+}
+
+/// Approve with `--yes` in `dir`, then the launcher's read (`check_default` at the checkout's top, R§8) is `Approved`
+/// with the digest that approve printed.
+fn approve_where_the_launcher_reads(f: &Fx, dir: &Path) {
+    let h = home(f, "");
+    let d = match check_default(dir, &id(dir), &approvals(&h), &SystemGit) {
+        Use::NotApproved { digest, .. } => digest,
+        u => panic!("the launcher's read before approve: {u:?}"),
+    };
+    let o = run_in(&h, dir, &["--yes"], None, &[]);
+    let out = text(&o.stdout);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert!(out.ends_with(&format!("approved {d}\n{NEXT}\n")), "{out}");
+    let top = checkout(dir, Instant::now() + Duration::from_secs(60)).unwrap().top;
+    assert!(out.starts_with(&format!("folder: {}\n", zygo_core::esc(&top.to_string_lossy()))), "{out}");
+    match check_default(dir, &id(dir), &approvals(&h), &SystemGit) {
+        Use::Approved { pin, .. } => assert_eq!(pin.digest, d),
+        u => panic!("the launcher's read after approve: {u:?}"),
+    }
+}
+
+#[test] // R§7.1 step 3 (WD-15 review F3): a linked checkout of a bare repository
+fn bare_repository_linked_checkout_is_approved_where_the_launcher_reads() {
+    let f = min();
+    let b = bare_clone(&f);
+    let wt = f.t.path().join("wt");
+    git(&b, &["worktree", "add", "-q", wt.to_str().unwrap(), "main"]);
+    approve_where_the_launcher_reads(&f, &wt);
+}
+
+#[test] // R§7.1 step 3 (WD-15 review F3): the first checkout's folder is deleted; approve reads at the current checkout
+fn first_checkout_deleted_is_approved_where_the_launcher_reads() {
+    let f = min();
+    let b = bare_clone(&f);
+    let (w1, w2) = (f.t.path().join("w1"), f.t.path().join("w2"));
+    git(&b, &["worktree", "add", "-q", w1.to_str().unwrap(), "main"]);
+    git(&b, &["worktree", "add", "-q", "-b", "side", w2.to_str().unwrap(), "main"]);
+    std::fs::remove_dir_all(&w1).unwrap();
+    approve_where_the_launcher_reads(&f, &w2);
+}
