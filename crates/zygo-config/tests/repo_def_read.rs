@@ -216,7 +216,21 @@ fn default_branch_only() {
     assert_ne!(after.commit, first.commit);
 }
 
-fn invalid(f: &Fx, why: &str) -> Read { Read::Invalid { full_ref: Some(MAIN.into()), commit: head(&f.c), why: why.into() } }
+fn invalid(f: &Fx, why: &str, workspace: bool) -> Read {
+    Read::Invalid { full_ref: Some(MAIN.into()), commit: head(&f.c), why: why.into(), workspace }
+}
+
+/// Whether `ents` put an entry at `.zygo/workspace.toml` (a file, a link, a gitlink, or a folder of that name): the
+/// read then lists it (WD-16 review F4).
+fn lists_workspace(ents: &[E]) -> bool {
+    ents.iter().any(|e| {
+        let p = match e {
+            E::File(p, _) | E::Exec(p, _) | E::Link(p, _) => *p,
+            E::Gitlink(p) => *p,
+        };
+        p == ".zygo/workspace.toml" || p.starts_with(".zygo/workspace.toml/")
+    })
+}
 
 #[test] // R§18 item 2; review focus 30
 fn tree_entries_are_refused_before_any_content_read() {
@@ -241,7 +255,7 @@ fn tree_entries_are_refused_before_any_content_read() {
     for (ents, why) in cases {
         let f = fx(&ents);
         let rec = Rec::default();
-        assert_eq!(repo_def::read_default(&f.c, &rec), invalid(&f, &why), "{why}");
+        assert_eq!(repo_def::read_default(&f.c, &rec), invalid(&f, &why, lists_workspace(&ents)), "{why}");
         assert_eq!(rec.content_reads(), 0, "content read before the check: {why}");
     }
 }
@@ -260,7 +274,7 @@ fn sizes_are_refused_before_any_content_read() {
     for (ents, why) in cases {
         let f = fx(&ents);
         let rec = Rec::default();
-        assert_eq!(repo_def::read_default(&f.c, &rec), invalid(&f, why), "{why}");
+        assert_eq!(repo_def::read_default(&f.c, &rec), invalid(&f, why, lists_workspace(&ents)), "{why}");
         assert_eq!(rec.content_reads(), 0, "content read before the size check: {why}");
     }
 }
@@ -431,10 +445,10 @@ fn failing_runner_is_unread() {
 #[test] // R§6.1 step 5
 fn content_must_match_size_and_be_utf8() {
     let f = fx(&[E::File(".zygo/workspace.toml", &[0xff, 0xfe])]);
-    assert_eq!(repo_def::read_default(&f.c, &Rec::default()), invalid(&f, ".zygo/workspace.toml is not UTF-8"));
+    assert_eq!(repo_def::read_default(&f.c, &Rec::default()), invalid(&f, ".zygo/workspace.toml is not UTF-8", true));
     let f = fx(&[E::File(".zygo/workspace.toml", b"version = 1\n")]);
     let short = Rec { short_blob: true, ..Rec::default() };
-    assert_eq!(repo_def::read_default(&f.c, &short), invalid(&f, ".zygo/workspace.toml: read 11 bytes, listed 12"));
+    assert_eq!(repo_def::read_default(&f.c, &short), invalid(&f, ".zygo/workspace.toml: read 11 bytes, listed 12", true));
 }
 
 #[test] // F2: a blobless clone is read with no fetch; a blob that is not here is gone (R§7.4), whether pruned or promised
@@ -558,10 +572,10 @@ fn long_content_and_short_profile_are_invalid() {
         if a[..2] == ["cat-file", "blob"] { real.stdout.push(b'\n') }
         real
     })), ..Rec::default() };
-    assert_eq!(repo_def::read_default(&f.c, &long), invalid(&f, ".zygo/workspace.toml: read 13 bytes, listed 12"));
+    assert_eq!(repo_def::read_default(&f.c, &long), invalid(&f, ".zygo/workspace.toml: read 13 bytes, listed 12", true));
     let f = fx(&[E::File(".zygo/profiles/rust.toml", b"[overrides]\n")]);
     let short = Rec { short_blob: true, ..Rec::default() };
-    assert_eq!(repo_def::read_default(&f.c, &short), invalid(&f, ".zygo/profiles/rust.toml: read 11 bytes, listed 12"));
+    assert_eq!(repo_def::read_default(&f.c, &short), invalid(&f, ".zygo/profiles/rust.toml: read 11 bytes, listed 12", false));
 }
 
 #[test] // F11: ignored paths in byte order
