@@ -112,8 +112,16 @@ fn shown(s: &str) -> String {
     line(s)
 }
 
+/// A free-text value of the summary (plan call 9, WD-15 review F2): `esc`, then `\` and `"` escaped with `\`, in double
+/// quotes, so a `,` `;` `=` or space in it cannot fake the structure of the line.
+fn quoted(s: &str) -> String {
+    format!("\"{}\"", esc(s).replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 /// The summary of R§7.1 step 6 and R§9.5 "Shown to the operator" (plan call 9): each member of the repository loadout
 /// with the defaults filled in, the agent count, each profile, and with a pool the members that run in passthrough.
+/// Names the shape restricts to `[a-z0-9-]` (member, profile and role names) and the fixed values of `kind` and `job`
+/// are bare; the free text of the files (`cwd`, each override's model) is `quoted`.
 fn summary(def: &Definition, pool_text: Option<&str>, home: Option<&Path>) -> Vec<String> {
     let panes: Vec<_> = repository_loadout(def).map(|l| l.window.into_iter().flat_map(|w| w.pane).collect()).unwrap_or_default();
     let or_dash = |v: &Option<String>| v.as_deref().map_or_else(|| "-".to_string(), esc);
@@ -126,11 +134,11 @@ fn summary(def: &Definition, pool_text: Option<&str>, home: Option<&Path>) -> Ve
             or_dash(&p.job),
             or_dash(&p.profile),
             p.pool,
-            or_dash(&p.cwd)
+            p.cwd.as_deref().map_or_else(|| "-".to_string(), quoted)
         ));
     }
     for (name, prof) in &def.profiles {
-        let overrides: Vec<String> = prof.overrides.iter().map(|(r, m)| format!("{} = {}", esc(r), esc(m))).collect();
+        let overrides: Vec<String> = prof.overrides.iter().map(|(r, m)| format!("{} = {}", esc(r), quoted(m))).collect();
         let disabled: Vec<String> = prof.disabled.iter().map(|r| esc(r)).collect();
         let list = |v: Vec<String>| if v.is_empty() { "-".to_string() } else { v.join(", ") };
         out.push(format!("  profile {}: overrides {}; disabled {}", esc(name), list(overrides), list(disabled)));

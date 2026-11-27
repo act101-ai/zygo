@@ -501,7 +501,7 @@ fn summary_names_passthrough_members_and_the_profile_that_does_not_apply() {
         "  member orchestrator: kind claude-code, job orchestrator, profile -, pool false, cwd -",
         "  member worker-1: kind claude-code, job worker, profile rust, pool true, cwd -",
         "  member worker-2: kind opencode, job worker, profile -, pool false, cwd -",
-        "  profile rust: overrides review = gpt-6-sol; disabled design",
+        r#"  profile rust: overrides review = "gpt-6-sol"; disabled design"#,
     ] {
         assert!(out.lines().any(|l| l == line), "{line:?} not in {out}");
     }
@@ -589,4 +589,85 @@ fn digest_of_another_value_on_approved_files_exits_1() {
     let out = text(&o.stdout);
     assert_eq!((o.status.code(), out.as_str()), (Some(0), &*format!("workspace files already approved ({d})\n")));
     assert_eq!(std::fs::read(approvals(&h)).unwrap(), before);
+}
+
+/// A double-quoted summary value at the start of `s`: its text (`\"` and `\\` read back) and the rest after the
+/// closing quote. `None` when `s` does not start with `"` or the string has no end.
+fn quoted(s: &str) -> Option<(String, &str)> {
+    let mut chars = s.strip_prefix('"')?.char_indices();
+    let mut out = String::new();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' => out.push(chars.next()?.1),
+            '"' => return Some((out, &s[i + 2..])),
+            c => out.push(c),
+        }
+    }
+    None
+}
+
+/// The overrides and the disabled roles of a summary `profile <name>:` line, read by the grammar of plan call 9:
+/// `overrides <role> = "<model>", ...; disabled <role>, ...` (`-` when empty). Panics on any other text.
+fn profile_clauses(line: &str) -> (Vec<(String, String)>, Vec<String>) {
+    let (_, rest) = line.split_once(": overrides ").expect("overrides clause");
+    let mut overrides = Vec::new();
+    let mut rest = rest;
+    if let Some(r) = rest.strip_prefix("-") {
+        rest = r;
+    } else {
+        loop {
+            let (role, r) = rest.split_once(" = ").expect("role = model");
+            assert!(role.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-')), "role {role:?}");
+            let (model, r) = quoted(r).expect("quoted model");
+            overrides.push((role.to_string(), model));
+            match r.strip_prefix(", ") {
+                Some(r) => rest = r,
+                None => {
+                    rest = r;
+                    break;
+                }
+            }
+        }
+    }
+    let list = rest.strip_prefix("; disabled ").expect("one disabled clause");
+    let disabled = if list == "-" { vec![] } else { list.split(", ").map(str::to_string).collect() };
+    for r in &disabled {
+        assert!(r.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-')), "disabled {r:?}");
+    }
+    (overrides, disabled)
+}
+
+#[test] // R§7.1 step 6, plan call 9 (WD-15 review F2): a free-text value cannot fake the structure of a summary line
+fn summary_quotes_free_text_values() {
+    let ws = "version = 1\n[members.w]\nprofile = \"rust\"\ncwd = 'a \"b\", pool true'\n";
+    let p = "overrides = { review = \"opus; disabled -\", x = \"y, implement = haiku\" }\ndisabled = [\"design\"]\n";
+    let q = "overrides = { a = 'b\\\" c\\' }\n";
+    let f = fx(&[(WS, ws.as_bytes()), (".zygo/profiles/rust.toml", p.as_bytes()), (".zygo/profiles/tricky.toml", q.as_bytes())]);
+    let h = home(&f, "");
+    let o = approve(&f, &h, &["--yes"], None, &[]);
+    let out = text(&o.stdout);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let line = |prefix: &str| out.lines().find(|l| l.starts_with(prefix)).unwrap_or_else(|| panic!("{prefix:?} in {out}"));
+
+    let rust = line("  profile rust:");
+    assert_eq!(
+        rust,
+        r#"  profile rust: overrides review = "opus; disabled -", x = "y, implement = haiku"; disabled design"#
+    );
+    assert_eq!(
+        profile_clauses(rust),
+        (
+            vec![("review".into(), "opus; disabled -".into()), ("x".into(), "y, implement = haiku".into())],
+            vec!["design".to_string()]
+        )
+    );
+
+    let tricky = line("  profile tricky:");
+    assert_eq!(tricky, r#"  profile tricky: overrides a = "b\\\" c\\"; disabled -"#);
+    assert_eq!(profile_clauses(tricky), (vec![("a".into(), "b\\\" c\\".into())], vec![]));
+
+    assert_eq!(
+        line("  member w:"),
+        r#"  member w: kind claude-code, job worker, profile rust, pool false, cwd "a \"b\", pool true""#
+    );
 }
