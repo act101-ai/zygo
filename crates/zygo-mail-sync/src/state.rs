@@ -3,7 +3,7 @@
 //! worktree `<workspace_cache_dir>/<id>/mail-sync/`. Every write is atomic, files `0600`, folders `0700` (W-C4,
 //! M-C4); `mail/` and `mail/sync/` are checked at each write and a link at either is refused. A read refuses a
 //! link and does not wait on a FIFO. No file holds a URL or mail content (W-C7, S-C2).
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -231,7 +231,8 @@ pub struct State {
     pub last_error: Option<String>,
     /// The cached public check (S§8.2).
     pub public: Option<PublicCache>,
-    /// Own file's branch path (`registry/<host>.json`, `ack/<host>.json`) → blob id last pushed (S§7.5).
+    /// Own file's branch path (`registry/<host>.json`, `ack/<host>.json`) → blob id last pushed (S§7.5); only the
+    /// paths of own hosts ([`forget_hosts`]).
     pub pushed: BTreeMap<String, String>,
     /// Own file's branch path → blob id about to be pushed (S§7.5).
     pub pending: BTreeMap<String, String>,
@@ -256,14 +257,18 @@ fn valid_check_name(s: &str) -> bool {
             .all(|c| matches!(c, b'a'..=b'z' | b'0'..=b'9' | b'-'))
 }
 
+/// The `<host>` of an own file's branch path `registry/<host>.json` or `ack/<host>.json`, as written; `None` for
+/// any other form.
+fn own_path_host(s: &str) -> Option<&str> {
+    s.strip_prefix("registry/")
+        .or_else(|| s.strip_prefix("ack/"))
+        .and_then(|r| r.strip_suffix(".json"))
+}
+
 /// An own file's branch path: `registry/<host>.json` or `ack/<host>.json`, the host in the S§5 form
 /// `^[a-z0-9][a-z0-9-]{0,31}$`.
 fn valid_own_path(s: &str) -> bool {
-    let host = s
-        .strip_prefix("registry/")
-        .or_else(|| s.strip_prefix("ack/"))
-        .and_then(|r| r.strip_suffix(".json"));
-    host.is_some_and(|h| {
+    own_path_host(s).is_some_and(|h| {
         (1..=32).contains(&h.len())
             && h.bytes()
                 .all(|c| matches!(c, b'a'..=b'z' | b'0'..=b'9' | b'-'))
@@ -323,6 +328,17 @@ pub fn load(sp: &SyncPaths) -> std::io::Result<State> {
     let s: State = serde_json::from_value(v).map_err(bad)?;
     check_state(&s).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     Ok(s)
+}
+
+/// S§7.5, S-C2: removes from `pushed` and `pending` each key whose host is not in `hosts` and that `keep` does not
+/// name, so the state holds no name of a host that is no longer an own host. The caller saves the state. Whether a
+/// key went.
+pub fn forget_hosts(s: &mut State, hosts: &BTreeSet<String>, keep: &BTreeSet<String>) -> bool {
+    let before = s.pushed.len() + s.pending.len();
+    let stays = |k: &String| keep.contains(k) || own_path_host(k).is_some_and(|h| hosts.contains(h));
+    s.pushed.retain(|k, _| stays(k));
+    s.pending.retain(|k, _| stays(k));
+    s.pushed.len() + s.pending.len() != before
 }
 
 /// The caller holds `mail/sync/lock`: the pass under the lock is the only writer of `state.json` (S§15).

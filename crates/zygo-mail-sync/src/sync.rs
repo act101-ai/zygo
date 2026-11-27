@@ -517,6 +517,7 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
     };
     prune_step(c, report, &base, &base_meta, &identity, forced, deadline)?;
     let mut st = state::load(sp).map_err(|_| stop("state"))?;
+    forget_old_hosts(&mut st, &base_meta, &identity, host);
     st.last_ok = Some(env.clock.now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()));
     st.last_error = None;
     state::save(sp, &st).map_err(|_| stop("state"))
@@ -787,6 +788,15 @@ pub(crate) fn own_blobs(meta: &TipMeta, identity: &str) -> BTreeMap<String, Stri
         .filter(|(_, r)| matches!(&r.value, Ok(v) if v.identity == identity))
         .map(|(h, r)| (format!("ack/{h}.json"), r.blob.clone()));
     regs.chain(acks).collect()
+}
+
+/// S§7.5, S-C2 (MS-22 review F1): the keys of `st` for the own hosts of `meta` (`host` and each host whose valid
+/// ack holds `identity`) stay, and so does the path of each file of this identity at `meta`, as the twin check
+/// needs its blob id; every other key goes. Whether a key went.
+pub(crate) fn forget_old_hosts(st: &mut State, meta: &TipMeta, identity: &str, host: &str) -> bool {
+    let hosts: BTreeSet<String> = own_hosts(meta, identity, host).into_iter().collect();
+    let files: BTreeSet<String> = own_blobs(meta, identity).into_keys().collect();
+    state::forget_hosts(st, &hosts, &files)
 }
 
 /// S§7.4: the ULIDs of the message files in the `*@<h>/` folders at the tip, for each own host `h`.
