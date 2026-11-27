@@ -20,10 +20,12 @@ WSKIP=""
 fail() { printf '%s\n' "check-premises: $*"; exit 1; }
 
 # nontrivial <path>: a regular file (not a symlink) of more than 2 bytes that is not {} or [].
+# NUL bytes are deleted with the blanks, so no shell sees a NUL in the command substitution (bash
+# >=4.4 warns on stderr; TF-3).
 nontrivial() {
   [ -f "$1" ] && [ ! -L "$1" ] || return 1
   [ "$(wc -c <"$1" | tr -d ' ')" -gt 2 ] || return 1
-  case "$(tr -d ' \t\r\n' <"$1")" in '{}'|'[]') return 1 ;; esac
+  case "$(tr -d ' \t\r\n\000' <"$1")" in '{}'|'[]') return 1 ;; esac
   return 0
 }
 
@@ -47,7 +49,9 @@ grep -q '^## ' "$P" || fail "$P has no '## ' line (the header lines end at the f
 # the value trimmed of blanks and tabs at its ends. Lines in a fenced code block (``` or ~~~, up to
 # three blanks before it) or an HTML comment (<!-- to -->) are skipped. A value that still holds a
 # tab fails (it would split the record). A row's agent needs a value that is a bare dotted version.
-HDR=$(awk '
+# Here and in every command substitution below that reads file content, a NUL becomes a blank first,
+# as in scan, so no shell sees a NUL there (bash >=4.4 warns on stderr; TF-3).
+HDR=$(tr '\000' ' ' <"$P" | awk '
   { s = $0; sub(/^ ? ? ?/, "", s); f3 = substr(s, 1, 3) }
   fence != "" { if (f3 == fence) fence = ""; next }
   cmt { if (index($0, "-->")) cmt = 0; next }
@@ -59,7 +63,7 @@ HDR=$(awk '
     if (index(v, "\t")) { bad = NR; exit }
     out = out substr($0, 1, i - 1) "\t" v "\t" NR "\n"
   }
-  END { if (bad) { print bad; exit 3 } printf "%s", out }' "$P")
+  END { if (bad) { print bad; exit 3 } printf "%s", out }')
 [ $? -ne 3 ] || fail "$P:$HDR: the value of a header line holds a tab"
 # A name given again must have the same value as its first header line.
 dup=$(printf '%s\n' "$HDR" | awk -F'\t' '$1 in v && v[$1] != $2 { print $3 "\t" $1 ": " $2 "\t" $1 ": " v[$1]; exit } !($1 in v) { v[$1] = $2 }')
@@ -79,12 +83,12 @@ version_of() { printf '%s\n' "$HDR" | N="$1" awk -F'\t' '$1 == ENVIRON["N"] { pr
 # Markdown renders it as code), the first cell trimmed at its ends, in file order; r marks a row of
 # the Results table (its header row starts "| Id | Item |"; it ends at the first line that is not a
 # table line), o any other table line. The Results header and separator rows are left out.
-TROWS=$(awk -F'|' '
+TROWS=$(tr '\000' ' ' <"$P" | awk -F'|' '
   !t && /^\| Id \| Item \|/ { t = 1; next }
   t == 1 { t = 2; if ($0 ~ /^ ? ? ?\|[-:| \t]*$/) next }
   t == 2 && $0 !~ /^ ? ? ?\|/ { t = 3 }
   /^ ? ? ?\|/ { id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id); print NR "\t" id "\t" (t == 2 ? "r" : "o") }
-' "$P")
+')
 # The file has one Results table: a second header row "| Id | Item |" fails.
 res2=$(awk '/^\| Id \| Item \|/ { if (n++) { print NR; exit } }' "$P")
 [ -z "$res2" ] || fail "$P:$res2: a second Results table header row '| Id | Item |'"
@@ -113,9 +117,9 @@ cells() {
 }
 
 # Spec sections: §19 is from "## 19." to "## 19a."; §19a is from "## 19a." to "## 20.".
-S19=$(awk '/^## 19\. /{f=1;next} /^## 19a\. /{f=0} f' "$SPEC")
-S19A=$(awk '/^## 19a\. /{f=1;next} /^## 20\. /{f=0} f' "$SPEC")
-S105=$(awk '/^### 10\.5 /{f=1;next} /^### 10\.6 /{f=0} f' "$SPEC")
+S19=$(tr '\000' ' ' <"$SPEC" | awk '/^## 19\. /{f=1;next} /^## 19a\. /{f=0} f')
+S19A=$(tr '\000' ' ' <"$SPEC" | awk '/^## 19a\. /{f=1;next} /^## 20\. /{f=0} f')
+S105=$(tr '\000' ' ' <"$SPEC" | awk '/^### 10\.5 /{f=1;next} /^### 10\.6 /{f=0} f')
 
 for id in $IDS $WIDS; do
   n=$(rows_of "$id")
@@ -134,7 +138,7 @@ for e in $(printf '%s\n' "$ROWS" | tr '\t' ':'); do
   ln=${e%%:*} id=${e#*:}
   n=$(rows_of "$id")
   [ "$n" -eq 1 ] || fail "$id: expected exactly one row, found $n"
-  row=$(sed -n "${ln}p" "$P")
+  row=$(sed -n "${ln}p" "$P" | tr '\000' ' ')
   agent=$(cells 4 4 | trim)
   ver=$(cells 5 5 | trim)
   date=$(cells 6 6 | trim)
@@ -280,7 +284,8 @@ done
 # VX: the ERE ^(<path>|<path>):<digits>: for the list (a grep -n hit line of exactly that file), dots
 # escaped. It is always applied case-sensitively, so only the exact path is exempt.
 VX="^($(printf '%s' "$VERBATIM" | sed 's/[.]/\\./g; s/ /|/g')):[0-9]+:"
-NOTES=$( (grep -anH 'N38' "$SPEC" docs/conformance.md 2>/dev/null) || true)
+# NOTES: the N38 lines, a NUL a blank (a dropped NUL could hide a hit or make one; TF-3).
+NOTES=$( (grep -anH 'N38' "$SPEC" docs/conformance.md 2>/dev/null | tr '\000' ' ') || true)
 # scan <ERE> <exempt ERE> <label> [i] [<drop sed -E script>]: the first line that matches and is not
 # exempt fails; i: the ERE matches any case (the exempt ERE never does). <drop sed -E script>:
 # applied to a hit line, which fails only when the ERE still matches the result; the message shows

@@ -72,6 +72,24 @@ add_lines() {
         mv "$d/docs/premises.md.new" "$d/docs/premises.md"
 }
 
+# SOH: the byte \001. A shell variable cannot hold a NUL, so a case plants a SOH and soh_to_nul
+# changes it to a NUL (TF-3).
+SOH=$(printf '\001')
+
+# soh_to_nul <file>: changes each SOH byte of the file to a NUL byte; the file must then hold a NUL.
+soh_to_nul() {
+    tr '\001' '\000' <"$1" > "$1.new" && mv "$1.new" "$1"
+    [ "$(tr -cd '\000' <"$1" | wc -c | tr -d ' ')" -gt 0 ] || fail "planted NUL did not apply"
+}
+
+# add_nul <file> <ERE> <line>: inserts the line (a SOH in it becomes a NUL) after the first line of
+# the file that matches the ERE.
+add_nul() {
+    L="$3" R="$2" awk '{ print } !d && $0 ~ ENVIRON["R"] { print ENVIRON["L"]; d = 1 }' "$1" > "$1.new" &&
+        mv "$1.new" "$1"
+    soh_to_nul "$1"
+}
+
 # add_row <dir> <row>: inserts the row after the last row of the Results table (from the header row
 # "| Id | Item |" to the first line that is not a table line). The row goes through the environment
 # (not awk -v), so its backslashes stay as written.
@@ -151,6 +169,13 @@ expect_fail_prefix() {
     [ "$RC" -eq 1 ] || fail "exit $RC, expected 1"
     [ "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" -eq 1 ] || fail "output is not one line"
     case "$OUT" in "check-premises: $1"*) ;; *) fail "output does not start with 'check-premises: $1'" ;; esac
+}
+
+# expect_ok_alone: expect_ok, and the ok line is all of the output, so the script wrote nothing to
+# stderr (run and run_names give both streams in OUT).
+expect_ok_alone() {
+    expect_ok
+    [ "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" -eq 1 ] || fail "output is not one line: the script wrote to stderr"
 }
 
 CASE="real tree"
@@ -921,24 +946,78 @@ expect_fail "forbidden name from N2_FORBIDDEN_NAMES: $BINF:1"
 
 # bash >=4.4 writes a warning to stderr when a command substitution reads a NUL byte; under bash the
 # scan of a binary file gives only the failure line (TF-3). The e-mail and API key cases guard the
-# tr that scan has now.
+# tr that scan has now: the NUL is a blank in the message (with no tr, read drops it: "ab").
 CASE="TF-3: under bash, a binary file with an e-mail address"
 D=$(mk tf3_mail)
 printf 'a\0b bob@corp.com\n' > "$D/$BINF"
 run_names "$D" '' bash
-expect_fail_prefix "forbidden content (e-mail address): $BINF:1:a"
+expect_fail "forbidden content (e-mail address): $BINF:1:a b bob@corp.com"
 
 CASE="TF-3: under bash, a binary file with an API key"
 D=$(mk tf3_key)
 printf 'a\0b sk-ant-x\n' > "$D/$BINF"
 run_names "$D" '' bash
-expect_fail_prefix "forbidden content (API key): $BINF:1:a"
+expect_fail "forbidden content (API key): $BINF:1:a b sk-ant-x"
 
 CASE="TF-3: under bash, a binary file with a forbidden name"
 D=$(mk tf3_name)
 printf 'a\0b alice\n' > "$D/$BINF"
 run_names "$D" alice bash
 expect_fail "forbidden name from N2_FORBIDDEN_NAMES: $BINF:1"
+
+# TF-3 round 1: every command substitution that reads file content maps a NUL to a blank first, so
+# bash gives no warning on stderr and a NUL neither hides nor makes a hit. Each case runs under bash;
+# the ok cases set a name that is nowhere (zzcinameq), so the ok line is the only output line.
+CASE="TF-3: under bash, an N38 line with a NUL before a forbidden name"
+D=$(mk tf3_notes)
+printf 'N38 note: x\0alice\n' >> "$D/docs/conformance.md"
+run_names "$D" alice bash
+expect_fail "forbidden name from N2_FORBIDDEN_NAMES: docs/conformance.md:$(wc -l <"$D/docs/conformance.md" | tr -d ' ')"
+
+CASE="TF-3: under bash, a required file with a NUL"
+D=$(mk tf3_required)
+printf 'x\0\n' > "$D/fixtures/opencode/help.txt"
+run_names "$D" zzcinameq bash
+expect_ok_alone
+
+CASE="TF-3: under bash, a header line with a NUL"
+D=$(mk tf3_header)
+add_nul "$D/docs/premises.md" '^tmux: ' "Zz-test: a${SOH}b"
+run_names "$D" zzcinameq bash
+expect_ok_alone
+
+CASE="TF-3: under bash, a table line with a NUL in its first cell"
+D=$(mk tf3_table)
+add_nul "$D/docs/premises.md" '^tmux: ' "| a${SOH}b | x |"
+run_names "$D" zzcinameq bash
+expect_ok_alone
+
+CASE="TF-3: under bash, a Results row with a NUL"
+D=$(mk tf3_row)
+evidence "$D"
+add_header "$D" 'Codex: 0.172.0'
+add_row "$D" "$(row PC99 Codex 0.172.0 verified fixtures/codex/pc1.txt | sed "s/Test row/Test${SOH}row/")"
+soh_to_nul "$D/docs/premises.md"
+run_names "$D" zzcinameq bash
+expect_ok_alone
+
+CASE="TF-3: under bash, spec section 19 with a NUL"
+D=$(mk tf3_s19)
+add_nul "$D/docs/specs/2026-11-18-zygo-design.md" '^## 19\. ' "x${SOH}y"
+run_names "$D" zzcinameq bash
+expect_ok_alone
+
+CASE="TF-3: under bash, spec section 19a with a NUL"
+D=$(mk tf3_s19a)
+add_nul "$D/docs/specs/2026-11-18-zygo-design.md" '^## 19a\. ' "x${SOH}y"
+run_names "$D" zzcinameq bash
+expect_ok_alone
+
+CASE="TF-3: under bash, spec section 10.5 with a NUL"
+D=$(mk tf3_s105)
+add_nul "$D/docs/specs/2026-11-18-zygo-design.md" '^### 10\.5 ' "x${SOH}y"
+run_names "$D" zzcinameq bash
+expect_ok_alone
 
 # The exemption is the exact path, also for a rule that matches any case: a case variant of the
 # Codex verbatim path is scanned. The real schema is removed first. On a case-insensitive file system
