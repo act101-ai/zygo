@@ -9,7 +9,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use zygo_config::layers::seg;
 use zygo_config::repo_def::SystemGit;
-use zygo_config::{check, load, Config, KeyRef, Layer, LoadContext, Merged, Severity, Violation};
+use zygo_config::check::{check_with, RepositoryLoadout};
+use zygo_config::{load, Config, KeyRef, Layer, LoadContext, Merged, Severity, Violation};
 use zygo_core::exit::ExitCode;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
@@ -162,6 +163,19 @@ fn loadout_checks(cfg: &Config, base: &PaneBase) -> Vec<Violation> {
     out
 }
 
+/// What the R§10 read gave for the `repository` loadout of the workspace files, as `zygo up` uses it (`up.rs`
+/// `choose`; FX-29): approved files that hold `.zygo/workspace.toml` add it; with no read (no checkout, a failed read,
+/// a slash call) the files are not known; every other state adds none.
+fn repository_of(state: &State) -> RepositoryLoadout {
+    match state {
+        State::Approved { workspace: true } => RepositoryLoadout::Added,
+        State::Outside | State::Unread | State::Slash => RepositoryLoadout::NotRead,
+        State::Absent | State::Invalid { .. } | State::NotApproved { .. } | State::Approved { workspace: false } => {
+            RepositoryLoadout::NotAdded
+        }
+    }
+}
+
 pub fn run() -> i32 {
     let tokens: Vec<String> = std::env::args().skip(2).collect();
     let ctx = LoadContext { paths: Paths::from_env(), repo: std::env::current_dir().ok(), team: None };
@@ -250,7 +264,7 @@ fn run_in(tokens: &[String], ctx: &LoadContext, s: &dyn SecretStore, team: &dyn 
             0
         }
         Sub::Check => {
-            let mut violations = check(&merged.config);
+            let mut violations = check_with(&merged.config, repository_of(&v.state));
             violations.extend(loadout_checks(&merged.config, &base));
             // R§10 `config check`: an invalid definition is one warning, so the exit status stays that of the config;
             // an unread one is its line on stderr; the other states print nothing here.

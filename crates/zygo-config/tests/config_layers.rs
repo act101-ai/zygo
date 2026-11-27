@@ -1696,6 +1696,33 @@ fn check_default_loadout_names_a_loadout() {
     err(&(base() + "[workspace]\ndefault_loadout = \"nope\"\n"), "workspace.default_loadout: unknown loadout");
 }
 
+/// FX-29, R§10 `zygo config check` row: `default_loadout = "repository"` with no user table follows the read of the
+/// workspace files: accepted when they add the loadout, the error when the read adds none, a warning with no read.
+/// `check` is `check_with` and `NotAdded` (its callers make no read). Any other name is unchanged.
+#[test]
+fn check_default_loadout_repository_follows_the_read() {
+    use zygo_config::check::{check_with, RepositoryLoadout};
+    let c = loaded(&(base() + "[workspace]\ndefault_loadout = \"repository\"\n")).config;
+    assert_eq!(check_with(&c, RepositoryLoadout::Added), vec![]);
+    let unknown = vec![Violation {
+        severity: Severity::Error,
+        path: "workspace.default_loadout".into(),
+        message: "unknown loadout".into(),
+    }];
+    assert_eq!(check_with(&c, RepositoryLoadout::NotAdded), unknown);
+    assert_eq!(check(&c), unknown);
+    let not_read = vec![Violation {
+        severity: Severity::Warning,
+        path: "workspace.default_loadout".into(),
+        message: "no workspace files were read here; zygo up uses \"repository\" only from approved files that hold .zygo/workspace.toml".into(),
+    }];
+    assert_eq!(check_with(&c, RepositoryLoadout::NotRead), not_read);
+    let nope = loaded(&(base() + "[workspace]\ndefault_loadout = \"nope\"\n")).config;
+    for r in [RepositoryLoadout::Added, RepositoryLoadout::NotAdded, RepositoryLoadout::NotRead] {
+        assert_eq!(check_with(&nope, r), unknown, "{r:?}");
+    }
+}
+
 #[test]
 fn check_loadout_missing_profile_is_a_warning() {
     let v = one(&(base() + LO + "kind = \"claude-code\"\nprofile = \"cheap\"\n"));
