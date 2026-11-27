@@ -948,3 +948,54 @@ fn non_ulid_entries_do_not_keep_the_old_ack() {
     assert_eq!(drop_host(&env(&b), WS_ID, "b", &mut |_| true), Ok(Some(0)));
     assert!(!under(&tip_paths(&r), "bob@b/"));
 }
+
+#[test] // S§7.6 Rename and `--drop-host`, S§13 limit 2 (FX-27 review round 2 F1): a folder name that is no address
+fn non_address_folders_of_the_old_host_stay_and_do_not_keep_the_ack() {
+    let (r, _a, b) = pair();
+    let u = Ulid::from_parts(T0 * 1000, 40);
+    let doc = blob(&r.bare, b"{}");
+    // `all` is a reserved name and `Bob` has upper case: `address::parse` refuses both folder names.
+    let (reserved, upper) = (format!("all@b/{u}.json"), format!("Bob@b/{u}.json"));
+    put_entries(&r, &[("100644", &doc, &reserved), ("100644", &doc, &upper)]);
+    assert_eq!(sync(&b).delivered, 0);
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+    // `--drop-host` takes only the folders whose name is an address of the host; only the operator removes these.
+    assert_eq!(drop_host(&env(&b), WS_ID, "b", &mut |_| true), Ok(Some(0)));
+    let paths = tip_paths(&r);
+    assert!(paths.contains(&reserved) && paths.contains(&upper), "{paths:?}");
+}
+
+#[test] // S§9 Tree, S§13 limit 2 (FX-27 review round 2 F2): the prune checks the folder name, not the member name
+fn prune_skips_a_non_address_folder_with_a_listed_ulid() {
+    let (r, a, b) = pair();
+    let m = send(&a, "alice", ("bob", "b"));
+    sync(&a);
+    assert_eq!(sync(&b).delivered, 1);
+    let doc = blob(&r.bare, b"{}");
+    let (own, reserved, other) = (format!("bob@b/{m}.json"), format!("all@b/{m}.json"), format!("zed@b/{m}.json"));
+    put_entries(&r, &[("100644", &doc, &reserved), ("100644", &doc, &other)]);
+    sync(&b);
+    assert!(imported(&r, "ack/b.json").contains(&m.to_string()));
+    assert!(prune_now(&b).notes.contains(&"pruned 2 files".to_string()));
+    let paths = tip_paths(&r);
+    assert!(!paths.contains(&own) && !paths.contains(&other), "{paths:?}");
+    assert!(paths.contains(&reserved), "{paths:?}");
+}
+
+#[test] // S§7.6 Rename (b) (FX-27 review round 2 F3): a link under a name this workspace does not have is never acked
+fn renamed_host_ack_stays_with_an_unacked_link_under_a_non_member_name() {
+    let (r, _a, b) = pair();
+    let u = Ulid::from_parts(T0 * 1000, 41);
+    put_entries(&r, &[("120000", &link(&r), &format!("zed@b/{u}.json"))]);
+    sync(&b);
+    b.config(Some("b2"), "");
+    sync(&b);
+    sync(&b);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    assert!(file(&r, "ack/b.json").is_some());
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string(), "b".to_string()]);
+}
