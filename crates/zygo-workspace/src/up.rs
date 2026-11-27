@@ -176,7 +176,7 @@ pub mod testing {
     }
 
     /// Runs the hook of (`point`, `dir`), if one is set, outside the lock of the hook table.
-    pub(super) fn fire(dir: &Path, point: &'static str) -> Result<(), String> {
+    pub(crate) fn fire(dir: &Path, point: &'static str) -> Result<(), String> {
         let hook = HOOKS.lock().unwrap_or_else(|e| e.into_inner()).get(&(point, dir.to_path_buf())).cloned();
         hook.map_or(Ok(()), |h| h())
     }
