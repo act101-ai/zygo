@@ -1349,10 +1349,34 @@ fn import_delivers_and_wakes_by_the_read_under_the_lock() {
     assert_eq!(*typed.lock().unwrap(), vec![("%3".to_string(), WAKE_TEXT.to_string())]);
 }
 
-#[test] // FX-24 review F2, S§8.6, S§10.1: the refused-message notice wakes its sender from the read under the lock
+#[test] // FX-24 review F2, R2 F5, S§8.6, S§10.1: the notice goes to the sender's key of the pass's first read, and wakes
+// it from the read under the lock (here: a new session of the same member, live only in that read)
 fn notice_wakes_the_sender_from_the_read_under_the_lock() {
     let _g = exclusive();
     let (_r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "say zz-forbidden-zz now");
+    a.config(Some("a"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
+    let _s = live(&a.paths, "salice2");
+    let typed = Typed::default();
+    let w = Store::open(&a.paths, WS_ID);
+    let h = after_gate(move || {
+        w.update(Duration::from_secs(10), &mut |ws| {
+            ws.members.get_mut(ALICE).unwrap().zygo_session = Some("salice2".into());
+            Ok(())
+        })
+        .unwrap();
+    });
+    let e = env(&a, h, Clock::at(T0), Verdict::Local, StubWake { idle: true, typed: typed.clone() }, far_policy());
+    run(&e, WS_ID, Mode::Cli).unwrap();
+    assert!(a.sp().refused.join(format!("{id}.json")).is_file());
+    assert_eq!(fs::read_dir(a.sp().mail.join(ALICE).join("new")).unwrap().count(), 1);
+    assert_eq!(*typed.lock().unwrap(), vec![("%3".to_string(), WAKE_TEXT.to_string())]);
+}
+
+#[test] // FX-24 review R2 F5, S§8.6: a sender name that maps to another key under the lock gets no notice: `moved`
+fn notice_to_a_renamed_sender_whose_name_another_member_took_is_moved() {
+    let _g = exclusive();
+    let (r, a, _b) = pair();
     let id = send(&a, "alice", ("bob", "b"), "say zz-forbidden-zz now");
     a.config(Some("a"), "[[redaction.pattern]]\nid = \"ship_word\"\npattern = \"zz-forbidden-zz\"\naction = \"redact\"\ndescription = \"d\"\n");
     let _s = live(&a.paths, "salice");
@@ -1362,8 +1386,13 @@ fn notice_wakes_the_sender_from_the_read_under_the_lock() {
     let e = env(&a, h, Clock::at(T0), Verdict::Local, StubWake { idle: true, typed: typed.clone() }, far_policy());
     run(&e, WS_ID, Mode::Cli).unwrap();
     assert!(a.sp().refused.join(format!("{id}.json")).is_file());
-    assert_eq!(fs::read_dir(a.sp().mail.join(NEW_ALICE).join("new")).unwrap().count(), 1);
-    assert_eq!(*typed.lock().unwrap(), vec![("%3".to_string(), WAKE_TEXT.to_string())]);
+    assert!(fs::symlink_metadata(a.sp().outbox.join(format!("{id}.json"))).is_err());
+    assert!(fs::symlink_metadata(a.sp().mail.join(NEW_ALICE)).is_err(), "the new alice got the notice");
+    assert_eq!(new_count(&a, ALICE), 0, "alicia got a notice for a name she no longer has");
+    assert!(typed.lock().unwrap().is_empty(), "a member was woken");
+    let log = a.errors();
+    assert!(log.lines().any(|l| l.ends_with(&format!("mail sync: outbox {id}: notice: moved"))), "{log}");
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none());
 }
 
 #[test] // FX-24 review R2 F1, S§8.6: a full sender inbox is a lasting refusal of the notice: the message moves once

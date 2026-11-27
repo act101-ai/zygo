@@ -659,13 +659,21 @@ fn host_of(to: &str) -> &str { to.split_once('@').map_or("", |(_, h)| h) }
 /// dropped before the next git call. A notice that a later pass can deliver (a lock not taken, an I/O error) writes
 /// the log line `notice` and leaves the file in the outbox for the next pass. A notice that no pass can deliver
 /// (FX-24 review R2 F1: [`notice_error`]) moves the file all the same, with the log line `notice: <reason>`: `full`
-/// (the sender's `new/` is at `max_unread`) or `no-record` (the sender has no record in that read: no notice and no
-/// maildir, as `cli`). A failed move writes the line `notice` too.
+/// (the sender's `new/` is at `max_unread`), `no-record` (the sender has no record in that read: no notice and no
+/// maildir, as `cli`) or `moved` (review R2 F5: the sender's name maps to other keys in that read than in the pass's
+/// first read `c.ws`, so it was renamed or another member holds the name now; the notice goes to no one). A failed
+/// move writes the line `notice` too.
 fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut Notified) {
     let now = c.env.clock.now();
     let mut notify = |sender: &str, subject: &str, secret_body: &str| -> Result<(), NoticeError> {
         let d = Delivery::begin(&c.store, MAIL_LOCK_WAIT).map_err(notice_error)?;
         let targets = names::resolve(d.workspace(), sender, None).map_err(notice_error)?;
+        // FX-24 review R2 F5: the sender is the member that held the name in the pass's first read. A name that maps
+        // to other keys under the lock (renamed, or now held by another member) is not that member: no notice.
+        let keys = |t: &[names::Target]| t.iter().map(|t| t.key.clone()).collect::<Vec<_>>();
+        if names::resolve(&c.ws, sender, None).map(|first| keys(&first)).ok() != Some(keys(&targets)) {
+            return Err(NoticeError::Never("moved"));
+        }
         let mut sent = false;
         let each = || -> Result<(), NoticeError> {
             for t in targets {
