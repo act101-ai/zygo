@@ -598,9 +598,11 @@ fn worktree_list_of_the_found_checkout_timed_out_exits_1() {
     let sub = r.join("sub");
     fs::create_dir_all(&sub).unwrap();
     let (stub, log) = blocking_list_git(t);
-    // `rev-parse` (the real git) finds `r` from `sub` well within the bound; only the list of `r` then waits for it.
+    // FX-25 review R2 F8: `rev-parse` (the real git) has one hour, so its time never decides the result; the list of
+    // `r` has its own 2 s bound (`up::Bounds::list`), which starts when that list starts, and the stub waits past it.
+    let bounds = up::Bounds { all: Duration::from_secs(3600), main: None, list: Some(Duration::from_secs(2)) };
     assert_eq!(
-        up::find_checkout_with(&sub, Duration::from_secs(2), stub.as_os_str(), &cache(t)).err(),
+        up::find_checkout_by(&sub, bounds, stub.as_os_str(), &cache(t)).err(),
         Some(Exit { code: 1, message: "git worktree list timed out".into() })
     );
     // One list ran, in the found checkout `r` (the second site), not the probe in the cwd `sub`.
