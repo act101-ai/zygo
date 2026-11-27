@@ -19,9 +19,10 @@ WSKIP=""
 
 fail() { printf '%s\n' "check-premises: $*"; exit 1; }
 
-# nontrivial <path>: a regular file (not a symlink) of more than 2 bytes that is not {} or [].
-# NUL bytes are deleted with the blanks, so no shell sees a NUL in the command substitution (bash
-# >=4.4 warns on stderr; TF-3).
+# nontrivial <path>: a regular file (not a symlink) of more than 2 bytes that is not {} or [] (the rule
+# of K§6.3.7, docs/specs/2026-11-25-client-model-design.md, "fixture:<path>"; a file of only NULs or
+# only blanks passes, as it did before TF-3). NUL bytes are deleted with the blanks, as the shell did
+# in the command substitution before TF-3, so no shell sees a NUL there (bash >=4.4 warns on stderr).
 nontrivial() {
   [ -f "$1" ] && [ ! -L "$1" ] || return 1
   [ "$(wc -c <"$1" | tr -d ' ')" -gt 2 ] || return 1
@@ -49,9 +50,13 @@ grep -q '^## ' "$P" || fail "$P has no '## ' line (the header lines end at the f
 # the value trimmed of blanks and tabs at its ends. Lines in a fenced code block (``` or ~~~, up to
 # three blanks before it) or an HTML comment (<!-- to -->) are skipped. A value that still holds a
 # tab fails (it would split the record). A row's agent needs a value that is a bare dotted version.
-# Here and in every command substitution below that reads file content, a NUL becomes a blank first,
-# as in scan, so no shell sees a NUL there (bash >=4.4 warns on stderr; TF-3).
-HDR=$(tr '\000' ' ' <"$P" | awk '
+# Here and in every command substitution below whose value feeds a decision, the command reads the
+# file itself and tr -d deletes each NUL from its output: the shell did the same in the substitution
+# before TF-3, so a NUL changes no result (a blank in its place would: "<NUL>```" would be a fence),
+# and no shell sees a NUL there (bash >=4.4 warns on stderr). No tr writes into a reader that stops
+# early (awk exit), so with SIGPIPE ignored no tr gets EPIPE (TF-3 round 2). The value of a header
+# line that holds a tab gives HDR as that line's number alone; a header name never starts with a digit.
+HDR=$(awk '
   { s = $0; sub(/^ ? ? ?/, "", s); f3 = substr(s, 1, 3) }
   fence != "" { if (f3 == fence) fence = ""; next }
   cmt { if (index($0, "-->")) cmt = 0; next }
@@ -63,11 +68,12 @@ HDR=$(tr '\000' ' ' <"$P" | awk '
     if (index(v, "\t")) { bad = NR; exit }
     out = out substr($0, 1, i - 1) "\t" v "\t" NR "\n"
   }
-  END { if (bad) { print bad; exit 3 } printf "%s", out }')
-[ $? -ne 3 ] || fail "$P:$HDR: the value of a header line holds a tab"
+  END { if (bad) { print bad; exit } printf "%s", out }' "$P" | tr -d '\000')
+case $HDR in [0-9]*) fail "$P:$HDR: the value of a header line holds a tab" ;; esac
 # A name given again must have the same value as its first header line.
 dup=$(printf '%s\n' "$HDR" | awk -F'\t' '$1 in v && v[$1] != $2 { print $3 "\t" $1 ": " $2 "\t" $1 ": " v[$1]; exit } !($1 in v) { v[$1] = $2 }')
 TAB=$(printf '\t')
+SOH=$(printf '\001')
 if [ -n "$dup" ]; then
   IFS=$TAB read -r ln h1 h0 <<EOF_DUP
 $dup
@@ -83,12 +89,12 @@ version_of() { printf '%s\n' "$HDR" | N="$1" awk -F'\t' '$1 == ENVIRON["N"] { pr
 # Markdown renders it as code), the first cell trimmed at its ends, in file order; r marks a row of
 # the Results table (its header row starts "| Id | Item |"; it ends at the first line that is not a
 # table line), o any other table line. The Results header and separator rows are left out.
-TROWS=$(tr '\000' ' ' <"$P" | awk -F'|' '
+TROWS=$(awk -F'|' '
   !t && /^\| Id \| Item \|/ { t = 1; next }
   t == 1 { t = 2; if ($0 ~ /^ ? ? ?\|[-:| \t]*$/) next }
   t == 2 && $0 !~ /^ ? ? ?\|/ { t = 3 }
   /^ ? ? ?\|/ { id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id); print NR "\t" id "\t" (t == 2 ? "r" : "o") }
-')
+' "$P" | tr -d '\000')
 # The file has one Results table: a second header row "| Id | Item |" fails.
 res2=$(awk '/^\| Id \| Item \|/ { if (n++) { print NR; exit } }' "$P")
 [ -z "$res2" ] || fail "$P:$res2: a second Results table header row '| Id | Item |'"
@@ -117,9 +123,9 @@ cells() {
 }
 
 # Spec sections: §19 is from "## 19." to "## 19a."; §19a is from "## 19a." to "## 20.".
-S19=$(tr '\000' ' ' <"$SPEC" | awk '/^## 19\. /{f=1;next} /^## 19a\. /{f=0} f')
-S19A=$(tr '\000' ' ' <"$SPEC" | awk '/^## 19a\. /{f=1;next} /^## 20\. /{f=0} f')
-S105=$(tr '\000' ' ' <"$SPEC" | awk '/^### 10\.5 /{f=1;next} /^### 10\.6 /{f=0} f')
+S19=$(awk '/^## 19\. /{f=1;next} /^## 19a\. /{f=0} f' "$SPEC" | tr -d '\000')
+S19A=$(awk '/^## 19a\. /{f=1;next} /^## 20\. /{f=0} f' "$SPEC" | tr -d '\000')
+S105=$(awk '/^### 10\.5 /{f=1;next} /^### 10\.6 /{f=0} f' "$SPEC" | tr -d '\000')
 
 for id in $IDS $WIDS; do
   n=$(rows_of "$id")
@@ -138,7 +144,9 @@ for e in $(printf '%s\n' "$ROWS" | tr '\t' ':'); do
   ln=${e%%:*} id=${e#*:}
   n=$(rows_of "$id")
   [ "$n" -eq 1 ] || fail "$id: expected exactly one row, found $n"
-  row=$(sed -n "${ln}p" "$P" | tr '\000' ' ')
+  row=$(sed -n "${ln}p" "$P" | tr -d '\000')
+  # cells uses \001 as the placeholder of an escaped "|", so a row that holds one fails closed.
+  case $row in *"$SOH"*) fail "$P:$ln: row '$id' holds a SOH byte (\\001), the placeholder of an escaped '|'" ;; esac
   agent=$(cells 4 4 | trim)
   ver=$(cells 5 5 | trim)
   date=$(cells 6 6 | trim)
@@ -284,8 +292,9 @@ done
 # VX: the ERE ^(<path>|<path>):<digits>: for the list (a grep -n hit line of exactly that file), dots
 # escaped. It is always applied case-sensitively, so only the exact path is exempt.
 VX="^($(printf '%s' "$VERBATIM" | sed 's/[.]/\\./g; s/ /|/g')):[0-9]+:"
-# NOTES: the N38 lines, a NUL a blank (a dropped NUL could hide a hit or make one; TF-3).
-NOTES=$( (grep -anH 'N38' "$SPEC" docs/conformance.md 2>/dev/null | tr '\000' ' ') || true)
+# NOTES: the N38 lines, each NUL deleted, as the shell did before TF-3 (scan and name_scan match on
+# NOTES, so a blank in place of a NUL would change a hit: "sk-<NUL>ant-" is "sk-ant-"; TF-3 round 2).
+NOTES=$( (grep -anH 'N38' "$SPEC" docs/conformance.md 2>/dev/null | tr -d '\000') || true)
 # scan <ERE> <exempt ERE> <label> [i] [<drop sed -E script>]: the first line that matches and is not
 # exempt fails; i: the ERE matches any case (the exempt ERE never does). <drop sed -E script>:
 # applied to a hit line, which fails only when the ERE still matches the result; the message shows
@@ -429,13 +438,15 @@ env_scan '/cc-socks\\*/[0-9]+\.sock' 'socket pid'
 # given (host names: A-Za-z0-9_-, as in scrub.py). A hit line ("path:line:text") that matches the
 # exempt ERE is dropped, as in scan. The message names the file and line, never the name. A NUL in a
 # hit line becomes a blank first, as in scan, so no shell sees a NUL in the command substitution
-# (bash >=4.4 warns on stderr; TF-3).
+# (bash >=4.4 warns on stderr; TF-3); grep matched the raw bytes, and the message keeps only the
+# "path:line" part, so the blank changes no result. sed -n 1p, not head, keeps the first hit line: it
+# reads to the end, so with SIGPIPE ignored tr and grep get no EPIPE (TF-3 round 2).
 name_scan() {
   e=$(printf '%s' "$2" | sed 's/[][\.*^$+?(){}|/]/\\&/g')
   wc=${3:-A-Za-z0-9_}
   rx="(^|[^$wc]|\\\\[nrtbf])$e([^$wc]|\$)"
   # shellcheck disable=SC2086
-  hit=$( (grep -rnaiE -- "$rx" $SCOPE "$P" 2>/dev/null; printf '%s\n' "$NOTES" | grep -aiE -- "$rx") | grep -av -E -- "${4:-^\$}" | tr '\000' ' ' | head -n 1)
+  hit=$( (grep -rnaiE -- "$rx" $SCOPE "$P" 2>/dev/null; printf '%s\n' "$NOTES" | grep -aiE -- "$rx") | grep -av -E -- "${4:-^\$}" | tr '\000' ' ' | sed -n 1p)
   [ -z "$hit" ] || fail "$1: $(printf '%s\n' "$hit" | head -n 1 | cut -d: -f1-2)"
 }
 for w in ${N2_FORBIDDEN_NAMES:-}; do name_scan "forbidden name from N2_FORBIDDEN_NAMES" "$w" A-Za-z0-9_ "$VX"; done

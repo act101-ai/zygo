@@ -171,11 +171,40 @@ expect_fail_prefix() {
     case "$OUT" in "check-premises: $1"*) ;; *) fail "output does not start with 'check-premises: $1'" ;; esac
 }
 
-# expect_ok_alone: expect_ok, and the ok line is all of the output, so the script wrote nothing to
-# stderr (run and run_names give both streams in OUT).
+# run_split <dir> <names> <shell> [nopipe]: as run_names, but OUT is stdout only and ERR is stderr
+# only (TF-3 round 2). nopipe: the script starts with SIGPIPE ignored (as on the macOS CI runner), so
+# a process that writes into a pipe whose reader has exited gets EPIPE and may print an error on
+# stderr in place of a silent death.
+ERR=""
+run_split() {
+    tick other
+    if [ "${4:-}" = nopipe ]; then
+        OUT=$( (trap '' PIPE; export N2_FORBIDDEN_NAMES="$2"; exec "$3" "$1/scripts/check-premises.sh") 2>"$T/err")
+    else
+        OUT=$( (export N2_FORBIDDEN_NAMES="$2"; exec "$3" "$1/scripts/check-premises.sh") 2>"$T/err")
+    fi
+    RC=$?
+    ERR=$(cat "$T/err")
+    N=$((N + 1))
+    tick check
+}
+
+# expect_no_stderr: ERR (from run_split) is empty.
+expect_no_stderr() {
+    [ -z "$ERR" ] || fail "the script wrote to stderr: $ERR"
+}
+
+# expect_ok_alone: after run_split, exit 0, stderr empty and the last stdout line the ok line (a note
+# line, such as the one for a host name shorter than 4 characters, may come before it).
 expect_ok_alone() {
+    expect_no_stderr
     expect_ok
-    [ "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" -eq 1 ] || fail "output is not one line: the script wrote to stderr"
+}
+
+# expect_fail_alone <text>: after run_split, stderr empty and stdout exactly "check-premises: <text>".
+expect_fail_alone() {
+    expect_no_stderr
+    expect_fail "$1"
 }
 
 CASE="real tree"
@@ -965,31 +994,32 @@ printf 'a\0b alice\n' > "$D/$BINF"
 run_names "$D" alice bash
 expect_fail "forbidden name from N2_FORBIDDEN_NAMES: $BINF:1"
 
-# TF-3 round 1: every command substitution that reads file content maps a NUL to a blank first, so
-# bash gives no warning on stderr and a NUL neither hides nor makes a hit. Each case runs under bash;
-# the ok cases set a name that is nowhere (zzcinameq), so the ok line is the only output line.
-CASE="TF-3: under bash, an N38 line with a NUL before a forbidden name"
+# TF-3: every command substitution that reads file content gives the shell no NUL byte, so bash gives
+# no warning on stderr. Round 2: where the value feeds a decision, the NUL is deleted from the output
+# of the command that reads the file, as every shell did before TF-3, so a NUL changes no result. Each
+# case runs under bash with stdout and stderr apart (run_split).
+CASE="TF-3: under bash, an N38 line with a NUL inside a forbidden name's word"
 D=$(mk tf3_notes)
 printf 'N38 note: x\0alice\n' >> "$D/docs/conformance.md"
-run_names "$D" alice bash
-expect_fail "forbidden name from N2_FORBIDDEN_NAMES: docs/conformance.md:$(wc -l <"$D/docs/conformance.md" | tr -d ' ')"
+run_split "$D" alice bash
+expect_ok_alone
 
 CASE="TF-3: under bash, a required file with a NUL"
 D=$(mk tf3_required)
 printf 'x\0\n' > "$D/fixtures/opencode/help.txt"
-run_names "$D" zzcinameq bash
+run_split "$D" '' bash
 expect_ok_alone
 
 CASE="TF-3: under bash, a header line with a NUL"
 D=$(mk tf3_header)
 add_nul "$D/docs/premises.md" '^tmux: ' "Zz-test: a${SOH}b"
-run_names "$D" zzcinameq bash
+run_split "$D" '' bash
 expect_ok_alone
 
 CASE="TF-3: under bash, a table line with a NUL in its first cell"
 D=$(mk tf3_table)
 add_nul "$D/docs/premises.md" '^tmux: ' "| a${SOH}b | x |"
-run_names "$D" zzcinameq bash
+run_split "$D" '' bash
 expect_ok_alone
 
 CASE="TF-3: under bash, a Results row with a NUL"
@@ -998,26 +1028,90 @@ evidence "$D"
 add_header "$D" 'Codex: 0.172.0'
 add_row "$D" "$(row PC99 Codex 0.172.0 verified fixtures/codex/pc1.txt | sed "s/Test row/Test${SOH}row/")"
 soh_to_nul "$D/docs/premises.md"
-run_names "$D" zzcinameq bash
+run_split "$D" '' bash
 expect_ok_alone
 
 CASE="TF-3: under bash, spec section 19 with a NUL"
 D=$(mk tf3_s19)
 add_nul "$D/docs/specs/2026-11-18-zygo-design.md" '^## 19\. ' "x${SOH}y"
-run_names "$D" zzcinameq bash
+run_split "$D" '' bash
 expect_ok_alone
 
 CASE="TF-3: under bash, spec section 19a with a NUL"
 D=$(mk tf3_s19a)
 add_nul "$D/docs/specs/2026-11-18-zygo-design.md" '^## 19a\. ' "x${SOH}y"
-run_names "$D" zzcinameq bash
+run_split "$D" '' bash
 expect_ok_alone
 
 CASE="TF-3: under bash, spec section 10.5 with a NUL"
 D=$(mk tf3_s105)
 add_nul "$D/docs/specs/2026-11-18-zygo-design.md" '^### 10\.5 ' "x${SOH}y"
-run_names "$D" zzcinameq bash
+run_split "$D" '' bash
 expect_ok_alone
+
+# TF-3 round 2 R2-F1, R2-F2, R2-F3: a NUL that a blank in its place would make significant. Before
+# TF-3 awk read the NUL as a character (so "<NUL>```" is no fence and "<NUL>| P1 |" no table line)
+# and the shell deleted it from the output (so "sk-<NUL>ant-" is "sk-ant-"); the result stays.
+CASE="TF-3 R2-F1: under bash, a fence line that starts with a NUL"
+D=$(mk tf3_fence)
+hl=$(($(grep -n '^tmux: ' "$D/docs/premises.md" | cut -d: -f1) + 2))
+add_nul "$D/docs/premises.md" '^tmux: ' "$(printf '%s```\nCodex: 0.1.0\n%s```' "$SOH" "$SOH")"
+run_split "$D" '' bash
+expect_fail_alone "docs/premises.md:$hl: header 'Codex: 0.1.0' differs from the first header line 'Codex: 0.172.0'"
+
+CASE="TF-3 R2-F2: under bash, a NUL before a table line's first bar"
+D=$(mk tf3_tablebar)
+add_nul "$D/docs/premises.md" '^tmux: ' "${SOH}| P1 | x |"
+run_split "$D" '' bash
+expect_ok_alone
+
+CASE="TF-3 R2-F3: under bash, an N38 line with a NUL inside an API key"
+D=$(mk tf3_noteskey)
+printf 'N38 note: sk-\0ant-x\n' >> "$D/docs/conformance.md"
+run_split "$D" '' bash
+expect_fail_alone "forbidden content (API key): docs/conformance.md:$(wc -l <"$D/docs/conformance.md" | tr -d ' '):N38 note: sk-ant-x"
+
+# TF-3 round 2 R2-F4: expect_ok_alone reads stderr on its own, so a note line on stdout (here the one
+# for a host name shorter than 4 characters, from a hostname stub) does not fail it.
+CASE="TF-3 R2-F4: under bash, a host name shorter than 4 characters"
+D=$(mk tf3_shorthost)
+mkdir -p "$T/stubbin"
+printf '#!/bin/sh\necho box\n' > "$T/stubbin/hostname"
+chmod +x "$T/stubbin/hostname"
+OLDPATH=$PATH
+PATH="$T/stubbin:$PATH"
+run_split "$D" '' bash
+PATH=$OLDPATH
+expect_ok_alone
+case "$OUT" in *'check-premises: note: a host name is shorter than 4 characters or localhost; host-name scan skipped for it'*) ;;
+    *) fail "the hostname stub did not apply" ;; esac
+
+# TF-3 round 2, macOS CI: with SIGPIPE ignored, a process that writes into a pipe whose reader has
+# exited gets EPIPE and prints an error (BSD tr: "tr: stdout: Broken pipe"; GNU tr: "tr: write error:
+# Broken pipe"). Each reader after a tr reads to its end. The header scan stops at the first "## " line
+# (a file of more than a pipe buffer after it); the name scan keeps only the first of many hit lines.
+CASE="TF-3 R2 EPIPE: under bash with SIGPIPE ignored, a large docs/premises.md"
+D=$(mk tf3_pipehdr)
+awk 'BEGIN { for (i = 0; i < 20000; i++) print "padding text after the header lines, to fill a pipe buffer" }' >> "$D/docs/premises.md"
+run_split "$D" '' bash nopipe
+expect_ok_alone
+
+CASE="TF-3 R2 EPIPE: under bash with SIGPIPE ignored, many name scan hit lines"
+D=$(mk tf3_pipename)
+awk 'BEGIN { for (i = 0; i < 20000; i++) print "zzpipeq" }' > "$D/fixtures/codex/many.txt"
+run_split "$D" zzpipeq bash nopipe
+expect_fail_alone "forbidden name from N2_FORBIDDEN_NAMES: fixtures/codex/many.txt:1"
+
+# TF-3 round 2: cells uses the byte \001 as the placeholder of an escaped "|", so a row that already
+# holds a \001 fails closed.
+CASE="TF-3 R2: a Results row with a SOH byte"
+D=$(mk tf3_rowsoh)
+evidence "$D"
+add_header "$D" 'Codex: 0.172.0'
+add_row "$D" "$(row PC99 Codex 0.172.0 verified fixtures/codex/pc1.txt | sed "s/Test row/Test${SOH}row/")"
+rl=$(grep -n '^| PC99 |' "$D/docs/premises.md" | cut -d: -f1)
+run_split "$D" '' bash
+expect_fail_alone "docs/premises.md:$rl: row 'PC99' holds a SOH byte (\\001), the placeholder of an escaped '|'"
 
 # The exemption is the exact path, also for a rule that matches any case: a case variant of the
 # Codex verbatim path is scanned. The real schema is removed first. On a case-insensitive file system
