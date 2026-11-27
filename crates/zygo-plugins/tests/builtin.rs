@@ -605,7 +605,7 @@ fn pinned() -> zygo_config::Marketplace { zygo_config::builtin::defaults().marke
 
 fn toml_of(p: &Path) -> toml::Table { std::fs::read_to_string(p).unwrap().parse().unwrap() }
 
-const COMMIT: &str = "409b9dad5da85a9857e8d584d1c6a9fe4136c3e3";
+const COMMIT: &str = "9d82bd9714927ac713212c07b60d87fd73a7500f";
 #[cfg(unix)]
 const ACT_LITE_DIGEST: &str = "8f7ac593245afb9c4cf3ca294e83d2648d76310026ac1f7865acb8476eda496d";
 
