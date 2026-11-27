@@ -883,3 +883,68 @@ fn drop_host_counts_only_message_files_the_ack_does_not_list() {
     assert_eq!(drop_host(&env(&a), WS_ID, "c", &mut |_| true), Ok(Some(2)));
     assert!(!under(&tip_paths(&r), "carol@c/"));
 }
+
+#[test] // S§7.6 Rename (a) (FX-27 review F1): a message file keeps the old ack also when a link sorts after it
+fn renamed_host_ack_stays_while_an_acked_message_file_sorts_before_a_link() {
+    let (r, a, b) = pair();
+    let m = send(&a, "alice", ("bob", "b"));
+    sync(&a);
+    // A later time than every sent message, so `ls-tree` lists the link after the message file.
+    let l = Ulid::from_parts((T0 + 1_000_000) * 1000, 30);
+    assert!(m.to_string() < l.to_string());
+    let p = format!("bob@b/{l}.json");
+    put_entries(&r, &[("120000", &link(&r), &p)]);
+    assert_eq!(sync(&b).delivered, 1);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([m.to_string(), l.to_string()]));
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    assert!(file(&r, "ack/b.json").is_some()); // R2(a): the message file waits
+    assert!(prune_now(&b).notes.contains(&"pruned 1 files".to_string()));
+    sync(&b);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert!(tip_paths(&r).contains(&p));
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+}
+
+#[test] // S§7.6 Rename (a), S§9 Tree (FX-27 review F2): an acked 100755 message file keeps the old ack until pruned
+fn renamed_host_ack_stays_while_an_acked_100755_file_waits() {
+    let (r, _a, b) = pair();
+    let u = Ulid::from_parts(T0 * 1000, 31);
+    let p = format!("bob@b/{u}.json");
+    put_entries(&r, &[("100755", &blob(&r.bare, b"{}"), &p)]);
+    assert_eq!(sync(&b).delivered, 0); // refused (mode), so acknowledged
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([u.to_string()]));
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    assert!(file(&r, "ack/b.json").is_some()); // R2(a): a 100755 blob is a message file
+    assert!(prune_now(&b).notes.contains(&"pruned 1 files".to_string()));
+    assert!(!tip_paths(&r).contains(&p));
+    sync(&b);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+}
+
+#[test] // S§7.6 Rename, S§13 limit 2 (FX-27 review F3): an entry with no canonical `<ULID>.json` name is no message
+fn non_ulid_entries_do_not_keep_the_old_ack() {
+    let (r, _a, b) = pair();
+    let u = Ulid::from_parts(T0 * 1000, 32);
+    let doc = blob(&r.bare, b"{}");
+    let (notes, lower) = ("bob@b/notes.txt".to_string(), format!("bob@b/{}.json", u.to_string().to_lowercase()));
+    put_entries(&r, &[("100644", &doc, &notes), ("100644", &doc, &lower)]);
+    assert_eq!(sync(&b).delivered, 0);
+    assert!(file(&r, "ack/b.json").is_some());
+    b.config(Some("b2"), "");
+    assert_eq!(sync(&b).delivered, 0);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+    assert!(prune_now(&b).notes.contains(&"pruned 0 files".to_string()));
+    let paths = tip_paths(&r);
+    assert!(paths.contains(&notes) && paths.contains(&lower), "{paths:?}");
+    assert_eq!(waiting_for(&env(&b), WS_ID, "b"), Ok(0));
+    // They stay until the operator removes them, or until `--drop-host` deletes the whole folder.
+    assert_eq!(drop_host(&env(&b), WS_ID, "b", &mut |_| true), Ok(Some(0)));
+    assert!(!under(&tip_paths(&r), "bob@b/"));
+}
