@@ -662,6 +662,25 @@ fn approval_write_failure_exits_1() {
     assert!(approvals(&h).parent().unwrap().is_file());
 }
 
+#[test] // R§11 "Approval write fails" (WD-15 review round 2, finding 4): the line names the cause, not only the path
+fn approval_write_failure_names_the_cause() {
+    let f = min();
+    let h = home(&f, "");
+    let file = approvals(&h);
+    std::fs::create_dir_all(&file).unwrap();
+    let o = approve(&f, &h, &["--yes"], None, &[]);
+    let (out, err) = (text(&o.stdout), text(&o.stderr));
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    let head = format!("zygo: cannot store the approval: {}: ", zygo_core::esc(&file.display().to_string()));
+    let cause = err.strip_prefix(&head).and_then(|r| r.strip_suffix("; nothing approved\n"));
+    assert!(cause.is_some_and(|c| !c.is_empty()), "{err}");
+    if cfg!(unix) {
+        assert!(err.contains("Is a directory"), "{err}");
+    }
+    assert!(!out.contains("approved "), "{out}");
+    assert!(file.is_dir() && std::fs::read_dir(&file).unwrap().next().is_none());
+}
+
 #[test] // R§7.1 step 4 (WD-15 review F1): --digest is compared before the already-approved check of step 5
 fn digest_of_another_value_on_approved_files_exits_1() {
     let f = min();

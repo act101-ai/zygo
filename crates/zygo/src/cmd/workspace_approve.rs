@@ -114,7 +114,8 @@ pub(crate) fn run(ctx: &VerbCtx, args: &[String], input: &mut dyn BufRead, promp
     let done = match approve_workspace_in(file, &id, &digest) {
         Ok(Stored::Added) => format!("approved {digest}\n{NEXT}"),
         Ok(Stored::AlreadyPresent) => format!("workspace files already approved ({digest})"),
-        Err(e) => bail!("zygo: cannot store the approval: {}; nothing approved", esc(&e.to_string())),
+        // WD-15 review round 2 finding 4: the whole chain, so the cause follows the path.
+        Err(e) => bail!("zygo: cannot store the approval: {}; nothing approved", esc(&format!("{e:#}"))),
     };
     Ok(if yes { format!("{shown_files}\n{done}") } else { done })
 }
