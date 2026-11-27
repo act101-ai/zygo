@@ -88,12 +88,34 @@ fn render_show(
         Which::Layer(l) => m.show(Some(l), &is_set),
         Which::WorkspaceFiles => m.show_workspace_files(),
     };
-    // `show` prints a failed key as `"<ref>" <unset>`; it is marked `<error>` here.
-    for (r, e) in failed.into_inner() {
-        text = text.replace(&zygo_core::esc(&format!("\"{r}\" <unset>")), &zygo_core::esc(&format!("\"{r}\" <error>")));
+    // `show` prints a failed key as `"<ref>" <unset>`; it is marked `<error>` here, on its own key line only.
+    let failed = failed.into_inner();
+    if !failed.is_empty() {
+        text = text.split_inclusive('\n').map(|l| mark_error(l, &failed)).collect();
+    }
+    for (r, e) in failed {
         let _ = writeln!(err, "zygo config: cannot read {}: {}", zygo_core::esc(&r), zygo_core::esc(&e));
     }
     text
+}
+
+/// `line` of `Merged::show` (`<key> = <value>  # <source>\n`) with `<unset>` made `<error>` when it is the line of a
+/// key reference (`model.<id>.provider.<name>.key`, `server.token`) whose value is exactly `"<ref>" <unset>` for a ref
+/// in `failed`; any other line is returned unchanged (WD-16 review F3). A repository value that holds the same text,
+/// or text that looks like a source label inside its TOML quotes, is never a key-reference line: the repository
+/// files add `profile.*` and `loadout.repository` keys only.
+fn mark_error(line: &str, failed: &BTreeMap<String, String>) -> String {
+    let Some((key, rest)) = line.split_once(" = ") else { return line.to_string() };
+    let key_ref = key == "server.token" || (key.starts_with("model.") && key.contains(".provider.") && key.ends_with(".key"));
+    if key_ref {
+        for r in failed.keys() {
+            let unset = zygo_core::esc(&format!("\"{r}\" <unset>"));
+            if let Some(source) = rest.strip_prefix(unset.as_str()).and_then(|s| s.strip_prefix("  # ")) {
+                return format!("{key} = {}  # {source}", zygo_core::esc(&format!("\"{r}\" <error>")));
+            }
+        }
+    }
+    line.to_string()
 }
 
 /// The loadout checks that need the compact parser, AU30 or AU98 (W§11, AU103; FIX-27 D9), per `claude-code` and
@@ -405,5 +427,37 @@ key = "keychain:acme"
         let out = render_show(&m, Which::All, &Failing, &no_env, &mut err, &PaneBase { main_root: _d.path().to_path_buf(), worktrees: vec![] });
         assert!(out.contains("\"keychain:acme\" <error>"), "{out}");
         assert_eq!(String::from_utf8(err).unwrap(), "zygo config: cannot read keychain:acme: boom\\u{1b}[2K\\nzygo config: forged\n");
+    }
+
+    /// WD-16 review F3: only the key line of a failed key is marked `<error>`; a repository value that holds the same
+    /// text, or text that looks like a source label inside its TOML quotes, is shown unchanged.
+    #[test]
+    fn show_marks_only_the_key_line_of_a_failed_key() {
+        use std::collections::BTreeMap;
+        use zygo_config::repo_def::{parse, Files};
+        let (_d, _, m) = merged_fixture();
+        let profile = "overrides = { review = '\"keychain:acme\" <unset>', plan = '\"keychain:acme\" <unset>  # user' }\n";
+        let files = Files {
+            full_ref: Some("refs/remotes/origin/main".into()),
+            commit: "0".repeat(40),
+            workspace: None,
+            profiles: BTreeMap::from([("rust".to_string(), profile.as_bytes().to_vec())]),
+            ignored: vec![],
+        };
+        let m = m.with_definition(&parse(&files).unwrap());
+        let mut err = Vec::new();
+        let base = PaneBase { main_root: _d.path().to_path_buf(), worktrees: vec![] };
+        for which in [Which::All, Which::WorkspaceFiles] {
+            let out = render_show(&m, which, &Failing, &no_env, &mut err, &base);
+            let file = "  # workspace-files .zygo/profiles/rust.toml";
+            let review = format!("profile.rust.overrides.review = '\"keychain:acme\" <unset>'{file}");
+            let plan = format!("profile.rust.overrides.plan = '\"keychain:acme\" <unset>  # user'{file}");
+            let shown: Vec<&str> = out.lines().filter(|l| l.starts_with("profile.") || l.contains("keychain:acme")).collect();
+            assert!(out.lines().any(|l| l == review), "{which:?}: {shown:#?}");
+            assert!(out.lines().any(|l| l == plan), "{which:?}: {shown:#?}");
+            if which == Which::All {
+                assert!(out.contains("\"keychain:acme\" <error>  # user\n"), "{shown:#?}");
+            }
+        }
     }
 }
