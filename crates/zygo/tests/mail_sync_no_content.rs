@@ -43,6 +43,7 @@ use common::workspace::{Harness, WS_ID};
 
 const ALICE: &str = "kaaaaaaaa"; // A's member key
 const BOB: &str = "kbbbbbbbb"; // B's member key
+const B_ALICE: &str = "kdddddddd"; // #9: B's second member key, named `A_NAME` during the #9 block
 const A_NAME: &str = "alice-q7x";
 const B_NAME: &str = "bob-q7x";
 const HOST_A: &str = "apple-q7x"; // A's host
@@ -1180,7 +1181,11 @@ fn sweep_remote(r: &Remote) -> Vec<String> {
 }
 
 /// FX-26 re-plan review round 2 F7: whether `p` (a file or a folder that a planted case just made unreadable) can still
-/// be read. As root it can; then that case's assertion is skipped, and one line says why.
+/// be read. As root it can; then that case's assertion is skipped, and one line says why. CI
+/// (`.github/workflows/ci.yml`) runs on GitHub-hosted runners (`ubuntu-latest`, `macos-latest`), whose user is not root
+/// (the workflow calls `sudo apt-get`), so there every case runs. FX-26 re-plan 2 review round 1 F7: when the variable
+/// `CI` is set and every case was skipped, `scanners_find_a_planted_marker` fails ([`PERMISSION_CASES_RUN`]), so a CI
+/// that runs as root cannot pass it without this coverage.
 fn still_readable(p: &Path) -> bool {
     let read = match std::fs::symlink_metadata(p) {
         Ok(m) if m.is_dir() => std::fs::read_dir(p).is_ok(),
@@ -1192,13 +1197,19 @@ fn still_readable(p: &Path) -> bool {
     read
 }
 
+/// The permission cases ([`failure_at_mode`]) whose assertion ran, as the file or folder could not be read.
+static PERMISSION_CASES_RUN: AtomicUsize = AtomicUsize::new(0);
+
 /// F7: sets the mode of `p` to `mode`, runs `f` unless `p` stays readable ([`still_readable`]), sets the mode back to
 /// `back`, and gives the panic message of `f`; `None` when `f` did not run. A run of `f` that does not fail panics with
 /// `what`.
 fn failure_at_mode<T>(p: &Path, mode: u32, back: u32, what: &str, f: impl FnOnce() -> T) -> Option<String> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
-    let r = (!still_readable(p)).then(|| std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
+    let r = (!still_readable(p)).then(|| {
+        PERMISSION_CASES_RUN.fetch_add(1, Ordering::SeqCst);
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+    });
     std::fs::set_permissions(p, std::fs::Permissions::from_mode(back)).unwrap();
     r.map(|r| match r {
         Ok(_) => panic!("{what}"),
@@ -1498,6 +1509,11 @@ fn scanners_find_a_planted_marker() {
     want.sort();
     got.sort();
     assert_eq!(got, want);
+    // FX-26 re-plan 2 review round 1 F7: in CI (the variable `CI` set; read only) at least one permission case ran.
+    if std::env::var_os("CI").is_some() {
+        assert!(PERMISSION_CASES_RUN.load(Ordering::SeqCst) > 0,
+            "CI is set and every permission case was skipped (the tests run as root), so the unreadable-path cases have no coverage");
+    }
 }
 
 #[test] // S-C2, S§6.5, S§19 #24 (as rewritten): after #1, #3, #4, #5, #12, #15, #19, #9, #20, #11, #6, #22, #23 and a
@@ -1584,6 +1600,9 @@ fn no_mail_content_after_the_scenarios() {
     assert_eq!(sync_in(&a).pushed, 1);
 
     // #4 (secret at send, CLI and MCP; then a new pattern before the pass).
+    // FX-26 re-plan 2 review round 1 F1: alice's `new/` already holds bob's #3 message, so the files before #4 are
+    // recorded, and #4 must add exactly one: the notice.
+    let new4 = new_ids(&a, ALICE);
     let aws = ["AK", "IA", "ABCDEFGHIJKLMNOP"].concat();
     let (code, o, e) = send_with(&a, ALICE, &format!("{B_NAME}@{HOST_B}"), 6, &format!("{BODY}-6 {aws}"));
     assert_eq!((code, o, e), (1, String::new(), "zygo: message not sent: it holds a secret (aws_access_key_id)\n".into()));
@@ -1596,10 +1615,20 @@ fn no_mail_content_after_the_scenarios() {
     assert!(sp(&a).refused.join(format!("{i4}.json")).is_file());
     assert!(!tip_paths(&r).iter().any(|p| p.ends_with(&format!("/{i4}.json"))));
     assert!(errors(&a).lines().any(|l| l.ends_with(&format!("mail sync: outbox {i4}: refused: ship_word"))), "{}", errors(&a));
-    assert!(std::fs::read_dir(mail_dir(&a.paths, WS_ID).join(ALICE).join("new")).unwrap().count() >= 1); // the notice from zygo
+    // The notice from `zygo` (S§8.6 "At commit"; `outbox::refuse` gives its subject and body, `sync::refuse` sends it
+    // from `zygo` to the sender's name).
+    let added: Vec<String> = new_ids(&a, ALICE).into_iter().filter(|id| !new4.contains(id)).collect();
+    assert_eq!(added.len(), 1, "#4 adds exactly one file to alice's new/: {added:?}");
+    let notice: Value = serde_json::from_slice(&std::fs::read(maildir(&a, ALICE, "new").join(format!("{}.json", added[0]))).unwrap()).unwrap();
+    assert_eq!((notice["from"].as_str(), notice["to"].as_str()), (Some("zygo"), Some(A_NAME)), "{notice}");
+    assert_eq!(notice["subject"].as_str(), Some(format!("not sent: {i4}").as_str()), "{notice}");
+    let text = format!("zygo did not send message {i4} to {B_NAME}@{HOST_B}: it holds a secret (ship_word). The message is kept on this machine in mail/outbox/refused/.");
+    assert_eq!(notice["body"].as_str(), Some(text.as_str()), "{notice}");
     config(&a, HOST_A, "", "");
 
     // #5 (the secret check cannot run: expiry, then an act-lite store that does not parse).
+    // F2: "no notice is sent": alice's `new/` gets no new file in this block.
+    let new5 = new_ids(&a, ALICE);
     let i5 = send_ok(&a, ALICE, &format!("{B_NAME}@{HOST_B}"), 9);
     let expire = DeadlinePolicy { expire_after_scans: Some(0), base: Duration::from_secs(3600), ..Default::default() };
     run_with_deadline(&env_in(&a, Box::new(NoSeam), expire), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap();
@@ -1612,6 +1641,7 @@ fn no_mail_content_after_the_scenarios() {
     assert!(errors(&a).contains(&format!("mail sync: outbox {i5}: secret check could not run: act_lite_store")), "{}", errors(&a));
     std::fs::remove_file(&store).unwrap();
     assert_eq!(sync_in(&a).pushed, 1);
+    assert_eq!(new_ids(&a, ALICE), new5, "#5 sends no notice");
 
     // #15 (inbox full; bob reads through the MCP tool). B first imports what waits for it since #3 (in the plan's
     // order the #12 pass did this).
@@ -1629,10 +1659,20 @@ fn no_mail_content_after_the_scenarios() {
     let ack: Value = serde_json::from_slice(&tip_blob(&r, &format!("ack/{HOST_B}.json")).unwrap()).unwrap();
     let acked = |id: &str| ack["imported"].as_array().unwrap().iter().any(|u| u == id);
     assert_eq!(acked(&f1) as u8 + acked(&f2) as u8, 1, "{ack}"); // the one not delivered is not acknowledged
+    // F2: "a prune keeps it". B's `--prune` pass (the inbox still full) makes a new root: the delivered message, whose
+    // ULID B acknowledged, goes, and the one not acknowledged stays at the tip.
+    let (done, waiting) = if acked(&f1) { (&f1, &f2) } else { (&f2, &f1) };
+    let o = sync_bin(&b, &["--prune"]);
+    assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    let paths = tip_paths(&r);
+    assert_eq!(count(&r), 1, "the prune made a new root");
+    assert!(!paths.contains(&format!("{B_NAME}@{HOST_B}/{done}.json")), "{paths:?}");
+    assert!(paths.contains(&format!("{B_NAME}@{HOST_B}/{waiting}.json")), "{paths:?}");
+    assert_eq!(new_count(&b, BOB), 1);
     call(&tools(&b, BOB), "mail_read", json!({})).unwrap();
     let o = sync_bin(&b, &[]);
     assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
-    assert_eq!(new_count(&b, BOB), 1); // the second one now
+    assert_eq!(new_ids(&b, BOB), vec![waiting.clone()]); // the second one now
     config(&b, HOST_B, "", "");
 
     // #19 (host rename while mail waits).
@@ -1686,11 +1726,35 @@ fn no_mail_content_after_the_scenarios() {
     }
 
     // #9 (collision and take-host, on the two machines).
+    // F2: "a message that the first machine acknowledged is not delivered on the second". B gets a second member
+    // `alice-q7x` (key `B_ALICE`), so a folder `alice-q7x@<HOST_A>/` is a candidate folder of B once B owns `HOST_A`.
+    // Bob sends to `alice-q7x@<HOST_A>`; A delivers it and acknowledges it; then B takes `HOST_A` and must not deliver
+    // it (S§7.6 `--take-host` keeps the ack's entries).
+    b.store(WS_ID).update(Duration::from_secs(5), &mut |w| {
+        w.members.insert(B_ALICE.to_string(), MemberRecord { name: Some(A_NAME.to_string()), ..MemberRecord::new(Agent::ClaudeCode) });
+        Ok(())
+    }).unwrap();
+    let i9 = send_ok(&b, BOB, &format!("{A_NAME}@{HOST_A}"), 30);
+    assert_eq!(sync_in(&b).pushed, 1);
+    assert_eq!(sync_in(&a).delivered, 1);
+    assert!(new_ids(&a, ALICE).contains(&i9));
+    let ack: Value = serde_json::from_slice(&tip_blob(&r, &format!("ack/{HOST_A}.json")).unwrap()).unwrap();
+    assert!(ack["imported"].as_array().unwrap().iter().any(|u| u == i9.as_str()), "{ack}");
     config(&b, HOST_A, "", "");
     let o = sync_bin(&b, &[]);
     assert_eq!((o.status.code(), err_of(&o)), (Some(1), format!("{COLLISION}\n")));
     let o = sync_bin(&b, &["--take-host"]);
     assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));
+    assert_eq!(out_of(&o), "zygo: mail sync: 0 sent, 0 delivered\n"); // not counted
+    let o = sync_bin(&b, &[]); // the pass after the take-host: still not delivered
+    assert_eq!((o.status.code(), out_of(&o)), (Some(0), "zygo: mail sync: 0 sent, 0 delivered\n".into()), "{}", err_of(&o));
+    assert!(tip_paths(&r).contains(&format!("{A_NAME}@{HOST_A}/{i9}.json"))); // the candidate is still there
+    assert_eq!(new_ids(&b, B_ALICE), Vec::<String>::new());
+    assert!(!std::fs::read_to_string(sp(&b).imported).unwrap().lines().any(|l| l == i9));
+    b.store(WS_ID).update(Duration::from_secs(5), &mut |w| {
+        w.members.remove(B_ALICE);
+        Ok(())
+    }).unwrap();
     let o = sync_bin(&a, &[]);
     assert_eq!((o.status.code(), err_of(&o)), (Some(1), format!("{COLLISION}\n")));
     config(&a, HOST_A2, "", "");
