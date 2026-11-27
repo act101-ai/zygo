@@ -213,6 +213,16 @@ impl Delivery {
         }
         store::deliver_staged(&self.mail_dir, key, id, staged, max_unread)
     }
+
+    /// Makes `mail/<key>/` and its three folders (`0700`, M-C4) when `key` has a member record in the read under the
+    /// lock; else `NoRecord`, and nothing is made. The mail sync makes it before it stages a file for `key` (mail sync
+    /// design S§8.5 step 1), so a staged file is kept while its maildir exists (S§8.5 step 5).
+    pub fn make_maildir(&self, key: &str) -> Result<(), MailError> {
+        if !self.ws.members.contains_key(key) {
+            return Err(MailError::NoRecord { key: key.to_string() });
+        }
+        store::make_maildir(&self.mail_dir, key)
+    }
 }
 
 /// `mail/` of `store` checked with `symlink_metadata`; `None` when it is missing. A link or an entry that is not a

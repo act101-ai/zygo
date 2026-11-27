@@ -102,6 +102,14 @@ fn make_dirs(mail_dir: &Path, md: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// [`make_dirs`] for the maildir of `key`, after the key check. It takes no `mail/lock`; production callers use
+/// [`super::Delivery::make_maildir`] (M§5 P1).
+pub(crate) fn make_maildir(mail_dir: &Path, key: &str) -> Result<(), MailError> {
+    let md = maildir(mail_dir, key)?;
+    make_dirs(mail_dir, &md)?;
+    Ok(())
+}
+
 /// Opens `path` for reading with no link follow and no wait on a FIFO; `None` unless it is a regular file of at
 /// most `FILE_MAX` bytes.
 fn open_regular(path: &Path) -> Option<File> {

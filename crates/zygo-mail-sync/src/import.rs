@@ -89,11 +89,13 @@ pub fn check_message(folder: &str, file: &str, mode: &str, kind: &str, size: u64
 /// imported log when it is not there, then the file moves into `new/` (the inbox check passed before it was
 /// staged). A file whose ULID is not in the log may be torn by a crash during its write: unless its bytes parse as
 /// a message whose `id` is the file's ULID, it is deleted and not logged, and the next pass imports the branch copy
-/// again. A file whose ULID is in the log was synced before the append. Returns the count of files moved into `new/`. Other names and links are left alone; a file whose finish
-/// fails stays for the next pass. Each file is one M§5 P1 delivery under `mail/lock` of `store`'s workspace held
-/// shared: a file whose key has no record in the read under that lock is deleted with the log unchanged (the branch
-/// copy stays); a lock not taken in [`MAIL_LOCK_WAIT`] ends the finish for this pass, and the file stays. `Err` only
-/// when `incoming/` or the imported log cannot be read.
+/// again. A file whose ULID is in the log was synced before the append. Returns the count of files moved into `new/`.
+/// Other names and links are left alone; a file whose finish fails stays for the next pass. Each file is one M§5 P1
+/// delivery under `mail/lock` of `store`'s workspace held shared. A file whose key has no record in the read under
+/// that lock stays while `mail/<key>/` exists (the record can come back, as at the undo write of `up`), and is
+/// deleted with the log unchanged when `mail/<key>/` is missing (M§5 removed the member's mail; the branch copy
+/// stays). A lock not taken in [`MAIL_LOCK_WAIT`] ends the finish for this pass, and the file stays. `Err` only when
+/// `incoming/` or the imported log cannot be read.
 pub fn finish_incoming(sp: &SyncPaths, store: &Store) -> std::io::Result<usize> {
     let entries = match std::fs::read_dir(&sp.incoming) {
         Ok(r) => r,
@@ -112,7 +114,11 @@ pub fn finish_incoming(sp: &SyncPaths, store: &Store) -> std::io::Result<usize> 
         }
         let Ok(d) = Delivery::begin(store, MAIL_LOCK_WAIT) else { break }; // S§8.5 step 5: the file stays
         if !d.workspace().members.contains_key(key) {
-            let _ = std::fs::remove_file(e.path()); // author's call 3: M§5 deletes a member's mail with its record
+            // Author's call 3 (FX-24 review F1): a record can be out for a short time (`up` step 8 to its undo write);
+            // M§5 removes the maildir only after the record went for good, so only a missing maildir deletes.
+            if std::fs::symlink_metadata(sp.mail.join(key)).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+                let _ = std::fs::remove_file(e.path());
+            }
             continue;
         }
         if !seen.contains(&id) {
@@ -135,6 +141,28 @@ pub fn finish_incoming(sp: &SyncPaths, store: &Store) -> std::io::Result<usize> 
         }
     }
     Ok(moved)
+}
+
+/// The ULIDs of the staged files in `incoming/` (`<pane key>.<ULID>.json`, regular files; links and other names are
+/// left out); none when `incoming/` is missing.
+fn staged_ids(sp: &SyncPaths) -> std::io::Result<HashSet<Ulid>> {
+    let entries = match std::fs::read_dir(&sp.incoming) {
+        Ok(r) => r,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(HashSet::new()),
+        Err(e) => return Err(e),
+    };
+    let mut out = HashSet::new();
+    for e in entries {
+        let e = e?;
+        let name = e.file_name();
+        let Some((key, rest)) = name.to_str().and_then(|n| n.split_once('.')) else { continue };
+        if let Some(id) = ulid_file(rest).filter(|_| valid_pane_key(key))
+            && e.file_type().is_ok_and(|t| t.is_file())
+        {
+            out.insert(id);
+        }
+    }
+    Ok(out)
 }
 
 /// One candidate of a pass: its ULID, the pane key it goes to, its folder and its tree entry.
@@ -219,7 +247,10 @@ fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], ow
 /// `store`'s workspace held shared (M§5 P1), taken after the candidate's git reads and dropped before the next: a
 /// candidate whose key has no record in the read under that lock is left on the branch (not staged, logged or
 /// acknowledged; no line); a lock not taken in [`MAIL_LOCK_WAIT`] writes `mail sync: import <ULID>: lock` and stops
-/// the run. `Err` only when a seam stops the run.
+/// the run. Step 1 makes the target's maildir before it writes the staged file. A candidate whose ULID is in the
+/// imported log is acknowledged, unless its staged file is still in `incoming/`: then it is left until step 5 of a
+/// later pass moves that file (S§8.5). `incoming/` that cannot be read writes `mail sync: import: incoming` and
+/// imports nothing. `Err` only when a seam stops the run.
 #[allow(clippy::too_many_arguments)]
 pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target],
     own_ack: &BTreeSet<Ulid>, max_unread: u32, deadline: Instant, seam: &dyn Seam, log: &mut dyn FnMut(&str))
@@ -232,6 +263,11 @@ pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[Str
         out.left = 1;
         return Ok(out);
     };
+    let Ok(staged_ids) = staged_ids(sp) else {
+        log("mail sync: import: incoming");
+        out.left = 1;
+        return Ok(out);
+    };
     for c in candidates(wt, tip, own_hosts, targets, own_ack, &seen, mail_dir, max_unread, deadline, &mut out.left, log) {
         if Instant::now() >= deadline {
             out.left += 1;
@@ -239,7 +275,13 @@ pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[Str
         }
         let id = c.id;
         if seen.contains(&id) {
-            out.acked.push(id);
+            // FX-24 review F1: a logged ULID whose staged file is still in `incoming/` is not delivered yet; step 5 of
+            // a later pass moves it, and only then is it acknowledged.
+            if staged_ids.contains(&id) {
+                out.left += 1;
+            } else {
+                out.acked.push(id);
+            }
             continue;
         }
         let e = &c.entry;
@@ -287,7 +329,9 @@ pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[Str
             continue; // not staged, logged or acked: it waits on the branch (S§13 limit 2)
         }
         let staged = sp.incoming.join(format!("{}.{id}.json", c.key));
-        let wrote = [&sp.mail, &sp.sync, &sp.incoming].into_iter().try_for_each(|d| ensure_mail_dir(d))
+        // Step 1 makes the maildir first (FX-24 review F1): a staged file is kept while its maildir exists.
+        let wrote = d.make_maildir(&c.key).map_err(|e| std::io::Error::other(e.to_string()))
+            .and_then(|()| [&sp.mail, &sp.sync, &sp.incoming].into_iter().try_for_each(|d| ensure_mail_dir(d)))
             .and_then(|()| write_synced(&staged, &bytes));
         if wrote.is_err() {
             log(&format!("mail sync: import {id}: write"));

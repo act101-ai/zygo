@@ -597,3 +597,46 @@ fn finish_incoming_stops_at_a_held_mail_lock() {
     assert_eq!(finish_incoming(&sp, &store).unwrap(), 1);
     assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
 }
+
+#[test] // FX-24 review F1: a record gone for a short time (up step 8 to its undo write) loses no logged staged message
+fn a_short_record_gap_keeps_a_logged_staged_message() {
+    let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+    let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
+    let store = Store::open(&m.paths, WS_ID);
+    // the process stops between step 2 (log append) and step 3 (move into new/)
+    assert_eq!(go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &CrashAt("after_log")).0, Err(Crash("after_log")));
+    let staged = vec![format!("{KEY}.{}.json", u(1))];
+    assert_eq!(names(&sp.incoming), staged);
+    assert!(imported_load(&sp).unwrap().contains(&u(1)));
+    assert!(fs::symlink_metadata(sp.mail.join(KEY)).is_ok_and(|m| m.is_dir()), "step 1 makes bob's maildir");
+    // up step 8 wrote the state without bob's record; his maildir stays until the up write or the undo write (M§5)
+    m.workspace(&[("kcccccccc", "carol")]);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
+    assert_eq!(names(&sp.incoming), staged, "the staged file stays while bob's maildir exists");
+    let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![], left: 1 }), "a logged ULID with a staged file waits");
+    assert!(lines.is_empty(), "{lines:?}");
+    // the undo write of up puts bob's record back: the next pass delivers to bob, then acknowledges
+    m.workspace(&[(KEY, "bob"), ("kcccccccc", "carol")]);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 1);
+    assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
+    assert_eq!(names(&sp.incoming), Vec::<String>::new());
+    let (res, _) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![u(1)], left: 0 }));
+}
+
+#[test] // FX-24 review F1: no record and no maildir (M§5 removed it after the record went) is the only delete
+fn finish_incoming_keeps_a_staged_file_while_its_maildir_exists() {
+    let (_t, sp, store) = local(); // record: bob only
+    let name = format!("kcccccccc.{}.json", u(1));
+    staged(&sp, &name, &msg(u(1), "carol@b"));
+    imported_append(&sp, u(1)).unwrap();
+    zygo_workspace::mail::ensure_mail_dir(&sp.mail.join("kcccccccc")).unwrap();
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
+    assert_eq!(names(&sp.incoming), [name]);
+    fs::remove_dir(sp.mail.join("kcccccccc")).unwrap(); // the M§5 removal after the up write
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
+    assert_eq!(names(&sp.incoming), Vec::<String>::new());
+    assert!(!sp.mail.join("kcccccccc").exists());
+    assert!(imported_load(&sp).unwrap().contains(&u(1)));
+}
