@@ -206,7 +206,7 @@ Session text (T, SX nodes):
 | WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | DONE | implementation | 15ea1e5b^..9a264b0a · acceptance pass (definition_hooks 11 passed) · PR #218 |
 | WD-21 | PR1 live check (operator): two pool members send two logins | WD-14, ML-19 | TODO | mechanical | — |
 | WD-22 | PR2 live check (operator): per-session settings act the same on a pool directory | WD-14, WD-21 | TODO | mechanical | — |
-| MS-22 | No mail content in logs, state, usage rows, commits or refs | MS-18, MS-19, MS-21 | PLANNED | implementation | — |
+| MS-22 | No mail content in logs, state, usage rows, commits or refs | MS-18, MS-19, MS-21 | DONE | judgment | e2b744fe^..91edeada · acceptance pass (mail_sync_no_content 2 passed) · PR #222 |
 | WD-15 | `zygo workspace approve [--yes] [--digest <hex>]` | WD-14, DR-3, MS-21 | TODO | judgment | — |
 | WD-16 | `config show/check`, `profile list/show`, `loadout list/show` show the repository files | WD-15, WD-24 | TODO | implementation | — |
 | WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | TODO | mechanical | — |
@@ -216,7 +216,6 @@ Session text (T, SX nodes):
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
 | FX-10 | HUD spec lists the member name and unread mail segments and the ✉ glyph | ML-15, RT-3 | DONE | mechanical | 8b19ed30, daf5faed · ✉ 4 ; floor green · PR #123 |
-| FX-11 | zygo doctor icon line shows the ✉ mail glyph | ML-15, RT-3 | DONE | implementation | 1921d4ca, a7ac8924 · usage_doctor 45/0, statusline_render 37/0 ; floor green · PR #122 |
 | FX-12 | HUD unread count uses the store's definition (regular <ULID>.json files; missing new/ is 0) | ML-15, ML-2, FX-11 | DONE | implementation | 233290fe, 9335d48e · statusline_mail 9/0 ; floor green · PR #124 |
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | DONE | judgment | 87a292d6^..da0207f1 · acceptance pass (mail_lifecycle 23 passed) · PR #219 |
 | FX-14 | `zygo up` team read: CLI test of `with_team`, team-layer warnings only, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code | WD-11, WD-12, ML-12 | DONE | implementation | 64d9685c, 3dc62442, 34467d50 · up_definition, workspace_restore, serve_cli, cmd::up all pass ; floor green · PR #162 |
@@ -444,3 +443,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-24 added: FX-13 P2: mail-sync deliveries (sync.rs, import.rs) and ws forget take the M§5 mail lock |
 | 2026-11-26 | FX-23 DONE: shared harness turns the built-in marketplace off by default (NO_MARKETPLACE) and fails any run that syncs; 90 tests in 6 files had synced; R1 F1 F2 F4 F5 fixed, F3 DNS leak of the offline form recorded · PR #220 |
 | 2026-11-26 | MS-22 PLANNED: drift: own member names in workspace.json, own hosts in state.json keys (S-C2, S§19 #24 rewritten); author's calls: sends in process (no detached child), binary syncs empty outbox only, trim hook writes the usage row |
+| 2026-11-26 | MS-22 DONE: no mail content in any store, log, commit or ref after the walked S§19 scenarios on three machines; R1 fixed stale host keys in state.json (forget_hosts); S-C2, S§7.5, S§19 #24 rewritten; FX-26, FX-27 added · PR #222 |
