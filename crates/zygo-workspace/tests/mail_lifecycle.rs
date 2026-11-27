@@ -1031,3 +1031,24 @@ fn lifecycle_removal_waits_for_a_delivery_in_flight() {
     );
     assert!(gone(&mail.join("kbbbbbbbb")));
 }
+
+#[test] // FX-24: a staged file delivered under the shared lock goes only to a key with a record in that read
+fn lifecycle_delivery_deliver_staged_needs_a_record() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let p = paths(td.path());
+    let store = stored(&p, THIRD, &[("kaaaaaaaa", Some("lead"))]);
+    let mail = mail_dir(&p, THIRD);
+    let d = Delivery::begin(&store, MAIL_LOCK_WAIT).unwrap();
+    let msg = Message::new("cli", "lead", "s", "b", at(T0)).unwrap();
+    let bytes = serde_json::to_vec(&msg).unwrap();
+    let staged = mail.join("staged.json");
+    mail_store::write_synced(&staged, &bytes).unwrap();
+    let e = d.deliver_staged("kbbbbbbbb", &msg.id, &staged, 500).unwrap_err();
+    assert!(matches!(&e, MailError::NoRecord { key } if key == "kbbbbbbbb"), "{e:?}");
+    assert!(staged.is_file());
+    assert!(gone(&mail.join("kbbbbbbbb")));
+    assert!(d.deliver_staged("kaaaaaaaa", &msg.id, &staged, 500).unwrap());
+    assert!(gone(&staged));
+    assert_eq!(fs::read(mail.join("kaaaaaaaa/new").join(format!("{}.json", msg.id))).unwrap(), bytes);
+}

@@ -180,7 +180,8 @@ pub fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 /// Moves `staged` (written with `write_synced` under `mail_dir`) into `mail/<key>/new/<id>.json` without reading
 /// or rewriting its bytes (M§5; S§8.5 step 3). `Ok(false)`, and the staged file removed, when the id is already in
-/// `new/` or `cur/`. A full `new/` returns the M§5 error and leaves the staged file in place.
+/// `new/` or `cur/`. A full `new/` returns the M§5 error and leaves the staged file in place. It takes no
+/// `mail/lock`; production callers use [`super::Delivery::deliver_staged`] (M§5 P1).
 pub fn deliver_staged(mail_dir: &Path, key: &str, id: &str, staged: &Path, max_unread: u32) -> Result<bool, MailError> {
     let md = maildir(mail_dir, key)?;
     if !valid_id(id) {

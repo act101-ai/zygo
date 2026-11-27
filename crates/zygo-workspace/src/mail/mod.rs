@@ -203,6 +203,16 @@ impl Delivery {
         }
         store::deliver(&self.mail_dir, key, label, msg, max_unread)
     }
+
+    /// The M§5 P1 delivery of a staged file, as [`Delivery::deliver`]: [`store::deliver_staged`] to `key` when `key`
+    /// has a member record in the read under the lock; else `NoRecord`, nothing is made, and the staged file stays for
+    /// the caller.
+    pub fn deliver_staged(&self, key: &str, id: &str, staged: &Path, max_unread: u32) -> Result<bool, MailError> {
+        if !self.ws.members.contains_key(key) {
+            return Err(MailError::NoRecord { key: key.to_string() });
+        }
+        store::deliver_staged(&self.mail_dir, key, id, staged, max_unread)
+    }
 }
 
 /// `mail/` of `store` checked with `symlink_metadata`; `None` when it is missing. A link or an entry that is not a
