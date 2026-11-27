@@ -3649,6 +3649,7 @@ dependencies = [
  "ulid",
  "zygo-config",
  "zygo-core",
+ "zygo-mail-sync",
  "zygo-plugins",
  "zygo-redact",
  "zygo-work",

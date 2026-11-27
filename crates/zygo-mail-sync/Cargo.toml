@@ -4,6 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# `sync::run_with_deadline`, the pass deadline seam (S-C9). Test builds turn it on (this crate's own tests through the
+# self dev-dependency below, `zygo`'s tests through its `test-hooks` feature), and so does the operator's live-premise
+# build (`cargo build -p zygo --features test-hooks` for `scripts/premises/live-hud.sh`). A normal or release build
+# never does.
+test-hooks = []
+
 [dependencies]
 zygo-core.workspace = true
 zygo-config.workspace = true
@@ -23,3 +30,6 @@ tempfile.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
+
+[dev-dependencies]
+zygo-mail-sync = { path = ".", features = ["test-hooks"] }
