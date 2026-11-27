@@ -48,7 +48,8 @@ fn parse_args(ctx: &VerbCtx, args: &[String]) -> Result<(bool, Option<String>), 
 }
 
 /// R§7.1 steps 2-7 in the order of plan call 1: arguments; `ZYGO_SESSION_DIR`; the checkout; one read of the default
-/// branch; already approved; `--digest`; the user config (call 7); the listing and the question; the store (R§7.2).
+/// branch; `--digest` (in every state, WD-15 review F1); already approved; the user config (call 7); the listing and
+/// the question; the store (R§7.2).
 /// The digest stored is the digest of the read that was shown: the files are not read again.
 pub(crate) fn run(ctx: &VerbCtx, args: &[String], input: &mut dyn BufRead, prompt: &mut dyn Write) -> anyhow::Result<String> {
     let (yes, want) = parse_args(ctx, args)?;
@@ -62,7 +63,8 @@ pub(crate) fn run(ctx: &VerbCtx, args: &[String], input: &mut dyn BufRead, promp
     let id = workspace_id(&co.common_dir);
     let file = &ctx.paths.approvals_file;
     // Plan call 6: the lines of R§7.1 step 3, each value escaped.
-    let (full_ref, files, digest, def) = match check_default(&main, &id, file, &SystemGit) {
+    // `read` is `None` when the files of the digest are approved already.
+    let (digest, read) = match check_default(&main, &id, file, &SystemGit) {
         Use::Absent { full_ref } => bail!("zygo: this repository has no workspace files at {}", esc(&full_ref)),
         Use::Unread { why } => bail!("zygo: this repository's workspace files are unread ({}); nothing approved", esc(&why)),
         Use::Invalid { full_ref, why, .. } => bail!(
@@ -70,14 +72,19 @@ pub(crate) fn run(ctx: &VerbCtx, args: &[String], input: &mut dyn BufRead, promp
             esc(full_ref.as_deref().unwrap_or_default()),
             esc(&why)
         ),
-        // R§7.1 step 4.
-        Use::Approved { pin, .. } => return Ok(format!("workspace files already approved ({})", pin.digest)),
-        Use::NotApproved { full_ref, files, digest, def } => (full_ref, files, digest, def),
+        Use::Approved { pin, .. } => (pin.digest, None),
+        Use::NotApproved { full_ref, files, digest, def } => (digest, Some((full_ref, files, def))),
     };
-    // R§7.1 step 5: upper-case hex is compared in lower case; the line shows the value as given.
+    // R§7.1 step 4 (WD-15 review F1): in every state, before the already-approved check, so a script learns that the
+    // files it read are not the files that apply. Upper-case hex is compared in lower case; the line shows the value as
+    // given.
     if let Some(hex) = want.filter(|h| h.to_ascii_lowercase() != digest) {
         bail!("zygo: the workspace files changed: their digest is {digest}, not {hex}; nothing approved");
     }
+    // R§7.1 step 5.
+    let Some((full_ref, files, def)) = read else {
+        return Ok(format!("workspace files already approved ({digest})"));
+    };
     let cfg = user_config(&ctx.paths)
         .map_err(|e| anyhow!("zygo: user config not read ({}); nothing approved", esc(&e.to_string())))?;
     let pool_text = cfg.workspace.pool.as_deref();

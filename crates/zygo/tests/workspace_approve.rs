@@ -254,7 +254,7 @@ fn yes_prints_the_listing_on_stdout() {
     assert_eq!(entries(&approvals(&h)), vec![(id(&f.c), d.clone())]);
 }
 
-#[test] // R§7.1 step 5: --digest of another value approves nothing; a malformed value is a usage error
+#[test] // R§7.1 step 4: --digest of another value approves nothing; a malformed value is a usage error
 fn digest_of_another_value_stores_nothing() {
     let f = min();
     let h = home(&f, "");
@@ -327,7 +327,7 @@ fn slash_form_returns_the_command_and_approves_nothing() {
     assert!(!ctx.paths.approvals_file.exists());
 }
 
-#[test] // R§7.1 step 4: a second approve stores nothing more
+#[test] // R§7.1 step 5: a second approve stores nothing more
 fn second_approve_keeps_the_file() {
     let f = min();
     let h = home(&f, "");
@@ -565,4 +565,28 @@ fn approval_write_failure_exits_1() {
     assert_eq!(o.status.code(), Some(1), "{err}");
     assert!(err.starts_with("zygo: cannot store the approval: ") && err.ends_with("; nothing approved\n"), "{err}");
     assert!(approvals(&h).parent().unwrap().is_file());
+}
+
+#[test] // R§7.1 step 4 (WD-15 review F1): --digest is compared before the already-approved check of step 5
+fn digest_of_another_value_on_approved_files_exits_1() {
+    let f = min();
+    let h = home(&f, "");
+    let d = digest(&f);
+    let o = approve(&f, &h, &["--yes"], None, &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let before = std::fs::read(approvals(&h)).unwrap();
+    let other = "a".repeat(64);
+    let o = approve(&f, &h, &["--yes", "--digest", other.as_str()], None, &[]);
+    let (out, err) = (text(&o.stdout), text(&o.stderr));
+    assert_eq!(
+        (o.status.code(), out.as_str(), err.as_str()),
+        (Some(1), "", &*format!("zygo: the workspace files changed: their digest is {d}, not {other}; nothing approved\n"))
+    );
+    assert_eq!(std::fs::read(approvals(&h)).unwrap(), before);
+
+    // The matching digest on approved files: the already-approved line, exit 0.
+    let o = approve(&f, &h, &["--yes", "--digest", d.as_str()], None, &[]);
+    let out = text(&o.stdout);
+    assert_eq!((o.status.code(), out.as_str()), (Some(0), &*format!("workspace files already approved ({d})\n")));
+    assert_eq!(std::fs::read(approvals(&h)).unwrap(), before);
 }
