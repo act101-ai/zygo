@@ -230,6 +230,8 @@ Session text (T, SX nodes):
 | FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
 | FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | DONE | implementation | bb21eadf^..c99eeb95 · acceptance pass (offline: 7 test files, 0 failed) · PR #220 |
 | FX-24 | Mail sync deliveries and ws forget take the M§5 mail lock | FX-13, MS-21 | TODO | judgment | — |
+| FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | TODO | implementation | — |
+| FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | TODO | judgment | — |
 
 ## Log
 
