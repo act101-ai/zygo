@@ -135,7 +135,8 @@ pub mod testing {
     /// FIX-29 round 3); the admin
     /// points of W8 D21: `forget_before_op_lock`, `forget_before_state` (under both locks, before anything is
     /// removed), `forget_before_cache` (after the state rename, before the cache removal; an error there is the cache
-    /// error), `forget_before_tombstone_remove` (after the rename), `forget_pane_before_op_lock`,
+    /// error), `forget_before_tombstone_remove` (after the rename), `forget_before_mail_lock` (in `ws forget`, after
+    /// `before_remove`, right before `mail/lock` is taken; FX-24), `forget_pane_before_op_lock`,
     /// `forget_pane_before_cache`, `forget_pane_remove_results` and `forget_pane_remove_program` (right before the
     /// removal of that cache; an error there is that cache's error); the mail points of FX-13 (M§5 P1):
     /// `mail_delivery_after_read` (in `mail::Delivery::begin`, after the state read under `mail/lock`; an error there

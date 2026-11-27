@@ -22,7 +22,7 @@ use zygo_core::paths::Paths;
 use zygo_core::Agent;
 use zygo_workspace::admin::{self, ListRow, ListState};
 use zygo_workspace::identity::workspace_id;
-use zygo_workspace::mail::{mail_dir, store as mail_store, Message};
+use zygo_workspace::mail::{mail_dir, store as mail_store, Delivery, MailError, Message, MAIL_LOCK_WAIT};
 use zygo_workspace::mux::testing::{require_tmux, PrivateServer};
 use zygo_workspace::mux::{HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split};
 use zygo_workspace::state::{MemberRecord, MemberState, Pane, PaneKind, Phase, Store, Workspace};
@@ -2188,6 +2188,110 @@ fn forget_refuses_while_a_mail_sync_holds_its_lock() {
     assert_eq!((calls, state_bytes(&p, ID)), (0, bytes));
     drop(held);
     assert_eq!(forget_run(&p, &t.join("none"), None, "app"), (0, "zygo: forgot app\n".to_string(), String::new()));
+}
+
+// ---- FX-24: ws forget holds mail/lock across the state rename (M§5 P1, S§7.6 step 4) ----
+
+/// A readable state `app` of workspace `ID` with the record of `kbbbbbbbb`.
+fn ws_with_bob(p: &Paths, t: &Path) -> Store {
+    ws_state(p, ID, "app", &t.join("r/app"), |ws| {
+        ws.members.insert("kbbbbbbbb".into(), MemberRecord::new(Agent::ClaudeCode));
+    })
+}
+
+#[test] // d4: a delivery in flight while ws forget runs links under its lock, and the forget renames after it
+fn forget_waits_for_a_delivery_in_flight_and_leaves_no_maildir() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let store = ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    let (held_tx, held_rx) = std::sync::mpsc::channel::<()>();
+    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+    let go_rx = Mutex::new(go_rx);
+    up::testing::hook(
+        &dir,
+        "mail_delivery_after_read",
+        Some(Box::new(move || {
+            let _ = held_tx.send(());
+            let _ = go_rx.lock().unwrap().recv();
+            Ok(())
+        })),
+    );
+    for point in ["forget_before_mail_lock", "forget_before_tombstone_remove"] {
+        let go = go_tx.clone();
+        up::testing::hook(
+            &dir,
+            point,
+            Some(Box::new(move || {
+                let _ = go.send(());
+                Ok(())
+            })),
+        );
+    }
+    drop(go_tx);
+    let thread = std::thread::spawn(move || {
+        Delivery::begin(&store, MAIL_LOCK_WAIT).and_then(|d| {
+            d.deliver("kbbbbbbbb", "x", &Message::new("cli", "x", "s", "b", SystemTime::now()).unwrap(), 500)
+        })
+    });
+    held_rx.recv().unwrap();
+    let forgot = forget_run(&p, &t.join("none"), None, "app");
+    // Clearing the hooks drops every `go` sender, so the delivery never waits past a forget that failed early.
+    for point in ["mail_delivery_after_read", "forget_before_mail_lock", "forget_before_tombstone_remove"] {
+        up::testing::hook(&dir, point, None);
+    }
+    let delivered = thread.join().unwrap();
+    assert_eq!(forgot, (0, "zygo: forgot app\n".to_string(), String::new()));
+    assert!(delivered.is_ok(), "{delivered:?}");
+    assert!(fs::symlink_metadata(&dir).is_err(), "a delivery made the state folder or its maildir again");
+}
+
+#[test] // S§7.6 step 4: under all forget locks, right before the rename, a delivery cannot take mail/lock
+fn forget_holds_mail_lock_across_the_state_rename() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let store = ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    let seen: Arc<Mutex<Option<Option<String>>>> = Arc::new(Mutex::new(None));
+    let (hp, hs) = (p.clone(), Arc::clone(&seen));
+    up::testing::hook(
+        &dir,
+        "forget_before_state",
+        Some(Box::new(move || {
+            *hs.lock().unwrap() = Some(Delivery::begin(&Store::open(&hp, ID), Duration::ZERO).err().map(|e| e.to_string()));
+            Ok(())
+        })),
+    );
+    let forgot = forget_run(&p, &t.join("none"), None, "app");
+    up::testing::hook(&dir, "forget_before_state", None);
+    assert_eq!(forgot, (0, "zygo: forgot app\n".to_string(), String::new()));
+    assert_eq!(*seen.lock().unwrap(), Some(Some("zygo: mail is busy; try again".to_string())));
+    let e = Delivery::begin(&store, MAIL_LOCK_WAIT).unwrap_err();
+    assert!(matches!(e, MailError::NoWorkspace), "{e:?}");
+    assert!(fs::symlink_metadata(&dir).is_err());
+}
+
+#[test] // S§7.6 step 4: a mail/lock held for the whole 2 s bound refuses the forget, and the state stays
+fn forget_refuses_when_mail_lock_stays_held() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let store = ws_with_bob(&p, t);
+    let dir = p.workspaces_dir().join(ID);
+    let held = Delivery::begin(&store, MAIL_LOCK_WAIT).unwrap();
+    assert_eq!(
+        forget_run(&p, &t.join("none"), None, "app"),
+        (1, String::new(), "zygo: cannot forget app: mail is busy; try again\n".to_string())
+    );
+    assert_eq!(Store::open(&p, ID).read().unwrap().unwrap().name, "app");
+    drop(held);
+    assert_eq!(forget_run(&p, &t.join("none"), None, "app"), (0, "zygo: forgot app\n".to_string(), String::new()));
+    assert!(fs::symlink_metadata(&dir).is_err());
 }
 
 #[test] // S§7.6 last paragraph: a state that cannot be read gets before_remove with its raw absolute main_root
