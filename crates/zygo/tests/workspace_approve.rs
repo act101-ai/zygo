@@ -421,7 +421,7 @@ fn worktree_list_failure_exits_1_with_the_reason() {
     let o = approve(&f, &h, &["--yes"], None, &[("PATH", path.as_os_str())]);
     assert_eq!(
         (o.status.code(), text(&o.stderr).as_str(), text(&o.stdout).as_str()),
-        (Some(1), "zygo: workspace approve: git worktree list failed\n", "")
+        (Some(1), "zygo: workspace approve: git worktree list failed: fatal: stub\n", "")
     );
     assert!(!approvals(&h).exists());
 }

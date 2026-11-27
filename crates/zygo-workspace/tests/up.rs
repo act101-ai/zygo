@@ -394,17 +394,33 @@ fn real_git() -> PathBuf {
     std::env::split_paths(&path).map(|d| d.join("git")).find(|g| g.is_file()).expect("git on PATH")
 }
 
-/// `<dir>/bin/git` (by `script`): a call whose arguments hold `worktree list` prints `fatal: stub` to stderr and exits
-/// 1; every other call is `exec '<real_git()>' "$@"`. Returns the program, for the `git` seam of
+/// `<dir>/<sub>/git` (by `script`): a call whose arguments hold `worktree list` prints `line` (no `'`) to stderr and
+/// exits 1; every other call is `exec '<real_git()>' "$@"`. Returns the program, for the `git` seam of
 /// `up::find_checkout_with` and `up::preflight_with`.
-fn failing_list_git(dir: &Path) -> PathBuf {
-    let bin = dir.join("bin");
+fn failing_list_git(dir: &Path, sub: &str, line: &str) -> PathBuf {
+    let bin = dir.join(sub);
     fs::create_dir_all(&bin).unwrap();
     let body = format!(
-        "case \" $* \" in *\" worktree list \"*) echo 'fatal: stub' >&2; exit 1;; esac\nexec '{}' \"$@\"",
+        "case \" $* \" in *\" worktree list \"*) echo '{line}' >&2; exit 1;; esac\nexec '{}' \"$@\"",
         real_git().display()
     );
     script(&bin, "git", &body)
+}
+
+#[test] // FX-25 review F6, W§8.1 step 3: only git's "not a git repository" is "not a repository"; another phrase of
+        // `zygo_config::repo_file::GIT_ABSENT` from `worktree list` is a failed list with its text, exit 1
+fn other_absent_phrase_of_worktree_list_exits_1_with_the_text() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    repo(t, "w");
+    git(t, &["clone", "-q", "--bare", "w", "repo.git"]);
+    let stub = failing_list_git(t, "invalid", "fatal: invalid object name x");
+    // The probe list in a bare repository's own folder, where `rev-parse` finds no work tree.
+    assert_eq!(
+        up::find_checkout_with(&t.join("repo.git"), Duration::from_secs(3600), stub.as_os_str()).err(),
+        Some(Exit { code: 1, message: "git worktree list failed: fatal: invalid object name x".into() })
+    );
 }
 
 #[test] // FX-25 f6, W§8.1 step 3, AU25: a failed or timed-out list keeps its reason, exit 1, no write
@@ -417,8 +433,8 @@ fn worktree_list_failure_exits_1_with_the_reason() {
     // Timed out: with no time left, no git starts.
     assert_eq!(up::find_checkout(&r, Duration::ZERO).err(), Some(Exit { code: 1, message: "git worktree list timed out".into() }));
     // Failed: the list of the checkout found from a work tree, and the probe list in a bare repository's own folder.
-    let stub = failing_list_git(t);
-    let failed = Some(Exit { code: 1, message: "git worktree list failed".into() });
+    let stub = failing_list_git(t, "bin", "fatal: stub");
+    let failed = Some(Exit { code: 1, message: "git worktree list failed: fatal: stub".into() });
     assert_eq!(up::find_checkout_with(&r, far, stub.as_os_str()).err(), failed);
     git(t, &["clone", "-q", "--bare", "app", "repo.git"]);
     assert_eq!(up::find_checkout_with(&t.join("repo.git"), far, stub.as_os_str()).err(), failed);
@@ -426,7 +442,7 @@ fn worktree_list_failure_exits_1_with_the_reason() {
     let o = opts(t, &r, &version_tmux(t, "tmux34", "tmux 3.4"), &t.join("zygo"));
     assert_eq!(
         up::preflight_with(&o.paths, &o.tmux, None, &r, stub.as_os_str()).err(),
-        Some(Exit { code: 1, message: "zygo: git worktree list failed".into() })
+        Some(Exit { code: 1, message: "zygo: git worktree list failed: fatal: stub".into() })
     );
     assert!(!o.paths.workspaces_dir().exists());
     // No git: the program cannot start.

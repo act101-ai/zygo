@@ -169,7 +169,7 @@ fn worktrees_fails_after_the_deadline_and_when_git_fails() {
     assert_eq!(worktrees(&Checkout { deadline: Instant::now(), ..co(&w) }), Err(ListError::TimedOut));
     let gone = t.path().join("gone"); // no such directory: `git -C` exits non-zero with "cannot change to"
     let c = Checkout { top: gone.clone(), common_dir: gone.clone(), main_root: gone, deadline: Instant::now() + GIT };
-    assert!(matches!(worktrees(&c), Err(ListError::Failed(_))));
+    assert!(matches!(worktrees(&c), Err(ListError::Failed(why)) if why.contains("cannot change to")));
 }
 
 #[test] // FX-25 f6, review F5d: git's "not a git repository" is told from a failure

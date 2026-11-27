@@ -108,7 +108,8 @@ pub fn main_worktree(worktrees: &[Worktree]) -> Option<&Worktree> {
 /// (then `: <text>` when the failure has a text), `git worktree list timed out`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ListError {
-    /// git's own answer: the folder is in no repository (its stderr passes `zygo_config::repo_file::git_absent`).
+    /// git's own answer: the folder is in no repository (its stderr passes `zygo_config::repo_file::git_absent` and
+    /// holds "not a git repository").
     NotARepository,
     /// No program `git` to start (`io::ErrorKind::NotFound`).
     NotFound,
@@ -133,6 +134,10 @@ impl std::fmt::Display for ListError {
 
 impl std::error::Error for ListError {}
 
+/// git's answer (under `LC_ALL=C`) for a folder in no repository: the one phrase of
+/// `zygo_config::repo_file::GIT_ABSENT` that means [`ListError::NotARepository`] for `git worktree list`.
+const NOT_A_REPOSITORY: &str = "not a git repository";
+
 /// The most stderr bytes kept from a `git worktree list`; the rest is read and dropped, so git never stops on a full
 /// pipe.
 const STDERR_CAP: u64 = 64 * 1024;
@@ -143,10 +148,11 @@ const STDERR_CAP: u64 = 64 * 1024;
 /// own thread, at most 64 KiB kept). The call ends at `checkout.deadline`: git is then killed and reaped, and the
 /// result is [`ListError::TimedOut`]. No program `git` (`io::ErrorKind::NotFound`) is [`ListError::NotFound`]; any other
 /// start error is [`ListError::Failed`] with the text `cannot start git: <error>`. A non-zero exit whose
-/// stderr is git's "not a git repository" answer (`zygo_config::repo_file::git_absent`) is
+/// stderr passes `zygo_config::repo_file::git_absent` and holds git's "not a git repository" answer is
 /// [`ListError::NotARepository`]; that stderr is taken only on a non-zero exit, within the time left to the deadline
-/// (else `TimedOut`). Every other non-zero exit, a read error, a missing pipe and output that is not UTF-8 are
-/// [`ListError::Failed`].
+/// (else `TimedOut`). Every other non-zero exit (also one with another `GIT_ABSENT` phrase) is [`ListError::Failed`]
+/// with its stderr, trimmed; a read error, a missing pipe and output that is not UTF-8 are [`ListError::Failed`] with
+/// no text.
 pub fn worktrees(checkout: &Checkout) -> Result<Vec<Worktree>, ListError> { worktrees_with(OsStr::new("git"), checkout) }
 
 /// [`worktrees`] with `git` as the program: the seam of a test's failing or missing `git` (FX-25), so no test changes
@@ -213,8 +219,11 @@ pub fn worktrees_by(mut cmd: Command, checkout: &Checkout) -> Result<Vec<Worktre
             Err(mpsc::RecvTimeoutError::Timeout) => return Err(ListError::TimedOut),
             Err(mpsc::RecvTimeoutError::Disconnected) => return Err(ListError::Failed(String::new())),
         };
-        let absent = zygo_config::repo_file::git_absent(&String::from_utf8_lossy(&stderr));
-        return Err(if absent { ListError::NotARepository } else { ListError::Failed(String::new()) });
+        // Of the `GIT_ABSENT` answers, only "not a git repository" means no repository here (FX-25 review F6).
+        let text = String::from_utf8_lossy(&stderr);
+        let text = text.trim();
+        let absent = zygo_config::repo_file::git_absent(text) && text.contains(NOT_A_REPOSITORY);
+        return Err(if absent { ListError::NotARepository } else { ListError::Failed(text.to_string()) });
     }
     let text = read.ok().and_then(|bytes| String::from_utf8(bytes).ok());
     text.map(|text| parse(&text)).ok_or(ListError::Failed(String::new()))
