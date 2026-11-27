@@ -394,6 +394,18 @@ fn outside_a_repository_exits_2() {
     assert!(!approvals(&h).exists());
 }
 
+#[test] // R§7.1 step 3 (WD-15 review F5): a lookup error other than "not a repository" keeps its reason, exit 1
+fn bare_repository_without_checkout_exits_1_with_the_reason() {
+    let f = min();
+    let h = home(&f, "");
+    let o = run_in(&h, &f.t.path().join("o.git"), &["--yes"], None, &[]);
+    assert_eq!(
+        (o.status.code(), text(&o.stderr).as_str(), text(&o.stdout).as_str()),
+        (Some(1), "zygo: workspace approve: zygo up needs a worktree; this repository is bare\n", "")
+    );
+    assert!(!approvals(&h).exists());
+}
+
 #[test] // R§7.1 step 3, R§18 item 4 (`approve` exits 1)
 fn invalid_exits_1_with_the_violation() {
     let f = fx(&[(WS, b"version = 1\n[members.a]\nargs = [\"x\"]\n")]);

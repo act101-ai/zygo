@@ -10,7 +10,7 @@ use zygo_config::repo_def::{approve_workspace_in, check_default, repository_load
 use zygo_core::esc;
 use zygo_workspace::identity::workspace_id;
 use zygo_workspace::pool;
-use zygo_workspace::up::{find_checkout, GIT_BOUND};
+use zygo_workspace::up::{self, find_checkout, GIT_BOUND};
 
 use super::verbs::VerbCtx;
 use super::workspace::{line, listing};
@@ -61,7 +61,15 @@ pub(crate) fn run(ctx: &VerbCtx, args: &[String], input: &mut dyn BufRead, promp
     // folder (`zygo_work::repo::checkout`, the call of the launcher); the read runs at its top, the folder the launcher
     // reads (R§8), so the digest and the id are the ones the launcher checks.
     let cwd = std::env::current_dir().map_err(|e| anyhow!("zygo: {}", cwd_error(&e)))?;
-    let (co, _, _) = find_checkout(&cwd, GIT_BOUND).map_err(|_| UsageError(NOT_A_REPO.into()))?;
+    // WD-15 review F5: "not a repository" is exit 2 with this verb's line; any other lookup error (a bare repository with
+    // no checkout, a git call that failed) keeps its reason, exit 1.
+    let (co, _, _) = find_checkout(&cwd, GIT_BOUND).map_err(|e| -> anyhow::Error {
+        if e.message == up::NOT_A_REPO {
+            UsageError(NOT_A_REPO.into()).into()
+        } else {
+            anyhow!("zygo: workspace approve: {}", esc(&e.message))
+        }
+    })?;
     let id = workspace_id(&co.common_dir);
     let file = &ctx.paths.approvals_file;
     // Plan call 6: the lines of R§7.1 step 3, each value escaped.

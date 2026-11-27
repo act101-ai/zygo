@@ -56,7 +56,9 @@ const SESSION_HOOKS: [&str; 4] = ["after-new-window", "after-split-window", "cli
 const WINDOW_HOOKS: [&str; 4] = ["window-layout-changed", "window-renamed", "pane-exited", "window-unlinked"];
 
 const NO_TMUX: &str = "zygo: workspaces need tmux; install tmux 3.2 or later";
-const NOT_A_REPO: &str = "zygo up needs a git repository";
+/// The `Exit.message` of [`find_checkout`] when the folder is not in a git repository; its other errors keep their
+/// own reason.
+pub const NOT_A_REPO: &str = "zygo up needs a git repository";
 const BARE: &str = "zygo up needs a worktree; this repository is bare";
 const NEWER: &str = "zygo: workspace state is from a newer zygo; run zygo update";
 const AU98: &str = "zygo: --server holds user info; this agent is not saved by the workspace";
