@@ -38,7 +38,12 @@ static SPECS: [VerbSpec; 19] = [
         scope: Scope::None,
     },
     VerbSpec { name: "ls", args: "", summary: "One line per workspace with its state", scope: Scope::None },
-    VerbSpec { name: "workspace", args: "", summary: "Status of this session's or this folder's workspace", scope: Scope::None },
+    VerbSpec {
+        name: "workspace",
+        args: "[approve [--yes] [--digest <hex>]]",
+        summary: "Status of this session's or this folder's workspace; approve: approve this repository's workspace files on this machine",
+        scope: Scope::None,
+    },
     VerbSpec { name: "decision", args: "ls|show|deps|check …", summary: "Decision records; /zygo:decision replies with the shell command", scope: Scope::None },
     VerbSpec { name: "mail", args: "send|read|ls …", summary: "Unread mail of this workspace's members; /zygo:mail lists only", scope: Scope::None },
 ];

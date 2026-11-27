@@ -42,6 +42,7 @@ pub mod usage;
 pub mod verbs;
 pub mod work;
 pub mod workspace;
+mod workspace_approve;
 pub mod ws;
 
 pub use zygo_config::display::EscapedLines;
@@ -377,8 +378,8 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Status of this session's or this folder's workspace
-    Workspace,
+    /// Status of this session's or this folder's workspace; approve: approve this repository's workspace files
+    Workspace(VerbArgs),
     /// Workspace tools: forget, forget-pane
     Ws(ws::WsArgs),
     /// Workspace mail: send, read, ls, watch, sync
@@ -610,9 +611,9 @@ pub fn run() -> i32 {
         Cmd::Attach(a) => return attach::run(a),
         Cmd::Loadout(a) => return loadout::run(a),
         Cmd::Decision { args } => return decision::run(args),
-        Cmd::Workspace => return finish(workspace::verb(&cli_ctx(), &[])),
         Cmd::Ws(_) => unreachable!("taken above"),
         Cmd::Mail(_) => unreachable!("taken above"),
+        Cmd::Workspace(_) => "workspace",
         Cmd::Status => "status",
         Cmd::Compact { .. } => "compact",
         Cmd::Profile { .. } => "profile",
