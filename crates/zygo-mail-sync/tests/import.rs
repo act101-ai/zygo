@@ -283,7 +283,9 @@ fn hostile_names_never_reach_a_path() { // review focus 8
     assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
     for p in all_files(m.root.parent().unwrap()).difference(&before) {
         let md = sp.mail.join(KEY);
-        assert!(p.starts_with(&sp.sync) || p.starts_with(&md) || sp.sync.starts_with(p) || md.starts_with(p), "{p:?}");
+        // `mail/lock`: the M§5 lock the delivery takes (FX-24); it names no remote value.
+        assert!(p.starts_with(&sp.sync) || p.starts_with(&md) || sp.sync.starts_with(p) || md.starts_with(p)
+            || *p == sp.mail.join("lock"), "{p:?}");
     }
 }
 
@@ -522,4 +524,46 @@ fn a_failed_ls_tree_is_logged() {
     let (res, lines) = go(&m, &sp, missing, &["b"], &BTreeSet::new(), 5000, &NoSeam);
     assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![], left: 1 }));
     assert_eq!(lines, ["mail sync: import: ls-tree"]);
+}
+
+// ---- FX-24: the import and the finish of incoming/ are M§5 deliveries (S§8.5 "Delivery, crash-safe", step 5) ----
+
+/// Holds `mail/lock` of `sp` exclusive, as a removal of a maildir holds it (M§5 P1), until the file is dropped.
+fn hold_mail_lock(sp: &SyncPaths) -> fs::File {
+    use std::os::unix::fs::OpenOptionsExt;
+    zygo_workspace::mail::ensure_mail_dir(&sp.mail).unwrap();
+    let f = fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).mode(0o600)
+        .open(sp.mail.join("lock")).unwrap();
+    fs4::FileExt::try_lock(&f).unwrap();
+    f
+}
+
+#[test] // d3, author's call 2: a candidate whose key has no record in the read under the lock waits on the branch
+fn import_to_a_key_with_no_record_stages_nothing() {
+    let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+    let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
+    m.workspace(&[("kcccccccc", "carol")]); // bob's record went; bob() is the older read of the gate
+    let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    assert_eq!(res, Ok(Imported::default()));
+    assert!(lines.is_empty(), "{lines:?}");
+    assert!(!sp.mail.join(KEY).exists() && !sp.incoming.exists());
+    assert!(!imported_load(&sp).unwrap().contains(&u(1)));
+    m.workspace(&[(KEY, "bob")]); // the message waited on the branch
+    let (res, _) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    assert_eq!(res, Ok(Imported { delivered: vec![(KEY.into(), u(1))], acked: vec![u(1)], left: 0 }));
+}
+
+#[test] // d3, author's calls 4 and 7: a mail/lock held for the whole bound stops the import for this pass
+fn import_stops_at_a_held_mail_lock() {
+    let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+    let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1), u(2)]))]);
+    let held = hold_mail_lock(&sp);
+    let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![], left: 1 }));
+    assert_eq!(lines, [log_line(u(1), "lock")]);
+    assert!(!sp.mail.join(KEY).exists() && !sp.incoming.exists());
+    assert!(imported_load(&sp).unwrap().is_empty());
+    drop(held);
+    let (res, _) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    assert_eq!(res.unwrap().delivered, [(KEY.to_string(), u(1)), (KEY.to_string(), u(2))]);
 }
