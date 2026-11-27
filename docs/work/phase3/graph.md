@@ -225,7 +225,7 @@ Session text (T, SX nodes):
 | FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | TODO | implementation | — |
 | FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | DONE | judgment | 343897e2^..a9b6f61c · acceptance pass (renamed_host_ack_goes_with_only_acked_link_and_gitlink_entries 1 passed) · PR #231 |
 | FX-28 | A remote send during `ws forget` is lost uncounted | FX-24 | TODO | judgment | — |
-| FX-29 | config check rejects default_loadout = "repository" that zygo up accepts | WD-20 | PLANNED | implementation | wt .worktrees/phase3/FX-29 |
+| FX-29 | config check rejects default_loadout = "repository" that zygo up accepts | WD-20 | PLANNED | implementation | wt .worktrees/phase3/FX-29 · PR #237 |
 | FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | TODO | judgment | — |
 
 ## Log
