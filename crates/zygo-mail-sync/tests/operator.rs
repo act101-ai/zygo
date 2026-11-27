@@ -761,3 +761,107 @@ fn renamed_host_ack_goes_after_the_prune_takes_the_message_file() {
     assert!(tip_paths(&r).contains(&link));
     assert_eq!(state_keys(&b), (own_keys(&["b2"]), BTreeSet::new()));
 }
+
+#[test] // S§7.4 Owner, S§7.6 Rename (FX-27 review F1): a ULID acked in another host's folder does not count for the old ack
+fn renamed_host_ack_stays_when_the_ulid_was_acked_only_in_another_folder() {
+    let (r, _a, b) = pair();
+    let u = Ulid::from_parts(T0 * 1000, 11);
+    let target = blob(&r.bare, b"../ZYGO-MAIL");
+    // carol is not a member: carol@b/<u> is never a candidate, so no pass acknowledges it.
+    put_entries(&r, &[("120000", &target, &format!("carol@b/{u}.json")), ("120000", &target, &format!("bob@b2/{u}.json"))]);
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    assert!(file(&r, "ack/b.json").is_some());
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::new());
+    assert_eq!(imported(&r, "ack/b2.json"), BTreeSet::from([u.to_string()]));
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string(), "b".to_string()]);
+}
+
+#[test] // S§7.4 Owner, S§9 (FX-27 review F1): a message file is not written into the old ack by an ack in another folder
+fn old_ack_does_not_list_a_message_file_acked_only_in_another_folder() {
+    let (r, _a, b) = pair();
+    let u = Ulid::from_parts(T0 * 1000, 12);
+    let path = format!("carol@b/{u}.json");
+    let msg = blob(&r.bare, b"{\"not\":\"delivered\"}");
+    put_entries(&r, &[("100644", &msg, &path), ("120000", &blob(&r.bare, b"../ZYGO-MAIL"), &format!("bob@b2/{u}.json"))]);
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::new());
+    assert_eq!(imported(&r, "ack/b2.json"), BTreeSet::from([u.to_string()]));
+    assert!(prune_now(&b).notes.contains(&"pruned 0 files".to_string()));
+    assert!(tip_paths(&r).contains(&path)); // never delivered, so never removed
+    assert!(file(&r, "ack/b.json").is_some());
+}
+
+#[test] // S§7.6 Rename (FX-27 review F2): a link acked in the rename pass itself lets the old ack go in that pass
+fn renamed_host_ack_goes_when_the_link_is_acked_in_the_rename_pass() {
+    let (r, _a, b) = pair();
+    let u = Ulid::from_parts(T0 * 1000, 8);
+    let link = format!("bob@b/{u}.json");
+    put_entries(&r, &[("120000", &blob(&r.bare, b"../ZYGO-MAIL"), &link)]);
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert!(tip_paths(&r).contains(&link));
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+    assert_eq!(state_keys(&b), (own_keys(&["b2"]), BTreeSet::new()));
+}
+
+/// A new remote tip with a tree (mode `040000`) at `bob@b/<name>`, made with `mktree`; the tip must not have `bob@b`.
+fn put_tree(r: &Remote, name: &str) {
+    use std::io::Write;
+    let tip = r.tip(BRANCH).unwrap();
+    let sub = git(&r.bare, &["rev-parse", &format!("{tip}:registry")]).trim().to_string();
+    let mk = |input: String| {
+        let mut ch = plain(&r.bare).arg("mktree").stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped()).spawn().unwrap();
+        ch.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        let out = ch.wait_with_output().unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    let folder = mk(format!("040000 tree {sub}\t{name}\n"));
+    let mut root = git(&r.bare, &["ls-tree", &tip]);
+    root.push_str(&format!("\n040000 tree {folder}\tbob@b\n"));
+    let tree = mk(root);
+    let c = commit_tree(&r.bare, &tree, Some(&tip));
+    git(&r.bare, &["update-ref", &format!("refs/heads/{BRANCH}"), &c]);
+}
+
+#[test] // S§7.6 Rename, S§9 Tree (FX-27 review F2): an acked tree entry (040000) does not keep the old ack; it stays
+fn renamed_host_ack_goes_with_only_an_acked_tree_entry() {
+    let (r, a, b) = pair();
+    let u = Ulid::from_parts(T0 * 1000, 7);
+    let under = format!("bob@b/{u}.json/");
+    let tree_at_tip = |r: &Remote| tip_paths(r).iter().any(|x| x.starts_with(&under));
+    put_tree(&r, &format!("{u}.json"));
+    assert!(tree_at_tip(&r));
+    assert_eq!(sync(&b).delivered, 0);
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([u.to_string()]));
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(own_at_tip(&r, &b, "b2"), vec!["b2".to_string()]);
+    assert!(tree_at_tip(&r));
+    assert!(prune_now(&b).notes.contains(&"pruned 0 files".to_string()));
+    assert!(tree_at_tip(&r));
+    sync(&b); // no twin, no collision
+    sync(&a);
+    assert_eq!(file(&r, "ack/b.json"), None);
+}
+
+#[test] // S§7.6 --drop-host (FX-27 review F3): acked links do not count as waiting messages after the old ack is gone
+fn drop_count_is_zero_for_links_after_the_old_ack_is_gone() {
+    let (r, _a, b) = pair();
+    let (u1, u2) = (Ulid::from_parts(T0 * 1000, 9), Ulid::from_parts(T0 * 1000, 10));
+    let target = blob(&r.bare, b"../ZYGO-MAIL");
+    put_entries(&r, &[("120000", &target, &format!("bob@b/{u1}.json")), ("120000", &target, &format!("bob@b/{u2}.json"))]);
+    sync(&b);
+    assert_eq!(waiting_for(&env(&b), WS_ID, "b"), Ok(0));
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "ack/b.json"), None);
+    assert_eq!(waiting_for(&env(&b), WS_ID, "b"), Ok(0));
+}

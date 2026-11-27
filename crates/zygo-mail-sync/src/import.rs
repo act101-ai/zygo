@@ -33,14 +33,14 @@ pub struct Target {
     pub pane_key: String,
 }
 
-/// What one import pass did. `delivered` holds `(pane key, ULID)`; `acked` each ULID once, in reading order;
-/// `left` the seen candidates not finished, plus 1 when the reading stopped early; `read` the state read under
+/// What one import pass did. `delivered` holds `(pane key, ULID)`; `acked` holds `(own host, ULID)`, each ULID once,
+/// in reading order, with the host of the `*@<host>/` folder of the acknowledged entry (S§7.4 "Owner"); `left` the seen candidates not finished, plus 1 when the reading stopped early; `read` the state read under
 /// `mail/lock` at the last delivery, which holds the record of each key in `delivered` that still has one (the wake
 /// uses it, S§10.1).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Imported {
     pub delivered: Vec<(String, ulid::Ulid)>,
-    pub acked: Vec<ulid::Ulid>,
+    pub acked: Vec<(String, ulid::Ulid)>,
     pub left: usize,
     pub read: Option<Workspace>,
 }
@@ -186,9 +186,10 @@ fn staged_ids(sp: &SyncPaths) -> std::io::Result<HashSet<Ulid>> {
     Ok(out)
 }
 
-/// One candidate of a pass: its ULID, the member name of its folder, its folder and its tree entry.
+/// One candidate of a pass: its ULID, the own host and member name of its folder, its folder and its tree entry.
 struct Candidate {
     id: Ulid,
+    host: String,
     name: String,
     folder: String,
     entry: Entry,
@@ -240,7 +241,7 @@ fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], ow
                     *room -= 1;
                 }
                 ids.insert(id);
-                out.push(Candidate { id, name: t.name.clone(), folder: folder.clone(), entry: e });
+                out.push(Candidate { id, host: host.clone(), name: t.name.clone(), folder: folder.clone(), entry: e });
                 Flow::Go
             });
             match r {
@@ -303,7 +304,7 @@ pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[Str
             if staged_ids.contains(&id) {
                 out.left += 1;
             } else {
-                out.acked.push(id);
+                out.acked.push((c.host.clone(), id));
             }
             continue;
         }
@@ -332,7 +333,7 @@ pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[Str
                     continue;
                 }
                 seen.insert(id);
-                out.acked.push(id);
+                out.acked.push((c.host.clone(), id));
                 log(&format!("mail sync: import {id}: {check}"));
                 continue;
             }
@@ -387,7 +388,7 @@ pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[Str
             out.delivered.push((key, id));
             out.read = Some(read);
         }
-        out.acked.push(id);
+        out.acked.push((c.host.clone(), id));
         seam.at("after_ack")?;
     }
     Ok(out)

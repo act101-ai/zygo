@@ -896,14 +896,15 @@ pub(crate) fn own_names(ws: &Workspace) -> Vec<String> {
     names
 }
 
-/// S§8.3 step 12, S§7.3, S§7.4: the own registry when the tip's differs, and the ack of each own host when it
-/// changes: (old ∪ the acknowledged ULIDs) ∩ the files of that host at the tip. The current host's ack is written
+/// S§8.3 step 12, S§7.3, S§7.4: the own registry when the tip's differs, and the ack of each own host `h` when it
+/// changes: (old ∪ the ULIDs that this pass acknowledged in a `*@<h>/` folder) ∩ the files of `h` at the tip. A ULID
+/// acknowledged in the folder of another host does not count for `h` (FX-27 review F1). The current host's ack is written
 /// when the tip has none of this identity (S§7.6). A file over its limit is not written; one line is logged (O3).
 /// After a rename (S§7.6 "Rename") it deletes the registry of an old own host, unless the new one is over its limit,
 /// and the ack of an old own host whose entries at the tip are none, or are all entries that no prune removes and
 /// that the ack lists, when it deletes that host's registry or the host has none.
 fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &BTreeMap<String, HostFiles>,
-    acked: &[Ulid]) -> Vec<Change> {
+    acked: &[(String, Ulid)]) -> Vec<Change> {
     let host = c.s.host.as_str();
     let names = own_names(&c.ws);
     let over = names.len() > MEMBERS_MAX;
@@ -923,13 +924,13 @@ fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &
             out.push(Change::Remove { path: format!("registry/{h}.json") });
         }
     }
-    let acked: BTreeSet<Ulid> = acked.iter().copied().collect();
     let none = HostFiles::default();
     for h in own {
         let tip_ack = own_ack(meta, h, identity);
         let old = tip_ack.map(|a| a.imported.clone()).unwrap_or_default();
         let at = files.get(h).unwrap_or(&none);
-        let new: BTreeSet<Ulid> = old.union(&acked).filter(|u| at.all.contains(u)).copied().collect();
+        let here: BTreeSet<Ulid> = acked.iter().filter(|(ah, _)| ah == h).map(|(_, u)| *u).collect();
+        let new: BTreeSet<Ulid> = old.union(&here).filter(|u| at.all.contains(u)).copied().collect();
         // The old ack goes only with or after the old registry: `own_hosts` finds an old host by its ack (S-G5).
         let reg_stays = over
             && meta.registries.get(h).is_some_and(|r| r.value.as_ref().is_ok_and(|v| v.identity == identity));
