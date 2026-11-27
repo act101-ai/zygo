@@ -582,12 +582,10 @@ fn a_hand_start_with_claude_code_simple_is_saved_with_events_off() {
 #[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_provider_key_named_claude_code_simple_does_not_make_a_member_events_off() {
     let Some(h) = Harness::new() else { return };
-    std::fs::write(
-        &h.paths.config_file,
+    h.config(
         "[[model]]\nid = \"test-env\"\n[[model.provider]]\nname = \"p-env\"\nbase_url = \"https://example.invalid\"\n\
          dialects = [\"anthropic\"]\nupstream_model = \"up-env\"\nkey = \"env:CLAUDE_CODE_SIMPLE\"\n",
-    )
-    .unwrap();
+    );
     workspace_session(&h, Some(KEY2), Some(WS_ID));
     up_state(&h, &[], &mut |_| {});
     let pane = split(&h, "=zygo-app:", "cat");
@@ -1220,7 +1218,7 @@ fn au94_a_resume_of_another_agent_kind_refuses() { // finding 2
 #[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_resume_command_names_the_saved_launch_and_a_hand_resume_keeps_it() { // finding 6
     let Some(h) = Harness::new() else { return };
-    std::fs::write(h.root().join("config.toml"), "[profile.p1]\nprompt = \"P\"\n").unwrap();
+    h.config("[profile.p1]\nprompt = \"P\"\n");
     let first = workspace_session(&h, Some(KEY), Some(WS_ID));
     let mut r = record(Agent::ClaudeCode, MemberState::Resumable, Some("abc"), Some(OLD_ZS));
     r.launch.profile = Some("p1".into());
@@ -1295,8 +1293,7 @@ fn w18_56_a_settings_argument_keeps_a_hand_start_a_member_through_down_and_up() 
     for (case, line) in [("readable", MERGE), ("missing", NO_FILE)] {
         let Some(h) = Harness::new() else { return };
         git_repo(&h);
-        std::fs::write(h.root().join("config.toml"), "[loadout.hold]\n[[loadout.hold.window]]\n[[loadout.hold.window.pane]]\nkind = \"shell\"\n")
-            .unwrap();
+        h.config("[loadout.hold]\n[[loadout.hold.window]]\n[[loadout.hold.window.pane]]\nkind = \"shell\"\n");
         let o = cli(&h, &["up", "--loadout", "hold", "--no-attach"], &[]);
         assert_eq!(o.status.code(), Some(0), "{case}: {}", text(&o.stderr));
         let (id, ws) = only_state(&h);
@@ -1362,7 +1359,7 @@ fn w18_19_loadout_values_reach_the_launch_and_the_resume() { // decision 2; #19 
          [[loadout.l19.window.pane]]\nkind = \"claude-code\"\nserver = \"https://127.0.0.1:{port}\"\n",
         dir.display()
     );
-    std::fs::write(h.root().join("config.toml"), config).unwrap();
+    h.config(&config);
     let token = OsString::from(zygo_proxy::team::new_token().0);
     let (out, mut env) = h.stub(Agent::ClaudeCode, "a");
     let c = ctl(&h, "a");
@@ -1421,7 +1418,7 @@ const L19U: &str = "[loadout.hold]\n[[loadout.hold.window]]\n[[loadout.hold.wind
 fn w18_19_config_check_and_a_hand_launch_report_user_info() { // #19 sentence 3; FIX-27 D9
     let Some(h) = Harness::new() else { return };
     git_repo(&h);
-    std::fs::write(h.root().join("config.toml"), L19U).unwrap();
+    h.config(L19U);
     let o = Guarded::spawn(h.zygo(&["config", "check"], &[no_check()])).output("config check");
     assert_eq!(o.status.code(), Some(11), "{}", text(&o.stderr));
     let out = text(&o.stdout);
@@ -1452,7 +1449,7 @@ fn w18_19_config_check_and_a_hand_launch_report_user_info() { // #19 sentence 3;
 fn w18_19_up_starts_a_user_info_pane_as_a_shell() { // AU98 in a loadout, through the CLI
     let Some(h) = Harness::new() else { return };
     git_repo(&h);
-    std::fs::write(h.root().join("config.toml"), L19U).unwrap();
+    h.config(L19U);
     let o = cli(&h, &["up", "--loadout", "l19u", "--no-attach"], &[]);
     assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
     assert_eq!(text(&o.stderr).matches(&format!("{AU98}\n")).count(), 1, "{}", text(&o.stderr));
@@ -1573,7 +1570,7 @@ fn the_printed_resume_command_starts_the_agent_as_ws_run_does() { // diff review
         let Some(h) = Harness::new() else { return };
         let (_d, srv, token) = team_server();
         let config = if serve { TEAM_SERVER } else { "" };
-        std::fs::write(h.root().join("config.toml"), format!("{config}[profile.p1]\nprompt = \"P\"\n")).unwrap();
+        h.config(&format!("{config}[profile.p1]\nprompt = \"P\"\n"));
         let first = workspace_session(&h, Some(KEY), Some(WS_ID));
         let mut r = record(Agent::ClaudeCode, MemberState::Resumable, Some("abc"), Some(OLD_ZS));
         r.launch.profile = Some("p1".into());
@@ -1679,7 +1676,7 @@ fn a_typed_id_that_does_not_exist_is_not_saved() { // diff review round 3, findi
 #[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_hand_start_exit_line_names_the_saved_launch() { // diff review round 3, finding 7
     let Some(h) = Harness::new() else { return };
-    std::fs::write(h.root().join("config.toml"), "[profile.p1]\nprompt = \"P\"\n[profile.p2]\nprompt = \"Q\"\n").unwrap();
+    h.config("[profile.p1]\nprompt = \"P\"\n[profile.p2]\nprompt = \"Q\"\n");
     let first = workspace_session(&h, Some(KEY), Some(WS_ID));
     let mut r = record(Agent::ClaudeCode, MemberState::Resumable, Some("abc"), Some(OLD_ZS));
     r.launch.profile = Some("p1".into());

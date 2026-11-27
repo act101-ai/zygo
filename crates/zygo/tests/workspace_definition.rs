@@ -2,8 +2,8 @@
 //! runner. B-tests run `zygo ws run` and E-tests `zygo up` on tmux; both launch the stub agent and are
 //! `#[ignore = "timing: …"]` as the agent-launch tests of `workspace_run.rs` and `workspace_restore.rs`. Workspace
 //! state and the test shell need unix, so the file is `cfg(unix)` (OP5). No test reaches the network: the L-tests
-//! remove the built-in marketplace from the built-in layer, the B- and E-tests turn it off in the user config
-//! ([`NO_MARKETPLACE`]).
+//! remove the built-in marketplace from the built-in layer; the B- and E-tests write the user config through the
+//! harness, whose `common::NO_MARKETPLACE` (after the body) turns it off (FX-23).
 #![cfg(unix)]
 mod common;
 #[path = "common/e2e.rs"]
@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use common::workspace::{ready_exe, Guarded, Harness, WS_ID};
+use common::workspace::{no_marketplace_line, ready_exe, Guarded, Harness, WS_ID};
 use e2e::*;
 use serde_json::{json, Value};
 use zygo_config::profile::Profile;
@@ -134,21 +134,6 @@ fn builtin() -> toml::Table {
     let mut t = toml::Table::try_from(zygo_config::builtin::defaults()).unwrap();
     t.remove("marketplace");
     t
-}
-
-/// The user config of the B- and E-tests turns the built-in marketplace off as the L-tests' [`builtin`] does: a user
-/// `act101` entry with an empty `ref` (the built-in source stays, §15.1), and sync skips a built-in entry without a
-/// `ref` (`zygo-plugins` `sync.rs` `engine`), so no run reaches the network.
-const NO_MARKETPLACE: &str = "[[marketplace]]\nname = \"act101\"\nref = \"\"\n";
-
-/// Writes the user config: [`NO_MARKETPLACE`], then `body`.
-fn user_config(h: &Harness, body: &str) {
-    config(h, &format!("{NO_MARKETPLACE}{body}"));
-}
-
-/// No line of `err` names a marketplace: the run did no marketplace sync (no network).
-fn no_marketplace_line(err: &str) {
-    assert!(!err.lines().any(|l| l.contains("marketplace")), "{err}");
 }
 
 /// Records the args of every call, then runs `SystemGit`.
@@ -648,7 +633,7 @@ const DEFAULT_LOOKUP: &str = "symbolic-ref --quiet refs/remotes/origin/HEAD";
 fn b1_ws_run_resumes_with_the_pinned_profile_and_keeps_job_and_pin() { // R§7.4 bullets 3, 7; R§9.3 effect 2; R§10 `ws run`; review focus 33
     for approve_new in [true, false] {
         let h = Harness::no_tmux();
-        user_config(&h, "");
+        config(&h, "");
         let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
         let pin0 = approve(&app, &h.paths.approvals_file);
         commit_default(&app, NEWER);
@@ -659,7 +644,7 @@ fn b1_ws_run_resumes_with_the_pinned_profile_and_keeps_job_and_pin() { // R§7.4
         fake_git(&h, false);
         let (out, env) = h.stub(Agent::ClaudeCode, "a");
         let o = ws_run(&h, &env);
-        no_marketplace_line(&text(&o.stderr));
+        no_marketplace_line(&text(&o.stderr), "ws run");
         let v = view(&out);
         assert_eq!((v["profile"].clone(), v["disabled_roles"].clone()), (json!("rust"), json!(["design"])), "{}", text(&o.stderr));
         let log = git_log(&h);
@@ -674,7 +659,7 @@ fn b1_ws_run_resumes_with_the_pinned_profile_and_keeps_job_and_pin() { // R§7.4
 #[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn b2_a_failing_pinned_listing_stops_ws_run_and_keeps_the_record() { // R§7.4 bullet 5 (rewritten); R§18 item 16
     let h = Harness::no_tmux();
-    user_config(&h, "");
+    config(&h, "");
     let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
     let pin = approve(&app, &h.paths.approvals_file);
     seed_member(&h, &app, &pinned(Some(&pin)));
@@ -692,7 +677,7 @@ fn b2_a_failing_pinned_listing_stops_ws_run_and_keeps_the_record() { // R§7.4 b
 #[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn b3_a_pruned_pin_stops_ws_run_and_keeps_the_record() { // R§7.4 bullet 4; R§11 row; R§18 item 16
     let h = Harness::no_tmux();
-    user_config(&h, "");
+    config(&h, "");
     let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
     let pin = approve(&app, &h.paths.approvals_file);
     prune(&app, &pin.commit);
@@ -710,7 +695,7 @@ fn b3_a_pruned_pin_stops_ws_run_and_keeps_the_record() { // R§7.4 bullet 4; R§
 #[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn b4_a_pool_member_with_a_gone_pin_starts_with_no_pinned_read() { // R§7.4 bullet 6; R§9.5; R§18 item 16
     let h = Harness::no_tmux();
-    user_config(&h, "");
+    config(&h, "");
     let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
     let pin = approve(&app, &h.paths.approvals_file);
     prune(&app, &pin.commit);
@@ -735,7 +720,7 @@ fn b4_a_pool_member_with_a_gone_pin_starts_with_no_pinned_read() { // R§7.4 bul
 #[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn b5_a_first_start_saves_the_pin_of_its_read_and_keeps_it() { // R§7.4 bullet 2 (rewritten); R§12 row (rewritten)
     let h = Harness::no_tmux();
-    user_config(&h, "");
+    config(&h, "");
     let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
     let pin0 = approve(&app, &h.paths.approvals_file);
     let mut m = MemberRecord::new(Agent::ClaudeCode);
@@ -758,7 +743,7 @@ fn b5_a_first_start_saves_the_pin_of_its_read_and_keeps_it() { // R§7.4 bullet 
 fn e1_a_fresh_up_pins_each_member_and_a_restore_sends_the_pinned_profile() { // R§7.4 bullets 1-3, 7; R§10 `up` (a restore); R§18 item 16
     for approve_new in [true, false] {
         let Some(h) = Harness::new() else { return };
-        user_config(&h, "");
+        config(&h, "");
         git_repo_at(&h, &h.repo());
         per_pane_claude(&h, "");
         let app = repo_at(
@@ -791,12 +776,12 @@ fn e1_a_fresh_up_pins_each_member_and_a_restore_sends_the_pinned_profile() { // 
 #[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn e2_a_hand_start_with_a_repository_profile_gets_the_pin_and_keeps_it() { // R§7.4 bullet 2 (rewritten); R§18 item 16
     let Some(h) = Harness::new() else { return };
-    user_config(&h, "");
+    config(&h, "");
     git_repo_at(&h, &h.repo());
     per_pane_claude(&h, "");
     let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
     let pin0 = approve(&app, &h.paths.approvals_file);
-    user_config(&h, "[loadout.l14]\n[[loadout.l14.window]]\n[[loadout.l14.window.pane]]\nkind = \"shell\"\n");
+    config(&h, "[loadout.l14]\n[[loadout.l14.window]]\n[[loadout.l14.window.pane]]\nkind = \"shell\"\n");
     let o = run_in(&h, &app, &["up", "--loadout", "l14", "--no-attach"], &[], true);
     assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
     let (id, ws) = only_state(&h);
@@ -836,7 +821,7 @@ fn e2_a_hand_start_with_a_repository_profile_gets_the_pin_and_keeps_it() { // R�
 #[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn e4_a_hand_resume_of_a_kept_record_launches_from_its_pin() { // R§7.4 bullet 2 (a hand resume), bullet 3; review F3
     let Some(h) = Harness::new() else { return };
-    user_config(&h, "[loadout.l14]\n[[loadout.l14.window]]\n[[loadout.l14.window.pane]]\nkind = \"shell\"\n");
+    config(&h, "[loadout.l14]\n[[loadout.l14.window]]\n[[loadout.l14.window.pane]]\nkind = \"shell\"\n");
     git_repo_at(&h, &h.repo());
     per_pane_claude(&h, "");
     let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
@@ -875,7 +860,7 @@ fn e4_a_hand_resume_of_a_kept_record_launches_from_its_pin() { // R§7.4 bullet 
 #[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn e3_item_15_a_pool_member_with_a_profile() { // R§18 item 15 (stub launch part); R§9.5 "Launch"; R§14 row §12
     let Some(h) = Harness::new() else { return };
-    user_config(&h, "");
+    config(&h, "");
     git_repo_at(&h, &h.repo());
     per_pane_claude(&h, "");
     let app = repo_at(
@@ -898,7 +883,7 @@ fn e3_item_15_a_pool_member_with_a_profile() { // R§18 item 15 (stub launch par
     // A pool: passthrough on the pool directory; no profile.
     let pool = h.root().join("pool");
     std::fs::create_dir_all(pool.join("a")).unwrap();
-    user_config(&h, &format!("[workspace]\npool = \"{}\"\n", pool.display()));
+    config(&h, &format!("[workspace]\npool = \"{}\"\n", pool.display()));
     let o = run_in(&h, &app, &["up", "--reset", "--no-attach"], &[], true);
     let err = text(&o.stderr);
     assert_eq!(o.status.code(), Some(0), "{err}");
@@ -916,4 +901,30 @@ fn e3_item_15_a_pool_member_with_a_profile() { // R§18 item 15 (stub launch par
     assert!(view_of(&h, &k2)["profile"].is_null());
     assert!(headers(&k2).contains("X-Zygo-Token"), "{}", headers(&k2));
     down(&h, &ws.name);
+}
+
+/// FX-23 review F5: [`Harness::config`] writes the body first and then `NO_MARKETPLACE`, so the `[[marketplace]]`
+/// header of `NO_MARKETPLACE` does not take a top-level key of the body into its table.
+#[test]
+fn fx23_harness_config_keeps_the_top_level_keys_of_the_body() {
+    let Some(h) = Harness::new() else { return };
+    h.config("main_role = \"boss\"\n");
+    let o = Guarded::spawn(h.zygo(&["config", "show"], &[])).output("config show");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let out = text(&o.stdout);
+    let main_role: Vec<&str> = out.lines().filter(|l| l.starts_with("main_role ")).collect();
+    assert_eq!(main_role, ["main_role = \"boss\"  # user"]);
+}
+
+/// FX-23 review F4: the stderr check matches only sync output: a line that starts with `marketplace ` and the exact
+/// offline summary `plugins: offline`. `plugins: partial` and other lines that name a marketplace pass.
+#[test]
+fn fx23_the_stderr_check_matches_only_sync_lines() {
+    for ok in ["plugins: partial", "zygo: marketplace team is not configured", "loadout uses marketplace plugins", "x plugins: offline"] {
+        no_marketplace_line(ok, "ok");
+    }
+    for sync in ["marketplace act101: tag v1 moved; run zygo marketplace update act101 --accept", "plugins: offline"] {
+        let r = std::panic::catch_unwind(|| no_marketplace_line(&format!("zygo: ok\n{sync}\n"), "sync"));
+        assert!(r.is_err(), "{sync}");
+    }
 }

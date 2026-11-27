@@ -1245,7 +1245,7 @@ fn fx17_up_refuses_a_user_max_members_outside_1_32() {
     let h = Harness::no_tmux();
     let (app, id) = approved_repo(&h, TWO);
     for v in [0, 33] {
-        std::fs::write(&h.paths.config_file, format!("[limits]\nmax_members = {v}\n")).unwrap();
+        h.config(&format!("[limits]\nmax_members = {v}\n"));
         let o = up_in(&h, &app, &["up", "--no-attach"], None);
         assert_eq!((o.status.code(), text(&o.stdout), text(&o.stderr)), (Some(1), String::new(), RANGE.to_string()), "{v}");
         assert!(!h.store(&id).dir().join("workspace.json").exists(), "{v}");
@@ -1267,10 +1267,10 @@ fn fx17_up_accepts_max_members_1_and_32_from_each_layer() {
     std::fs::write(s.join("team.toml"), "[limits]\nmax_members = 32\n").unwrap();
     let o = up_in(&h, &app, &["up", "--no-attach"], Some(&s));
     assert!(!text(&o.stderr).contains("max_members"), "team 32: {}", text(&o.stderr));
-    std::fs::write(&h.paths.config_file, "[limits]\nmax_members = 1\n").unwrap();
+    h.config("[limits]\nmax_members = 1\n");
     let o = up_in(&h, &app, &["up", "--no-attach"], None);
     assert_eq!((o.status.code(), text(&o.stdout), text(&o.stderr)), (Some(1), String::new(), ONE_OF_TWO.to_string()), "user 1");
-    std::fs::write(&h.paths.config_file, "[limits]\nmax_members = 32\n").unwrap();
+    h.config("[limits]\nmax_members = 32\n");
     let o = up_in(&h, &app, &["up", "--no-attach"], None);
     assert!(!text(&o.stderr).contains("max_members"), "user 32: {}", text(&o.stderr));
 }
@@ -1290,12 +1290,12 @@ fn fx17_up_with_no_max_members_layer_uses_8() {
 fn fx17_up_all_refuses_max_members_0() {
     let h = Harness::no_tmux();
     let (app, _id) = approved_repo(&h, TWO);
-    std::fs::write(&h.paths.config_file, "[limits]\nmax_members = 0\n").unwrap();
+    h.config("[limits]\nmax_members = 0\n");
     let o = up_in(&h, &app, &["up", "--all"], None);
     assert_eq!((o.status.code(), text(&o.stdout), text(&o.stderr)), (Some(1), String::new(), RANGE.to_string()), "user");
     assert!(zygo_workspace::state::list_all(&h.paths).is_empty(), "user");
     assert!(!h.root().join("tmux.log").exists(), "user");
-    std::fs::write(&h.paths.config_file, "").unwrap();
+    h.config("");
     let s = h.root().join("s");
     std::fs::create_dir_all(&s).unwrap();
     std::fs::write(s.join("team.toml"), "[limits]\nmax_members = 0\n").unwrap();
