@@ -1227,6 +1227,39 @@ fn saved_main_root_wins_while_valid_by_name_and_from_any_checkout() {
     assert!(named.panes.iter().chain(&here.panes).all(|p| p.cwd == two), "{:?} {:?}", named.panes, here.panes);
 }
 
+#[test] // FX-25 review R2 F4, D4, W§8.1 step 3: by name, with no valid worktree left, `up` exits 1, reads nothing and saves
+        // nothing; it plans no pane in a folder that is gone
+fn by_name_with_no_valid_worktree_exits_1_and_saves_nothing() {
+    let _g = serial();
+    let mut f = fx(&[(WS, b"version = 1\n")]);
+    let (_b, one, two, store) = two_worktrees(&f);
+    f.o.cwd = two.clone();
+    assert_eq!(f.up(), gone());
+    let first = f.planned();
+    assert_eq!(first.main_root, one);
+    fs::remove_dir_all(&one).unwrap();
+    fs::remove_dir_all(&two).unwrap();
+    set(&store, |w| {
+        *w = first.clone();
+        w.phase = Phase::Down;
+    });
+    let state = store.dir().join("workspace.json");
+    let before = fs::read(&state).unwrap();
+    let reads = f.git.reads();
+    let sessions_before = tmux_log(&f.t).iter().filter(|l| l.contains("new-session")).count();
+    f.o.reset = true;
+    f.o.cwd = f.t.clone();
+    f.o.name = Some(first.name.clone());
+    let got = f.up();
+    assert_eq!(got, (1, String::new(), format!("zygo: no checkout at the main worktree {}\n", esc(&one.to_string_lossy()))));
+    assert!(!got.2.contains("symbolic-ref"), "{got:?}");
+    assert_eq!(fs::read(&state).unwrap(), before);
+    assert_eq!(f.git.reads(), reads);
+    assert!(!f.t.join("planned.json").exists());
+    let sessions = |log: Vec<String>| log.iter().filter(|l| l.contains("new-session")).count();
+    assert_eq!(sessions(tmux_log(&f.t)), sessions_before);
+}
+
 /// The main worktree that `up::find_checkout` gives from `cwd` with the cache folder of `f` (D1).
 fn main_from(f: &Fx, cwd: &Path) -> Result<PathBuf, up::Exit> {
     up::find_checkout(cwd, S5, &f.o.paths.workspace_cache_dir()).map(|(_, _, main)| main)
