@@ -553,3 +553,47 @@ fn remote_send_holds_mail_lock_across_its_link() {
     assert!(sp(&h).outbox.join(format!("{id}.json")).is_file());
     assert!(!mail_lock_is_held(&dir), "the send left mail/lock held");
 }
+
+#[test] // S§7.6 step 4, S§8.1 (FX-28, re-plan R3-F2): a send under mail/lock and a forget that comes to its lock meanwhile:
+        // the forget goes on only after the send returned, counts the linked file again under mail/lock and refuses;
+        // the order comes from hooks and channels, each wait has a fail-safe bound
+fn remote_send_racing_forget_makes_the_forget_refuse_at_the_count_again() {
+    let h = Harness::no_tmux();
+    seed_down(&h, &[(ALICE, "alice")]);
+    unsynced(&h);
+    send(&h, "a", "alice", ("bob", "b"));
+    let dir = h.paths.workspaces_dir().join(WS_ID);
+    let _clear = ClearHooks { dir: &dir, points: &["remote_send_before_link", "forget_before_mail_lock"] };
+    let (tx, rx) = mpsc::channel::<Step>();
+    let mut threads = Threads::default();
+    // The send stops under mail/lock, right before its link.
+    let resume = pause_at(&dir, "remote_send_before_link", &tx);
+    threads.send(&h, &tx);
+    match threads.next(&rx, "the send stops at remote_send_before_link") {
+        Step::Paused("remote_send_before_link") => {}
+        other => panic!("the send did not stop at remote_send_before_link: {other:?}"),
+    }
+    // The forget counts 1 message, asks, and stops right before it takes mail/lock exclusive.
+    let go = pause_at(&dir, "forget_before_mail_lock", &tx);
+    threads.forget(&h, &tx);
+    match threads.next(&rx, "the forget comes to forget_before_mail_lock") {
+        Step::AtLock => {}
+        other => panic!("the forget did not come to forget_before_mail_lock: {other:?}"),
+    }
+    resume.send(()).expect("the send waits at remote_send_before_link");
+    let id = match threads.next(&rx, "the send returns") {
+        Step::Sent(r) => r.expect("the send linked its file"),
+        other => panic!("the send did not return while the forget waited: {other:?}"),
+    };
+    go.send(()).expect("the forget waits at forget_before_mail_lock");
+    let (code, out, err, ask) = match threads.next(&rx, "the forget returns") {
+        Step::Forgot(code, out, err, ask) => (code, out, err, ask),
+        other => panic!("the forget did not return: {other:?}"),
+    };
+    threads.join_all();
+    assert_eq!((code, out.as_str(), err.as_str()), (1, "", changed(2).as_str()));
+    assert_eq!(ask, asked(1));
+    assert!(sp(&h).outbox.join(format!("{id}.json")).is_file());
+    assert_eq!(count(&sp(&h)).unwrap(), 2);
+    assert!(dir.join("workspace.json").is_file());
+}
