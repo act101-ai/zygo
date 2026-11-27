@@ -21,7 +21,7 @@ use zygo_mail_sync::address::Address;
 use zygo_mail_sync::env::{self, Crash, Env, Seam, Spawner, Verdict, Wake};
 use zygo_mail_sync::registry::{read_cache, write_cache, MemberCache};
 use zygo_mail_sync::state::{load, make_identity, mark_again, save, SyncPaths};
-use zygo_mail_sync::sync::{run, run_with, Mode, Opts, SyncError, LOCK_WAIT, MAX_ATTEMPTS, OUTBOX_CAP, PASS_DEADLINE};
+use zygo_mail_sync::sync::{run, run_with, run_with_deadline, Mode, Opts, SyncError, LOCK_WAIT, MAX_ATTEMPTS, OUTBOX_CAP, PASS_DEADLINE};
 use zygo_redact::DeadlinePolicy;
 use zygo_workspace::mail::wake::{after_send_with, Probe as IdleProbe, WAKE_TEXT};
 use zygo_workspace::mux::{HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split};
@@ -279,6 +279,21 @@ fn spec_values() {
     for (e, child, cli) in [(SyncError::Off(SyncOff::NotOn), 0, 1), (SyncError::Busy, 0, 1), (stop, 1, 1)] {
         assert_eq!((e.exit_code(Mode::Child), e.exit_code(Mode::Cli)), (child, cli));
     }
+}
+
+#[test] // S§8.3 step 4, S-C9 (FX-26 review round 2 F-3): the pass deadline seam bounds each pass; `run_with` keeps
+        // `PASS_DEADLINE`
+fn pass_deadline_seam_bounds_the_pass() {
+    let _g = shared();
+    let (r, a, _b) = pair();
+    let id = send(&a, "alice", ("bob", "b"), "hello");
+    let tip0 = git(&r.bare, &["rev-parse", &format!("refs/heads/{BRANCH}")]);
+    let e = run_with_deadline(&plain_env(&a), WS_ID, Mode::Cli, &Opts::default(), Duration::ZERO).unwrap_err();
+    assert!(matches!(e, SyncError::Stopped { .. }), "{e:?}");
+    assert_eq!(git(&r.bare, &["rev-parse", &format!("refs/heads/{BRANCH}")]), tip0);
+    assert!(a.sp().outbox.join(format!("{id}.json")).is_file());
+    assert_eq!(run_with(&plain_env(&a), WS_ID, Mode::Cli, &Opts::default()).unwrap().pushed, 1);
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_some());
 }
 
 #[test] // S§19 #1, S-G1, S§7.3, S§14 Normal, S-C4

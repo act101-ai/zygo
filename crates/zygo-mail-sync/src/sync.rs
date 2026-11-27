@@ -151,6 +151,15 @@ pub fn run(env: &Env, ws_id: &str, mode: Mode) -> Result<Report, SyncError> {
 
 /// [`run`] with `opts`: `prune` forces the prune of the first pass (S§9 When).
 pub fn run_with(env: &Env, ws_id: &str, mode: Mode, opts: &Opts) -> Result<Report, SyncError> {
+    run_with_deadline(env, ws_id, mode, opts, PASS_DEADLINE)
+}
+
+/// Test seam (S-C9; FX-26 review round 2 F-3): [`run_with`] with `pass_deadline` in place of [`PASS_DEADLINE`] as the
+/// deadline of each pass (S§8.3 step 4), so that a test whose result must not depend on how fast the machine runs git
+/// can give a far deadline, as the secret pass takes `Env::secret_policy`. Production code calls [`run_with`].
+#[doc(hidden)]
+pub fn run_with_deadline(env: &Env, ws_id: &str, mode: Mode, opts: &Opts, pass_deadline: Duration)
+    -> Result<Report, SyncError> {
     let c = gate(env, ws_id)?;
     env.seam.at("after_gate").map_err(|e| c.stopped(e.into(), false))?;
     if state::mark_again(&c.sp).is_err() {
@@ -180,7 +189,7 @@ pub fn run_with(env: &Env, ws_id: &str, mode: Mode, opts: &Opts) -> Result<Repor
         }
         let held = (|| {
             state::take_again(&c.sp).map_err(|_| stop("again"))?;
-            pass(&c, &mut report, first, first && opts.prune)?;
+            pass(&c, &mut report, first, first && opts.prune, pass_deadline)?;
             report.passes += 1;
             first = false;
             // S§6.6: the note goes with the last pass, the one that finds no mark under the lock.
@@ -412,13 +421,13 @@ fn take_lock(sp: &SyncPaths, mode: Mode, clock: &dyn Clock) -> Result<Option<Fil
     }
 }
 
-/// S§8.3 steps 5-16, with one deadline of [`PASS_DEADLINE`].
-fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), Fail> {
+/// S§8.3 steps 5-16, with one deadline of `pass_deadline` ([`PASS_DEADLINE`] in production).
+fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: Duration) -> Result<(), Fail> {
     let (env, sp, root, wt) = (c.env, &c.sp, &c.ws.main_root, &c.sp.worktree);
     let (remote, branch_name, host) = (c.s.remote.as_str(), c.s.branch.as_str(), c.s.host.as_str());
-    let deadline = Instant::now() + PASS_DEADLINE;
+    let deadline = Instant::now() + pass_deadline;
     // The same deadline on the injected clock (S-C9), checked before each secret check of the outbox step.
-    let pass_end = env.clock.now() + PASS_DEADLINE;
+    let pass_end = env.clock.now() + pass_deadline;
     let mut log = |l: &str| c.log(l);
     import::finish_incoming(sp, &c.store).map_err(|_| stop("incoming"))?;
     if first {
