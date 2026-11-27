@@ -225,7 +225,7 @@ Session text (T, SX nodes):
 | FX-25 | `zygo up` reads the definition at the current checkout; `find_checkout` keeps a failed or timed-out `git worktree list` (exit 1) | WD-15 | DONE | implementation | a8092a70^..3c511812 · acceptance pass (up_definition 42, up 82, workspace_approve 29) · PR #226 |
 | FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | TODO | implementation | — |
 | FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | DONE | judgment | 343897e2^..a9b6f61c · acceptance pass (renamed_host_ack_goes_with_only_acked_link_and_gitlink_entries 1 passed) · PR #231 |
-| FX-28 | A remote send during `ws forget` is lost uncounted | FX-24 | PLANNED | judgment | — |
+| FX-28 | A remote send during `ws forget` is lost uncounted | FX-24 | PLANNED | judgment | PR #234 |
 
 ## Log
 
