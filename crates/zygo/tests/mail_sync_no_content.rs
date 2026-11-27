@@ -597,14 +597,17 @@ fn files_findings(paths: &[PathBuf], markers: &[&str]) -> (usize, Vec<String>) {
 
 /// S-C2 (MS-22 review F3): the reflogs of `repo` (`logs/**`) and the admin files of each of its linked worktrees
 /// (`worktrees/<name>/**`, its reflogs among them), for every marker, but the index of a linked worktree for the
-/// [`CONTENT`] markers only. Returns the count of files under `logs/` and the findings.
-fn git_meta_findings(repo: &Path) -> (usize, Vec<String>) {
+/// [`CONTENT`] markers only. Returns what it read (MS-22 review R2 F-B) and the findings.
+fn git_meta_findings(repo: &Path) -> (GitMeta, Vec<String>) {
     let gd = git_dir(repo);
     let (logs, mut found) = files_findings(&[gd.join("logs")], &MARKERS);
-    let Ok(rd) = std::fs::read_dir(gd.join("worktrees")) else { return (logs, found) };
+    let mut read = GitMeta { logs, admins: 0, indexes: 0 };
+    let Ok(rd) = std::fs::read_dir(gd.join("worktrees")) else { return (read, found) };
     for w in rd.map(|e| e.unwrap().path()) {
+        read.admins += 1;
         let index = w.join("index");
         if index.is_file() {
+            read.indexes += 1;
             found.extend(text_findings(&index.display().to_string(), &std::fs::read(&index).unwrap(), &CONTENT));
         }
         let rest: Vec<PathBuf> = walkdir::WalkDir::new(&w).follow_links(false).into_iter().filter_map(Result::ok)
@@ -613,8 +616,12 @@ fn git_meta_findings(repo: &Path) -> (usize, Vec<String>) {
             .collect();
         found.extend(files_findings(&rest, &MARKERS).1);
     }
-    (logs, found)
+    (read, found)
 }
+
+/// What [`git_meta_findings`] read: the files under `logs/`, the linked-worktree admin folders, and their index files.
+#[derive(Debug, PartialEq)]
+struct GitMeta { logs: usize, admins: usize, indexes: usize }
 
 /// Every ref name that `git for-each-ref` lists from the worktree (or bare repository) `dir`, its per-worktree refs
 /// among them, and the ref that its `HEAD` names (MS-22 review F3), scanned for every marker. A detached `HEAD` names
@@ -729,8 +736,9 @@ fn scanners_find_a_planted_marker() {
         git(&wt, &["add", &name]);
     }
     git(&wt, &["update-ref", &format!("refs/worktree/{HOST_A}"), &head]);
-    let (logs, f) = git_meta_findings(&r2);
-    assert!(logs >= 1, "{f:?}");
+    let (read, f) = git_meta_findings(&r2);
+    assert!(read.logs >= 1, "{f:?}");
+    assert_eq!((read.admins, read.indexes), (1, 1), "{f:?}"); // MS-22 review R2 F-B: the one linked worktree
     assert!(f.iter().any(|l| l.contains("/logs/") && l.ends_with(&format!("holds {BODY}"))), "{f:?}");
     assert!(f.iter().any(|l| l.ends_with(&format!("/index holds {SUBJ}"))), "{f:?}");
     assert!(!f.iter().any(|l| l.contains("/index holds ") && !l.ends_with(&format!("holds {SUBJ}"))), "{f:?}");
@@ -1093,8 +1101,13 @@ fn no_mail_content_after_the_scenarios() {
         assert!(refs >= 1, "{}: no ref read", repo.display());
         found.extend(f);
         // MS-22 review F3: the reflogs (the sync worktree's among them) and the linked worktrees' admin files.
-        let (logs, f) = git_meta_findings(&repo);
-        assert!(repo == r.bare || logs >= 1, "{}: no reflog", repo.display());
+        let (read, f) = git_meta_findings(&repo);
+        assert!(repo == r.bare || read.logs >= 1, "{}: no reflog", repo.display());
+        // MS-22 review R2 F-B: A and B have a sync worktree (C's went with its forget), so the scan read its admin
+        // folder and its index.
+        if repo == a.repo() || repo == b.repo() {
+            assert!(read.admins >= 1 && read.indexes >= 1, "{}: {read:?}", repo.display());
+        }
         found.extend(f);
     }
     for h in [&a, &b] {
