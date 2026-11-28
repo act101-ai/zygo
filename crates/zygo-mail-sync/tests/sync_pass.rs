@@ -830,6 +830,29 @@ fn second_push_url_that_is_public_refuses_the_pass() {
     assert!(!a.wt.exists());
 }
 
+#[test] // FX-40 review F1, S§8.3 step 15: two `file://` push URLs, the second moved: the first takes the commit and the
+        // second refuses it; the pass stops with the `push` line (exit 1), keeps the outbox and records no own blob as
+        // pushed, and does not report success
+fn push_taken_by_one_push_url_only_stops_the_pass() {
+    let _g = shared();
+    let (r, a, _b) = pair();
+    let r2 = r.mirror();
+    common::push_urls(&a, &[&r.url, &r2.url]);
+    let moved = common::advance(&r2, BRANCH);
+    let id = send(&a, "alice", ("bob", "b"), "two urls");
+    let pushed0 = load(&a.sp()).unwrap().pushed;
+    let e = run(&plain_env(&a), WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!(e, SyncError::Stopped { line: "zygo: mail sync stopped (push); the outbox is kept".into(), check: "push" });
+    assert_eq!(e.exit_code(Mode::Cli), 1);
+    assert!(a.sp().outbox.join(format!("{id}.json")).is_file());
+    let st = load(&a.sp()).unwrap();
+    assert_eq!(st.pushed, pushed0);
+    assert!(!st.pending.is_empty());
+    assert_eq!(st.last_error.as_deref(), Some("push"));
+    assert!(a.errors().contains("push"), "{}", a.errors());
+    assert_eq!(r2.tip(BRANCH), Some(moved));
+}
+
 /// A valid message file for `bob@b` from `alice@a`, named by `id`.
 fn bob_message(id: Ulid) -> Vec<u8> {
     format!(r#"{{"version":1,"id":"{id}","from":"alice@a","to":"bob@b","sent_at":"2026-11-25T10:00:00Z","subject":"s","body":"b"}}"#)

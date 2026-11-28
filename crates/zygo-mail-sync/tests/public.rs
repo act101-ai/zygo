@@ -271,13 +271,54 @@ mod unix {
         (t, sp)
     }
 
+    /// FX-40 review F4, S§8.3 step 4: each probe ends at 10 s or at the pass deadline, whichever is first.
+    #[test]
+    fn probe_deadline_is_10_s_or_the_pass_deadline() {
+        let now = std::time::Instant::now();
+        assert_eq!(probe_deadline(now, now + Duration::from_secs(120)), now + Duration::from_secs(10));
+        assert_eq!(probe_deadline(now, now + Duration::from_secs(3)), now + Duration::from_secs(3));
+        assert_eq!(probe_deadline(now, now), now);
+    }
+
+    /// FX-40 review F4, S§8.3 step 4: past the pass deadline no URL is probed; the verdict is `unknown` and is not
+    /// cached, so the next check probes.
+    #[test]
+    fn check_past_the_deadline_probes_nothing_and_caches_nothing() {
+        let (_t, sp) = setup();
+        let f = fake(&[]);
+        let past = std::time::Instant::now();
+        assert_eq!(check(&sp, &urls(&["https://h/p", "https://m/q"]), &f, &at(0), past),
+            Verdict::Unknown("the pass deadline passed".into()));
+        assert!(seen(&f).is_empty());
+        assert_eq!(check(&sp, &urls(&["https://h/p", "https://m/q"]), &f, &at(1), far()), Verdict::Private);
+        assert_eq!(seen(&f), urls(&["https://h/p", "https://m/q"]));
+    }
+
+    /// FX-40 review F4: the probe gets the deadline of the check.
+    #[test]
+    fn check_gives_each_probe_the_deadline() {
+        struct Until(Mutex<Vec<std::time::Instant>>);
+        impl Probe for Until {
+            fn probe(&self, _: &str) -> Verdict { panic!("check calls probe_until") }
+            fn probe_until(&self, _: &str, deadline: std::time::Instant) -> Verdict {
+                self.0.lock().unwrap().push(deadline);
+                Verdict::Private
+            }
+        }
+        let (_t, sp) = setup();
+        let p = Until(Mutex::new(vec![]));
+        let d = far();
+        assert_eq!(check(&sp, &urls(&["https://h/p", "https://m/q"]), &p, &at(0), d), Verdict::Private);
+        assert_eq!(*p.0.lock().unwrap(), vec![d, d]);
+    }
+
     #[test]
     fn check_uses_the_cache_at_59_minutes() {
         let (_t, sp) = setup();
         let f = fake(&[]);
-        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(0)), Verdict::Private);
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(0), far()), Verdict::Private);
         assert_eq!(seen(&f).len(), 1);
-        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(59)), Verdict::Private);
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(59), far()), Verdict::Private);
         assert_eq!(seen(&f).len(), 1);
     }
 
@@ -285,8 +326,8 @@ mod unix {
     fn check_probes_again_at_61_minutes() {
         let (_t, sp) = setup();
         let f = fake(&[]);
-        check(&sp, &urls(&["https://h/p"]), &f, &at(0));
-        check(&sp, &urls(&["https://h/p"]), &f, &at(61));
+        check(&sp, &urls(&["https://h/p"]), &f, &at(0), far());
+        check(&sp, &urls(&["https://h/p"]), &f, &at(61), far());
         assert_eq!(seen(&f).len(), 2);
     }
 
@@ -294,8 +335,8 @@ mod unix {
     fn check_probes_again_after_a_url_change() {
         let (_t, sp) = setup();
         let f = fake(&[]);
-        check(&sp, &urls(&["https://h/p"]), &f, &at(0));
-        check(&sp, &urls(&["https://h/q"]), &f, &at(1));
+        check(&sp, &urls(&["https://h/p"]), &f, &at(0), far());
+        check(&sp, &urls(&["https://h/q"]), &f, &at(1), far());
         assert_eq!(seen(&f), urls(&["https://h/p", "https://h/q"]));
     }
 
@@ -303,8 +344,8 @@ mod unix {
     fn check_probes_again_when_the_clock_is_before_the_cache() {
         let (_t, sp) = setup();
         let f = fake(&[]);
-        check(&sp, &urls(&["https://h/p"]), &f, &at(0));
-        check(&sp, &urls(&["https://h/p"]), &f, &at(-1));
+        check(&sp, &urls(&["https://h/p"]), &f, &at(0), far());
+        check(&sp, &urls(&["https://h/p"]), &f, &at(-1), far());
         assert_eq!(seen(&f).len(), 2);
     }
 
@@ -312,7 +353,7 @@ mod unix {
     fn cache_holds_sha256_hex_only() {
         let (_t, sp) = setup();
         let f = fake(&[]);
-        check(&sp, &urls(&["https://u:secret@h/p", "ssh://git@h:22/p"]), &f, &at(0));
+        check(&sp, &urls(&["https://u:secret@h/p", "ssh://git@h:22/p"]), &f, &at(0), far());
         let text = fs::read_to_string(&sp.state).unwrap();
         for bad in ["secret", "h/p", "https", "ssh"] {
             assert!(!text.contains(bad), "{bad} in {text}");
@@ -327,7 +368,7 @@ mod unix {
     fn check_probes_each_distinct_mapped_url_once() {
         let (_t, sp) = setup();
         let f = fake(&[]);
-        check(&sp, &urls(&["https://u@h/p", "ssh://git@h:22/p", "git@h:p"]), &f, &at(0));
+        check(&sp, &urls(&["https://u@h/p", "ssh://git@h:22/p", "git@h:p"]), &f, &at(0), far());
         assert_eq!(seen(&f), urls(&["https://h/p"]));
     }
 
@@ -335,16 +376,16 @@ mod unix {
     fn public_for_any_url_wins() {
         let (_t, sp) = setup();
         let f = fake(&[("https://h/b", Verdict::Public)]);
-        assert_eq!(check(&sp, &urls(&["https://h/a", "https://h/b"]), &f, &at(0)), Verdict::Public);
+        assert_eq!(check(&sp, &urls(&["https://h/a", "https://h/b"]), &f, &at(0), far()), Verdict::Public);
     }
 
     #[test]
     fn local_and_unknown_need_no_probe() {
         let (_t, sp) = setup();
         let f = fake(&[]);
-        assert_eq!(check(&sp, &urls(&["/srv/r.git", "file:///srv/r.git"]), &f, &at(0)), Verdict::Local);
-        assert_eq!(check(&sp, &urls(&["git://h/p"]), &f, &at(0)), Verdict::Unknown("the remote URL has no https form".into()));
-        assert_eq!(check(&sp, &[], &f, &at(0)), Verdict::Unknown("the remote has no URL".into()));
+        assert_eq!(check(&sp, &urls(&["/srv/r.git", "file:///srv/r.git"]), &f, &at(0), far()), Verdict::Local);
+        assert_eq!(check(&sp, &urls(&["git://h/p"]), &f, &at(0), far()), Verdict::Unknown("the remote URL has no https form".into()));
+        assert_eq!(check(&sp, &[], &f, &at(0), far()), Verdict::Unknown("the remote has no URL".into()));
         assert!(seen(&f).is_empty());
     }
 
@@ -352,8 +393,8 @@ mod unix {
     fn cached_unknown_keeps_unknown() {
         let (_t, sp) = setup();
         let f = fake(&[("https://h/p", Verdict::Unknown("x".into()))]);
-        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(0)), Verdict::Unknown("x".into()));
-        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(30)),
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(0), far()), Verdict::Unknown("x".into()));
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(30), far()),
             Verdict::Unknown("the last check, under 1 h ago, could not tell".into()));
         assert_eq!(seen(&f).len(), 1);
     }
@@ -363,10 +404,10 @@ mod unix {
     fn cached(first: Verdict, name: &str, again: Verdict) {
         let (_t, sp) = setup();
         let f = fake(&[("https://h/p", first.clone())]);
-        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(0)), first);
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(0), far()), first);
         assert_eq!(load(&sp).unwrap().public.unwrap().verdict, name);
         let g = fake(&[("https://h/p", Verdict::Public)]);
-        assert_eq!(check(&sp, &urls(&["https://h/p"]), &g, &at(59)), again);
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &g, &at(59), far()), again);
         assert!(seen(&g).is_empty());
     }
 
@@ -374,10 +415,10 @@ mod unix {
     fn cached_public_comes_back() {
         let (_t, sp) = setup();
         let f = fake(&[("https://h/p", Verdict::Public)]);
-        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(0)), Verdict::Public);
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(0), far()), Verdict::Public);
         assert_eq!(load(&sp).unwrap().public.unwrap().verdict, "public");
         let g = fake(&[]); // would answer Private
-        assert_eq!(check(&sp, &urls(&["https://h/p"]), &g, &at(59)), Verdict::Public);
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &g, &at(59), far()), Verdict::Public);
         assert!(seen(&g).is_empty());
     }
 
@@ -396,13 +437,13 @@ mod unix {
     fn cached_local_comes_back() {
         let (_t, sp) = setup();
         let f = fake(&[]);
-        assert_eq!(check(&sp, &urls(&["/srv/r.git"]), &f, &at(0)), Verdict::Local);
+        assert_eq!(check(&sp, &urls(&["/srv/r.git"]), &f, &at(0), far()), Verdict::Local);
         assert_eq!(load(&sp).unwrap().public.unwrap().verdict, "local");
         let mut s = load(&sp).unwrap();
         s.public = Some(zygo_mail_sync::state::PublicCache { url_sha256: vec![sha("https://h/p")], verdict: "local".into(),
             at: 1_800_000_000 });
         save(&sp, &s).unwrap();
-        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(59)), Verdict::Local);
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(59), far()), Verdict::Local);
         assert!(seen(&f).is_empty());
     }
 
@@ -412,7 +453,7 @@ mod unix {
         let f = fake(&[]);
         fs::create_dir_all(&sp.sync).unwrap();
         fs::write(&sp.state, b"not json").unwrap();
-        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(0)), Verdict::Private);
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(0), far()), Verdict::Private);
         assert_eq!(seen(&f).len(), 1);
         assert_eq!(fs::read(&sp.state).unwrap(), b"not json");
     }
@@ -429,12 +470,12 @@ mod unix {
             ..Default::default()
         };
         save(&sp, &s).unwrap();
-        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(1)), Verdict::Public, "the valid cache is used");
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(1), far()), Verdict::Public, "the valid cache is used");
         assert!(seen(&f).is_empty());
         s.pushed.insert("ack/A.json".into(), "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391".into());
         let bytes = serde_json::to_vec_pretty(&s).unwrap();
         fs::write(&sp.state, &bytes).unwrap();
-        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(1)), Verdict::Private);
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(1), far()), Verdict::Private);
         assert_eq!(seen(&f), urls(&["https://h/p"]));
         assert_eq!(fs::read(&sp.state).unwrap(), bytes);
     }
@@ -446,7 +487,7 @@ mod unix {
         let blob = "0123456789abcdef0123456789abcdef01234567".to_string();
         let own = || [("registry/host1.json".to_string(), blob.clone())].into_iter().collect::<std::collections::BTreeMap<_, _>>();
         save(&sp, &State { last_ok: Some(5), ci_note_shown: true, pushed: own(), pending: own(), ..Default::default() }).unwrap();
-        check(&sp, &urls(&["https://h/p"]), &f, &at(0));
+        check(&sp, &urls(&["https://h/p"]), &f, &at(0), far());
         let s = load(&sp).unwrap();
         assert_eq!(s.last_ok, Some(5));
         assert!(s.ci_note_shown);

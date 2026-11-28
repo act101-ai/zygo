@@ -433,17 +433,17 @@ fn porcelain(flag: &str, to: &str, summary: &str) -> Vec<u8> {
 
 #[test]
 fn classify_moved_fetch_first_any_case() {
-    assert_eq!(classify(false, &porcelain("!", "zygo/mail", "[REJECTED] (Fetch First)"), "zygo/mail"), Pushed::Moved);
+    assert_eq!(classify(false, &porcelain("!", "zygo/mail", "[REJECTED] (Fetch First)"), "zygo/mail", 1), Pushed::Moved);
 }
 
 #[test]
 fn classify_moved_non_fast_forward_any_case() {
-    assert_eq!(classify(false, &porcelain("!", "zygo/mail", "[rejected] (NON-FAST-FORWARD)"), "zygo/mail"), Pushed::Moved);
+    assert_eq!(classify(false, &porcelain("!", "zygo/mail", "[rejected] (NON-FAST-FORWARD)"), "zygo/mail", 1), Pushed::Moved);
 }
 
 #[test]
 fn classify_moved_stale_info_any_case() {
-    assert_eq!(classify(false, &porcelain("!", "zygo/mail", "[Rejected] (STALE INFO)"), "zygo/mail"), Pushed::Moved);
+    assert_eq!(classify(false, &porcelain("!", "zygo/mail", "[Rejected] (STALE INFO)"), "zygo/mail", 1), Pushed::Moved);
 }
 
 #[test]
@@ -451,37 +451,98 @@ fn classify_reads_only_the_target_ref_line() {
     let failed = Pushed::Other("push failed".into());
     let rejected = Pushed::Other("push rejected".into());
     for flag in ["*", " ", "+", "="] {
-        assert_eq!(classify(true, format!("{flag}\tC:refs/heads/zygo/mail\t[new branch]\nDone\n").as_bytes(), "zygo/mail"),
+        assert_eq!(classify(true, format!("{flag}\tC:refs/heads/zygo/mail\t[new branch]\nDone\n").as_bytes(), "zygo/mail", 1),
             Pushed::Accepted, "flag {flag:?}");
     }
-    assert_eq!(classify(false, b"!\tC:refs/heads/zygo/other\t[rejected] (fetch first)\n", "zygo/mail"), failed);
-    assert_eq!(classify(false, b"!\tC:refs/heads/zygo/mail-2\t[rejected] (fetch first)\n", "zygo/mail"), failed);
+    assert_eq!(classify(false, b"!\tC:refs/heads/zygo/other\t[rejected] (fetch first)\n", "zygo/mail", 1), failed);
+    assert_eq!(classify(false, b"!\tC:refs/heads/zygo/mail-2\t[rejected] (fetch first)\n", "zygo/mail", 1), failed);
     assert_eq!(classify(false,
         b"remote: [rejected] (fetch first)\n!\tC:refs/heads/zygo/mail\t[remote rejected] (pre-receive hook declined)\n",
-        "zygo/mail"), rejected);
-    assert_eq!(classify(false, b"!\tC:refs/heads/zygo/mail\t[remote rejected] (fetch first)\n", "zygo/mail"), rejected);
-    assert_eq!(classify(false, b"", "zygo/mail"), failed);
-    assert_eq!(classify(false, b"*\tC:refs/heads/zygo/mail\t[new branch]\n", "zygo/mail"), failed);
+        "zygo/mail", 1), rejected);
+    assert_eq!(classify(false, b"!\tC:refs/heads/zygo/mail\t[remote rejected] (fetch first)\n", "zygo/mail", 1), rejected);
+    assert_eq!(classify(false, b"", "zygo/mail", 1), failed);
+    assert_eq!(classify(false, b"*\tC:refs/heads/zygo/mail\t[new branch]\n", "zygo/mail", 1), failed);
 }
 
-/// FX-40 (S-F1), S§8.3 step 15: a push to two URLs gives one ref line per URL; one accept and one reject is never
-/// `Accepted`, whatever the exit and the line order.
+/// FX-40 review F1, F3, F5, S§8.3 step 15: a push to several URLs gives one ref line per URL. `Accepted` needs exit 0,
+/// a line for every URL and every line an accept; `Moved` needs a line for every URL and every line a moved
+/// rejection; a URL that accepted while another did not is `Split`; else `Other`.
 #[test]
-fn classify_one_accept_and_one_reject_is_not_accepted() {
+fn classify_several_push_urls() {
     let accept = " \tC:refs/heads/zygo/mail\t[new branch]\n";
     let moved = "!\tC:refs/heads/zygo/mail\t[rejected] (fetch first)\n";
+    let stale = "!\tC:refs/heads/zygo/mail\t[rejected] (stale info)\n";
     let server = "!\tC:refs/heads/zygo/mail\t[remote rejected] (hook declined)\n";
+    let failed = Pushed::Other("push failed".into());
+    let rejected = Pushed::Other("push rejected".into());
+    let c = |ok: bool, out: String, urls: usize| classify(ok, out.as_bytes(), "zygo/mail", urls);
     for ok in [true, false] {
-        for out in [format!("To one\n{accept}Done\nTo two\n{moved}Done\n"), format!("To two\n{moved}Done\nTo one\n{accept}Done\n")] {
-            assert_eq!(classify(ok, out.as_bytes(), "zygo/mail"), Pushed::Moved, "ok {ok}: {out:?}");
+        // one URL accepted, the other did not: never Accepted, never Moved
+        for out in [format!("To a\n{accept}Done\nTo b\n{moved}Done\n"), format!("To b\n{moved}Done\nTo a\n{accept}Done\n"),
+            format!("{accept}{stale}"), format!("{accept}{server}"), format!("{server}{accept}")] {
+            assert_eq!(c(ok, out.clone(), 2), Pushed::Split, "ok {ok}: {out:?}");
         }
-        for out in [format!("{accept}{server}"), format!("{server}{accept}"), format!("{moved}{server}")] {
-            assert_eq!(classify(ok, out.as_bytes(), "zygo/mail"), Pushed::Other("push rejected".into()), "ok {ok}: {out:?}");
-        }
+        assert_eq!(c(ok, format!("{moved}{stale}"), 2), Pushed::Moved, "ok {ok}");
+        assert_eq!(c(ok, format!("{moved}{server}"), 2), rejected, "ok {ok}");
+        assert_eq!(c(ok, format!("{server}{moved}"), 2), rejected, "ok {ok}");
     }
-    let two = format!("{accept}{accept}");
-    assert_eq!(classify(true, two.as_bytes(), "zygo/mail"), Pushed::Accepted);
-    assert_eq!(classify(false, two.as_bytes(), "zygo/mail"), Pushed::Other("push failed".into()));
+    // git exits 128 and a URL gave no ref line (unreachable, authentication): Other, not Moved
+    assert_eq!(c(false, moved.to_string(), 2), failed);
+    assert_eq!(c(false, format!("{moved}{moved}"), 3), failed);
+    // a URL accepted and another gave no line
+    assert_eq!(c(false, accept.to_string(), 2), Pushed::Split);
+    assert_eq!(c(true, format!("{accept}{accept}"), 3), Pushed::Split);
+    assert_eq!(c(true, format!("{accept}{accept}"), 2), Pushed::Accepted);
+    assert_eq!(c(false, format!("{accept}{accept}"), 2), failed);
+    assert_eq!(c(true, accept.to_string(), 0), failed);
+    assert_eq!(c(false, String::new(), 2), failed);
+}
+
+/// FX-40 review F1: a real push to two `file://` URLs, the second moved: `Split`, and the first URL holds the commit.
+#[test]
+fn push_to_two_urls_one_moved_is_split() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let c0 = first(&m, "a");
+    assert_eq!(push(&m.wt, "origin", "zygo/mail", &c0, None, far()), Ok(Pushed::Accepted));
+    let r2 = r.mirror();
+    push_urls(&m, &[&r.url, &r2.url]);
+    let moved = advance(&r2, "zygo/mail");
+    let c1 = commit(&m.wt, &c0, Some(&c0), &[Change::Add { path: "registry/x.json".into(), bytes: b"{}\n".to_vec() }],
+        far()).unwrap();
+    assert_eq!(push(&m.wt, "origin", "zygo/mail", &c1, None, far()), Ok(Pushed::Split));
+    assert_eq!((r.tip("zygo/mail"), r2.tip("zygo/mail")), (Some(c1), Some(moved)));
+}
+
+/// FX-40 review F3: a real push to two URLs, the first moved and the second missing (git exits 128 and prints no ref
+/// line for it): `Other`, not `Moved`.
+#[test]
+fn push_with_a_missing_url_and_a_moved_one_is_other() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let c0 = first(&m, "a");
+    assert_eq!(push(&m.wt, "origin", "zygo/mail", &c0, None, far()), Ok(Pushed::Accepted));
+    let missing = format!("file://{}/missing.git", r.dir.path().display());
+    push_urls(&m, &[&r.url, &missing]);
+    advance(&r, "zygo/mail");
+    let c1 = commit(&m.wt, &c0, Some(&c0), &[Change::Add { path: "registry/x.json".into(), bytes: b"{}\n".to_vec() }],
+        far()).unwrap();
+    assert_eq!(push(&m.wt, "origin", "zygo/mail", &c1, None, far()), Ok(Pushed::Other("push failed".into())));
+}
+
+/// FX-40 review F2: a lease push to two URLs that the first takes and the second refuses (`stale info`): `Split`.
+#[test]
+fn lease_push_taken_by_one_url_only_is_split() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let c0 = first(&m, "a");
+    assert_eq!(push(&m.wt, "origin", "zygo/mail", &c0, None, far()), Ok(Pushed::Accepted));
+    let r2 = r.mirror();
+    push_urls(&m, &[&r.url, &r2.url]);
+    advance(&r2, "zygo/mail");
+    let root = commit(&m.wt, &c0, None, &[], far()).unwrap();
+    assert_eq!(push(&m.wt, "origin", "zygo/mail", &root, Some(&c0), far()), Ok(Pushed::Split));
+    assert_eq!(r.tip("zygo/mail"), Some(root));
 }
 
 /// The bootstrap root of `m` plus a commit that adds `registry/<who>.json`: distinct per machine even when two

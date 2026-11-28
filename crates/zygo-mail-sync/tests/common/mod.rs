@@ -213,6 +213,16 @@ impl Remote {
         Remote { dir, bare, url }
     }
 
+    /// A second local bare repository with every ref of this one (`git clone --mirror`), used by its own `file://`
+    /// URL: the second push URL of a remote (FX-40).
+    pub fn mirror(&self) -> Remote {
+        let (dir, p) = canonical_dir();
+        git(&p, &["clone", "-q", "--mirror", &self.url, "bare.git"]);
+        let bare = p.join("bare.git");
+        let url = format!("file://{}", bare.display());
+        Remote { dir, bare, url }
+    }
+
     /// The commit of `refs/heads/<branch>` on the remote, or `None`.
     pub fn tip(&self, branch: &str) -> Option<String> {
         let o = plain(&self.bare).args(["rev-parse", "--verify", "-q", &format!("refs/heads/{branch}")])
@@ -289,6 +299,13 @@ pub fn live(paths: &Paths, id: &str) -> fs::File {
     let f = fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(dir.join("pid")).unwrap();
     fs4::FileExt::try_lock(&f).unwrap();
     f
+}
+
+/// Sets the push URLs of `origin` in `m`'s checkout to `urls`, in that order (`remote.origin.pushurl`, FX-40).
+pub fn push_urls(m: &Machine, urls: &[&str]) {
+    for u in urls {
+        git(&m.root, &["remote", "set-url", "--add", "--push", "origin", u]);
+    }
 }
 
 /// A new commit on `refs/heads/<branch>` of the bare repository with the tip's tree and the tip as parent.
