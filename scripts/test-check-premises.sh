@@ -1102,6 +1102,26 @@ awk 'BEGIN { for (i = 0; i < 20000; i++) print "zzpipeq" }' > "$D/fixtures/codex
 run_split "$D" zzpipeq bash nopipe
 expect_fail_alone "forbidden name from N2_FORBIDDEN_NAMES: fixtures/codex/many.txt:1"
 
+# The hit loops of scan, cx_scan and env_scan keep only the first hit line: 4000 hit lines (more than
+# a pipe buffer of output) of a rule with no drop script give the failure line and nothing on stderr.
+CASE="TF-3 R2 EPIPE: under bash with SIGPIPE ignored, many scan hit lines"
+D=$(mk tf3_pipescan)
+awk 'BEGIN { for (i = 0; i < 4000; i++) print "sk-ant-x" }' > "$D/fixtures/codex/many.txt"
+run_split "$D" '' bash nopipe
+expect_fail_alone "forbidden content (API key): fixtures/codex/many.txt:1:sk-ant-x"
+
+CASE="TF-3 R2 EPIPE: under bash with SIGPIPE ignored, many cx_scan hit lines"
+D=$(mk tf3_pipecx)
+awk 'BEGIN { for (i = 0; i < 4000; i++) print "__CFx" }' > "$D/fixtures/codex/many.txt"
+run_split "$D" '' bash nopipe
+expect_fail_alone "forbidden content (macOS env name): fixtures/codex/many.txt:1:__CFx"
+
+CASE="TF-3 R2 EPIPE: under bash with SIGPIPE ignored, many env_scan hit lines"
+D=$(mk tf3_pipeenv)
+awk 'BEGIN { for (i = 0; i < 4000; i++) print "/cc-socks/1.sock" }' > "$D/fixtures/claude-code/many.txt"
+run_split "$D" '' bash nopipe
+expect_fail_alone "forbidden content (socket pid): fixtures/claude-code/many.txt:1:/cc-socks/1.sock"
+
 # TF-3 round 2: cells uses the byte \001 as the placeholder of an escaped "|", so a row that already
 # holds a \001 fails closed.
 CASE="TF-3 R2: a Results row with a SOH byte"

@@ -299,7 +299,9 @@ NOTES=$( (grep -anH 'N38' "$SPEC" docs/conformance.md 2>/dev/null | tr -d '\000'
 # exempt fails; i: the ERE matches any case (the exempt ERE never does). <drop sed -E script>:
 # applied to a hit line, which fails only when the ERE still matches the result; the message shows
 # the line as written. A NUL in a hit line becomes a blank first (read stops at a NUL); both are
-# outside every character class of the rules and of the drop script.
+# outside every character class of the rules and of the drop script. sed -n 1p, not head, keeps the
+# first hit line (also in cx_scan and env_scan): it reads to the end, so with SIGPIPE ignored the loop
+# and the commands before it get no EPIPE (bash: "printf: write error: Broken pipe"; TF-3 round 2).
 scan() {
   o=-aE; [ "${4:-}" != i ] || o=-aiE
   # shellcheck disable=SC2086
@@ -307,7 +309,7 @@ scan() {
     tr '\000' ' ' | while IFS= read -r ln; do
       [ -z "${5:-}" ] || printf '%s\n' "$ln" | sed -E "$5" | grep -q $o -- "$1" || continue
       printf '%s\n' "$ln"
-    done | head -n 1)
+    done | sed -n 1p)
   [ -z "$hit" ] || fail "forbidden content ($3): $(printf '%s\n' "$hit" | head -n 1 | cut -c1-160)"
 }
 # L: the left edge of a key or id: line start, a non-word character, or a JSON backslash escape
@@ -349,7 +351,7 @@ cx_scan() {
     while IFS= read -r ln; do
       [ -z "${4:-}" ] || printf '%s\n' "$ln" | sed -E "$4" | grep -q $o -- "$1" || continue
       printf '%s\n' "$ln"
-    done | head -n 1)
+    done | sed -n 1p)
   [ -z "$hit" ] || fail "forbidden content ($2): $(printf '%s\n' "$hit" | head -n 1 | cut -c1-160)"
 }
 # TAG <shell> and ECX <environment_context> in their three bracket forms (plain, <..>, &lt;..&gt;).
@@ -382,7 +384,7 @@ env_scan() {
     while IFS= read -r ln; do
       [ -z "${3:-}" ] || printf '%s\n' "${ln#*:*:}" | LC_ALL=C sed -E "$3" | LC_ALL=C grep -qaE -- "$1" || continue
       printf '%s\n' "$ln"
-    done | head -n 1)
+    done | sed -n 1p)
   [ -z "$hit" ] || fail "forbidden content ($2): $(printf '%s\n' "$hit" | head -n 1 | cut -c1-160)"
 }
 # ci <text>: an ERE for the text in any case ([Ss][Hh]...); the text holds no ERE syntax but . / ( ) | -.
