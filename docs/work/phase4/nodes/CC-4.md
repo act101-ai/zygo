@@ -74,7 +74,7 @@ Descriptor values (K-D3: today's behavior):
 Steps:
 
 - [x] 1. **Parent line.** When the node starts, insert as the first line under `## Plan` the line `Parent: <40-hex>` = `git merge-base HEAD <layer base branch>`, where the layer base branch is the branch of the open layer directly below this one, or `origin/phase-4` when the stack below is empty (Workflows (2); CC-2 Definitions "Parent"). CC-12's layer is open but shares no file with this node, so, as in CC-3, the layer branches from `origin/phase-4`. After every merge into the node branch, recompute the line and rewrite it in the merge commit. Check: `sed -n 's/^Parent: \([0-9a-f]\{40\}\)$/\1/p' docs/work/phase4/nodes/CC-4.md` prints exactly one hash, equal to `git merge-base HEAD <layer base branch>`. Commit `docs(work): CC-4 parent`.
-- [ ] 2. **Failing tests**, five new files (K-C7 does not check a file that is new in the node). No test names an `Agent` variant by path (CC-13, CC-14): a client comes from its id.
+- [x] 2. **Failing tests**, five new files (K-C7 does not check a file that is new in the node). No test names an `Agent` variant by path (CC-13, CC-14): a client comes from its id.
   - `crates/zygo-core/tests/client_proxy.rs`:
     ```rust
     use zygo_core::{Agent, Dialect};
