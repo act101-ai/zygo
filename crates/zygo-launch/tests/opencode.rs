@@ -722,7 +722,7 @@ esac
     std::fs::write(&stub, script).unwrap();
     std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
     let zygo = if mode == "missing" { dir.join("no-such-zygo") } else { stub };
-    std::fs::write(dir.join("plugin.mjs"), plugin_js(&ctx(fx, |_| {}), &zygo)).unwrap();
+    std::fs::write(dir.join("plugin.mjs"), with_fail_safe_limit(&plugin_js(&ctx(fx, |_| {}), &zygo))).unwrap();
     std::fs::write(
         dir.join("driver.mjs"),
         r#"import { ZygoPlugin } from "./plugin.mjs";
@@ -770,12 +770,43 @@ console.log(JSON.stringify(res));
     if let Some(e) = edge {
         cmd.env("EDGE", e);
     }
-    let out = cmd.output().unwrap();
+    let out = output_within(cmd, FAIL_SAFE);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     NodeRun {
         result: serde_json::from_slice(&out.stdout).ok(),
         calls: std::fs::read_to_string(dir.join("calls.txt")).unwrap_or_default(),
         dir,
+    }
+}
+
+/// The fail-safe bound of a [node_run_edge] run and of each stub `zygo` call in it (SX-10 review F1). A pass does not
+/// depend on it: each stub call ends in milliseconds; it only ends a run that hangs.
+#[cfg(unix)]
+const FAIL_SAFE: Duration = Duration::from_secs(60);
+
+/// The generated plugin with its per-call limit (10 s, `opencode-plugin.js` `run`) raised to [FAIL_SAFE], so that
+/// a slow machine cannot turn a stub call into the plugin's empty timeout result (the reason these tests were ignored,
+/// commit "take tests bound by fixed production time limits out of CI"). The decision code is not changed.
+#[cfg(unix)]
+fn with_fail_safe_limit(js: &str) -> String {
+    let limit = "}, 10000);";
+    assert_eq!(js.matches(limit).count(), 1, "the plugin's one per-call limit");
+    js.replace(limit, &format!("}}, {});", FAIL_SAFE.as_millis()))
+}
+
+/// `cmd.output()`, but a run that has not ended after `bound` fails the test. No sleep: a thread waits for the child
+/// and the test waits on a channel with a timeout.
+#[cfg(unix)]
+fn output_within(mut cmd: std::process::Command, bound: Duration) -> std::process::Output {
+    use std::process::Stdio;
+    let child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    match rx.recv_timeout(bound) {
+        Ok(out) => out.unwrap(),
+        Err(_) => panic!("node did not end within {bound:?}"),
     }
 }
 
@@ -834,6 +865,10 @@ fn plugin_behaves_under_node() {
     assert_eq!(after, euro);
 }
 
+// The `subagent_transform_*` tests run in the default test run (SX-10 review F1): they are the only tests of the
+// channel that gives the mechanics text to an OpenCode subagent (ST4 verified, T§7.2 item 3). `node` is on each CI
+// image (actions/runner-images: Node.js 22.23.5 on Ubuntu 24.04, macOS 15 and Windows 2025), `no_node` fails them
+// under `CI` without it, and [node_run_edge] bounds them by [FAIL_SAFE], not by the plugin's 10 s limit.
 #[cfg(unix)]
 const MAIN_CALL: &str = "hook session-start --agent opencode";
 #[cfg(unix)]
@@ -854,7 +889,6 @@ fn session_start_stdins(r: &NodeRun) -> Vec<Value> {
 // T§7.2 item 1, T§17 check 10
 #[cfg(unix)]
 #[test]
-#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn subagent_transform_other_zygo_role_calls_event_subagent() {
     if no_node("subagent_transform_other_zygo_role_calls_event_subagent") {
         return;
@@ -876,7 +910,6 @@ fn subagent_transform_other_zygo_role_calls_event_subagent() {
 // T§7.2 item 1, T§17 check 10
 #[cfg(unix)]
 #[test]
-#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn subagent_transform_main_role_calls_without_event() {
     if no_node("subagent_transform_main_role_calls_without_event") {
         return;
@@ -891,7 +924,6 @@ fn subagent_transform_main_role_calls_without_event() {
 // T§7.2 item 1, T§17 check 10
 #[cfg(unix)]
 #[test]
-#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn subagent_transform_anthropic_provider_calls_nothing() {
     if no_node("subagent_transform_anthropic_provider_calls_nothing") {
         return;
@@ -905,7 +937,6 @@ fn subagent_transform_anthropic_provider_calls_nothing() {
 // T§7.2 item 1, T§17 check 10
 #[cfg(unix)]
 #[test]
-#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn subagent_transform_unset_main_role_calls_event_subagent() {
     if no_node("subagent_transform_unset_main_role_calls_event_subagent") {
         return;
@@ -925,7 +956,6 @@ fn subagent_transform_unset_main_role_calls_event_subagent() {
 // T§7.2 item 1 (SX-6 review round 1, item 3): a missing or null `input.model` is not a `zygo/` model
 #[cfg(unix)]
 #[test]
-#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn subagent_transform_missing_or_null_model_calls_nothing() {
     if no_node("subagent_transform_missing_or_null_model_calls_nothing") {
         return;
@@ -943,7 +973,6 @@ fn subagent_transform_missing_or_null_model_calls_nothing() {
 // T§7.2 item 1 (SX-6 review round 1, item 3): a `zygo` model with no id is not the main role
 #[cfg(unix)]
 #[test]
-#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn subagent_transform_zygo_model_without_id_calls_event_subagent() {
     if no_node("subagent_transform_zygo_model_without_id_calls_event_subagent") {
         return;
@@ -959,7 +988,6 @@ fn subagent_transform_zygo_model_without_id_calls_event_subagent() {
 // T-C1 (SX-6 review round 1, item 4): no `output.system` array, no zygo process and no throw
 #[cfg(unix)]
 #[test]
-#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn subagent_transform_without_system_array_calls_nothing() {
     if no_node("subagent_transform_without_system_array_calls_nothing") {
         return;
