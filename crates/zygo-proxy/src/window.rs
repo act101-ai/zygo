@@ -113,6 +113,17 @@ pub fn responses_compact_tool(client: &ClientSpec, namespace: Option<&str>, name
     name.strip_suffix("__compact").and_then(|ns| ns.strip_prefix("mcp__")).is_some_and(|s| s.ends_with("zygo"))
 }
 
+/// The compact tool in a tool name of the model's answer to a request on `route`, read as Messages lines: a
+/// Responses-route request's tool names are the fixed flat form (K§6.4.3; also when an Anthropic or chat upstream
+/// answers it), matched as `responses_compact_tool` matches them; a Messages-route request's are the client's own
+/// form (`compact_tool`).
+pub fn route_compact_tool(client: &ClientSpec, route: ModelRoute, name: &str) -> bool {
+    match route {
+        ModelRoute::Responses => responses_compact_tool(client, None, name),
+        ModelRoute::Messages | ModelRoute::CountTokens => compact_tool(client, name),
+    }
+}
+
 /// Trigger 1's threshold: the override, else `soft`; none when `off`; then at most `safety` (§10.2.1).
 pub fn soft_threshold(compact: Option<WindowArg>, row: &ModelRow, safety: Option<u64>) -> Option<u64> {
     let t = match compact {
@@ -175,7 +186,7 @@ fn messages_line(ctx: &mut ResponseCtx, line: &mut SseLine) {
     match v.get("type").and_then(Value::as_str) {
         Some("content_block_start") => {
             let b = &v["content_block"];
-            if b["type"] == "tool_use" && b["name"].as_str().is_some_and(|n| compact_tool(ctx.session.agent.spec(), n)) {
+            if b["type"] == "tool_use" && b["name"].as_str().is_some_and(|n| route_compact_tool(ctx.session.agent.spec(), ctx.route, n)) {
                 ctx.compact_call = true;
             }
         }
