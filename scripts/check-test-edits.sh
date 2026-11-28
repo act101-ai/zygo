@@ -15,7 +15,7 @@
 # The checker does not judge itself: the helper (crate zygo-test-edits, tools/test-edits) is
 # built from <parent> and run against this repository. The review gate runs the parent's copy of
 # this script too, from the top folder or a subfolder:
-#   git show <parent>:scripts/check-test-edits.sh | sh -s -- <parent> <node file>
+#   S=$(git show <parent>:scripts/check-test-edits.sh) && printf '%s\n' "$S" | sh -s -- <parent> <node file>
 # Build cache: ZYGO_TEST_EDITS_CACHE (default ${XDG_CACHE_HOME:-$HOME/.cache}/zygo-test-edits).
 # The key is a hash of the tree of tools/test-edits, the root Cargo.toml and Cargo.lock, the
 # rust-toolchain file (if any) at <parent>, and "rustc -V". Each key has its own sources
