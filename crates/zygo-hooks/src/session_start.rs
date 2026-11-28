@@ -3,7 +3,7 @@
 //! design T§7.2 item 2).
 
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 use zygo_core::hook::{error_line, HookInput, HookOutput};
@@ -83,6 +83,122 @@ fn output(agent: Agent, text: String) -> HookOutput {
     }
 }
 
+/// The folder of the stored OpenCode item 8 in the session folder, one file per OpenCode session id (FX-9).
+const ITEM_DIR: &str = "session-item";
+
+/// The most bytes of a stored item 8 that are read; a larger file is not used.
+const MAX_ITEM: u64 = 1 << 20;
+
+/// `<dir>/session-item/<agent_session>`, the stored item 8 of an OpenCode session (FX-9 Decision 3), when
+/// `agent_session` passes the rule of `pre_compact::flag_path` (1-64 of `[A-Za-z0-9_-]`, T§9.2 item 1), so the path
+/// stays in the session folder; else `None`.
+pub fn item_path(dir: &SessionDir, agent_session: &str) -> Option<PathBuf> {
+    crate::pre_compact::flag_path(dir, agent_session).map(|_| dir.root.join(ITEM_DIR).join(agent_session))
+}
+
+/// Item 8 of the OpenCode session `agent_session`, fixed at its first main-loop request (M§8a item 1, FX-9
+/// Decisions 1-5). A stored text is returned as it is and `build` is not called. Else `build()`; a `Some` text is
+/// stored first-writer-wins (a temp file, then a hard link that fails when the name is taken), and a call that loses
+/// the race returns the stored text. `None` stores nothing. An id that fails `item_path` gives `build()` with no
+/// store. A stored entry that is a link, not a regular file, too large or unreadable gives `build()` with no store and
+/// one `log` line; a store that fails gives the built text and one `log` line.
+pub fn fixed_item(
+    dir: &SessionDir, agent_session: &str, build: &mut dyn FnMut() -> Option<String>, log: &dyn Fn(&str),
+) -> Option<String> {
+    let Some(path) = item_path(dir, agent_session) else { return build() };
+    match read_item(&path) {
+        Ok(Some(t)) => return Some(t),
+        Ok(None) => {}
+        Err(e) => {
+            log(&format!("{}: {e:#}; item 8 not stored", path.display()));
+            return build();
+        }
+    }
+    let text = build()?;
+    match store_item(dir, &path, &text) {
+        Ok(true) => Some(text),
+        // Another request stored its text after this one read: that text is the session's item 8.
+        Ok(false) => match read_item(&path) {
+            Ok(Some(t)) => Some(t),
+            Ok(None) => Some(text),
+            Err(e) => {
+                log(&format!("{}: {e:#}", path.display()));
+                Some(text)
+            }
+        },
+        Err(e) => {
+            log(&format!("{}: cannot store item 8: {e:#}", path.display()));
+            Some(text)
+        }
+    }
+}
+
+/// The stored text at `path`: `Ok(None)` when nothing is there. Opened with `O_NOFOLLOW | O_NONBLOCK`, so a link is
+/// not followed and a FIFO does not make the reader wait; only a regular file of at most `MAX_ITEM` bytes of UTF-8 is
+/// read.
+fn read_item(path: &Path) -> anyhow::Result<Option<String>> {
+    let mut o = std::fs::OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    }
+    let f = match o.open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(anyhow::Error::new(e).context("cannot open")),
+    };
+    let m = f.metadata()?;
+    if !m.is_file() {
+        anyhow::bail!("is not a regular file");
+    }
+    if m.len() > MAX_ITEM {
+        anyhow::bail!("is larger than {MAX_ITEM} bytes");
+    }
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut std::io::Read::take(f, MAX_ITEM), &mut text)?;
+    Ok(Some(text))
+}
+
+/// Stores `text` at `path` unless the name is taken: `Ok(true)` when stored, `Ok(false)` when the name is taken, so a
+/// stored text is never replaced. `session-item/` is made when missing (0700, set also when it exists, as `reinject/`
+/// in `pre_compact`); `text` goes to a new temp file next to `path` (0600, synced, a name unique to this process and
+/// call), which is hard-linked to `path` and then removed. A missing session folder is an error and is not made again.
+fn store_item(dir: &SessionDir, path: &Path, text: &str) -> anyhow::Result<bool> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let folder = dir.root.join(ITEM_DIR);
+    let mut b = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+    match b.create(&folder) {
+        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => return Err(e.into()),
+        _ => {}
+    }
+    #[cfg(unix)]
+    std::fs::set_permissions(&folder, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = folder.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    let mut f = o.open(&tmp)?;
+    let linked = (|| -> std::io::Result<bool> {
+        f.write_all(text.as_bytes())?;
+        f.sync_all()?;
+        match std::fs::hard_link(&tmp, path) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(e) => Err(e),
+        }
+    })();
+    // The temp file is this call's own; the stored text stays under `path`.
+    let _ = std::fs::remove_file(&tmp);
+    Ok(linked?)
+}
+
 /// `run_in` with the member part (H1 D3, D11). The view is loaded as `run_in` loads it. A launch that is not a member
 /// gets the output or the error of `run_in` and no other effect. The Claude Code `SessionStart` entry of a member is
 /// `session-start --event member` (`input.cli_event == Some("member")`): the session folder is checked first, and a
@@ -96,7 +212,7 @@ fn output(agent: Agent, text: String) -> HookOutput {
 /// Without the flag (a launch that is not a member, or an OpenCode request on the main role) a load error is `run_in`'s
 /// error and that check does not run. A session folder that `workspace::check_folder` refuses skips the member part.
 /// Else `workspace::session_start` runs; a Claude Code member's output is printed to `out` there, so the result is
-/// `HookOutput::None`. A `view.json` that is a FIFO is a load error of `SessionView::load` (`<path>: is a FIFO`), with
+/// `HookOutput::None`; an OpenCode member's item 8 is fixed per OpenCode session id there (`fixed_item`, FX-9). A `view.json` that is a FIFO is a load error of `SessionView::load` (`<path>: is a FIFO`), with
 /// no wait, for every launch (FIX-22).
 pub fn run_member(
     input: &HookInput, dir: &SessionDir, paths: &Paths, zygo: &Path, out: &mut dyn Write,
