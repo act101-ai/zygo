@@ -903,7 +903,8 @@ fn git_bound_is_total() {
     std::fs::set_permissions(&g, std::fs::Permissions::from_mode(0o755)).unwrap();
     let path = format!("{}:{}", d.display(), std::env::var("PATH").unwrap_or_default());
     let out = Command::new(std::env::current_exe().unwrap())
-        .args(["git_bound_is_total", "--exact", "--test-threads=1"])
+        // `--ignored`: the test is ignored, so without it the child skips it and passes nothing.
+        .args(["git_bound_is_total", "--exact", "--ignored", "--test-threads=1"])
         .env("ZYGO_N3_FAKE_GIT", "1")
         .env("PATH", path)
         .output()
