@@ -33,8 +33,10 @@ use super::{
     UsageError,
 };
 
-/// The text when neither `ZYGO_WORKSPACE` nor the checkout of the current folder names a workspace (as `zygo workspace`).
-const NO_WORKSPACE: &str = "no workspace for this session or folder";
+/// The line when neither `ZYGO_WORKSPACE` nor the checkout of the current folder names a workspace: the text of
+/// `zygo workspace`, with the `zygo: ` prefix of every mail CLI error line (FX-28 step 10; the slash form gives the
+/// same line, N42).
+const NO_WORKSPACE: &str = "zygo: no workspace for this session or folder";
 
 /// The git bound of the `/zygo:mail` checkout lookup: the bound of `admin::status`, so `/zygo:mail` fits the 4.5 s
 /// hook bound as `/zygo:workspace` does (`crates/zygo-workspace/src/admin.rs:29-30`, W§12). The CLI keeps `GIT_BOUND`.
@@ -586,7 +588,8 @@ fn print_error(e: &SyncError, ws_name: &str, err: &mut dyn Write) {
 }
 
 /// The workspace of `ZYGO_WORKSPACE`, else of the checkout of `cwd`, with the error texts of `zygo workspace`
-/// (`admin::status`). A state folder that is a link reads as none.
+/// (`admin::status`); the two no-workspace lines carry the `zygo: ` prefix, as `zygo ws` and `zygo down` give
+/// `zygo: no workspace with id <id>` (FX-28 step 10). A state folder that is a link reads as none.
 pub(crate) fn workspace_of(
     paths: &Paths,
     cwd: &Path,
@@ -610,7 +613,7 @@ pub(crate) fn workspace_of(
     let read = if real { Store::open(paths, &id).read().map_err(|e| anyhow!("{e}"))? } else { None };
     match read {
         Some(ws) => Ok(ws),
-        None if by_env => bail!("no workspace with id {id}"),
+        None if by_env => bail!("zygo: no workspace with id {id}"),
         None => bail!(NO_WORKSPACE),
     }
 }

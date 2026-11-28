@@ -556,8 +556,9 @@ fn remote_send_holds_mail_lock_across_its_link() {
 }
 
 #[test] // S§7.6 step 4, S§8.1 (FX-28, re-plan R3-F2): a send under mail/lock and a forget that comes to its lock meanwhile:
-        // the forget goes on only after the send returned, counts the linked file again under mail/lock and refuses;
-        // the order comes from hooks and channels, each wait has a fail-safe bound
+        // the test holds the forget at forget_before_mail_lock until the send returned (this order is the test's, not
+        // the lock's: the forget that meets the held lock is forget_cannot_take_mail_lock_while_a_send_holds_it); the
+        // forget then counts the linked file again under mail/lock and refuses; each wait has a fail-safe bound
 fn remote_send_racing_forget_makes_the_forget_refuse_at_the_count_again() {
     let h = Harness::no_tmux();
     seed_down(&h, &[(ALICE, "alice")]);
@@ -596,5 +597,51 @@ fn remote_send_racing_forget_makes_the_forget_refuse_at_the_count_again() {
     assert_eq!(ask, asked(1));
     assert!(sp(&h).outbox.join(format!("{id}.json")).is_file());
     assert_eq!(count(&sp(&h)).unwrap(), 2);
+    assert!(dir.join("workspace.json").is_file());
+}
+
+#[test] // S§7.6 step 4, S§8.1 (FX-28 review F1): a send that holds mail/lock shared (stopped at remote_send_before_link)
+        // and a forget that comes to the lock meanwhile: the forget waits the code's own MAIL_LOCK_WAIT in take_lock
+        // and refuses as busy, the state stays, and the send then links and returns Ok; the test itself has no sleep
+fn forget_cannot_take_mail_lock_while_a_send_holds_it() {
+    let h = Harness::no_tmux();
+    seed_down(&h, &[(ALICE, "alice")]);
+    unsynced(&h);
+    let dir = h.paths.workspaces_dir().join(WS_ID);
+    let _clear = ClearHooks { dir: &dir, points: &["remote_send_before_link", "forget_before_mail_lock"] };
+    let (tx, rx) = mpsc::channel::<Step>();
+    let mut threads = Threads::default();
+    // The send stops under mail/lock, right before its link.
+    let resume = pause_at(&dir, "remote_send_before_link", &tx);
+    threads.send(&h, &tx);
+    match threads.next(&rx, "the send stops at remote_send_before_link") {
+        Step::Paused("remote_send_before_link") => {}
+        other => panic!("the send did not stop at remote_send_before_link: {other:?}"),
+    }
+    // The forget reports that it came to its lock and goes on at once: no go from the test, so the only thing that
+    // can stop it is the lock that the send holds.
+    let at_lock = tx.clone();
+    hook(&dir, "forget_before_mail_lock", Some(Box::new(move || {
+        let _ = at_lock.send(Step::AtLock);
+        Ok(())
+    })));
+    threads.forget(&h, &tx);
+    match threads.next(&rx, "the forget comes to forget_before_mail_lock") {
+        Step::AtLock => {}
+        other => panic!("the forget did not come to forget_before_mail_lock: {other:?}"),
+    }
+    let (code, out, err, ask) = match threads.next(&rx, "the forget returns while the send holds mail/lock") {
+        Step::Forgot(code, out, err, ask) => (code, out, err, ask),
+        other => panic!("the forget did not return while the send held mail/lock: {other:?}"),
+    };
+    assert_eq!((code, out.as_str(), err.as_str(), ask.as_str()), (1, "", "zygo: cannot forget app: mail is busy; try again\n", ""));
+    assert!(dir.join("workspace.json").is_file(), "the forget removed the state while the send held mail/lock");
+    resume.send(()).expect("the send waits at remote_send_before_link");
+    let id = match threads.next(&rx, "the send returns") {
+        Step::Sent(r) => r.expect("the send linked its file"),
+        other => panic!("the send did not return: {other:?}"),
+    };
+    threads.join_all();
+    assert!(sp(&h).outbox.join(format!("{id}.json")).is_file());
     assert!(dir.join("workspace.json").is_file());
 }

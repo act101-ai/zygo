@@ -277,9 +277,10 @@ fn remote_send_with_no_workspace_state_is_refused_and_starts_no_child() {
     nothing_sent(&x);
     assert!(std::fs::symlink_metadata(&state).is_err());
     // The binary reads the state first (`workspace_of`), so it refuses with its own line before the send: with
-    // ZYGO_WORKSPACE set, `no workspace with id <id>` (the line of `finish`, FX-28 step 10).
+    // ZYGO_WORKSPACE set, `zygo: no workspace with id <id>` (the line of `workspace_of`, as `ws` and `down` give it;
+    // FX-28 step 10).
     let o = zygo(&x.h, &["mail", "send", "bob@b", "--subject", SUBJECT], &[]);
-    assert_eq!((o.status.code(), out(&o), err(&o)), (Some(1), String::new(), format!("no workspace with id {WS_ID}\n")));
+    assert_eq!((o.status.code(), out(&o), err(&o)), (Some(1), String::new(), format!("zygo: no workspace with id {WS_ID}\n")));
     nothing_sent(&x);
     assert!(std::fs::symlink_metadata(&state).is_err());
 }

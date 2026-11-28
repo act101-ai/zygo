@@ -170,7 +170,7 @@ fn name_option_picks_the_workspace_by_name() { // T2
     let r = remote();
     let a = machine(&r, "a", &[(ALICE, "alice")]);
     let o = a.zygo(&["mail", "sync"], &[]).output().unwrap();
-    assert_eq!((o.status.code(), err(&o)), (Some(1), "no workspace for this session or folder\n".to_string()));
+    assert_eq!((o.status.code(), err(&o)), (Some(1), "zygo: no workspace for this session or folder\n".to_string()));
     let o = a.zygo(&["mail", "sync", "--name", "nope"], &[]).output().unwrap();
     assert_eq!((o.status.code(), err(&o)), (Some(1), "zygo: no workspace named nope\n".to_string()));
     let o = a.zygo(&["mail", "sync", "--name", "app"], &[]).output().unwrap();
