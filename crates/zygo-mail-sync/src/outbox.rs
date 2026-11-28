@@ -10,7 +10,7 @@ use zygo_config::schema::{RedactionConfig, SyncOff, SyncSettings};
 use zygo_core::ids::valid_member_name;
 use zygo_redact::secret::DeadlinePolicy;
 use zygo_workspace::mail::store::{write_synced, FILE_MAX};
-use zygo_workspace::mail::{ensure_mail_dir, MailError, Message};
+use zygo_workspace::mail::{ensure_mail_dir, fire_point, Delivery, MailError, Message, MAIL_LOCK_WAIT};
 
 use crate::address::{ulid_file, Address};
 use crate::registry::read_cache;
@@ -77,6 +77,34 @@ pub fn send_remote(
 /// `send_remote` with the deadline policy of the secret pass given. The rules run in the S§7.2 order (sender
 /// name, sync off, public, unknown address), then the M§5 limits, then the secret pass; a refusal writes nothing.
 /// The file is written in `outbox/tmp/` and linked into `outbox/` (M§5, M-C3).
+///
+/// `mail/lock` is held shared ([`Delivery::begin`]) from before the first outbox folder is made until after the link
+/// (S§7.6 step 4, FX-28). Each refusal of `Delivery::begin` is `SendError::Io` with the `MailError` line (S§8.1 row 1):
+/// - `Busy`, the lock not taken in `MAIL_LOCK_WAIT`: `zygo: mail is busy; try again`;
+/// - `NoWorkspace`, no `workspace.json`, no state folder, or a locked file that is no longer `mail/lock` (a forget
+///   renamed the state folder while this send waited): `zygo: the workspace has no state; nothing sent`;
+/// - `BadState`, a corrupt `workspace.json` (`zygo: mail: <state>/workspace.json: <reason>`), a newer one (`zygo: mail:
+///   workspace state is from a newer zygo; run zygo update`), a state folder that is a link (`zygo: mail: <state>
+///   is a link; it is not followed`), or a state path that is not a folder (`zygo: mail: <state> is not a folder`);
+/// - `BadMail`, a `mail/` that is a link or not a folder: `zygo: mail: <state>/mail is not a folder`;
+/// - `Io`, a `mail/lock` that is not a regular file: `zygo: mail: <state>/mail/lock: is a link; it is not followed`
+///   for a link, and `zygo: mail: <state>/mail/lock: is not a regular file` for a folder, a FIFO or another entry.
+///
+/// The sync state and the member cache are in the state folder, so a state folder that is missing or not a folder
+/// when they are read refuses first (an unknown address, or the error of the sync state read); the `NoWorkspace` and
+/// `BadState` lines of those two cases come when the state goes after those reads and before `Delivery::begin`.
+/// `zygo mail send` and `mail_send` read the state before they call this function, so a state that is missing then
+/// refuses with their own line (S§8.1 row 1).
+///
+/// A refusal makes no state folder, no `mail/outbox/` folder and no outbox file. When the state folder is a real
+/// folder and `mail/` is not a link, `Delivery::begin` makes `mail/` (`0700`) and `mail/lock` (`0600`) when they are
+/// missing, before it reads the state, and they stay after a `NoWorkspace` or `BadState` refusal.
+///
+/// Hook points (test hooks only, fired with the state folder through `zygo_workspace::mail::fire_point`; an error at
+/// each is the send's `Io` error, `zygo: mail: <text>`): `remote_send_before_begin` (after the member cache read and
+/// the secret pass, before `Delivery::begin`), `remote_send_before_link` (under the lock, after the write in
+/// `outbox/tmp/` and right before the link; an error there removes the `tmp/` name), and `remote_send_after_link`
+/// (under the lock, after the link into `outbox/` and its folder sync; the file is linked then).
 #[allow(clippy::too_many_arguments)]
 pub fn send_remote_with(
     sp: &SyncPaths,
@@ -111,16 +139,26 @@ pub fn send_remote_with(
     }
     let id = msg.id.parse::<Ulid>().map_err(|e| io_err(io::Error::other(e)))?;
     let bytes = serde_json::to_vec(&msg).map_err(|e| io_err(io::Error::other(e)))?;
+    let store = sp.store();
+    let hook_err = |e: String| io_err(io::Error::other(e));
+    fire_point(store.dir(), "remote_send_before_begin").map_err(hook_err)?;
+    // S§7.6 step 4 (FX-28): `mail/lock` shared, held to the end: across the folder makes, the write and the link.
+    let _held = Delivery::begin(&store, MAIL_LOCK_WAIT).map_err(|e| SendError::Io(e.to_string()))?;
     for d in [&sp.mail, &sp.outbox, &sp.outbox_tmp] {
         ensure_mail_dir(d).map_err(io_err)?;
     }
     let file = format!("{id}.json");
     let tmp = sp.outbox_tmp.join(&file);
     write_synced(&tmp, &bytes).map_err(io_err)?;
+    fire_point(store.dir(), "remote_send_before_link").map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        hook_err(e)
+    })?;
     publish(&tmp, &sp.outbox.join(&file)).map_err(io_err)?;
     // The message is in the outbox now: an error here would make the sender send it again. A left tmp/ name is a
     // second name of the same file, swept after 1 h.
     let _ = sync_dir(&sp.outbox);
+    fire_point(store.dir(), "remote_send_after_link").map_err(hook_err)?;
     let _ = fs::remove_file(&tmp);
     Ok(id)
 }

@@ -24,6 +24,23 @@ pub const BODY_MAX: usize = 1048576;
 /// The longest wait for `mail/lock`, by a delivery or by a removal (M§5 P1).
 pub const MAIL_LOCK_WAIT: Duration = Duration::from_secs(2);
 
+/// The test hook of `point` for the state folder `dir`, for a hook point in another crate (D33; the points are listed
+/// at `up::testing::hook`, which the `test-hooks` feature builds): `Err(text)` is the hook's error. Without the
+/// feature it does nothing and is `Ok`. It is here, not in `up`, because the hook-side crates must not name
+/// `zygo_workspace::up` (`crates/zygo/tests/definition_hooks.rs`, R-C8; FX-28). Code of this crate uses `up::fire`.
+#[doc(hidden)]
+pub fn fire_point(dir: &Path, point: &'static str) -> Result<(), String> {
+    #[cfg(feature = "test-hooks")]
+    {
+        crate::up::testing::fire(dir, point)
+    }
+    #[cfg(not(feature = "test-hooks"))]
+    {
+        let _ = (dir, point);
+        Ok(())
+    }
+}
+
 /// The message file, version 1 (M§5). Field order is the file's key order; unknown fields are kept (AU78).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {

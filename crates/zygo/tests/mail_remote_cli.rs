@@ -254,6 +254,37 @@ fn the_other_s7_2_refusals_write_nothing() {
     assert_eq!((code, o.ends_with(" to elena\n")), (0, true));
 }
 
+#[test] // C9: S§8.1 row 1, S§7.6 step 4 (FX-28): mail/lock held exclusive for the whole wait
+fn remote_send_with_mail_lock_held_is_busy_and_starts_no_child() {
+    let x = setup();
+    let lock = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false)
+        .open(mail_dir(&x.h.paths, WS_ID).join("lock")).unwrap();
+    fs4::FileExt::try_lock(&lock).unwrap();
+    refused(send(&x, Some(ALICE), "bob@b", BODY), "zygo: mail is busy; try again");
+    nothing_sent(&x);
+    drop(lock);
+    let (code, o, e) = send(&x, Some(ALICE), "bob@b", BODY);
+    assert_eq!((code, o.ends_with(" to bob@b\n"), e.as_str()), (0, true, ""));
+    assert_eq!(spawns(&x), vec![1]);
+}
+
+#[test] // C10: S§8.1 row 1 (FX-28): no workspace.json under mail/lock refuses and writes no state; the binary refuses first
+fn remote_send_with_no_workspace_state_is_refused_and_starts_no_child() {
+    let x = setup();
+    let state = x.h.store(WS_ID).dir().join("workspace.json");
+    std::fs::remove_file(&state).unwrap();
+    refused(send(&x, Some(ALICE), "bob@b", BODY), "zygo: the workspace has no state; nothing sent");
+    nothing_sent(&x);
+    assert!(std::fs::symlink_metadata(&state).is_err());
+    // The binary reads the state first (`workspace_of`), so it refuses with its own line before the send: with
+    // ZYGO_WORKSPACE set, `zygo: no workspace with id <id>` (the line of `workspace_of`, as `ws` and `down` give it;
+    // FX-28 step 10).
+    let o = zygo(&x.h, &["mail", "send", "bob@b", "--subject", SUBJECT], &[]);
+    assert_eq!((o.status.code(), out(&o), err(&o)), (Some(1), String::new(), format!("zygo: no workspace with id {WS_ID}\n")));
+    nothing_sent(&x);
+    assert!(std::fs::symlink_metadata(&state).is_err());
+}
+
 #[test] // R1: S§7.2 (rewritten): a value with `@` that is not local is refused in read, ls and watch
 fn read_ls_and_watch_refuse_a_value_with_at_that_is_not_local() {
     let x = setup();

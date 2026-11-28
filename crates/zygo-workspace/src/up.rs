@@ -160,7 +160,12 @@ pub mod testing {
     /// before it makes `cur/`; the state folder is the parent of `mail/`; an error there is the read's `Io` error) and
     /// `mail_removal_after_lock` (in `mail::remove_maildir` and `mail::prune`, after `mail/lock` is taken exclusive and
     /// before the check that the locked file is still `mail/lock`; FX-24 review R3 F2; an error there is the removal's
-    /// error).
+    /// error); the points of another crate, fired through `mail::fire_point` (FX-28), in
+    /// `zygo_mail_sync::outbox::send_remote_with`: `remote_send_before_begin` (after the member cache read and the
+    /// secret pass, before `mail::Delivery::begin` takes `mail/lock` shared), `remote_send_before_link` (under
+    /// `mail/lock` shared, after the write in `outbox/tmp/` and right before the link into `outbox/`; an error there
+    /// removes the `tmp/` name) and `remote_send_after_link` (under `mail/lock` shared, after the link and its folder
+    /// sync); an error at each is the send's `Io` error, `zygo: mail: <text>`.
     /// An `Err(text)` of the hook becomes `MuxError::Failed { message: text }` at that point; at `before_undo` it is
     /// the undo's write error.
     pub fn hook(dir: &Path, point: &'static str, f: Option<Box<dyn Fn() -> Result<(), String> + Send + Sync>>) {
@@ -176,7 +181,7 @@ pub mod testing {
     }
 
     /// Runs the hook of (`point`, `dir`), if one is set, outside the lock of the hook table.
-    pub(super) fn fire(dir: &Path, point: &'static str) -> Result<(), String> {
+    pub(crate) fn fire(dir: &Path, point: &'static str) -> Result<(), String> {
         let hook = HOOKS.lock().unwrap_or_else(|e| e.into_inner()).get(&(point, dir.to_path_buf())).cloned();
         hook.map_or(Ok(()), |h| h())
     }

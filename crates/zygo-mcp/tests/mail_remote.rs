@@ -104,10 +104,13 @@ fn cache(sp: &SyncPaths, hosts: &[(&str, &[&str])]) {
 fn public(x: &X) {
     save(&x.sp, &State { public: Some(PublicCache { url_sha256: vec!["0".repeat(64)], verdict: "public".into(), at: T0 }), ..Default::default() }).unwrap();
 }
-fn tools_p(x: &X, fail: bool, policy: DeadlinePolicy) -> Vec<Box<dyn Tool>> {
+fn tools_p(x: &X, fail: bool, policy: DeadlinePolicy) -> Vec<Box<dyn Tool>> { tools_c(x, fail, policy, Arc::new(|| at(T0))) }
+/// `tools_p` with the clock of the send given: `mail_send` reads it after its state read and right before the outbox
+/// send, so a test clock can change the state between the two.
+fn tools_c(x: &X, fail: bool, policy: DeadlinePolicy, clock: mail::Clock) -> Vec<Box<dyn Tool>> {
     let ctx = McpCtx { agent: Agent::ClaudeCode, features: Features { mail: true, ..Default::default() }, session_dir: Some(x.sd.clone()) };
     let woke = Arc::clone(&x.woke);
-    mail::tools_with_sync(&ctx, x.p.clone(), MailConfig::default(), Arc::new(|| at(T0)),
+    mail::tools_with_sync(&ctx, x.p.clone(), MailConfig::default(), clock,
         Arc::new(move |_: &Paths, _: &Workspace, k: &[String], _: &MailConfig| woke.lock().unwrap().push(k.to_vec())),
         Box::new(Spawns { sp: x.sp.clone(), seen: Arc::clone(&x.seen), fail }), policy)
 }
@@ -267,6 +270,45 @@ fn config_that_does_not_load_refuses_an_addressed_send_only() {
     assert_eq!(send(&t, "elena@a", BODY), Err(ToolError::Failed(NO_CONFIG.into())));
     nothing_sent(&x);
     assert_eq!(send(&t, "elena", BODY).unwrap()["sent"][0]["to"], "elena");
+}
+
+#[test] // R17: S§8.1 row 1, S§7.6 step 4 (FX-28): mail/lock held exclusive for the whole wait
+fn remote_send_with_mail_lock_held_is_busy_and_starts_no_child() {
+    let x = setup(LEAD);
+    let lock = fs::OpenOptions::new().read(true).write(true).create(true).truncate(false)
+        .open(mail_dir(&x.p, ID).join("lock")).unwrap();
+    lock.try_lock().unwrap();
+    assert_eq!(send(&tools(&x), "bob@b", BODY), Err(ToolError::Failed("zygo: mail is busy; try again".into())));
+    nothing_sent(&x);
+    drop(lock);
+    assert_eq!(send(&tools(&x), "bob@b", BODY).unwrap()["sent"][0]["to"], "bob@b");
+    assert_eq!(spawns(&x), vec![1]);
+}
+
+#[test] // R18: S§8.1 row 1 (FX-28): no workspace.json, at the tool's read and under mail/lock
+fn remote_send_with_no_workspace_state_is_refused_and_starts_no_child() {
+    let x = setup(LEAD);
+    let state = Store::open(&x.p, ID).dir().join("workspace.json");
+    let saved = fs::read(&state).unwrap();
+    fs::remove_file(&state).unwrap();
+    assert_eq!(send(&tools(&x), "bob@b", BODY), Err(ToolError::Failed(format!("zygo: workspace {ID} has no state"))));
+    nothing_sent(&x);
+    // The state is gone after the tool's read: the outbox send finds no workspace.json under mail/lock.
+    // The clock seam is the place to remove it because of the call order in `Mail::route`: the tool reads the state
+    // (`Mail::workspace`) first, then reads the clock once, as the `now` argument of `send_remote_with`, and only
+    // inside that call does `Delivery::begin` read workspace.json under mail/lock. So the clock runs between the two
+    // reads. A change of that order fails this test loudly: a clock read before the tool's read gives
+    // `workspace <id> has no state`, a clock read after `Delivery::begin` lets the send succeed, and a second clock
+    // read panics at the `remove_file` of a file that is gone. Each differs from the line asserted below.
+    fs::write(&state, &saved).unwrap();
+    let gone = state.clone();
+    let t = tools_c(&x, false, far(), Arc::new(move || {
+        fs::remove_file(&gone).unwrap();
+        at(T0)
+    }));
+    assert_eq!(send(&t, "bob@b", BODY), Err(ToolError::Failed("zygo: the workspace has no state; nothing sent".into())));
+    nothing_sent(&x);
+    assert!(fs::symlink_metadata(&state).is_err());
 }
 
 #[test] // R16: acceptance, S-C2, M§8a: no message text in any tool error

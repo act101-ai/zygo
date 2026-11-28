@@ -33,3 +33,7 @@ libc.workspace = true
 
 [dev-dependencies]
 zygo-mail-sync = { path = ".", features = ["test-hooks"] }
+# The test hooks of zygo-workspace (`up::testing::hook`, fired through `mail::fire_point`) for the tests of this crate
+# only: the outbox tests drive the `remote_send_*` points of `outbox::send_remote_with` and the
+# `mail_delivery_after_lock` point of `Delivery::begin` (FX-28). Production builds do not get them.
+zygo-workspace = { workspace = true, features = ["test-hooks"] }

@@ -191,7 +191,6 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | DONE | implementation | 0167648d..826c59f6 · acceptance pass (mail_sync_cli 14 passed, cli_surface 21 passed) · PR #210 |
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | DONE | implementation | 37139e44^..e21d5e0b · acceptance pass (mail_remote 16 passed) · PR #212 |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
 | WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | DONE | judgment | 1324716e^..e1276ac2 · acceptance pass (workspace_definition 23 passed with tmux) · PR #214 |
@@ -221,7 +220,7 @@ Session text (T, SX nodes):
 | FX-25 | `zygo up` reads the definition at the current checkout; `find_checkout` keeps a failed or timed-out `git worktree list` (exit 1) | WD-15 | DONE | implementation | a8092a70^..3c511812 · acceptance pass (up_definition 42, up 82, workspace_approve 29) · PR #226 |
 | FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | DONE | judgment | ccb3aaec^..336d5654 · acceptance pass (mail_sync_no_content 5 passed) · PR #236 |
 | FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | DONE | judgment | 343897e2^..a9b6f61c · acceptance pass (renamed_host_ack_goes_with_only_acked_link_and_gitlink_entries 1 passed) · PR #231 |
-| FX-28 | A remote send during `ws forget` is lost uncounted | FX-24, FX-26 | TODO | judgment | — |
+| FX-28 | A remote send during `ws forget` is lost uncounted | FX-24, FX-26 | DONE | judgment | 6392c45c^..781e5ee6 · acceptance pass (remote_send_during_forget_is_never_lost_uncounted 1 passed; mail_sync_forget 13 passed) · PR #234 |
 | FX-29 | config check rejects default_loadout = "repository" that zygo up accepts | WD-20 | DONE | implementation | cf92636c^..2f28c271 · acceptance pass (config_check_default_loadout_repository_follows_zygo_up 1 passed, zygo-config all pass) · PR #237 |
 | FX-30 | A crash-recovered delivery gets no wake and no count | FX-26, FX-28 | TODO | judgment | — |
 | FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | DONE | judgment | 3279f092^..4bae96ba · acceptance pass (pin_gone_stops_exactly_the_r11_members 1 passed, workspace_definition 17 passed + 9 ignored passed) · PR #238 |
@@ -454,6 +453,8 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-27 BLOCKED: failed 3 review rounds; round 3: the member-gated prune (R2 D-B) leaves delivered mail after a member rename, a cross-pass member duplicate is never acked, member_names is quadratic; branch discarded, re-plan · PR #230 closed |
 | 2026-11-26 | FX-27 PLANNED (re-plan), author's call: R1 ack = (old ∪ acked ∪ own-ack union) ∩ folder ULIDs; R2 old ack goes with no message file, every ULID listed, registry gone; R3 prune unchanged; R4 drop-host counts message files; invariant: one delivery per ULID |
 | 2026-11-26 | FX-27 DONE: ULID-keyed re-plan R1–R4; review rounds 1–2 fixed tests and spec text; author's calls: non-address folders are documented as operator-only removal; planner's call: non-ULID names do not keep the ack. |
+| 2026-11-27 | FX-28 BLOCKED: failed 3 review rounds; round 3: mail/lock released after the remote_send_before_link hook passes every test; CI definition_hooks p2: outbox.rs names zygo_workspace::up; branch discarded, diff saved · PR #232 closed |
+| 2026-11-27 | FX-28 PLANNED (re-plan): send hooks before Delivery::begin and both sides of the link; timing-free tests; fire_point in zygo_workspace::mail, not up; open_regular/activity name the path; CLI lines start with zygo:; review rounds reset to 0 |
 | 2026-11-27 | FX-26 BLOCKED: failed 3 review rounds; round 3: the sweep skips unreadable folders, the deadline seam test misses the injected clock, FX-30 leaves S§19 #24 stale, no edges between mail-sync spec nodes; #233 closed; diff saved in ~/.cache/fx26-old |
 | 2026-11-27 | FX-26 PLANNED (re-plan): step 0 applies the reviewed diff (patches 0003-0005, no docs/work), steps 1-10 fix R3-1..R3-13 (sweep errors, seam test and test-hooks gate, S-C9, far deadline, proxies, #14 states, FX-30 contract), step 11 floor |
 | 2026-11-27 | FX-30 created from FX-26 review round 2 F-1; deps FX-26, FX-28 (author's call: every node that edits the mail-sync spec is on one dependency path); the FX-28 → FX-26 edge is added on phase3/FX-28 (PR #234) |
@@ -471,3 +472,5 @@ Session text (T, SX nodes):
 | 2026-11-27 | FX-31 PLANNED: author's call: R§11 names the R§7.4 conditions; a gone, withdrawn or unread pin stops only a launch that makes the pinned read; no profile, user or team profile, passthrough start; launcher unchanged; R§11, R§7.4, R§18 item 16, workspace-files.md rewritten |
 | 2026-11-27 | FX-31 IN-PROGRESS: plan steps 1-4 done; pin_gone_stops_exactly_the_r11_members 1 passed; mutations Gone→NotFound and passthrough pinned read each fail it; floor green; waits for review · PR #238 |
 | 2026-11-27 | FX-31 DONE; author's call: a withdrawal stops every pinned member, and a gone or unread pin stops only a launch that does the pinned read; review F1-F6 fixed; OS-45 row archived · PR #238 |
+| 2026-11-27 | Correction of the FX-28 re-plan line ("CLI lines start with zygo:"): only the two no-workspace lines of mail workspace_of get the prefix, at their source; finish and the other verbs do not change, so N42 holds (FX-28 review round 4 F3, author's call) |
+| 2026-11-27 | FX-28 DONE: rule B (send holds mail/lock shared; forget counts again under it and refuses on a higher count); review round 4 F1-F4 fixed; author's calls: step 10 fixed at the source line (workspace_of), N42 kept; F4 recorded as the FX-24 same-user limit · PR #234 |
