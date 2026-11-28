@@ -19,6 +19,46 @@ WSKIP=""
 
 fail() { printf '%s\n' "check-premises: $*"; exit 1; }
 
+# Text tools (TF-5 round 3). Every grep, sed, tr, awk, cut, sort and wc reads bytes, not characters:
+# LC_ALL=C is exported here, so a byte that is not UTF-8 cannot stop one (BSD tr and sed stop on one
+# in a UTF-8 locale, and the line they drop is lost: macOS CI run 46133671018). Each runs through
+# tool(), which writes a failure (grep: exit 2 or more; every other tool: any exit but 0) to $W/fail
+# and the tool's error lines to $W/err.<tool>. tool_check fails the check on the first failure; it
+# runs after each scan and before the ok line, so a tool that fails never lets the check pass. RULE
+# names the scan in the message. The caller's LC_ALL is kept (U_LC_SET, U_LC_ALL) for the name grep of
+# name_scan that folds case outside ASCII (F4).
+U_LC_SET=${LC_ALL+1} U_LC_ALL=${LC_ALL-}
+LC_ALL=C
+export LC_ALL
+W=$(command mktemp -d "${TMPDIR:-/tmp}/check-premises.XXXXXX") || fail "no scratch dir"
+trap 'command rm -rf "$W"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+RULE=setup
+tool() { # <tool> <argument>...
+  _tl_t=$1
+  shift
+  command "$_tl_t" "$@" 2>>"$W/err.$_tl_t"
+  _tl_s=$?
+  case $_tl_t:$_tl_s in *:0 | grep:1) return "$_tl_s" ;; esac
+  printf '%s|%s|%s\n' "$_tl_t" "$_tl_s" "$RULE" >>"$W/fail"
+  return "$_tl_s"
+}
+grep() { tool grep "$@"; }
+sed() { tool sed "$@"; }
+tr() { tool tr "$@"; }
+awk() { tool awk "$@"; }
+cut() { tool cut "$@"; }
+sort() { tool sort "$@"; }
+wc() { tool wc "$@"; }
+tool_check() {
+  [ -s "$W/fail" ] || return 0
+  _tc_l=$(command sed -n 1p "$W/fail")
+  _tc_t=${_tc_l%%|*} _tc_l=${_tc_l#*|}
+  fail "$_tc_t error (${_tc_l#*|}, exit ${_tc_l%%|*}): $(command sed -n 1p "$W/err.$_tc_t" 2>/dev/null | command cut -c1-160)"
+}
+
 # nontrivial <path>: a regular file (not a symlink) of more than 2 bytes that is not {} or [] (the rule
 # of K§6.3.7, docs/specs/2026-11-25-client-model-design.md, "fixture:<path>"; a file of only NULs or
 # only blanks passes, as it did before TF-3). NUL bytes are deleted with the blanks, as the shell did
@@ -311,19 +351,22 @@ NOTES=$( (grep -anH 'N38' "$SPEC" docs/conformance.md 2>/dev/null | tr -d '\000'
 # 2), and many hit lines cost no more than one (round 3). read takes one byte at a time from a pipe,
 # so cat gets every byte after the hit line.
 scan() {
+  RULE=$3
   o=-aE; [ "${4:-}" != i ] || o=-aiE
   # shellcheck disable=SC2086
-  hit=$( (LC_ALL=C grep -rn $o -- "$1" $SCOPE 2>/dev/null; printf '%s\n' "$NOTES" | LC_ALL=C grep $o -- "$1") |
+  hit=$( (LC_ALL=C grep -rn $o -- "$1" $SCOPE; printf '%s\n' "$NOTES" | LC_ALL=C grep $o -- "$1") |
     LC_ALL=C grep -av -E -- "${2:-^\$}" | tr '\000' ' ' | while IFS= read -r ln; do
       if [ -n "${5:-}" ]; then
         d=$(printf '%s\n' "$ln" | LC_ALL=C sed -E "$5") || d=$ln
-        printf '%s\n' "$d" | LC_ALL=C grep -q $o -- "$1" || continue
+        printf '%s\n' "$d" | LC_ALL=C grep -q $o -- "$1"
+        case $? in 1) continue ;; esac
       fi
       printf '%s\n' "$ln"
       cat >/dev/null
       break
     done)
   [ -z "$hit" ] || fail "forbidden content ($3): $(printf '%s\n' "$hit" | cut -c1-160)"
+  tool_check
 }
 # L: the left edge of a key or id: line start, a non-word character, or a JSON backslash escape
 # (\n, \t, \r, \b, \f, \uXXXX) right before it in nested JSON text.
@@ -368,19 +411,22 @@ scan 'eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.' '' 'JWT'
 # classes of Codex captures); the verbatim files are exempt. As in scan, grep and sed run with
 # LC_ALL=C and a drop sed that fails leaves the line a hit (TF-5 round 2).
 cx_scan() {
+  RULE=$2
   o=-aE; [ "${3:-}" != i ] || o=-aiE
   # shellcheck disable=SC2086
-  hit=$(LC_ALL=C grep -rn $o -- "$1" fixtures/codex 2>/dev/null | LC_ALL=C grep -av -E -- "$VX" | tr '\000' ' ' |
+  hit=$(LC_ALL=C grep -rn $o -- "$1" fixtures/codex | LC_ALL=C grep -av -E -- "$VX" | tr '\000' ' ' |
     while IFS= read -r ln; do
       if [ -n "${4:-}" ]; then
         d=$(printf '%s\n' "$ln" | LC_ALL=C sed -E "$4") || d=$ln
-        printf '%s\n' "$d" | LC_ALL=C grep -q $o -- "$1" || continue
+        printf '%s\n' "$d" | LC_ALL=C grep -q $o -- "$1"
+        case $? in 1) continue ;; esac
       fi
       printf '%s\n' "$ln"
       cat >/dev/null
       break
     done)
   [ -z "$hit" ] || fail "forbidden content ($2): $(printf '%s\n' "$hit" | cut -c1-160)"
+  tool_check
 }
 # TAG <shell> and ECX <environment_context> in their three bracket forms (plain, <..>, &lt;..&gt;).
 # The shell rules have the scope of scrub.py (review round 2 G1): the <shell> tag after an
@@ -408,17 +454,20 @@ cx_scan "${L}[a-z]{1,8}_[0-7][0-9A-HJKMNP-TV-Z]{25}([^0-9A-Za-z]|\$)" 'time-bear
 # sed run with LC_ALL=C, byte by byte, so the time stays linear on long lines (review round 2 G4). A
 # drop sed that fails leaves the text a hit (TF-5 round 2). The verbatim files are exempt.
 env_scan() {
-  hit=$(LC_ALL=C grep -rn -aE -- "$1" fixtures/claude-code fixtures/opencode 2>/dev/null | LC_ALL=C grep -av -E -- "$VX" | tr '\000' ' ' |
+  RULE=$2
+  hit=$(LC_ALL=C grep -rn -aE -- "$1" fixtures/claude-code fixtures/opencode | LC_ALL=C grep -av -E -- "$VX" | tr '\000' ' ' |
     while IFS= read -r ln; do
       if [ -n "${3:-}" ]; then
         d=$(printf '%s\n' "${ln#*:*:}" | LC_ALL=C sed -E "$3") || d=${ln#*:*:}
-        printf '%s\n' "$d" | LC_ALL=C grep -qaE -- "$1" || continue
+        printf '%s\n' "$d" | LC_ALL=C grep -qaE -- "$1"
+        case $? in 1) continue ;; esac
       fi
       printf '%s\n' "$ln"
       cat >/dev/null
       break
     done)
   [ -z "$hit" ] || fail "forbidden content ($2): $(printf '%s\n' "$hit" | cut -c1-160)"
+  tool_check
 }
 # ci <text>: an ERE for the text in any case ([Ss][Hh]...); the text holds no ERE syntax but . / ( ) | -.
 ci() {
@@ -480,9 +529,18 @@ name_scan() {
   e=$(printf '%s' "$2" | sed 's/[][\.*^$+?(){}|/]/\\&/g')
   wc=${3:-A-Za-z0-9_}
   rx="(^|[^$wc]|\\\\[nrtbf])$e([^$wc]|\$)"
+  RULE=$1
+  # The name grep runs twice: in the caller's locale, which folds case outside ASCII (Ë and ë), and
+  # with LC_ALL=C, which matches next to a byte that is not UTF-8; a hit of either fails (TF-5 round
+  # 3 F4). Every other tool here runs with LC_ALL=C.
   # shellcheck disable=SC2086
-  hit=$( (grep -rnaiE -- "$rx" $SCOPE "$P" 2>/dev/null; printf '%s\n' "$NOTES" | grep -aiE -- "$rx") | grep -av -E -- "${4:-^\$}" | tr '\000' ' ' | sed -n 1p)
+  hit=$( (
+      (if [ -n "$U_LC_SET" ]; then LC_ALL=$U_LC_ALL; export LC_ALL; else unset LC_ALL; fi
+       grep -rnaiE -- "$rx" $SCOPE "$P"; printf '%s\n' "$NOTES" | grep -aiE -- "$rx")
+      grep -rnaiE -- "$rx" $SCOPE "$P"; printf '%s\n' "$NOTES" | grep -aiE -- "$rx"
+    ) | grep -av -E -- "${4:-^\$}" | tr '\000' ' ' | sed -n 1p)
   [ -z "$hit" ] || fail "$1: $(printf '%s\n' "$hit" | cut -d: -f1-2)"
+  tool_check
 }
 for w in ${N2_FORBIDDEN_NAMES:-}; do name_scan "forbidden name from N2_FORBIDDEN_NAMES" "$w" A-Za-z0-9_ "$VX"; done
 # The machine's host names (from the OS at run time, full and short): hostname, and on macOS
@@ -508,5 +566,7 @@ EOF_HOSTS
 [ -n "${N2_FORBIDDEN_NAMES:-}" ] || echo "check-premises: note: N2_FORBIDDEN_NAMES not set; name scan skipped"
 
 [ -z "$WSKIP" ] || echo "check-premises: note: $WSPEC not found; W§17 result check skipped"
+RULE=end
+tool_check
 printf '%s\n' "check-premises: ok ($CHECKED)"
 exit 0
