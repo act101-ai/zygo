@@ -2118,24 +2118,39 @@ fn rec_main(id: &str) -> MemberRecord {
     MemberRecord { agent_session: Some(id.into()), ..MemberRecord::new(Agent::OpenCode) }
 }
 
-/// The member keys of each wake that a hook asked for (M§7.3; FX-33 review F1).
-#[derive(Clone, Default)]
-struct Wakes(std::sync::Arc<Mutex<Vec<Vec<String>>>>);
+/// The member keys of each turn-end wake that a hook asked for (M§7.3; FX-33 review F1), and the outcome that each
+/// gets (`Woken` unless a test sets another).
+#[derive(Clone)]
+struct Wakes(std::sync::Arc<Mutex<(Vec<Vec<String>>, zygo_workspace::mail::wake::Outcome)>>);
 
-impl zygo_mail_sync::env::Wake for Wakes {
-    fn wake(&self, _: &Paths, _: &zygo_workspace::state::Workspace, keys: &[String], _: &zygo_config::MailConfig, _: std::time::SystemTime) {
-        self.0.lock().unwrap().push(keys.to_vec());
+impl Default for Wakes {
+    fn default() -> Self {
+        Wakes(std::sync::Arc::new(Mutex::new((Vec::new(), zygo_workspace::mail::wake::Outcome::Woken))))
+    }
+}
+
+impl workspace::TurnWake for Wakes {
+    fn wake(
+        &self, _: &Paths, _: &zygo_workspace::state::Workspace, key: &str, _: &zygo_config::MailConfig,
+        _: std::time::SystemTime,
+    ) -> zygo_workspace::mail::wake::Outcome {
+        let mut g = self.0.lock().unwrap();
+        g.0.push(vec![key.to_string()]);
+        g.1.clone()
     }
 }
 
 impl Wakes {
     fn taken(&self) -> Vec<Vec<String>> {
-        std::mem::take(&mut *self.0.lock().unwrap())
+        std::mem::take(&mut self.0.lock().unwrap().0)
+    }
+    fn answer(&self, o: zygo_workspace::mail::wake::Outcome) {
+        self.0.lock().unwrap().1 = o;
     }
 }
 
-/// `ws` with the mail sync seams of `w`: the system clock, a spawner and a probe that the hook does not use here (no
-/// `[mail.workspace.*]` table), and the recording wake `w`.
+/// `ws` with the mail sync seams of the production hook but the system clock and a spawner and a probe that the hook
+/// does not use here (no `[mail.workspace.*]` table), and the recording turn-end wake `w`.
 fn ws_wake(f: &Fx, w: &Wakes, event: &str, payload: Value) -> anyhow::Result<Option<String>> {
     let env = zygo_mail_sync::env::Env {
         paths: f.paths.clone(),
@@ -2143,11 +2158,11 @@ fn ws_wake(f: &Fx, w: &Wakes, event: &str, payload: Value) -> anyhow::Result<Opt
         probe: Box::new(zygo_mail_sync::public::LsRemote),
         seam: Box::new(zygo_mail_sync::env::NoSeam),
         spawner: Box::new(zygo_mail_sync::spawn::ChildSpawner { zygo: f.zygo.clone() }),
-        wake: Box::new(w.clone()),
+        wake: Box::new(zygo_mail_sync::env::TmuxWake { tmux: "/dev/null/tmux".into() }),
         secret_policy: Default::default(),
     };
     let sd = f.dir.root.clone().into_os_string();
-    workspace::run_with_sync(
+    workspace::run_with_wake(
         event,
         &serde_json::to_vec(&payload).unwrap(),
         &f.paths,
@@ -2155,7 +2170,34 @@ fn ws_wake(f: &Fx, w: &Wakes, event: &str, payload: Value) -> anyhow::Result<Opt
         &f.zygo,
         None,
         &env,
+        w,
     )
+}
+
+#[test] // M§7.3 (OpenCode turn end), M§7.2; FX-33 review F1 follow-up: a wake that is not sent announces nothing
+fn opencode_turn_end_wake_that_is_not_sent_keeps_the_mail_unannounced() {
+    use zygo_workspace::mail::wake::Outcome;
+    let _s = serial();
+    for (case, first) in [("gap", Outcome::Gap), ("busy", Outcome::Busy), ("no pane", Outcome::NoPane), ("failed", Outcome::Failed("x".into()))] {
+        let w = Wakes::default();
+        let o = fx(Agent::OpenCode);
+        mail_on(&o);
+        ws_state(&o, Phase::Up, rec_main("ses_A"));
+        ws_wake(&o, &w, "prompt", oc("ses_A")).unwrap();
+        put_new(&o, 2); // mail comes after the turn's message
+        // The turn ends within `wake_gap` of an earlier wake (or the member is not idle yet, ...): no wake is sent.
+        w.answer(first);
+        ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+        assert_eq!(w.taken(), vec![vec![KEY.to_string()]], "{case}");
+        // The ids stay unannounced: the next turn end asks again, and this one wakes.
+        w.answer(Outcome::Woken);
+        ws_wake(&o, &w, "prompt", oc("ses_A")).unwrap();
+        ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+        assert_eq!(w.taken(), vec![vec![KEY.to_string()]], "{case}");
+        // Once woken, the same mail gives no more wake.
+        ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+        assert!(w.taken().is_empty(), "{case}");
+    }
 }
 
 #[test] // M§7.2, M§8; FX-33 acceptance 2 (the hook part of the OpenCode `chat.message` path); FX-33 review (child order)
