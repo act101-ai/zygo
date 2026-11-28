@@ -208,6 +208,7 @@ fn take_host_taken_by_one_push_url_only_stops() {
     let st = state::load(&x2.sp()).unwrap();
     assert!(st.pushed.is_empty(), "{:?}", st.pushed);
     assert!(!st.pending.is_empty());
+    assert!(st.push_split);
     assert_eq!(r2.tip(BRANCH), Some(moved));
 }
 
