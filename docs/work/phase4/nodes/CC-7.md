@@ -1,7 +1,7 @@
 # CC-7 — Argument grammar and session flags (concern 7) read the descriptor
 
 **Spec:** docs/specs/2026-11-25-client-model-design.md K§6.1.2 concern 7, K§9 (P4-6: `args.rs`, `launcher.rs`), K-D3
-**Files:** `crates/zygo-core/src/client/mod.rs`, `crates/zygo-core/src/client/claude_code.rs`, `crates/zygo-core/src/client/opencode.rs`, `crates/zygo-workspace/src/args.rs`, `crates/zygo-launch/src/launcher.rs`
+**Files:** `crates/zygo-core/src/client/mod.rs`, `crates/zygo-core/src/client/claude_code.rs`, `crates/zygo-core/src/client/opencode.rs`, `crates/zygo-workspace/src/args.rs`, `crates/zygo-launch/src/launcher.rs`, `crates/zygo-workspace/tests/args.rs` (from the CC-1 inventory at `b324e1dc`, round 2)
 **Consumes:** `Agent::spec` (CC-3), `ClientSpec` (CC-3), `inventory` (CC-1), `check-test-edits.sh` (CC-2)
 **Produces:** `ClientSpec` concern 7 fields: the flag table, the subcommand rule, the session-flag names, the insertion point of session arguments, the "bare" rule (names: the builder's, K§10); kept unchanged: the signatures of `zygo_workspace::args::{occurrences, flags, has_session_arg}` at `b324e1dc` (the CC-9 adapter rows call them, so CC-7 makes no adapter edit; CC-1 round 1, F8)
 **Acceptance:** `cargo test -p zygo-workspace -p zygo-launch -p zygo-core --locked --no-fail-fast && sh scripts/check-test-edits.sh "$(sed -n 's/^Parent: \([0-9a-f]\{40\}\)$/\1/p' docs/work/phase4/nodes/CC-7.md)" docs/work/phase4/nodes/CC-7.md` → every command exits 0, and `cargo test --workspace --locked --no-fail-fast` is green on ubuntu, macOS and Windows CI

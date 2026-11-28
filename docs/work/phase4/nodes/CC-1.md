@@ -1,10 +1,10 @@
 # CC-1 — Client-branch inventory at the P4-6 base commit
 
 **Spec:** docs/specs/2026-11-25-client-model-design.md K§6.9 (last paragraph), K§1 item 2 (the grep), K§6.1.2 (concerns 1-11), K§6.1.4 (the names)
-**Files:** `docs/work/phase4/nodes/CC-1.md` (its `## Observed` section; in review round 1 also its Acceptance, Produces and Plan text and its `## Round 1 review` section), the **Files** lines of `docs/work/phase4/nodes/CC-3.md` to `CC-11.md`, `CC-13.md` and `CC-15.md` (only to add a file that an inventory row assigns to that node), the contract lines of `docs/work/phase4/nodes/CC-7.md` (kept signatures, round 1 F8) and `docs/work/phase4/nodes/CC-13.md` (Files, Produces and Acceptance, round 1 F4/F5)
+**Files:** `docs/work/phase4/nodes/CC-1.md` (its `## Observed` section; in review rounds 1 and 2 also its Acceptance, Produces, planning notes and Plan text and its `## Round 1 review` and `## Round 2 review` sections), `docs/work/phase4/cc1_check.py` (new in round 2: the acceptance check), the **Files** lines of `docs/work/phase4/nodes/CC-3.md` to `CC-11.md`, `CC-13.md` and `CC-15.md` (only to add a file that an inventory row assigns to that node), the contract lines of `docs/work/phase4/nodes/CC-7.md` (kept signatures, round 1 F8), `docs/work/phase4/nodes/CC-11.md` (Acceptance: no production variant path, round 2 F8) and `docs/work/phase4/nodes/CC-13.md` (Files, Produces and Acceptance, rounds 1 and 2)
 **Consumes:** `phase_3_in_phase_4` (CC-0)
-**Produces:** `base` (the line `Base: <40-hex commit>` under `## Observed`: the CC-0 merge commit), `inventory` (the table under `## Observed`, one row per site that the search of **Acceptance** finds at the base: `| <file> | <line> | <concern> | <node> |`, where the concern is 1-11 and the node one of CC-3 to CC-15, or the concern is `—` and the node `stays: test`, `stays: comment` or `stays: exception list (CC-15, K§6.1.4)`; no backtick in a row)
-**Acceptance:** `T=$(mktemp -d) && F=docs/work/phase4/nodes/CC-1.md && B=$(sed -n 's/^Base: \([0-9a-f]\{40\}\)$/\1/p' "$F") && test -n "$B" && git fetch origin && git merge-base --is-ancestor b7e9d45d "$B" && git merge-base --is-ancestor "$B" origin/phase-4 && git grep -nE -e 'Agent::(ClaudeCode|OpenCode|\{|\*)' -e 'PaneKind::(ClaudeCode|OpenCode)' -e 'Plugins::' -e '"(claude-code|claude|opencode|\.claude|\.opencode|CLAUDE_CONFIG_DIR|OPENCODE_CONFIG_DIR|Claude Code|OpenCode)"' -e '(^|[^A-Za-z0-9_])(claude|opencode|claude_code|open_code)[a-z_]*: bool' -e '(^|[^A-Za-z0-9_])!(claude|opencode|claude_code)([^A-Za-z0-9_]|$)' -e '(^|[^A-Za-z0-9_])(CLAUDE[A-Z_]*|OPENCODE_[A-Z_]+|CODEX_[A-Z_]+)([^A-Za-z0-9_]|$)' -e '(^|[^A-Za-z0-9_])(LOADOUT_KINDS|AGENT_ONLY|CLAUDE_ONLY)([^A-Za-z0-9_]|$)' -e '[xX]-[cC]laude-[cC]ode-' -e 'claude-code' -e '^\[(claude-code|opencode)\]' -e 'agents\.toml' -e '(^|[^A-Za-z0-9_])(PreToolUse|PostToolUse|PostToolUseFailure|PreCompact|SessionStart|SessionEnd|SubagentStart|SubagentStop|UserPromptSubmit)([^A-Za-z0-9_]|$)' -e '"(Stop|StopFailure|Notification)"' -e 'mcp__' -e 'pub fn compact_tool\(|is_some_and\(compact_tool\)|window::compact_tool' -e '(^|[^A-Za-z0-9_])(ClaudeCode|OpenCode)([^A-Za-z0-9_]|$)' -e '(^|[^A-Za-z0-9_])(Claude|Opencode)\(' -e '(^|[^A-Za-z0-9_])(claude|opencode|claude_code)::|mod (claude|opencode|claude_code);' "$B" -- 'crates/*/src/**' 'crates/*/tests/**' crates/zygo-config/data/agents.toml crates/zygo-launch/assets/opencode-plugin.js | sed "s/^$B://" | cut -d: -f1,2 | sort > "$T/grep" && test -s "$T/grep" && grep '^| crates/' "$F" > "$T/all" && grep -E '^\| crates/[A-Za-z0-9_./-]+ \| [1-9][0-9]* \| (([1-9]|1[01]) \| CC-([3-9]|1[0-5])|— \| stays: (test|comment|exception list \(CC-15, K§6\.1\.4\))) \|$' "$T/all" > "$T/ok" && cmp "$T/all" "$T/ok" && awk -F'|' '{gsub(/ /,"",$2); gsub(/ /,"",$3); print $2":"$3}' "$T/ok" | sort > "$T/rows" && test -s "$T/rows" && test -z "$(uniq -d "$T/rows")" && cmp "$T/grep" "$T/rows"` → every command exits 0: the recorded base holds phase 3 and is on `phase-4`; the search finds at least one site; every line of this file that starts with `| crates/` is a well-formed row (concern 1-11 with a node CC-3 to CC-15, or `—` with a `stays:` node of the three); no `file:line` has two rows; and the `file:line` sites that the search finds at the base equal the rows. The check reads only the recorded base, so it gives the same result after the node is DONE. Completeness is bounded by the search patterns (listed under `## Observed`). After a node file is edited, the work-graph validator (`work_graph.py check docs/work/phase4/graph.md`) exits 0
+**Produces:** `base` (the line `Base: <40-hex commit>` under `## Observed`: the CC-0 merge commit), `inventory` (the table under `## Observed`, one row per site that the search of `docs/work/phase4/cc1_check.py` finds at the base: `| <file> | <line> | <concern> | <node> |` at column 0, where the node is an owner of the 'Concerns per node' table (CC-3 to CC-11, CC-13, CC-15) with one of its concerns, or the concern is `—` and the node `stays: test`, `stays: comment` or `stays: exception list (CC-15, K§6.1.4)`; no backtick in a row)
+**Acceptance:** `python3 docs/work/phase4/cc1_check.py docs/work/phase4/nodes/CC-1.md` → exit 0 and one `ok:` line. The check is hermetic: it reads every source line at the recorded base with `git grep` and `git show` and fetches nothing; it reads the owners' **Files** lines from `docs/work/phase4/nodes/`. In order, it fails on: a missing base or a base without phase 3 (`b7e9d45d`) (step `base`); a pattern list or a 'Concerns per node' table in this file that differs from the check's (`patterns`, `concern-table`); an empty search (`search`); a line that starts with optional spaces, `|` and a path-like cell but is not a row at column 0 (`row-form`); an owner outside the table or a `stays:` reason other than the three, a concern that is not 1-11 on an owner row or not `—` on a `stays:` row (`node`); two rows for one `file:line` (`duplicate`); a site without a row or a row the search does not find (`rows-vs-search`); a row file that is not on its owner's **Files** line, where a folder entry covers the files under it (`files`); a concern that the owner does not take (`concern`); a `stays: comment` line that is not a `//` comment at the base (`comment`); a listed test range that is not its file's test code at the base, or a test-code site of a `src` file with no listed range (`test-ranges`); a `stays: test` or CC-13 row that is not under `crates/*/tests/` or in a listed test range (`test`). Completeness is bounded by the search patterns (listed under `## Observed`). After a node file is edited, the work-graph validator (`work_graph.py check docs/work/phase4/graph.md`) exits 0
 
 ## Planning notes
 
@@ -12,7 +12,7 @@
 - No product code changes. The writes are this file's `## Observed` section and, for a row whose node does not yet list its file, that node's Files line (operator brief for P4-5; ruling I4).
 - The grep is the K§1 item 2 grep made exact (author; extended by ruling I4): a variant path of `Agent`, `PaneKind` or `Plugins`; a `use Agent::{…}` or `use Agent::*` import; a string literal whose whole value is a client id, program, CLI verb, config folder or config-folder variable; a boolean client flag such as `opencode: bool` (`crates/zygo-redact/src/harness.rs:45`). At `c21b32e0` it finds 209 sites. These counts show the pattern; they are not the work list.
 - One row per site. A site in a `#[cfg(test)]` item is `stays: test` unless its node rewrites it (CC-13 sweeps the `Agent::` uses left in tests); a site in a doc comment is `stays: comment`.
-- Node per concern (author): concerns 1 and 2, `Dialect` and the minimum version → CC-3; 9, the per-agent usage id and the harness-span flag → CC-4; 5 → CC-5; 3 and 4 → CC-6; 7 → CC-7; 8, workspace definition kinds and pool rule → CC-8; 6, 11 and the adapters → CC-9; 10 and the CLI sites → CC-10; a site in the descriptor or adapter folders → `stays: contract`; the no-attribution guard (`crates/zygo-work/src/guards.rs`, item `claude_attribution`) → `stays: exception list (CC-15, K§6.1.4)`; any other literal that equals a registered name but does not branch on a client → CC-15, which stops for the operator before it adds an exception (K§6.1.4).
+- Node per concern (author): concerns 1 and 2, `Dialect` and the minimum version → CC-3; 9, the per-agent usage id and the harness-span flag → CC-4; 5 → CC-5; 3 and 4 → CC-6; 7 → CC-7; 8, workspace definition kinds and pool rule → CC-8; 6, 11 and the adapters → CC-9; 10 and the CLI sites → CC-10; the no-attribution guard (`crates/zygo-work/src/guards.rs`, item `claude_attribution`) → `stays: exception list (CC-15, K§6.1.4)`; any other literal that equals a registered name but does not branch on a client → CC-15, which stops for the operator before it adds an exception (K§6.1.4).
 - Under the table, list each phase 3 client feature for CC-12 (output shaping, mail wake and delivery, the run-time status line), each with its files and tests at the base.
 
 ## Observed
@@ -23,7 +23,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 |---|---|---|---|
 | crates/zygo-config/data/agents.toml | 2 | 1 | CC-3 |
 | crates/zygo-config/data/agents.toml | 5 | 1 | CC-3 |
-| crates/zygo-config/src/builtin.rs | 49 | — | stays: comment |
+| crates/zygo-config/src/builtin.rs | 49 | 1 | CC-3 |
 | crates/zygo-config/src/builtin.rs | 51 | 1 | CC-3 |
 | crates/zygo-config/src/check.rs | 8 | 8 | CC-8 |
 | crates/zygo-config/src/check.rs | 219 | — | stays: comment |
@@ -33,6 +33,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-config/src/check.rs | 254 | 8 | CC-8 |
 | crates/zygo-config/src/check.rs | 255 | 8 | CC-8 |
 | crates/zygo-config/src/check.rs | 256 | 8 | CC-8 |
+| crates/zygo-config/src/check.rs | 257 | 8 | CC-8 |
 | crates/zygo-config/src/check.rs | 259 | 8 | CC-8 |
 | crates/zygo-config/src/check.rs | 260 | 8 | CC-8 |
 | crates/zygo-config/src/check.rs | 262 | 8 | CC-8 |
@@ -50,16 +51,20 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-config/src/schema.rs | 470 | 9 | CC-4 |
 | crates/zygo-config/src/schema.rs | 801 | — | stays: comment |
 | crates/zygo-config/src/schema.rs | 809 | 8 | CC-8 |
-| crates/zygo-config/src/schema.rs | 867 | — | stays: comment |
+| crates/zygo-config/src/schema.rs | 867 | 8 | CC-8 |
 | crates/zygo-config/src/schema.rs | 879 | — | stays: comment |
 | crates/zygo-config/src/schema.rs | 885 | — | stays: comment |
 | crates/zygo-config/src/schema.rs | 888 | — | stays: comment |
+| crates/zygo-config/tests/builtin.rs | 167 | — | stays: test |
 | crates/zygo-config/tests/builtin.rs | 229 | 1 | CC-13 |
 | crates/zygo-config/tests/builtin.rs | 230 | 1 | CC-13 |
 | crates/zygo-config/tests/builtin.rs | 231 | 1 | CC-13 |
 | crates/zygo-config/tests/config_layers.rs | 111 | — | stays: test |
+| crates/zygo-config/tests/config_layers.rs | 178 | — | stays: test |
+| crates/zygo-config/tests/config_layers.rs | 252 | — | stays: test |
+| crates/zygo-config/tests/config_layers.rs | 278 | — | stays: test |
 | crates/zygo-config/tests/config_layers.rs | 1571 | — | stays: test |
-| crates/zygo-config/tests/config_layers.rs | 1590 | — | stays: test |
+| crates/zygo-config/tests/config_layers.rs | 1590 | 8 | CC-8 |
 | crates/zygo-config/tests/config_layers.rs | 1613 | — | stays: test |
 | crates/zygo-config/tests/config_layers.rs | 1675 | — | stays: test |
 | crates/zygo-config/tests/config_layers.rs | 1679 | — | stays: test |
@@ -80,7 +85,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-config/tests/config_layers.rs | 1857 | — | stays: test |
 | crates/zygo-config/tests/config_layers.rs | 1863 | — | stays: test |
 | crates/zygo-config/tests/config_layers.rs | 1865 | — | stays: test |
-| crates/zygo-config/tests/definition_keys.rs | 11 | — | stays: test |
+| crates/zygo-config/tests/definition_keys.rs | 11 | 8 | CC-8 |
 | crates/zygo-config/tests/definition_keys.rs | 12 | — | stays: test |
 | crates/zygo-config/tests/definition_keys.rs | 76 | — | stays: test |
 | crates/zygo-config/tests/definition_keys.rs | 89 | — | stays: test |
@@ -101,6 +106,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-config/tests/repo_def_loadout.rs | 34 | — | stays: test |
 | crates/zygo-config/tests/repo_def_loadout.rs | 110 | — | stays: test |
 | crates/zygo-config/tests/repo_def_loadout.rs | 118 | — | stays: test |
+| crates/zygo-config/tests/repo_def_loadout.rs | 177 | — | stays: test |
 | crates/zygo-config/tests/repo_def_loadout.rs | 180 | — | stays: test |
 | crates/zygo-config/tests/repo_def_shape.rs | 40 | — | stays: test |
 | crates/zygo-config/tests/repo_def_shape.rs | 54 | — | stays: test |
@@ -108,11 +114,15 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-config/tests/repo_def_shape.rs | 190 | — | stays: test |
 | crates/zygo-config/tests/repo_def_shape.rs | 202 | — | stays: test |
 | crates/zygo-config/tests/repo_def_shape.rs | 212 | — | stays: test |
+| crates/zygo-config/tests/repo_def_shape.rs | 278 | — | stays: test |
+| crates/zygo-core/src/hook.rs | 7 | 2 | CC-3 |
 | crates/zygo-core/src/hook.rs | 23 | 2 | CC-3 |
+| crates/zygo-core/src/hook.rs | 24 | 2 | CC-3 |
 | crates/zygo-core/src/hook_opencode.rs | 3 | — | stays: comment |
 | crates/zygo-core/src/hook_opencode.rs | 29 | — | stays: comment |
 | crates/zygo-core/src/hook_opencode.rs | 39 | 2 | CC-3 |
 | crates/zygo-core/src/hook_opencode.rs | 43 | 2 | CC-3 |
+| crates/zygo-core/src/lib.rs | 8 | 2 | CC-3 |
 | crates/zygo-core/src/lib.rs | 38 | 1 | CC-3 |
 | crates/zygo-core/src/lib.rs | 39 | 1 | CC-3 |
 | crates/zygo-core/src/lib.rs | 40 | 1 | CC-3 |
@@ -127,6 +137,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-core/src/session_view.rs | 61 | 1 | CC-3 |
 | crates/zygo-core/tests/conformance.rs | 823 | — | stays: test |
 | crates/zygo-core/tests/conformance.rs | 824 | — | stays: test |
+| crates/zygo-core/tests/conformance.rs | 1856 | — | stays: test |
 | crates/zygo-core/tests/conformance.rs | 1862 | — | stays: test |
 | crates/zygo-core/tests/conformance.rs | 1888 | — | stays: test |
 | crates/zygo-core/tests/conformance.rs | 1890 | — | stays: test |
@@ -138,7 +149,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-core/tests/conformance/fixtures/repo/crates/zygo-config/data/agents.toml | 4 | — | stays: test |
 | crates/zygo-core/tests/conformance/model.rs | 1228 | 1 | CC-13 |
 | crates/zygo-core/tests/conformance/model.rs | 1229 | 1 | CC-13 |
-| crates/zygo-core/tests/conformance/model.rs | 1281 | — | stays: comment |
+| crates/zygo-core/tests/conformance/model.rs | 1281 | 1 | CC-3 |
 | crates/zygo-core/tests/conformance/model.rs | 1283 | — | stays: test |
 | crates/zygo-core/tests/core_basics.rs | 92 | 1 | CC-13 |
 | crates/zygo-core/tests/core_basics.rs | 153 | — | stays: test |
@@ -162,6 +173,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/src/prompt.rs | 180 | — | stays: test |
 | crates/zygo-hooks/src/prompt.rs | 447 | — | stays: test |
 | crates/zygo-hooks/src/prompt.rs | 449 | 1 | CC-13 |
+| crates/zygo-hooks/src/role_guard.rs | 28 | 3 | CC-6 |
 | crates/zygo-hooks/src/role_guard.rs | 29 | 3 | CC-6 |
 | crates/zygo-hooks/src/session_start.rs | 38 | — | stays: comment |
 | crates/zygo-hooks/src/session_start.rs | 39 | — | stays: comment |
@@ -180,7 +192,9 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/src/trim.rs | 106 | — | stays: comment |
 | crates/zygo-hooks/src/trim.rs | 240 | — | stays: comment |
 | crates/zygo-hooks/src/trim.rs | 244 | 2 | CC-6 |
+| crates/zygo-hooks/src/trim.rs | 269 | 3 | CC-6 |
 | crates/zygo-hooks/src/trim.rs | 272 | 3 | CC-6 |
+| crates/zygo-hooks/src/trim.rs | 327 | 3 | CC-6 |
 | crates/zygo-hooks/src/trim.rs | 328 | 3 | CC-6 |
 | crates/zygo-hooks/src/workspace.rs | 7 | — | stays: comment |
 | crates/zygo-hooks/src/workspace.rs | 221 | — | stays: comment |
@@ -225,6 +239,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/hooks_basic.rs | 77 | — | stays: test |
 | crates/zygo-hooks/tests/hooks_basic.rs | 101 | — | stays: test |
 | crates/zygo-hooks/tests/hooks_basic.rs | 104 | — | stays: test |
+| crates/zygo-hooks/tests/hooks_basic.rs | 106 | — | stays: test |
 | crates/zygo-hooks/tests/hooks_basic.rs | 225 | — | stays: test |
 | crates/zygo-hooks/tests/hooks_basic.rs | 234 | — | stays: test |
 | crates/zygo-hooks/tests/hooks_basic.rs | 242 | — | stays: test |
@@ -257,6 +272,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/mail_sync_text.rs | 193 | — | stays: comment |
 | crates/zygo-hooks/tests/mail_sync_text.rs | 194 | — | stays: comment |
 | crates/zygo-hooks/tests/mail_sync_text.rs | 201 | 1 | CC-13 |
+| crates/zygo-hooks/tests/mail_sync_text.rs | 203 | — | stays: test |
 | crates/zygo-hooks/tests/mail_sync_text.rs | 211 | 1 | CC-13 |
 | crates/zygo-hooks/tests/mail_sync_text.rs | 220 | 1 | CC-13 |
 | crates/zygo-hooks/tests/mail_sync_text.rs | 233 | 1 | CC-13 |
@@ -272,6 +288,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/mail_sync_trigger.rs | 261 | 1 | CC-13 |
 | crates/zygo-hooks/tests/mail_sync_trigger.rs | 277 | 1 | CC-13 |
 | crates/zygo-hooks/tests/mail_sync_trigger.rs | 284 | — | stays: test |
+| crates/zygo-hooks/tests/mail_sync_trigger.rs | 285 | — | stays: test |
 | crates/zygo-hooks/tests/mail_sync_trigger.rs | 286 | 1 | CC-13 |
 | crates/zygo-hooks/tests/mail_sync_trigger.rs | 302 | 1 | CC-13 |
 | crates/zygo-hooks/tests/mail_sync_trigger.rs | 311 | 1 | CC-13 |
@@ -316,6 +333,8 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/reinject.rs | 284 | — | stays: test |
 | crates/zygo-hooks/tests/reinject.rs | 290 | — | stays: comment |
 | crates/zygo-hooks/tests/reinject.rs | 294 | — | stays: test |
+| crates/zygo-hooks/tests/reinject.rs | 299 | — | stays: comment |
+| crates/zygo-hooks/tests/reinject.rs | 303 | — | stays: test |
 | crates/zygo-hooks/tests/reinject.rs | 319 | — | stays: test |
 | crates/zygo-hooks/tests/reinject.rs | 320 | — | stays: test |
 | crates/zygo-hooks/tests/reinject.rs | 326 | — | stays: test |
@@ -324,6 +343,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/reinject.rs | 344 | — | stays: test |
 | crates/zygo-hooks/tests/reinject.rs | 355 | — | stays: test |
 | crates/zygo-hooks/tests/reinject.rs | 362 | — | stays: test |
+| crates/zygo-hooks/tests/reinject.rs | 372 | — | stays: test |
 | crates/zygo-hooks/tests/reinject.rs | 384 | — | stays: test |
 | crates/zygo-hooks/tests/reinject.rs | 385 | — | stays: test |
 | crates/zygo-hooks/tests/reinject.rs | 397 | — | stays: test |
@@ -339,18 +359,25 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/session_text.rs | 46 | 1 | CC-13 |
 | crates/zygo-hooks/tests/session_text.rs | 99 | — | stays: test |
 | crates/zygo-hooks/tests/session_text.rs | 100 | 1 | CC-13 |
+| crates/zygo-hooks/tests/session_text.rs | 138 | — | stays: test |
 | crates/zygo-hooks/tests/session_text.rs | 139 | 1 | CC-13 |
+| crates/zygo-hooks/tests/session_text.rs | 293 | — | stays: test |
 | crates/zygo-hooks/tests/session_text.rs | 294 | 1 | CC-13 |
 | crates/zygo-hooks/tests/session_text.rs | 404 | — | stays: test |
+| crates/zygo-hooks/tests/session_text.rs | 412 | — | stays: test |
 | crates/zygo-hooks/tests/session_text.rs | 416 | — | stays: test |
 | crates/zygo-hooks/tests/session_text.rs | 420 | — | stays: test |
+| crates/zygo-hooks/tests/session_text.rs | 422 | — | stays: test |
+| crates/zygo-hooks/tests/session_text.rs | 426 | — | stays: test |
 | crates/zygo-hooks/tests/session_text.rs | 428 | 1 | CC-13 |
 | crates/zygo-hooks/tests/session_text.rs | 430 | 1 | CC-13 |
 | crates/zygo-hooks/tests/session_text.rs | 438 | — | stays: test |
 | crates/zygo-hooks/tests/session_text.rs | 439 | — | stays: test |
 | crates/zygo-hooks/tests/session_text.rs | 440 | — | stays: test |
 | crates/zygo-hooks/tests/session_text.rs | 444 | — | stays: test |
+| crates/zygo-hooks/tests/session_text.rs | 446 | — | stays: test |
 | crates/zygo-hooks/tests/session_text.rs | 489 | 1 | CC-13 |
+| crates/zygo-hooks/tests/session_text.rs | 543 | — | stays: test |
 | crates/zygo-hooks/tests/session_text.rs | 553 | 1 | CC-13 |
 | crates/zygo-hooks/tests/session_text.rs | 554 | 1 | CC-13 |
 | crates/zygo-hooks/tests/session_text.rs | 632 | 1 | CC-13 |
@@ -380,6 +407,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/shaping.rs | 170 | — | stays: comment |
 | crates/zygo-hooks/tests/shaping.rs | 172 | 1 | CC-13 |
 | crates/zygo-hooks/tests/shaping.rs | 238 | 1 | CC-13 |
+| crates/zygo-hooks/tests/shaping.rs | 257 | — | stays: test |
 | crates/zygo-hooks/tests/shaping.rs | 258 | — | stays: test |
 | crates/zygo-hooks/tests/shaping.rs | 269 | — | stays: test |
 | crates/zygo-hooks/tests/shaping.rs | 281 | — | stays: comment |
@@ -391,14 +419,17 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/shaping.rs | 700 | 1 | CC-13 |
 | crates/zygo-hooks/tests/shaping.rs | 804 | — | stays: comment |
 | crates/zygo-hooks/tests/shaping_fixtures.rs | 22 | — | stays: test |
+| crates/zygo-hooks/tests/shaping_fixtures.rs | 51 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_fixtures.rs | 52 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_fixtures.rs | 53 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_fixtures.rs | 56 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_fixtures.rs | 61 | 1 | CC-13 |
 | crates/zygo-hooks/tests/shaping_fixtures.rs | 62 | — | stays: test |
+| crates/zygo-hooks/tests/shaping_fixtures.rs | 67 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_fixtures.rs | 68 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_fixtures.rs | 72 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_fixtures.rs | 73 | — | stays: test |
+| crates/zygo-hooks/tests/shaping_fixtures.rs | 80 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_fixtures.rs | 81 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_fixtures.rs | 86 | 1 | CC-13 |
 | crates/zygo-hooks/tests/shaping_fixtures.rs | 87 | — | stays: test |
@@ -417,6 +448,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/shaping_hook.rs | 51 | — | stays: comment |
 | crates/zygo-hooks/tests/shaping_hook.rs | 57 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_hook.rs | 83 | — | stays: test |
+| crates/zygo-hooks/tests/shaping_hook.rs | 84 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_hook.rs | 98 | 1 | CC-13 |
 | crates/zygo-hooks/tests/shaping_hook.rs | 129 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_hook.rs | 158 | — | stays: test |
@@ -429,6 +461,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/shaping_hook.rs | 186 | 1 | CC-13 |
 | crates/zygo-hooks/tests/shaping_hook.rs | 205 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_hook.rs | 206 | 1 | CC-13 |
+| crates/zygo-hooks/tests/shaping_hook.rs | 208 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_hook.rs | 209 | 1 | CC-13 |
 | crates/zygo-hooks/tests/shaping_hook.rs | 233 | 1 | CC-13 |
 | crates/zygo-hooks/tests/shaping_hook.rs | 248 | 1 | CC-13 |
@@ -455,7 +488,9 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/shaping_hook.rs | 479 | 1 | CC-13 |
 | crates/zygo-hooks/tests/shaping_hook.rs | 495 | 1 | CC-13 |
 | crates/zygo-hooks/tests/shaping_hook.rs | 510 | 1 | CC-13 |
+| crates/zygo-hooks/tests/shaping_hook.rs | 519 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_hook.rs | 520 | — | stays: comment |
+| crates/zygo-hooks/tests/shaping_hook.rs | 522 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_hook.rs | 525 | 1 | CC-13 |
 | crates/zygo-hooks/tests/shaping_hook.rs | 537 | 1 | CC-13 |
 | crates/zygo-hooks/tests/shaping_hook.rs | 549 | 1 | CC-13 |
@@ -482,9 +517,12 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/shaping_off.rs | 191 | — | stays: comment |
 | crates/zygo-hooks/tests/shaping_off.rs | 197 | — | stays: comment |
 | crates/zygo-hooks/tests/shaping_off.rs | 199 | — | stays: test |
+| crates/zygo-hooks/tests/shaping_off.rs | 210 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_off.rs | 215 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_off.rs | 218 | 1 | CC-13 |
 | crates/zygo-hooks/tests/shaping_off.rs | 219 | — | stays: test |
+| crates/zygo-hooks/tests/shaping_off.rs | 229 | — | stays: test |
+| crates/zygo-hooks/tests/shaping_off.rs | 235 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_off.rs | 236 | 1 | CC-13 |
 | crates/zygo-hooks/tests/shaping_off.rs | 241 | — | stays: comment |
 | crates/zygo-hooks/tests/shaping_off.rs | 247 | — | stays: test |
@@ -492,12 +530,14 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/shaping_off.rs | 265 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_off.rs | 271 | — | stays: test |
 | crates/zygo-hooks/tests/shaping_off.rs | 273 | — | stays: test |
+| crates/zygo-hooks/tests/shaping_off.rs | 278 | — | stays: test |
 | crates/zygo-hooks/tests/statusline_team.rs | 287 | — | stays: test |
 | crates/zygo-hooks/tests/statusline_team.rs | 345 | 1 | CC-13 |
 | crates/zygo-hooks/tests/subagent_text.rs | 39 | — | stays: test |
 | crates/zygo-hooks/tests/subagent_text.rs | 54 | 1 | CC-13 |
 | crates/zygo-hooks/tests/subagent_text.rs | 61 | 1 | CC-13 |
 | crates/zygo-hooks/tests/subagent_text.rs | 101 | — | stays: test |
+| crates/zygo-hooks/tests/subagent_text.rs | 105 | — | stays: test |
 | crates/zygo-hooks/tests/subagent_text.rs | 114 | — | stays: test |
 | crates/zygo-hooks/tests/subagent_text.rs | 115 | — | stays: test |
 | crates/zygo-hooks/tests/subagent_text.rs | 124 | — | stays: test |
@@ -517,18 +557,24 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/subagent_text.rs | 336 | — | stays: test |
 | crates/zygo-hooks/tests/subagent_text.rs | 348 | — | stays: comment |
 | crates/zygo-hooks/tests/subagent_text.rs | 355 | 1 | CC-13 |
+| crates/zygo-hooks/tests/subagent_text.rs | 371 | — | stays: test |
 | crates/zygo-hooks/tests/subagent_text.rs | 373 | 1 | CC-13 |
+| crates/zygo-hooks/tests/subagent_text.rs | 384 | — | stays: test |
 | crates/zygo-hooks/tests/subagent_text.rs | 387 | 1 | CC-13 |
+| crates/zygo-hooks/tests/subagent_text.rs | 395 | — | stays: test |
 | crates/zygo-hooks/tests/subagent_text.rs | 399 | 1 | CC-13 |
 | crates/zygo-hooks/tests/subagent_text.rs | 409 | — | stays: comment |
 | crates/zygo-hooks/tests/subagent_text.rs | 411 | 1 | CC-13 |
+| crates/zygo-hooks/tests/subagent_text.rs | 420 | — | stays: test |
 | crates/zygo-hooks/tests/workspace.rs | 54 | — | stays: test |
 | crates/zygo-hooks/tests/workspace.rs | 128 | — | stays: test |
 | crates/zygo-hooks/tests/workspace.rs | 151 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 155 | 1 | CC-13 |
+| crates/zygo-hooks/tests/workspace.rs | 159 | — | stays: test |
 | crates/zygo-hooks/tests/workspace.rs | 202 | — | stays: comment |
 | crates/zygo-hooks/tests/workspace.rs | 204 | — | stays: test |
 | crates/zygo-hooks/tests/workspace.rs | 244 | 1 | CC-13 |
+| crates/zygo-hooks/tests/workspace.rs | 459 | — | stays: test |
 | crates/zygo-hooks/tests/workspace.rs | 461 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 463 | — | stays: test |
 | crates/zygo-hooks/tests/workspace.rs | 464 | — | stays: test |
@@ -545,8 +591,10 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/workspace.rs | 492 | — | stays: test |
 | crates/zygo-hooks/tests/workspace.rs | 494 | — | stays: test |
 | crates/zygo-hooks/tests/workspace.rs | 496 | — | stays: test |
+| crates/zygo-hooks/tests/workspace.rs | 502 | — | stays: test |
 | crates/zygo-hooks/tests/workspace.rs | 504 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 526 | — | stays: test |
+| crates/zygo-hooks/tests/workspace.rs | 527 | — | stays: test |
 | crates/zygo-hooks/tests/workspace.rs | 529 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 532 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 546 | 1 | CC-13 |
@@ -603,11 +651,13 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/workspace.rs | 1127 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 1137 | — | stays: comment |
 | crates/zygo-hooks/tests/workspace.rs | 1138 | 1 | CC-13 |
+| crates/zygo-hooks/tests/workspace.rs | 1151 | — | stays: test |
 | crates/zygo-hooks/tests/workspace.rs | 1154 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 1169 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 1183 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 1191 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 1197 | 1 | CC-13 |
+| crates/zygo-hooks/tests/workspace.rs | 1228 | — | stays: test |
 | crates/zygo-hooks/tests/workspace.rs | 1231 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 1245 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 1254 | 1 | CC-13 |
@@ -700,6 +750,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/workspace.rs | 2060 | — | stays: test |
 | crates/zygo-hooks/tests/workspace.rs | 2063 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 2068 | 1 | CC-13 |
+| crates/zygo-hooks/tests/workspace.rs | 2094 | — | stays: test |
 | crates/zygo-hooks/tests/workspace.rs | 2096 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 2130 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 2131 | 1 | CC-13 |
@@ -718,7 +769,11 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-hooks/tests/workspace.rs | 2312 | 1 | CC-13 |
 | crates/zygo-hooks/tests/workspace.rs | 2323 | 1 | CC-13 |
 | crates/zygo-launch/assets/opencode-plugin.js | 23 | 1 | CC-9 |
+| crates/zygo-launch/assets/opencode-plugin.js | 36 | 3 | CC-9 |
 | crates/zygo-launch/src/adapter.rs | 72 | — | stays: comment |
+| crates/zygo-launch/src/adapter.rs | 74 | 6 | CC-9 |
+| crates/zygo-launch/src/adapter.rs | 95 | 6 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 14 | 6 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 19 | — | stays: comment |
 | crates/zygo-launch/src/claude_code.rs | 20 | 7 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 34 | 1 | CC-9 |
@@ -733,7 +788,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/src/claude_code.rs | 61 | 1 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 63 | 1 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 64 | 1 | CC-9 |
-| crates/zygo-launch/src/claude_code.rs | 67 | — | stays: comment |
+| crates/zygo-launch/src/claude_code.rs | 67 | 1 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 69 | 1 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 70 | 1 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 74 | 1 | CC-9 |
@@ -741,8 +796,17 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/src/claude_code.rs | 90 | 7 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 95 | 7 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 101 | 7 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 144 | 9 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 145 | 9 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 146 | 9 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 153 | 4 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 154 | 4 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 155 | 4 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 156 | 4 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 157 | 4 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 158 | 4 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 161 | 11 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 162 | 11 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 358 | 9 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 442 | 1 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 483 | 5 | CC-9 |
@@ -766,6 +830,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/src/claude_code.rs | 619 | 1 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 630 | 6 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 652 | 7 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 698 | 9 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 701 | 7 | CC-9 |
 | crates/zygo-launch/src/env.rs | 24 | 11 | CC-9 |
 | crates/zygo-launch/src/env.rs | 25 | 11 | CC-9 |
@@ -775,6 +840,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/src/env.rs | 30 | 11 | CC-9 |
 | crates/zygo-launch/src/env.rs | 31 | 11 | CC-9 |
 | crates/zygo-launch/src/env.rs | 32 | 11 | CC-9 |
+| crates/zygo-launch/src/launcher.rs | 34 | 6 | CC-9 |
 | crates/zygo-launch/src/launcher.rs | 117 | — | stays: comment |
 | crates/zygo-launch/src/launcher.rs | 592 | 6 | CC-9 |
 | crates/zygo-launch/src/launcher.rs | 593 | 6 | CC-9 |
@@ -783,15 +849,18 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/src/launcher.rs | 616 | 6 | CC-9 |
 | crates/zygo-launch/src/launcher.rs | 727 | — | stays: comment |
 | crates/zygo-launch/src/launcher.rs | 804 | — | stays: comment |
+| crates/zygo-launch/src/launcher.rs | 805 | 7 | CC-7 |
 | crates/zygo-launch/src/launcher.rs | 809 | 7 | CC-7 |
 | crates/zygo-launch/src/launcher.rs | 810 | 7 | CC-7 |
 | crates/zygo-launch/src/lib.rs | 2 | 1 | CC-9 |
 | crates/zygo-launch/src/lib.rs | 5 | 1 | CC-9 |
+| crates/zygo-launch/src/lib.rs | 10 | 6 | CC-9 |
 | crates/zygo-launch/src/opencode.rs | 1 | — | stays: comment |
+| crates/zygo-launch/src/opencode.rs | 15 | 6 | CC-9 |
 | crates/zygo-launch/src/opencode.rs | 17 | — | stays: comment |
 | crates/zygo-launch/src/opencode.rs | 26 | 1 | CC-9 |
 | crates/zygo-launch/src/opencode.rs | 30 | 1 | CC-9 |
-| crates/zygo-launch/src/opencode.rs | 31 | — | stays: comment |
+| crates/zygo-launch/src/opencode.rs | 31 | 1 | CC-9 |
 | crates/zygo-launch/src/opencode.rs | 32 | 1 | CC-9 |
 | crates/zygo-launch/src/opencode.rs | 33 | 1 | CC-9 |
 | crates/zygo-launch/src/opencode.rs | 37 | 1 | CC-9 |
@@ -803,8 +872,11 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/src/opencode.rs | 172 | 1 | CC-9 |
 | crates/zygo-launch/src/opencode.rs | 202 | 6 | CC-9 |
 | crates/zygo-launch/src/opencode.rs | 262 | — | stays: comment |
+| crates/zygo-launch/src/opencode.rs | 266 | 6 | CC-9 |
+| crates/zygo-launch/src/opencode.rs | 277 | 6 | CC-9 |
 | crates/zygo-launch/src/opencode.rs | 281 | — | stays: comment |
 | crates/zygo-launch/src/opencode.rs | 286 | 6 | CC-9 |
+| crates/zygo-launch/src/opencode.rs | 382 | 6 | CC-9 |
 | crates/zygo-launch/src/opencode.rs | 423 | — | stays: comment |
 | crates/zygo-launch/src/opencode.rs | 428 | 1 | CC-9 |
 | crates/zygo-launch/src/opencode.rs | 430 | 1 | CC-9 |
@@ -823,12 +895,14 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/src/opencode.rs | 572 | 1 | CC-9 |
 | crates/zygo-launch/src/opencode.rs | 575 | — | stays: comment |
 | crates/zygo-launch/src/opencode.rs | 577 | — | stays: comment |
+| crates/zygo-launch/src/opencode.rs | 578 | — | stays: comment |
 | crates/zygo-launch/src/opencode.rs | 579 | — | stays: comment |
 | crates/zygo-launch/src/opencode.rs | 583 | 1 | CC-9 |
 | crates/zygo-launch/src/opencode.rs | 591 | 1 | CC-9 |
 | crates/zygo-launch/src/opencode.rs | 600 | — | stays: comment |
 | crates/zygo-launch/src/opencode.rs | 606 | — | stays: comment |
 | crates/zygo-launch/tests/claude_code.rs | 17 | 1 | CC-9 |
+| crates/zygo-launch/tests/claude_code.rs | 19 | 6 | CC-9 |
 | crates/zygo-launch/tests/claude_code.rs | 90 | 1 | CC-13 |
 | crates/zygo-launch/tests/claude_code.rs | 119 | 1 | CC-13 |
 | crates/zygo-launch/tests/claude_code.rs | 120 | — | stays: test |
@@ -836,31 +910,54 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/claude_code.rs | 190 | 1 | CC-9 |
 | crates/zygo-launch/tests/claude_code.rs | 191 | 1 | CC-9 |
 | crates/zygo-launch/tests/claude_code.rs | 204 | 1 | CC-9 |
+| crates/zygo-launch/tests/claude_code.rs | 205 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 255 | 1 | CC-9 |
 | crates/zygo-launch/tests/claude_code.rs | 336 | 6 | CC-9 |
+| crates/zygo-launch/tests/claude_code.rs | 418 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 430 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 447 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 448 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 467 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 493 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 497 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 498 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 502 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 511 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 534 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 539 | — | stays: comment |
 | crates/zygo-launch/tests/claude_code.rs | 553 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 556 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 559 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 580 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 581 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 582 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 583 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 584 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 600 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 838 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 1185 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 1186 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 1187 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 1188 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 1189 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 1190 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 1207 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 1213 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 1214 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 1219 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 1225 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 1230 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 1247 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 1249 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 1253 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 1254 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 1255 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 1259 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 1261 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 1315 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 1326 | — | stays: comment |
 | crates/zygo-launch/tests/claude_code.rs | 1327 | — | stays: comment |
+| crates/zygo-launch/tests/claude_code.rs | 1329 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 1339 | — | stays: comment |
 | crates/zygo-launch/tests/claude_code.rs | 1342 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 1353 | — | stays: test |
@@ -890,6 +987,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/claude_code.rs | 1617 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 1619 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 1647 | — | stays: test |
+| crates/zygo-launch/tests/claude_code.rs | 1651 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 1670 | — | stays: test |
 | crates/zygo-launch/tests/claude_code.rs | 1681 | — | stays: comment |
 | crates/zygo-launch/tests/claude_code.rs | 1684 | — | stays: test |
@@ -919,9 +1017,15 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/claude_code.rs | 1892 | 1 | CC-13 |
 | crates/zygo-launch/tests/claude_code.rs | 1921 | 1 | CC-9 |
 | crates/zygo-launch/tests/claude_code.rs | 1922 | 1 | CC-9 |
+| crates/zygo-launch/tests/fixtures/claude_code/env-passthrough.json | 1 | — | stays: test |
 | crates/zygo-launch/tests/fixtures/claude_code/env-passthrough.json | 2 | — | stays: test |
+| crates/zygo-launch/tests/fixtures/claude_code/env-passthrough.json | 3 | — | stays: test |
+| crates/zygo-launch/tests/fixtures/claude_code/env.json | 1 | — | stays: test |
+| crates/zygo-launch/tests/fixtures/claude_code/env.json | 2 | — | stays: test |
 | crates/zygo-launch/tests/fixtures/claude_code/env.json | 3 | — | stays: test |
 | crates/zygo-launch/tests/fixtures/claude_code/env.json | 4 | — | stays: test |
+| crates/zygo-launch/tests/fixtures/claude_code/env.json | 5 | — | stays: test |
+| crates/zygo-launch/tests/fixtures/claude_code/env.json | 6 | — | stays: test |
 | crates/zygo-launch/tests/fixtures/claude_code/mcp.json | 1 | — | stays: test |
 | crates/zygo-launch/tests/fixtures/claude_code/settings-passthrough.json | 15 | — | stays: test |
 | crates/zygo-launch/tests/fixtures/claude_code/settings-passthrough.json | 35 | — | stays: test |
@@ -944,12 +1048,19 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/fixtures/claude_code/settings.json | 25 | — | stays: test |
 | crates/zygo-launch/tests/fixtures/claude_code/settings.json | 26 | — | stays: test |
 | crates/zygo-launch/tests/launcher.rs | 16 | 1 | CC-9 |
+| crates/zygo-launch/tests/launcher.rs | 18 | 6 | CC-9 |
+| crates/zygo-launch/tests/launcher.rs | 94 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 95 | — | stays: test |
 | crates/zygo-launch/tests/launcher.rs | 98 | — | stays: test |
 | crates/zygo-launch/tests/launcher.rs | 99 | — | stays: test |
 | crates/zygo-launch/tests/launcher.rs | 100 | — | stays: test |
 | crates/zygo-launch/tests/launcher.rs | 101 | — | stays: test |
 | crates/zygo-launch/tests/launcher.rs | 105 | — | stays: test |
 | crates/zygo-launch/tests/launcher.rs | 108 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 127 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 128 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 132 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 142 | — | stays: test |
 | crates/zygo-launch/tests/launcher.rs | 144 | — | stays: test |
 | crates/zygo-launch/tests/launcher.rs | 145 | — | stays: test |
 | crates/zygo-launch/tests/launcher.rs | 148 | — | stays: test |
@@ -957,13 +1068,30 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/launcher.rs | 220 | 1 | CC-13 |
 | crates/zygo-launch/tests/launcher.rs | 251 | 6 | CC-9 |
 | crates/zygo-launch/tests/launcher.rs | 252 | 6 | CC-9 |
+| crates/zygo-launch/tests/launcher.rs | 271 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 349 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 353 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 503 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 506 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 512 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 515 | — | stays: test |
 | crates/zygo-launch/tests/launcher.rs | 517 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 527 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 562 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 565 | — | stays: test |
 | crates/zygo-launch/tests/launcher.rs | 674 | 1 | CC-13 |
-| crates/zygo-launch/tests/launcher.rs | 703 | — | stays: comment |
+| crates/zygo-launch/tests/launcher.rs | 703 | 1 | CC-9 |
 | crates/zygo-launch/tests/launcher.rs | 724 | 1 | CC-9 |
+| crates/zygo-launch/tests/launcher.rs | 814 | — | stays: test |
 | crates/zygo-launch/tests/launcher.rs | 818 | 1 | CC-13 |
+| crates/zygo-launch/tests/launcher.rs | 1040 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 1047 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 1470 | — | stays: test |
+| crates/zygo-launch/tests/launcher.rs | 1544 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 1 | — | stays: comment |
+| crates/zygo-launch/tests/opencode.rs | 11 | 2 | CC-3 |
 | crates/zygo-launch/tests/opencode.rs | 18 | 1 | CC-9 |
+| crates/zygo-launch/tests/opencode.rs | 19 | 6 | CC-9 |
 | crates/zygo-launch/tests/opencode.rs | 30 | 1 | CC-13 |
 | crates/zygo-launch/tests/opencode.rs | 43 | 1 | CC-13 |
 | crates/zygo-launch/tests/opencode.rs | 73 | — | stays: test |
@@ -971,7 +1099,9 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/opencode.rs | 96 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 104 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 140 | — | stays: test |
+| crates/zygo-launch/tests/opencode.rs | 141 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 146 | — | stays: test |
+| crates/zygo-launch/tests/opencode.rs | 155 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 161 | 1 | CC-13 |
 | crates/zygo-launch/tests/opencode.rs | 162 | 1 | CC-13 |
 | crates/zygo-launch/tests/opencode.rs | 226 | 1 | CC-13 |
@@ -981,6 +1111,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/opencode.rs | 255 | 1 | CC-9 |
 | crates/zygo-launch/tests/opencode.rs | 259 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 327 | — | stays: test |
+| crates/zygo-launch/tests/opencode.rs | 342 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 349 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 359 | — | stays: comment |
 | crates/zygo-launch/tests/opencode.rs | 541 | — | stays: test |
@@ -991,15 +1122,24 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/opencode.rs | 645 | 1 | CC-9 |
 | crates/zygo-launch/tests/opencode.rs | 657 | 1 | CC-9 |
 | crates/zygo-launch/tests/opencode.rs | 704 | 1 | CC-9 |
+| crates/zygo-launch/tests/opencode.rs | 705 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 771 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 772 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 773 | — | stays: test |
+| crates/zygo-launch/tests/opencode.rs | 1046 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 1068 | — | stays: test |
+| crates/zygo-launch/tests/opencode.rs | 1081 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 1093 | 6 | CC-9 |
+| crates/zygo-launch/tests/opencode.rs | 1101 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 1105 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 1128 | — | stays: test |
+| crates/zygo-launch/tests/opencode.rs | 1142 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 1159 | — | stays: test |
+| crates/zygo-launch/tests/opencode.rs | 1191 | — | stays: test |
+| crates/zygo-launch/tests/opencode.rs | 1202 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 1213 | — | stays: test |
+| crates/zygo-launch/tests/opencode.rs | 1231 | — | stays: test |
+| crates/zygo-launch/tests/opencode.rs | 1232 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 1243 | 6 | CC-9 |
 | crates/zygo-launch/tests/opencode.rs | 1290 | 6 | CC-9 |
 | crates/zygo-launch/tests/opencode.rs | 1301 | — | stays: test |
@@ -1008,8 +1148,12 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/opencode.rs | 1327 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 1371 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 1441 | 1 | CC-9 |
+| crates/zygo-launch/tests/opencode.rs | 1447 | — | stays: test |
+| crates/zygo-launch/tests/opencode.rs | 1449 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 1452 | — | stays: test |
+| crates/zygo-launch/tests/opencode.rs | 1454 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 1458 | — | stays: test |
+| crates/zygo-launch/tests/opencode.rs | 1464 | — | stays: test |
 | crates/zygo-launch/tests/opencode.rs | 1497 | — | stays: comment |
 | crates/zygo-launch/tests/opencode.rs | 1513 | 1 | CC-9 |
 | crates/zygo-launch/tests/opencode.rs | 1515 | 1 | CC-13 |
@@ -1019,21 +1163,33 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/opencode.rs | 1867 | 1 | CC-13 |
 | crates/zygo-launch/tests/opencode.rs | 1995 | — | stays: comment |
 | crates/zygo-launch/tests/opencode.rs | 2791 | 1 | CC-9 |
+| crates/zygo-launch/tests/premise.rs | 50 | — | stays: test |
 | crates/zygo-launch/tests/premise.rs | 52 | — | stays: test |
 | crates/zygo-launch/tests/premise.rs | 55 | — | stays: test |
+| crates/zygo-launch/tests/premise.rs | 62 | — | stays: test |
 | crates/zygo-launch/tests/premise.rs | 64 | — | stays: test |
 | crates/zygo-launch/tests/premise.rs | 65 | — | stays: test |
 | crates/zygo-launch/tests/premise.rs | 67 | — | stays: test |
 | crates/zygo-launch/tests/premise.rs | 111 | — | stays: test |
+| crates/zygo-launch/tests/premise.rs | 119 | — | stays: test |
 | crates/zygo-launch/tests/premise.rs | 121 | — | stays: test |
 | crates/zygo-launch/tests/premise.rs | 124 | — | stays: test |
+| crates/zygo-launch/tests/premise.rs | 132 | — | stays: test |
 | crates/zygo-launch/tests/premise.rs | 141 | — | stays: comment |
+| crates/zygo-launch/tests/premise.rs | 151 | — | stays: test |
+| crates/zygo-launch/tests/premise.rs | 161 | — | stays: test |
 | crates/zygo-launch/tests/premise.rs | 163 | — | stays: test |
+| crates/zygo-launch/tests/premise.rs | 164 | — | stays: comment |
 | crates/zygo-launch/tests/premise.rs | 165 | — | stays: test |
+| crates/zygo-launch/tests/premise.rs | 174 | — | stays: test |
 | crates/zygo-launch/tests/premise.rs | 176 | — | stays: test |
+| crates/zygo-launch/tests/premise.rs | 177 | — | stays: test |
 | crates/zygo-launch/tests/premise.rs | 178 | — | stays: test |
+| crates/zygo-launch/tests/premise.rs | 204 | — | stays: test |
+| crates/zygo-launch/tests/premise.rs | 210 | — | stays: test |
 | crates/zygo-launch/tests/premise.rs | 211 | — | stays: test |
 | crates/zygo-launch/tests/repo_profile.rs | 147 | 1 | CC-13 |
+| crates/zygo-launch/tests/repo_profile.rs | 163 | — | stays: test |
 | crates/zygo-launch/tests/serve_client.rs | 20 | 1 | CC-9 |
 | crates/zygo-launch/tests/serve_client.rs | 243 | 1 | CC-13 |
 | crates/zygo-launch/tests/serve_client.rs | 793 | 1 | CC-13 |
@@ -1041,7 +1197,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/serve_client.rs | 1249 | — | stays: test |
 | crates/zygo-launch/tests/stub_agent/harness.rs | 15 | 1 | CC-9 |
 | crates/zygo-launch/tests/stub_agent/harness.rs | 18 | 1 | CC-9 |
-| crates/zygo-launch/tests/stub_agent/harness.rs | 21 | — | stays: comment |
+| crates/zygo-launch/tests/stub_agent/harness.rs | 21 | 1 | CC-3 |
 | crates/zygo-launch/tests/stub_agent/harness.rs | 22 | — | stays: test |
 | crates/zygo-launch/tests/stub_agent/harness.rs | 23 | — | stays: test |
 | crates/zygo-launch/tests/stub_agent/harness.rs | 69 | 1 | CC-9 |
@@ -1050,6 +1206,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/stub_agent/harness.rs | 74 | 1 | CC-9 |
 | crates/zygo-launch/tests/stub_agent/harness.rs | 237 | — | stays: test |
 | crates/zygo-launch/tests/stub_agent/harness.rs | 238 | — | stays: test |
+| crates/zygo-launch/tests/stub_agent/harness.rs | 241 | — | stays: test |
 | crates/zygo-launch/tests/stub_agent/stub.rs | 7 | — | stays: comment |
 | crates/zygo-launch/tests/stub_agent/stub.rs | 12 | — | stays: comment |
 | crates/zygo-launch/tests/stub_agent/stub.rs | 13 | — | stays: comment |
@@ -1067,16 +1224,29 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/stub_agent/stub.rs | 132 | — | stays: test |
 | crates/zygo-launch/tests/stub_agent/stub.rs | 144 | — | stays: comment |
 | crates/zygo-launch/tests/stub_agent/stub.rs | 151 | — | stays: test |
+| crates/zygo-launch/tests/stub_agent/stub.rs | 181 | — | stays: test |
 | crates/zygo-launch/tests/stub_agent/stub.rs | 233 | — | stays: test |
 | crates/zygo-launch/tests/stub_agent/stub.rs | 323 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 15 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 16 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 17 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 30 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 31 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 39 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 43 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 48 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 49 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 50 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 51 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 52 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 53 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 54 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 55 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 56 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 57 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 59 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 66 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 86 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 97 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 99 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 105 | — | stays: test |
@@ -1089,11 +1259,13 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/stub_launch.rs | 224 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 232 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 260 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 274 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 280 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 296 | — | stays: comment |
 | crates/zygo-launch/tests/stub_launch.rs | 302 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 309 | — | stays: comment |
 | crates/zygo-launch/tests/stub_launch.rs | 310 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 318 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 324 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 334 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 346 | — | stays: test |
@@ -1101,6 +1273,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/stub_launch.rs | 366 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 388 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 394 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 408 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 410 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 449 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 450 | — | stays: test |
@@ -1110,20 +1283,33 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/stub_launch.rs | 454 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 455 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 477 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 479 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 488 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 491 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 506 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 521 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 534 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 543 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 546 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 563 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 567 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 568 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 577 | — | stays: comment |
+| crates/zygo-launch/tests/stub_launch.rs | 579 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 582 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 590 | — | stays: comment |
+| crates/zygo-launch/tests/stub_launch.rs | 592 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 594 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 598 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 600 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 602 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 603 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 616 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 620 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 633 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 635 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 638 | — | stays: test |
+| crates/zygo-launch/tests/stub_launch.rs | 654 | — | stays: test |
 | crates/zygo-launch/tests/stub_launch.rs | 657 | — | stays: test |
 | crates/zygo-launch/tests/stub_member.rs | 28 | — | stays: test |
 | crates/zygo-launch/tests/stub_member.rs | 113 | — | stays: test |
@@ -1133,7 +1319,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/tests/stub_member.rs | 188 | — | stays: test |
 | crates/zygo-launch/tests/stub_member.rs | 219 | — | stays: test |
 | crates/zygo-launch/tests/stub_member.rs | 224 | — | stays: test |
-| crates/zygo-launch/tests/stub_member.rs | 228 | — | stays: comment |
+| crates/zygo-launch/tests/stub_member.rs | 228 | 1 | CC-9 |
 | crates/zygo-launch/tests/stub_member.rs | 235 | — | stays: test |
 | crates/zygo-launch/tests/stub_member.rs | 245 | — | stays: test |
 | crates/zygo-launch/tests/stub_member.rs | 250 | — | stays: comment |
@@ -1169,8 +1355,10 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-mcp/tests/mcp_server.rs | 126 | 1 | CC-13 |
 | crates/zygo-mcp/tests/mcp_server.rs | 245 | 1 | CC-13 |
 | crates/zygo-mcp/tests/mcp_server.rs | 291 | 1 | CC-13 |
+| crates/zygo-mcp/tests/mcp_server.rs | 297 | — | stays: test |
 | crates/zygo-mcp/tests/mcp_server.rs | 298 | 1 | CC-13 |
 | crates/zygo-mcp/tests/mcp_server.rs | 302 | 1 | CC-13 |
+| crates/zygo-mcp/tests/mcp_server.rs | 309 | — | stays: test |
 | crates/zygo-mcp/tests/mcp_server.rs | 310 | 1 | CC-13 |
 | crates/zygo-mcp/tests/mcp_server.rs | 317 | 1 | CC-13 |
 | crates/zygo-mcp/tests/mcp_server.rs | 324 | 1 | CC-13 |
@@ -1179,6 +1367,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-mcp/tests/mcp_server.rs | 338 | 1 | CC-13 |
 | crates/zygo-mcp/tests/mcp_server.rs | 340 | 1 | CC-13 |
 | crates/zygo-mcp/tests/mcp_server.rs | 357 | 1 | CC-13 |
+| crates/zygo-mcp/tests/mcp_server.rs | 359 | — | stays: test |
 | crates/zygo-mcp/tests/mcp_server.rs | 364 | 1 | CC-13 |
 | crates/zygo-mcp/tests/mcp_server.rs | 464 | 1 | CC-13 |
 | crates/zygo-mcp/tests/mcp_server.rs | 545 | 1 | CC-13 |
@@ -1189,19 +1378,59 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-mcp/tests/mcp_server.rs | 875 | 1 | CC-13 |
 | crates/zygo-mcp/tests/mcp_server.rs | 901 | 1 | CC-13 |
 | crates/zygo-mcp/tests/readbacks.rs | 236 | 1 | CC-13 |
+| crates/zygo-plugins/src/builtin.rs | 15 | 6 | CC-9 |
+| crates/zygo-plugins/src/builtin.rs | 69 | — | stays: comment |
+| crates/zygo-plugins/src/check.rs | 139 | 6 | CC-9 |
+| crates/zygo-plugins/src/check.rs | 140 | 6 | CC-9 |
+| crates/zygo-plugins/src/check.rs | 144 | 6 | CC-9 |
+| crates/zygo-plugins/src/check.rs | 166 | 6 | CC-9 |
 | crates/zygo-plugins/src/check.rs | 629 | — | stays: comment |
 | crates/zygo-plugins/src/check.rs | 632 | 6 | CC-9 |
+| crates/zygo-plugins/src/check.rs | 676 | 6 | CC-9 |
+| crates/zygo-plugins/src/embedded.rs | 30 | 6 | CC-9 |
+| crates/zygo-plugins/src/marketplace.rs | 135 | 6 | CC-9 |
+| crates/zygo-plugins/src/marketplace.rs | 331 | 6 | CC-9 |
 | crates/zygo-plugins/src/snapshot.rs | 2 | — | stays: comment |
 | crates/zygo-plugins/src/snapshot.rs | 25 | 6 | CC-9 |
+| crates/zygo-plugins/src/snapshot.rs | 232 | 6 | CC-9 |
 | crates/zygo-plugins/src/snapshot.rs | 264 | 6 | CC-9 |
 | crates/zygo-plugins/src/snapshot.rs | 265 | 6 | CC-9 |
+| crates/zygo-plugins/src/store.rs | 234 | 6 | CC-9 |
+| crates/zygo-plugins/src/sync.rs | 482 | 6 | CC-9 |
+| crates/zygo-plugins/tests/builtin.rs | 143 | — | stays: test |
+| crates/zygo-plugins/tests/builtin.rs | 145 | — | stays: test |
+| crates/zygo-plugins/tests/builtin.rs | 154 | — | stays: test |
+| crates/zygo-plugins/tests/builtin.rs | 156 | — | stays: test |
+| crates/zygo-plugins/tests/builtin.rs | 161 | — | stays: test |
+| crates/zygo-plugins/tests/builtin.rs | 165 | — | stays: test |
+| crates/zygo-plugins/tests/builtin.rs | 386 | — | stays: test |
+| crates/zygo-plugins/tests/builtin.rs | 387 | — | stays: test |
+| crates/zygo-plugins/tests/builtin.rs | 633 | — | stays: test |
+| crates/zygo-plugins/tests/builtin.rs | 641 | — | stays: test |
+| crates/zygo-plugins/tests/builtin.rs | 670 | — | stays: test |
+| crates/zygo-plugins/tests/builtin.rs | 745 | — | stays: test |
 | crates/zygo-plugins/tests/builtin.rs | 796 | 1 | CC-13 |
+| crates/zygo-plugins/tests/builtin.rs | 798 | — | stays: test |
 | crates/zygo-plugins/tests/builtin.rs | 813 | 1 | CC-13 |
 | crates/zygo-plugins/tests/builtin.rs | 819 | 1 | CC-13 |
 | crates/zygo-plugins/tests/builtin.rs | 839 | 1 | CC-13 |
+| crates/zygo-plugins/tests/check.rs | 24 | — | stays: test |
+| crates/zygo-plugins/tests/check.rs | 29 | — | stays: test |
+| crates/zygo-plugins/tests/check.rs | 74 | — | stays: test |
+| crates/zygo-plugins/tests/check.rs | 107 | — | stays: test |
+| crates/zygo-plugins/tests/check.rs | 133 | — | stays: test |
+| crates/zygo-plugins/tests/check.rs | 159 | — | stays: test |
+| crates/zygo-plugins/tests/check.rs | 222 | — | stays: test |
 | crates/zygo-plugins/tests/check.rs | 228 | — | stays: test |
+| crates/zygo-plugins/tests/check.rs | 243 | — | stays: test |
 | crates/zygo-plugins/tests/check.rs | 249 | — | stays: test |
+| crates/zygo-plugins/tests/check.rs | 257 | — | stays: test |
+| crates/zygo-plugins/tests/check.rs | 298 | — | stays: test |
+| crates/zygo-plugins/tests/check.rs | 329 | — | stays: test |
 | crates/zygo-plugins/tests/check.rs | 415 | — | stays: test |
+| crates/zygo-plugins/tests/check.rs | 425 | — | stays: test |
+| crates/zygo-plugins/tests/check.rs | 429 | — | stays: test |
+| crates/zygo-plugins/tests/check.rs | 486 | — | stays: test |
 | crates/zygo-plugins/tests/check.rs | 625 | — | stays: test |
 | crates/zygo-plugins/tests/check.rs | 635 | — | stays: test |
 | crates/zygo-plugins/tests/check.rs | 696 | — | stays: test |
@@ -1210,7 +1439,16 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-plugins/tests/check.rs | 699 | — | stays: test |
 | crates/zygo-plugins/tests/check.rs | 753 | — | stays: test |
 | crates/zygo-plugins/tests/check.rs | 761 | — | stays: test |
+| crates/zygo-plugins/tests/check.rs | 775 | — | stays: test |
+| crates/zygo-plugins/tests/check.rs | 787 | — | stays: test |
+| crates/zygo-plugins/tests/common/mod.rs | 103 | — | stays: test |
+| crates/zygo-plugins/tests/common/mod.rs | 113 | — | stays: test |
+| crates/zygo-plugins/tests/marketplace.rs | 112 | — | stays: test |
+| crates/zygo-plugins/tests/marketplace.rs | 484 | — | stays: test |
+| crates/zygo-plugins/tests/marketplace.rs | 513 | — | stays: test |
+| crates/zygo-plugins/tests/snapshot.rs | 98 | — | stays: test |
 | crates/zygo-plugins/tests/snapshot.rs | 103 | 1 | CC-13 |
+| crates/zygo-plugins/tests/snapshot.rs | 106 | — | stays: test |
 | crates/zygo-plugins/tests/snapshot.rs | 122 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 127 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 141 | 1 | CC-13 |
@@ -1221,6 +1459,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-plugins/tests/snapshot.rs | 219 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 232 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 239 | 1 | CC-13 |
+| crates/zygo-plugins/tests/snapshot.rs | 258 | — | stays: test |
 | crates/zygo-plugins/tests/snapshot.rs | 265 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 308 | — | stays: test |
 | crates/zygo-plugins/tests/snapshot.rs | 310 | — | stays: test |
@@ -1228,26 +1467,41 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-plugins/tests/snapshot.rs | 312 | — | stays: test |
 | crates/zygo-plugins/tests/snapshot.rs | 330 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 354 | 1 | CC-13 |
+| crates/zygo-plugins/tests/snapshot.rs | 356 | — | stays: test |
+| crates/zygo-plugins/tests/snapshot.rs | 357 | — | stays: test |
+| crates/zygo-plugins/tests/snapshot.rs | 363 | — | stays: test |
 | crates/zygo-plugins/tests/snapshot.rs | 367 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 368 | — | stays: test |
 | crates/zygo-plugins/tests/snapshot.rs | 397 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 410 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 419 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 442 | 1 | CC-13 |
+| crates/zygo-plugins/tests/snapshot.rs | 534 | — | stays: test |
 | crates/zygo-plugins/tests/snapshot.rs | 553 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 579 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 615 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 630 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 644 | 1 | CC-13 |
+| crates/zygo-plugins/tests/snapshot.rs | 666 | — | stays: test |
 | crates/zygo-plugins/tests/snapshot.rs | 668 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 688 | 1 | CC-13 |
 | crates/zygo-plugins/tests/snapshot.rs | 700 | 1 | CC-13 |
+| crates/zygo-plugins/tests/snapshot.rs | 702 | — | stays: test |
+| crates/zygo-plugins/tests/sync.rs | 165 | — | stays: test |
+| crates/zygo-plugins/tests/sync.rs | 397 | — | stays: test |
+| crates/zygo-plugins/tests/sync.rs | 1155 | — | stays: test |
+| crates/zygo-plugins/tests/sync.rs | 1171 | — | stays: test |
+| crates/zygo-plugins/tests/sync.rs | 1527 | — | stays: test |
+| crates/zygo-plugins/tests/sync.rs | 1529 | — | stays: test |
+| crates/zygo-proxy/src/forward.rs | 47 | 9 | CC-4 |
 | crates/zygo-proxy/src/forward.rs | 65 | 9 | CC-4 |
 | crates/zygo-proxy/src/forward.rs | 310 | 9 | CC-4 |
 | crates/zygo-proxy/src/forward.rs | 311 | 9 | CC-4 |
 | crates/zygo-proxy/src/forward.rs | 312 | 9 | CC-4 |
 | crates/zygo-proxy/src/forward.rs | 313 | 9 | CC-4 |
+| crates/zygo-proxy/src/forward.rs | 480 | 9 | CC-4 |
 | crates/zygo-proxy/src/passthrough.rs | 33 | 9 | CC-4 |
+| crates/zygo-proxy/src/passthrough.rs | 34 | 9 | CC-4 |
 | crates/zygo-proxy/src/passthrough.rs | 35 | 9 | CC-4 |
 | crates/zygo-proxy/src/passthrough.rs | 46 | 9 | CC-4 |
 | crates/zygo-proxy/src/redact_stage.rs | 188 | 9 | CC-4 |
@@ -1258,25 +1512,28 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-proxy/src/window.rs | 132 | 9 | CC-4 |
 | crates/zygo-proxy/src/window.rs | 133 | 9 | CC-4 |
 | crates/zygo-proxy/src/window.rs | 163 | 5 | CC-5 |
+| crates/zygo-proxy/src/window.rs | 206 | 5 | CC-5 |
 | crates/zygo-proxy/src/window.rs | 229 | 9 | CC-4 |
 | crates/zygo-proxy/tests/data/compaction-request.json | 47 | — | stays: test |
 | crates/zygo-proxy/tests/facts_schema.rs | 1024 | 1 | CC-13 |
-| crates/zygo-proxy/tests/passthrough.rs | 21 | — | stays: test |
+| crates/zygo-proxy/tests/passthrough.rs | 21 | 9 | CC-4 |
 | crates/zygo-proxy/tests/passthrough.rs | 39 | — | stays: test |
-| crates/zygo-proxy/tests/passthrough.rs | 350 | — | stays: test |
-| crates/zygo-proxy/tests/passthrough.rs | 351 | — | stays: test |
+| crates/zygo-proxy/tests/passthrough.rs | 350 | 9 | CC-4 |
+| crates/zygo-proxy/tests/passthrough.rs | 351 | 9 | CC-4 |
 | crates/zygo-proxy/tests/passthrough.rs | 352 | 1 | CC-13 |
-| crates/zygo-proxy/tests/passthrough.rs | 353 | — | stays: test |
+| crates/zygo-proxy/tests/passthrough.rs | 353 | 9 | CC-4 |
 | crates/zygo-proxy/tests/passthrough.rs | 354 | 1 | CC-13 |
-| crates/zygo-proxy/tests/passthrough.rs | 359 | — | stays: test |
-| crates/zygo-proxy/tests/passthrough.rs | 365 | — | stays: test |
-| crates/zygo-proxy/tests/passthrough.rs | 370 | — | stays: test |
+| crates/zygo-proxy/tests/passthrough.rs | 359 | 9 | CC-4 |
+| crates/zygo-proxy/tests/passthrough.rs | 365 | 9 | CC-4 |
+| crates/zygo-proxy/tests/passthrough.rs | 370 | 9 | CC-4 |
 | crates/zygo-proxy/tests/passthrough.rs | 376 | — | stays: test |
-| crates/zygo-proxy/tests/passthrough.rs | 381 | — | stays: test |
-| crates/zygo-proxy/tests/passthrough.rs | 384 | — | stays: test |
+| crates/zygo-proxy/tests/passthrough.rs | 381 | 9 | CC-4 |
+| crates/zygo-proxy/tests/passthrough.rs | 384 | 9 | CC-4 |
 | crates/zygo-proxy/tests/passthrough.rs | 408 | 1 | CC-13 |
-| crates/zygo-proxy/tests/passthrough.rs | 418 | — | stays: test |
-| crates/zygo-proxy/tests/passthrough.rs | 422 | — | stays: test |
+| crates/zygo-proxy/tests/passthrough.rs | 418 | 9 | CC-4 |
+| crates/zygo-proxy/tests/passthrough.rs | 420 | — | stays: test |
+| crates/zygo-proxy/tests/passthrough.rs | 422 | 9 | CC-4 |
+| crates/zygo-proxy/tests/passthrough.rs | 425 | — | stays: test |
 | crates/zygo-proxy/tests/passthrough.rs | 439 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 442 | — | stays: test |
 | crates/zygo-proxy/tests/passthrough.rs | 450 | — | stays: test |
@@ -1307,12 +1564,14 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-proxy/tests/passthrough.rs | 842 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 860 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 871 | 1 | CC-13 |
+| crates/zygo-proxy/tests/passthrough.rs | 879 | — | stays: test |
 | crates/zygo-proxy/tests/passthrough.rs | 885 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 896 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 924 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 925 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 943 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 946 | 1 | CC-13 |
+| crates/zygo-proxy/tests/passthrough.rs | 953 | — | stays: test |
 | crates/zygo-proxy/tests/passthrough.rs | 955 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 963 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 975 | 1 | CC-13 |
@@ -1331,13 +1590,14 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-proxy/tests/passthrough.rs | 1167 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 1177 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 1213 | 1 | CC-13 |
-| crates/zygo-proxy/tests/passthrough.rs | 1219 | — | stays: test |
+| crates/zygo-proxy/tests/passthrough.rs | 1219 | 9 | CC-4 |
 | crates/zygo-proxy/tests/passthrough.rs | 1248 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 1249 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 1261 | 1 | CC-13 |
-| crates/zygo-proxy/tests/passthrough.rs | 1262 | — | stays: test |
+| crates/zygo-proxy/tests/passthrough.rs | 1262 | 9 | CC-4 |
 | crates/zygo-proxy/tests/passthrough.rs | 1276 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 1299 | 1 | CC-13 |
+| crates/zygo-proxy/tests/passthrough.rs | 1314 | — | stays: test |
 | crates/zygo-proxy/tests/passthrough.rs | 1323 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 1352 | 1 | CC-13 |
 | crates/zygo-proxy/tests/passthrough.rs | 1382 | 1 | CC-13 |
@@ -1377,6 +1637,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-proxy/tests/redaction_e2e.rs | 563 | 1 | CC-13 |
 | crates/zygo-proxy/tests/redaction_e2e.rs | 645 | — | stays: test |
 | crates/zygo-proxy/tests/redaction_e2e.rs | 692 | — | stays: test |
+| crates/zygo-proxy/tests/redaction_e2e.rs | 745 | — | stays: test |
 | crates/zygo-proxy/tests/redaction_e2e.rs | 747 | 1 | CC-13 |
 | crates/zygo-proxy/tests/refusal_calls.rs | 24 | 1 | CC-13 |
 | crates/zygo-proxy/tests/request_path.rs | 603 | — | stays: test |
@@ -1410,6 +1671,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-proxy/tests/request_path.rs | 1259 | 1 | CC-13 |
 | crates/zygo-proxy/tests/request_path.rs | 1273 | 1 | CC-13 |
 | crates/zygo-proxy/tests/request_path.rs | 1286 | 1 | CC-13 |
+| crates/zygo-proxy/tests/request_path.rs | 1305 | — | stays: test |
 | crates/zygo-proxy/tests/request_path.rs | 1307 | 1 | CC-13 |
 | crates/zygo-proxy/tests/request_path.rs | 1308 | 1 | CC-13 |
 | crates/zygo-proxy/tests/request_path.rs | 1345 | 1 | CC-13 |
@@ -1435,6 +1697,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-proxy/tests/responses_cache.rs | 39 | 1 | CC-13 |
 | crates/zygo-proxy/tests/responses_cache.rs | 53 | 1 | CC-13 |
 | crates/zygo-proxy/tests/responses_cache.rs | 57 | — | stays: comment |
+| crates/zygo-proxy/tests/responses_cache.rs | 59 | — | stays: test |
 | crates/zygo-proxy/tests/responses_cache.rs | 60 | 1 | CC-13 |
 | crates/zygo-proxy/tests/responses_cache.rs | 65 | — | stays: comment |
 | crates/zygo-proxy/tests/responses_cache.rs | 68 | 1 | CC-13 |
@@ -1523,12 +1786,14 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-proxy/tests/translate.rs | 1099 | 1 | CC-13 |
 | crates/zygo-proxy/tests/translate.rs | 1259 | — | stays: test |
 | crates/zygo-proxy/tests/translate.rs | 1265 | — | stays: test |
+| crates/zygo-proxy/tests/window.rs | 29 | 5 | CC-5 |
 | crates/zygo-proxy/tests/window.rs | 42 | — | stays: test |
 | crates/zygo-proxy/tests/window.rs | 344 | — | stays: test |
 | crates/zygo-proxy/tests/window.rs | 345 | — | stays: test |
-| crates/zygo-proxy/tests/window.rs | 452 | — | stays: test |
-| crates/zygo-proxy/tests/window.rs | 453 | — | stays: test |
+| crates/zygo-proxy/tests/window.rs | 452 | 5 | CC-5 |
+| crates/zygo-proxy/tests/window.rs | 453 | 5 | CC-5 |
 | crates/zygo-proxy/tests/window.rs | 454 | — | stays: test |
+| crates/zygo-proxy/tests/window.rs | 455 | 5 | CC-5 |
 | crates/zygo-proxy/tests/window.rs | 470 | — | stays: test |
 | crates/zygo-proxy/tests/window.rs | 561 | 1 | CC-13 |
 | crates/zygo-proxy/tests/window.rs | 584 | 1 | CC-13 |
@@ -1548,6 +1813,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-proxy/tests/window.rs | 708 | — | stays: test |
 | crates/zygo-proxy/tests/window.rs | 736 | 1 | CC-13 |
 | crates/zygo-proxy/tests/window.rs | 756 | — | stays: test |
+| crates/zygo-proxy/tests/window.rs | 758 | — | stays: test |
 | crates/zygo-proxy/tests/window.rs | 771 | 1 | CC-13 |
 | crates/zygo-proxy/tests/window.rs | 781 | 1 | CC-13 |
 | crates/zygo-proxy/tests/window.rs | 792 | 1 | CC-13 |
@@ -1593,21 +1859,26 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-redact/src/harness.rs | 12 | 9 | CC-4 |
 | crates/zygo-redact/src/harness.rs | 43 | — | stays: comment |
 | crates/zygo-redact/src/harness.rs | 45 | 9 | CC-4 |
+| crates/zygo-redact/src/harness.rs | 50 | 9 | CC-4 |
 | crates/zygo-redact/tests/content.rs | 17 | 1 | CC-13 |
 | crates/zygo-redact/tests/content.rs | 18 | 1 | CC-13 |
 | crates/zygo-redact/tests/content.rs | 19 | 1 | CC-13 |
 | crates/zygo-redact/tests/content.rs | 58 | — | stays: test |
 | crates/zygo-redact/tests/content.rs | 155 | — | stays: test |
 | crates/zygo-redact/tests/content.rs | 192 | — | stays: test |
+| crates/zygo-redact/tests/content.rs | 343 | — | stays: test |
 | crates/zygo-redact/tests/content.rs | 364 | — | stays: test |
 | crates/zygo-redact/tests/content.rs | 371 | — | stays: test |
 | crates/zygo-results/tests/results.rs | 142 | — | stays: test |
 | crates/zygo-results/tests/results.rs | 831 | 1 | CC-13 |
 | crates/zygo-usage/src/carry.rs | 36 | — | stays: comment |
 | crates/zygo-usage/src/savings.rs | 65 | — | stays: comment |
+| crates/zygo-usage/src/savings.rs | 76 | 9 | CC-4 |
 | crates/zygo-usage/src/savings.rs | 77 | 9 | CC-4 |
+| crates/zygo-usage/src/savings.rs | 78 | 9 | CC-4 |
 | crates/zygo-usage/tests/report_snapshot.rs | 23 | — | stays: test |
 | crates/zygo-usage/tests/savings.rs | 26 | — | stays: test |
+| crates/zygo-usage/tests/savings.rs | 132 | — | stays: test |
 | crates/zygo-usage/tests/savings.rs | 136 | 1 | CC-13 |
 | crates/zygo-usage/tests/store.rs | 26 | — | stays: test |
 | crates/zygo-usage/tests/store.rs | 174 | — | stays: test |
@@ -1617,6 +1888,13 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-work/src/guards.rs | 57 | — | stays: comment |
 | crates/zygo-work/src/guards.rs | 119 | 3 | CC-6 |
 | crates/zygo-work/src/guards.rs | 153 | 3 | CC-6 |
+| crates/zygo-work/src/guards.rs | 154 | 3 | CC-6 |
+| crates/zygo-work/src/guards.rs | 155 | 3 | CC-6 |
+| crates/zygo-work/src/guards.rs | 905 | — | stays: exception list (CC-15, K§6.1.4) |
+| crates/zygo-work/src/guards.rs | 910 | — | stays: exception list (CC-15, K§6.1.4) |
+| crates/zygo-work/src/guards.rs | 928 | — | stays: exception list (CC-15, K§6.1.4) |
+| crates/zygo-work/src/guards.rs | 1020 | — | stays: exception list (CC-15, K§6.1.4) |
+| crates/zygo-work/src/guards.rs | 1038 | — | stays: exception list (CC-15, K§6.1.4) |
 | crates/zygo-work/src/guards.rs | 1047 | — | stays: exception list (CC-15, K§6.1.4) |
 | crates/zygo-work/src/guards.rs | 1059 | — | stays: exception list (CC-15, K§6.1.4) |
 | crates/zygo-work/src/guards.rs | 1173 | — | stays: comment |
@@ -1633,6 +1911,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-work/src/hooks.rs | 514 | — | stays: comment |
 | crates/zygo-work/src/join.rs | 13 | — | stays: comment |
 | crates/zygo-work/src/join.rs | 16 | 9 | CC-4 |
+| crates/zygo-work/src/join.rs | 17 | 9 | CC-4 |
 | crates/zygo-work/src/log.rs | 71 | — | stays: comment |
 | crates/zygo-work/tests/collection.rs | 23 | — | stays: test |
 | crates/zygo-work/tests/collection.rs | 30 | — | stays: test |
@@ -1676,6 +1955,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-work/tests/collection.rs | 939 | — | stays: test |
 | crates/zygo-work/tests/collection.rs | 951 | — | stays: test |
 | crates/zygo-work/tests/collection.rs | 1061 | — | stays: test |
+| crates/zygo-work/tests/collection.rs | 1069 | — | stays: test |
 | crates/zygo-work/tests/collection.rs | 1071 | — | stays: test |
 | crates/zygo-work/tests/collection.rs | 1078 | — | stays: test |
 | crates/zygo-work/tests/collection.rs | 1095 | — | stays: test |
@@ -1698,14 +1978,23 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-work/tests/guards.rs | 594 | — | stays: test |
 | crates/zygo-work/tests/guards.rs | 597 | — | stays: test |
 | crates/zygo-work/tests/guards.rs | 652 | — | stays: test |
+| crates/zygo-work/tests/guards.rs | 735 | — | stays: test |
 | crates/zygo-work/tests/guards.rs | 845 | — | stays: test |
 | crates/zygo-work/tests/guards.rs | 846 | — | stays: test |
+| crates/zygo-work/tests/guards.rs | 1130 | — | stays: test |
 | crates/zygo-work/tests/guards.rs | 1131 | — | stays: test |
 | crates/zygo-work/tests/guards.rs | 1139 | — | stays: test |
 | crates/zygo-work/tests/guards.rs | 1140 | — | stays: test |
 | crates/zygo-work/tests/guards.rs | 1143 | — | stays: test |
+| crates/zygo-work/tests/guards.rs | 1150 | — | stays: test |
 | crates/zygo-work/tests/guards.rs | 1152 | — | stays: test |
+| crates/zygo-work/tests/guards.rs | 1154 | — | stays: test |
 | crates/zygo-work/tests/guards.rs | 1156 | — | stays: test |
+| crates/zygo-work/tests/guards.rs | 1157 | — | stays: test |
+| crates/zygo-work/tests/guards.rs | 1158 | — | stays: test |
+| crates/zygo-work/tests/guards.rs | 1159 | — | stays: test |
+| crates/zygo-work/tests/guards.rs | 1160 | — | stays: test |
+| crates/zygo-work/tests/guards.rs | 1163 | — | stays: test |
 | crates/zygo-work/tests/guards.rs | 1225 | — | stays: test |
 | crates/zygo-workspace/src/activity.rs | 22 | — | stays: comment |
 | crates/zygo-workspace/src/activity.rs | 29 | — | stays: comment |
@@ -1717,6 +2006,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-workspace/src/args.rs | 58 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 70 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 130 | — | stays: comment |
+| crates/zygo-workspace/src/args.rs | 188 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 358 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 359 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 391 | — | stays: comment |
@@ -1725,31 +2015,47 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-workspace/src/args.rs | 406 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 507 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 591 | — | stays: comment |
+| crates/zygo-workspace/src/args.rs | 593 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 597 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 598 | 7 | CC-7 |
+| crates/zygo-workspace/src/args.rs | 602 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 611 | — | stays: comment |
 | crates/zygo-workspace/src/args.rs | 613 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 615 | — | stays: comment |
+| crates/zygo-workspace/src/args.rs | 618 | — | stays: comment |
 | crates/zygo-workspace/src/args.rs | 620 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 626 | — | stays: comment |
+| crates/zygo-workspace/src/args.rs | 629 | 7 | CC-7 |
+| crates/zygo-workspace/src/args.rs | 630 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 650 | — | stays: comment |
 | crates/zygo-workspace/src/args.rs | 651 | — | stays: comment |
 | crates/zygo-workspace/src/args.rs | 654 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 655 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 659 | — | stays: comment |
 | crates/zygo-workspace/src/args.rs | 662 | — | stays: comment |
+| crates/zygo-workspace/src/args.rs | 665 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 676 | 7 | CC-7 |
 | crates/zygo-workspace/src/drain.rs | 108 | — | stays: comment |
 | crates/zygo-workspace/src/env.rs | 22 | 11 | CC-9 |
 | crates/zygo-workspace/src/env.rs | 23 | 11 | CC-9 |
 | crates/zygo-workspace/src/env.rs | 24 | 11 | CC-9 |
 | crates/zygo-workspace/src/env.rs | 25 | 11 | CC-9 |
+| crates/zygo-workspace/src/env.rs | 31 | 11 | CC-9 |
+| crates/zygo-workspace/src/env.rs | 32 | 11 | CC-9 |
+| crates/zygo-workspace/src/env.rs | 33 | 11 | CC-9 |
+| crates/zygo-workspace/src/env.rs | 34 | 11 | CC-9 |
+| crates/zygo-workspace/src/env.rs | 35 | 11 | CC-9 |
+| crates/zygo-workspace/src/env.rs | 36 | 11 | CC-9 |
+| crates/zygo-workspace/src/env.rs | 37 | 11 | CC-9 |
 | crates/zygo-workspace/src/env.rs | 38 | 11 | CC-9 |
 | crates/zygo-workspace/src/env.rs | 39 | 11 | CC-9 |
+| crates/zygo-workspace/src/env.rs | 40 | 11 | CC-9 |
+| crates/zygo-workspace/src/env.rs | 41 | 11 | CC-9 |
 | crates/zygo-workspace/src/env.rs | 42 | 11 | CC-9 |
 | crates/zygo-workspace/src/env.rs | 43 | 11 | CC-9 |
 | crates/zygo-workspace/src/loadout.rs | 12 | 8 | CC-8 |
 | crates/zygo-workspace/src/loadout.rs | 98 | 8 | CC-8 |
+| crates/zygo-workspace/src/loadout.rs | 101 | 8 | CC-8 |
 | crates/zygo-workspace/src/loadout.rs | 111 | — | stays: comment |
 | crates/zygo-workspace/src/loadout.rs | 113 | 8 | CC-8 |
 | crates/zygo-workspace/src/snapshot.rs | 263 | 8 | CC-8 |
@@ -1763,6 +2069,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-workspace/src/up.rs | 933 | 8 | CC-8 |
 | crates/zygo-workspace/src/up.rs | 1013 | — | stays: comment |
 | crates/zygo-workspace/src/up.rs | 1014 | 8 | CC-8 |
+| crates/zygo-workspace/src/up.rs | 1015 | 8 | CC-8 |
 | crates/zygo-workspace/src/up.rs | 1029 | — | stays: comment |
 | crates/zygo-workspace/src/up.rs | 1039 | 8 | CC-8 |
 | crates/zygo-workspace/tests/activity.rs | 29 | — | stays: test |
@@ -1803,19 +2110,25 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-workspace/tests/admin.rs | 2029 | 1 | CC-13 |
 | crates/zygo-workspace/tests/admin.rs | 2058 | 1 | CC-13 |
 | crates/zygo-workspace/tests/admin.rs | 2353 | 1 | CC-13 |
+| crates/zygo-workspace/tests/args.rs | 3 | 7 | CC-7 |
 | crates/zygo-workspace/tests/args.rs | 12 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 15 | 1 | CC-13 |
+| crates/zygo-workspace/tests/args.rs | 23 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 37 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 43 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 45 | 1 | CC-13 |
+| crates/zygo-workspace/tests/args.rs | 49 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 58 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 64 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 70 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 71 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 73 | — | stays: comment |
+| crates/zygo-workspace/tests/args.rs | 75 | — | stays: comment |
 | crates/zygo-workspace/tests/args.rs | 82 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 91 | — | stays: comment |
 | crates/zygo-workspace/tests/args.rs | 93 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 101 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 103 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 106 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 108 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 109 | 1 | CC-13 |
@@ -1841,14 +2154,26 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-workspace/tests/args.rs | 200 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 202 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 212 | 1 | CC-13 |
+| crates/zygo-workspace/tests/args.rs | 233 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 234 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 236 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 241 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 255 | — | stays: comment |
 | crates/zygo-workspace/tests/args.rs | 258 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 261 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 265 | — | stays: comment |
+| crates/zygo-workspace/tests/args.rs | 268 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 269 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 343 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 344 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 353 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 370 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 376 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 377 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 384 | 1 | CC-13 |
+| crates/zygo-workspace/tests/args.rs | 407 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 409 | 1 | CC-13 |
+| crates/zygo-workspace/tests/args.rs | 410 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 412 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 414 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 423 | 1 | CC-13 |
@@ -1924,16 +2249,27 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-workspace/tests/args.rs | 662 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 663 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 670 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 671 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 679 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 686 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 690 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 692 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 696 | 7 | CC-7 |
+| crates/zygo-workspace/tests/args.rs | 697 | 7 | CC-7 |
+| crates/zygo-workspace/tests/args.rs | 703 | 7 | CC-7 |
+| crates/zygo-workspace/tests/args.rs | 704 | 7 | CC-7 |
+| crates/zygo-workspace/tests/args.rs | 708 | 7 | CC-7 |
+| crates/zygo-workspace/tests/args.rs | 709 | 7 | CC-7 |
+| crates/zygo-workspace/tests/args.rs | 745 | 7 | CC-7 |
 | crates/zygo-workspace/tests/args.rs | 751 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 752 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 754 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 756 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 765 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 767 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 768 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 771 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 772 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 779 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 785 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 789 | 1 | CC-13 |
@@ -1942,29 +2278,38 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-workspace/tests/args.rs | 797 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 799 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 803 | — | stays: test |
+| crates/zygo-workspace/tests/args.rs | 804 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 816 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 822 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 824 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 825 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 826 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 827 | 1 | CC-13 |
+| crates/zygo-workspace/tests/args.rs | 831 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 835 | 1 | CC-13 |
+| crates/zygo-workspace/tests/args.rs | 836 | 7 | CC-7 |
 | crates/zygo-workspace/tests/args.rs | 842 | 1 | CC-13 |
+| crates/zygo-workspace/tests/args.rs | 843 | 7 | CC-7 |
+| crates/zygo-workspace/tests/args.rs | 848 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 850 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 853 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 857 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 858 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 860 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 863 | 1 | CC-13 |
+| crates/zygo-workspace/tests/args.rs | 867 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 870 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 872 | 1 | CC-13 |
+| crates/zygo-workspace/tests/args.rs | 880 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 888 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 891 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 892 | 1 | CC-13 |
+| crates/zygo-workspace/tests/args.rs | 896 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 900 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 915 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 917 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 923 | 1 | CC-13 |
+| crates/zygo-workspace/tests/args.rs | 936 | — | stays: test |
 | crates/zygo-workspace/tests/args.rs | 939 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 941 | 1 | CC-13 |
 | crates/zygo-workspace/tests/args.rs | 943 | 1 | CC-13 |
@@ -1972,18 +2317,21 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-workspace/tests/down.rs | 2496 | 1 | CC-13 |
 | crates/zygo-workspace/tests/down.rs | 2528 | 1 | CC-13 |
 | crates/zygo-workspace/tests/down.rs | 2537 | 1 | CC-13 |
+| crates/zygo-workspace/tests/env.rs | 6 | — | stays: test |
 | crates/zygo-workspace/tests/env.rs | 16 | — | stays: test |
+| crates/zygo-workspace/tests/env.rs | 19 | — | stays: test |
 | crates/zygo-workspace/tests/env.rs | 20 | — | stays: test |
 | crates/zygo-workspace/tests/env.rs | 21 | — | stays: test |
 | crates/zygo-workspace/tests/env.rs | 29 | — | stays: test |
-| crates/zygo-workspace/tests/loadout.rs | 4 | — | stays: test |
+| crates/zygo-workspace/tests/loadout.rs | 4 | 8 | CC-8 |
+| crates/zygo-workspace/tests/loadout.rs | 31 | — | stays: test |
 | crates/zygo-workspace/tests/loadout.rs | 33 | — | stays: test |
 | crates/zygo-workspace/tests/loadout.rs | 36 | 1 | CC-13 |
 | crates/zygo-workspace/tests/loadout.rs | 49 | — | stays: test |
 | crates/zygo-workspace/tests/loadout.rs | 53 | — | stays: test |
 | crates/zygo-workspace/tests/loadout.rs | 57 | 1 | CC-13 |
 | crates/zygo-workspace/tests/loadout.rs | 59 | 1 | CC-13 |
-| crates/zygo-workspace/tests/loadout.rs | 63 | — | stays: test |
+| crates/zygo-workspace/tests/loadout.rs | 63 | 8 | CC-8 |
 | crates/zygo-workspace/tests/loadout.rs | 71 | — | stays: test |
 | crates/zygo-workspace/tests/loadout.rs | 75 | 1 | CC-13 |
 | crates/zygo-workspace/tests/loadout.rs | 81 | — | stays: test |
@@ -2105,6 +2453,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-workspace/tests/up.rs | 1381 | — | stays: test |
 | crates/zygo-workspace/tests/up.rs | 1382 | — | stays: test |
 | crates/zygo-workspace/tests/up.rs | 1388 | 1 | CC-13 |
+| crates/zygo-workspace/tests/up.rs | 1409 | — | stays: test |
 | crates/zygo-workspace/tests/up.rs | 1663 | 1 | CC-13 |
 | crates/zygo-workspace/tests/up.rs | 1671 | 1 | CC-13 |
 | crates/zygo-workspace/tests/up.rs | 1751 | 8 | CC-8 |
@@ -2155,50 +2504,63 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/src/cmd/compact.rs | 61 | 10 | CC-10 |
 | crates/zygo/src/cmd/compact.rs | 62 | 10 | CC-10 |
 | crates/zygo/src/cmd/compact.rs | 173 | 1 | CC-13 |
+| crates/zygo/src/cmd/compact.rs | 267 | — | stays: test |
 | crates/zygo/src/cmd/compact.rs | 269 | 1 | CC-13 |
 | crates/zygo/src/cmd/compact.rs | 270 | — | stays: test |
 | crates/zygo/src/cmd/config.rs | 122 | — | stays: comment |
 | crates/zygo/src/cmd/config.rs | 131 | 1 | CC-10 |
 | crates/zygo/src/cmd/config.rs | 132 | 1 | CC-10 |
+| crates/zygo/src/cmd/doctor.rs | 49 | 6 | CC-9 |
 | crates/zygo/src/cmd/doctor.rs | 200 | 1 | CC-10 |
 | crates/zygo/src/cmd/doctor.rs | 352 | 8 | CC-10 |
-| crates/zygo/src/cmd/doctor.rs | 459 | 1 | CC-10 |
-| crates/zygo/src/cmd/doctor.rs | 460 | 1 | CC-10 |
+| crates/zygo/src/cmd/doctor.rs | 391 | 6 | CC-9 |
+| crates/zygo/src/cmd/doctor.rs | 459 | 6 | CC-9 |
+| crates/zygo/src/cmd/doctor.rs | 460 | 6 | CC-9 |
+| crates/zygo/src/cmd/doctor.rs | 467 | 6 | CC-9 |
 | crates/zygo/src/cmd/hook.rs | 106 | 1 | CC-10 |
+| crates/zygo/src/cmd/keys.rs | 372 | — | stays: test |
 | crates/zygo/src/cmd/loadout.rs | 330 | 1 | CC-10 |
 | crates/zygo/src/cmd/loadout.rs | 493 | — | stays: comment |
 | crates/zygo/src/cmd/loadout.rs | 590 | — | stays: test |
 | crates/zygo/src/cmd/loadout.rs | 593 | — | stays: comment |
 | crates/zygo/src/cmd/loadout.rs | 624 | 1 | CC-13 |
 | crates/zygo/src/cmd/loadout.rs | 648 | 1 | CC-13 |
+| crates/zygo/src/cmd/loadout.rs | 683 | — | stays: test |
 | crates/zygo/src/cmd/loadout.rs | 733 | 1 | CC-13 |
+| crates/zygo/src/cmd/loadout.rs | 745 | — | stays: test |
+| crates/zygo/src/cmd/loadout.rs | 749 | — | stays: test |
 | crates/zygo/src/cmd/loadout.rs | 851 | 1 | CC-13 |
 | crates/zygo/src/cmd/loadout.rs | 986 | — | stays: test |
+| crates/zygo/src/cmd/loadout.rs | 995 | — | stays: test |
 | crates/zygo/src/cmd/mail.rs | 893 | 1 | CC-13 |
+| crates/zygo/src/cmd/marketplace.rs | 251 | — | stays: test |
+| crates/zygo/src/cmd/marketplace.rs | 253 | — | stays: test |
+| crates/zygo/src/cmd/marketplace.rs | 594 | — | stays: test |
 | crates/zygo/src/cmd/mcp.rs | 6 | 1 | CC-10 |
 | crates/zygo/src/cmd/member.rs | 17 | 1 | CC-9 |
 | crates/zygo/src/cmd/member.rs | 19 | 1 | CC-9 |
-| crates/zygo/src/cmd/member.rs | 95 | 7 | CC-10 |
+| crates/zygo/src/cmd/member.rs | 95 | 8 | CC-10 |
 | crates/zygo/src/cmd/member.rs | 107 | 8 | CC-10 |
 | crates/zygo/src/cmd/member.rs | 108 | 8 | CC-10 |
 | crates/zygo/src/cmd/member.rs | 234 | — | stays: comment |
-| crates/zygo/src/cmd/member.rs | 235 | — | stays: comment |
+| crates/zygo/src/cmd/member.rs | 235 | 7 | CC-9 |
 | crates/zygo/src/cmd/member.rs | 236 | 7 | CC-10 |
 | crates/zygo/src/cmd/member.rs | 237 | — | stays: comment |
 | crates/zygo/src/cmd/member.rs | 390 | — | stays: comment |
 | crates/zygo/src/cmd/member.rs | 469 | — | stays: comment |
-| crates/zygo/src/cmd/member.rs | 470 | — | stays: comment |
+| crates/zygo/src/cmd/member.rs | 470 | 7 | CC-9 |
 | crates/zygo/src/cmd/member.rs | 570 | — | stays: comment |
 | crates/zygo/src/cmd/member.rs | 573 | 8 | CC-10 |
 | crates/zygo/src/cmd/member.rs | 581 | 1 | CC-10 |
 | crates/zygo/src/cmd/member.rs | 582 | 1 | CC-10 |
-| crates/zygo/src/cmd/member.rs | 631 | — | stays: comment |
+| crates/zygo/src/cmd/member.rs | 631 | 1 | CC-10 |
 | crates/zygo/src/cmd/member.rs | 635 | — | stays: comment |
 | crates/zygo/src/cmd/member.rs | 636 | — | stays: comment |
-| crates/zygo/src/cmd/member.rs | 645 | 8 | CC-10 |
-| crates/zygo/src/cmd/member.rs | 662 | 1 | CC-9 |
-| crates/zygo/src/cmd/member.rs | 664 | 8 | CC-10 |
-| crates/zygo/src/cmd/member.rs | 678 | 1 | CC-9 |
+| crates/zygo/src/cmd/member.rs | 645 | 8 | CC-9 |
+| crates/zygo/src/cmd/member.rs | 662 | 8 | CC-9 |
+| crates/zygo/src/cmd/member.rs | 664 | 8 | CC-9 |
+| crates/zygo/src/cmd/member.rs | 665 | 8 | CC-9 |
+| crates/zygo/src/cmd/member.rs | 678 | 8 | CC-9 |
 | crates/zygo/src/cmd/member.rs | 691 | 8 | CC-10 |
 | crates/zygo/src/cmd/member.rs | 692 | 8 | CC-10 |
 | crates/zygo/src/cmd/member.rs | 693 | 8 | CC-10 |
@@ -2311,6 +2673,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/src/cmd/mod.rs | 29 | 1 | CC-10 |
 | crates/zygo/src/cmd/mod.rs | 205 | 1 | CC-10 |
 | crates/zygo/src/cmd/mod.rs | 238 | — | stays: comment |
+| crates/zygo/src/cmd/mod.rs | 253 | 1 | CC-10 |
 | crates/zygo/src/cmd/mod.rs | 279 | 1 | CC-10 |
 | crates/zygo/src/cmd/mod.rs | 280 | — | stays: comment |
 | crates/zygo/src/cmd/mod.rs | 281 | 1 | CC-10 |
@@ -2321,29 +2684,41 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/src/cmd/mod.rs | 707 | 1 | CC-10 |
 | crates/zygo/src/cmd/mod.rs | 709 | 1 | CC-10 |
 | crates/zygo/src/cmd/opencode.rs | 5 | 1 | CC-9 |
+| crates/zygo/src/cmd/opencode.rs | 9 | 1 | CC-10 |
 | crates/zygo/src/cmd/opencode.rs | 11 | — | stays: comment |
+| crates/zygo/src/cmd/opencode.rs | 12 | 1 | CC-10 |
 | crates/zygo/src/cmd/opencode.rs | 21 | 1 | CC-9 |
+| crates/zygo/src/cmd/opencode.rs | 29 | 1 | CC-10 |
 | crates/zygo/src/cmd/opencode.rs | 34 | 1 | CC-10 |
+| crates/zygo/src/cmd/opencode.rs | 48 | 1 | CC-10 |
 | crates/zygo/src/cmd/opencode.rs | 55 | 1 | CC-10 |
+| crates/zygo/src/cmd/opencode.rs | 65 | 1 | CC-10 |
+| crates/zygo/src/cmd/opencode.rs | 66 | 1 | CC-10 |
+| crates/zygo/src/cmd/opencode.rs | 77 | 1 | CC-10 |
 | crates/zygo/src/cmd/opencode.rs | 108 | — | stays: test |
 | crates/zygo/src/cmd/opencode.rs | 115 | — | stays: test |
 | crates/zygo/src/cmd/opencode.rs | 123 | 1 | CC-13 |
+| crates/zygo/src/cmd/plugins.rs | 220 | — | stays: test |
+| crates/zygo/src/cmd/plugins.rs | 222 | — | stays: test |
 | crates/zygo/src/cmd/statusline.rs | 5 | — | stays: comment |
 | crates/zygo/src/cmd/verbs.rs | 451 | 1 | CC-13 |
 | crates/zygo/src/cmd/workspace_approve.rs | 180 | 8 | CC-8 |
 | crates/zygo/src/cmd/ws.rs | 15 | 1 | CC-9 |
 | crates/zygo/src/cmd/ws.rs | 18 | 1 | CC-9 |
-| crates/zygo/src/cmd/ws.rs | 406 | 8 | CC-10 |
-| crates/zygo/src/cmd/ws.rs | 407 | 1 | CC-9 |
-| crates/zygo/src/cmd/ws.rs | 413 | 1 | CC-9 |
-| crates/zygo/src/cmd/ws.rs | 417 | 8 | CC-10 |
-| crates/zygo/src/cmd/ws.rs | 418 | 1 | CC-9 |
+| crates/zygo/src/cmd/ws.rs | 30 | 1 | CC-10 |
+| crates/zygo/src/cmd/ws.rs | 406 | 8 | CC-9 |
+| crates/zygo/src/cmd/ws.rs | 407 | 8 | CC-9 |
+| crates/zygo/src/cmd/ws.rs | 413 | 8 | CC-9 |
+| crates/zygo/src/cmd/ws.rs | 417 | 8 | CC-9 |
+| crates/zygo/src/cmd/ws.rs | 418 | 8 | CC-9 |
 | crates/zygo/src/cmd/ws.rs | 471 | 8 | CC-10 |
 | crates/zygo/src/cmd/ws.rs | 479 | — | stays: comment |
-| crates/zygo/src/cmd/ws.rs | 608 | — | stays: comment |
-| crates/zygo/src/cmd/ws.rs | 612 | 10 | CC-10 |
-| crates/zygo/src/cmd/ws.rs | 613 | 10 | CC-10 |
+| crates/zygo/src/cmd/ws.rs | 608 | 1 | CC-10 |
+| crates/zygo/src/cmd/ws.rs | 612 | 1 | CC-10 |
+| crates/zygo/src/cmd/ws.rs | 613 | 1 | CC-10 |
 | crates/zygo/src/cmd/ws.rs | 618 | — | stays: comment |
+| crates/zygo/src/cmd/ws.rs | 635 | 1 | CC-10 |
+| crates/zygo/src/cmd/ws.rs | 637 | 1 | CC-10 |
 | crates/zygo/src/cmd/ws.rs | 648 | — | stays: comment |
 | crates/zygo/src/cmd/ws.rs | 651 | 8 | CC-10 |
 | crates/zygo/src/cmd/ws.rs | 667 | — | stays: comment |
@@ -2354,6 +2729,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/src/cmd/ws.rs | 730 | 1 | CC-10 |
 | crates/zygo/src/cmd/ws.rs | 737 | 1 | CC-13 |
 | crates/zygo/src/cmd/ws.rs | 751 | 1 | CC-13 |
+| crates/zygo/src/cmd/ws.rs | 766 | 1 | CC-10 |
 | crates/zygo/src/cmd/ws.rs | 776 | — | stays: test |
 | crates/zygo/src/cmd/ws.rs | 778 | — | stays: test |
 | crates/zygo/src/cmd/ws.rs | 780 | — | stays: test |
@@ -2367,6 +2743,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/src/cmd/ws.rs | 820 | — | stays: test |
 | crates/zygo/src/cmd/ws.rs | 821 | — | stays: test |
 | crates/zygo/src/cmd/ws.rs | 875 | 1 | CC-13 |
+| crates/zygo/src/cmd/ws.rs | 881 | 1 | CC-10 |
 | crates/zygo/src/cmd/ws.rs | 882 | 1 | CC-10 |
 | crates/zygo/src/cmd/ws.rs | 883 | 1 | CC-10 |
 | crates/zygo/tests/cli_surface.rs | 33 | — | stays: test |
@@ -2381,6 +2758,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/cli_surface.rs | 406 | — | stays: test |
 | crates/zygo/tests/cli_surface.rs | 411 | — | stays: test |
 | crates/zygo/tests/cli_surface.rs | 417 | — | stays: comment |
+| crates/zygo/tests/cli_surface.rs | 420 | — | stays: test |
 | crates/zygo/tests/cli_surface.rs | 423 | 1 | CC-13 |
 | crates/zygo/tests/cli_surface.rs | 424 | 1 | CC-13 |
 | crates/zygo/tests/cli_surface.rs | 433 | — | stays: test |
@@ -2388,27 +2766,33 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/cli_surface.rs | 471 | 1 | CC-13 |
 | crates/zygo/tests/cli_surface.rs | 485 | — | stays: test |
 | crates/zygo/tests/cli_surface.rs | 487 | 1 | CC-13 |
+| crates/zygo/tests/cli_surface.rs | 515 | — | stays: comment |
+| crates/zygo/tests/cli_surface.rs | 519 | — | stays: test |
 | crates/zygo/tests/cli_surface.rs | 523 | 1 | CC-13 |
 | crates/zygo/tests/cli_surface.rs | 533 | 1 | CC-13 |
 | crates/zygo/tests/cli_surface.rs | 554 | — | stays: test |
 | crates/zygo/tests/cli_surface.rs | 620 | 1 | CC-13 |
 | crates/zygo/tests/cli_surface.rs | 626 | — | stays: test |
+| crates/zygo/tests/cli_surface.rs | 642 | — | stays: test |
 | crates/zygo/tests/cli_surface.rs | 645 | 1 | CC-13 |
 | crates/zygo/tests/cli_surface.rs | 646 | 1 | CC-13 |
 | crates/zygo/tests/cli_surface.rs | 649 | — | stays: test |
 | crates/zygo/tests/cli_surface.rs | 659 | — | stays: comment |
 | crates/zygo/tests/cli_surface.rs | 666 | 1 | CC-13 |
 | crates/zygo/tests/cli_surface.rs | 670 | — | stays: test |
+| crates/zygo/tests/cli_surface.rs | 686 | — | stays: test |
 | crates/zygo/tests/cli_surface.rs | 693 | — | stays: test |
 | crates/zygo/tests/cli_surface.rs | 740 | — | stays: test |
 | crates/zygo/tests/common/e2e.rs | 30 | — | stays: comment |
 | crates/zygo/tests/common/e2e.rs | 177 | — | stays: comment |
 | crates/zygo/tests/common/e2e.rs | 185 | 1 | CC-13 |
 | crates/zygo/tests/common/e2e.rs | 186 | 1 | CC-13 |
+| crates/zygo/tests/common/e2e.rs | 211 | — | stays: test |
 | crates/zygo/tests/common/e2e.rs | 212 | 1 | CC-13 |
 | crates/zygo/tests/common/e2e.rs | 274 | — | stays: comment |
 | crates/zygo/tests/common/e2e.rs | 280 | — | stays: test |
 | crates/zygo/tests/common/e2e.rs | 608 | — | stays: comment |
+| crates/zygo/tests/common/e2e.rs | 610 | — | stays: test |
 | crates/zygo/tests/common/e2e.rs | 611 | 1 | CC-13 |
 | crates/zygo/tests/common/e2e.rs | 614 | — | stays: comment |
 | crates/zygo/tests/common/e2e.rs | 616 | — | stays: test |
@@ -2458,6 +2842,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/definition_hooks.rs | 734 | — | stays: comment |
 | crates/zygo/tests/definition_hooks.rs | 739 | — | stays: comment |
 | crates/zygo/tests/definition_hooks.rs | 741 | — | stays: test |
+| crates/zygo/tests/definition_hooks.rs | 752 | 2 | CC-9 |
 | crates/zygo/tests/definition_hooks.rs | 765 | — | stays: test |
 | crates/zygo/tests/definition_hooks.rs | 766 | — | stays: test |
 | crates/zygo/tests/definition_hooks.rs | 769 | — | stays: test |
@@ -2481,6 +2866,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/definition_hooks.rs | 796 | — | stays: test |
 | crates/zygo/tests/definition_hooks.rs | 810 | — | stays: test |
 | crates/zygo/tests/definition_hooks.rs | 833 | — | stays: test |
+| crates/zygo/tests/definition_hooks.rs | 844 | 2 | CC-9 |
 | crates/zygo/tests/definition_hooks.rs | 848 | — | stays: test |
 | crates/zygo/tests/definition_hooks.rs | 849 | — | stays: test |
 | crates/zygo/tests/definition_hooks.rs | 850 | — | stays: test |
@@ -2490,10 +2876,13 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/definition_hooks.rs | 854 | — | stays: test |
 | crates/zygo/tests/definition_hooks.rs | 863 | — | stays: comment |
 | crates/zygo/tests/definition_hooks.rs | 1078 | 1 | CC-13 |
+| crates/zygo/tests/definition_hooks.rs | 1103 | — | stays: test |
 | crates/zygo/tests/definition_hooks.rs | 1105 | 1 | CC-13 |
 | crates/zygo/tests/definition_hooks.rs | 1132 | — | stays: test |
+| crates/zygo/tests/definition_hooks.rs | 1143 | — | stays: test |
 | crates/zygo/tests/definition_hooks.rs | 1145 | 1 | CC-13 |
 | crates/zygo/tests/definition_hooks.rs | 1154 | — | stays: test |
+| crates/zygo/tests/definition_hooks.rs | 1158 | — | stays: test |
 | crates/zygo/tests/definition_hooks.rs | 1160 | 1 | CC-13 |
 | crates/zygo/tests/definition_hooks.rs | 1202 | — | stays: test |
 | crates/zygo/tests/definition_hooks.rs | 1203 | 1 | CC-13 |
@@ -2510,14 +2899,20 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/guard_hook.rs | 192 | — | stays: test |
 | crates/zygo/tests/guard_hook.rs | 212 | — | stays: test |
 | crates/zygo/tests/guard_hook.rs | 239 | — | stays: test |
+| crates/zygo/tests/guard_hook.rs | 367 | — | stays: test |
+| crates/zygo/tests/guard_hook.rs | 386 | — | stays: test |
+| crates/zygo/tests/guard_hook.rs | 398 | — | stays: test |
 | crates/zygo/tests/guard_hook.rs | 443 | — | stays: test |
 | crates/zygo/tests/guard_hook.rs | 465 | — | stays: test |
 | crates/zygo/tests/guard_hook.rs | 473 | — | stays: test |
 | crates/zygo/tests/guard_hook.rs | 493 | — | stays: test |
+| crates/zygo/tests/guard_hook.rs | 498 | — | stays: test |
+| crates/zygo/tests/guard_hook.rs | 502 | — | stays: test |
 | crates/zygo/tests/guard_hook.rs | 506 | — | stays: test |
 | crates/zygo/tests/guard_hook.rs | 511 | — | stays: test |
 | crates/zygo/tests/hook_session.rs | 12 | — | stays: test |
 | crates/zygo/tests/hook_session.rs | 21 | 1 | CC-13 |
+| crates/zygo/tests/hook_session.rs | 61 | — | stays: test |
 | crates/zygo/tests/hook_session.rs | 73 | — | stays: test |
 | crates/zygo/tests/hook_session.rs | 74 | — | stays: test |
 | crates/zygo/tests/hook_session.rs | 121 | — | stays: test |
@@ -2525,6 +2920,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/hook_trim.rs | 24 | — | stays: test |
 | crates/zygo/tests/hook_trim.rs | 25 | — | stays: test |
 | crates/zygo/tests/hook_trim.rs | 40 | — | stays: test |
+| crates/zygo/tests/hook_trim.rs | 41 | — | stays: test |
 | crates/zygo/tests/loadout_secrets.rs | 14 | — | stays: comment |
 | crates/zygo/tests/loadout_secrets.rs | 100 | — | stays: test |
 | crates/zygo/tests/loadout_secrets.rs | 103 | — | stays: test |
@@ -2534,6 +2930,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/loadout_secrets.rs | 125 | — | stays: test |
 | crates/zygo/tests/loadout_secrets.rs | 130 | — | stays: test |
 | crates/zygo/tests/loadout_secrets.rs | 139 | — | stays: test |
+| crates/zygo/tests/loadout_secrets.rs | 141 | — | stays: test |
 | crates/zygo/tests/loadout_secrets.rs | 149 | — | stays: test |
 | crates/zygo/tests/loadout_secrets.rs | 152 | — | stays: test |
 | crates/zygo/tests/loadout_secrets.rs | 160 | — | stays: comment |
@@ -2561,28 +2958,42 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/mail_sync_no_content.rs | 2537 | — | stays: test |
 | crates/zygo/tests/mail_sync_no_content.rs | 2571 | — | stays: test |
 | crates/zygo/tests/mail_sync_no_content.rs | 2584 | — | stays: comment |
+| crates/zygo/tests/mail_sync_no_content.rs | 2590 | — | stays: test |
 | crates/zygo/tests/mcp_stdio.rs | 21 | 1 | CC-13 |
+| crates/zygo/tests/mcp_stdio.rs | 44 | — | stays: test |
 | crates/zygo/tests/mcp_stdio.rs | 45 | — | stays: test |
 | crates/zygo/tests/mcp_stdio.rs | 56 | — | stays: test |
 | crates/zygo/tests/mcp_stdio.rs | 60 | — | stays: test |
 | crates/zygo/tests/mcp_stdio.rs | 63 | — | stays: test |
 | crates/zygo/tests/mcp_stdio.rs | 69 | — | stays: test |
 | crates/zygo/tests/member_fixture/mod.rs | 41 | 1 | CC-13 |
+| crates/zygo/tests/results_sweep.rs | 73 | — | stays: test |
 | crates/zygo/tests/results_sweep.rs | 78 | — | stays: test |
 | crates/zygo/tests/results_sweep.rs | 109 | — | stays: test |
 | crates/zygo/tests/session_verbs.rs | 56 | 1 | CC-13 |
 | crates/zygo/tests/session_verbs.rs | 132 | — | stays: test |
+| crates/zygo/tests/session_verbs.rs | 164 | — | stays: test |
+| crates/zygo/tests/session_verbs.rs | 196 | — | stays: test |
+| crates/zygo/tests/session_verbs.rs | 202 | — | stays: test |
+| crates/zygo/tests/session_verbs.rs | 294 | — | stays: test |
 | crates/zygo/tests/slash_parity.rs | 54 | 1 | CC-13 |
 | crates/zygo/tests/slash_parity.rs | 118 | — | stays: test |
 | crates/zygo/tests/slash_parity.rs | 128 | — | stays: test |
+| crates/zygo/tests/slow_slash.rs | 54 | — | stays: test |
+| crates/zygo/tests/slow_slash.rs | 56 | — | stays: test |
 | crates/zygo/tests/statusline_cmd.rs | 4 | — | stays: comment |
 | crates/zygo/tests/statusline_cmd.rs | 49 | — | stays: test |
 | crates/zygo/tests/statusline_cmd.rs | 50 | — | stays: test |
 | crates/zygo/tests/statusline_cmd.rs | 87 | — | stays: test |
 | crates/zygo/tests/statusline_cmd.rs | 314 | — | stays: comment |
+| crates/zygo/tests/statusline_cmd.rs | 316 | — | stays: test |
+| crates/zygo/tests/update.rs | 797 | — | stays: test |
 | crates/zygo/tests/update.rs | 798 | — | stays: test |
+| crates/zygo/tests/update.rs | 802 | — | stays: test |
 | crates/zygo/tests/update.rs | 803 | — | stays: test |
+| crates/zygo/tests/update.rs | 808 | — | stays: test |
 | crates/zygo/tests/update.rs | 809 | — | stays: test |
+| crates/zygo/tests/update.rs | 814 | — | stays: test |
 | crates/zygo/tests/update.rs | 815 | — | stays: test |
 | crates/zygo/tests/update.rs | 896 | 1 | CC-13 |
 | crates/zygo/tests/update.rs | 914 | 1 | CC-13 |
@@ -2590,6 +3001,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/update.rs | 1086 | 8 | CC-8 |
 | crates/zygo/tests/update.rs | 1090 | 1 | CC-13 |
 | crates/zygo/tests/usage_doctor.rs | 57 | — | stays: test |
+| crates/zygo/tests/usage_doctor.rs | 406 | 6 | CC-9 |
 | crates/zygo/tests/usage_doctor.rs | 415 | 1 | CC-13 |
 | crates/zygo/tests/usage_doctor.rs | 418 | — | stays: test |
 | crates/zygo/tests/usage_doctor.rs | 419 | — | stays: test |
@@ -2609,7 +3021,22 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/usage_doctor.rs | 464 | — | stays: test |
 | crates/zygo/tests/usage_doctor.rs | 465 | — | stays: test |
 | crates/zygo/tests/usage_doctor.rs | 466 | — | stays: test |
+| crates/zygo/tests/usage_doctor.rs | 648 | 6 | CC-9 |
+| crates/zygo/tests/usage_doctor.rs | 683 | — | stays: test |
+| crates/zygo/tests/usage_doctor.rs | 685 | — | stays: test |
+| crates/zygo/tests/usage_doctor.rs | 705 | 6 | CC-9 |
+| crates/zygo/tests/usage_doctor.rs | 708 | — | stays: test |
 | crates/zygo/tests/usage_doctor.rs | 709 | — | stays: test |
+| crates/zygo/tests/usage_doctor.rs | 710 | — | stays: test |
+| crates/zygo/tests/usage_doctor.rs | 776 | — | stays: test |
+| crates/zygo/tests/usage_doctor.rs | 790 | — | stays: test |
+| crates/zygo/tests/usage_doctor.rs | 794 | — | stays: test |
+| crates/zygo/tests/usage_doctor.rs | 801 | — | stays: test |
+| crates/zygo/tests/usage_doctor.rs | 807 | 6 | CC-9 |
+| crates/zygo/tests/usage_doctor.rs | 836 | 6 | CC-9 |
+| crates/zygo/tests/usage_doctor.rs | 857 | 6 | CC-9 |
+| crates/zygo/tests/usage_doctor.rs | 867 | 6 | CC-9 |
+| crates/zygo/tests/usage_doctor.rs | 934 | 6 | CC-9 |
 | crates/zygo/tests/usage_doctor.rs | 963 | — | stays: test |
 | crates/zygo/tests/usage_doctor.rs | 998 | — | stays: test |
 | crates/zygo/tests/usage_doctor.rs | 1023 | — | stays: test |
@@ -2623,6 +3050,8 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/work_hook.rs | 90 | — | stays: test |
 | crates/zygo/tests/work_hook.rs | 103 | — | stays: test |
 | crates/zygo/tests/work_hook.rs | 104 | — | stays: test |
+| crates/zygo/tests/work_hook.rs | 109 | — | stays: test |
+| crates/zygo/tests/work_hook.rs | 110 | — | stays: test |
 | crates/zygo/tests/workspace_approve.rs | 258 | — | stays: test |
 | crates/zygo/tests/workspace_approve.rs | 565 | — | stays: test |
 | crates/zygo/tests/workspace_approve.rs | 566 | — | stays: test |
@@ -2631,9 +3060,11 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/workspace_cli.rs | 28 | — | stays: comment |
 | crates/zygo/tests/workspace_cli.rs | 44 | — | stays: test |
 | crates/zygo/tests/workspace_cli.rs | 300 | — | stays: test |
+| crates/zygo/tests/workspace_cli.rs | 355 | — | stays: test |
 | crates/zygo/tests/workspace_cli.rs | 364 | 1 | CC-13 |
 | crates/zygo/tests/workspace_cli.rs | 369 | — | stays: test |
 | crates/zygo/tests/workspace_definition.rs | 166 | 1 | CC-13 |
+| crates/zygo/tests/workspace_definition.rs | 182 | — | stays: test |
 | crates/zygo/tests/workspace_definition.rs | 523 | 1 | CC-13 |
 | crates/zygo/tests/workspace_definition.rs | 585 | 8 | CC-8 |
 | crates/zygo/tests/workspace_definition.rs | 594 | 1 | CC-13 |
@@ -2643,35 +3074,55 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/workspace_definition.rs | 710 | 1 | CC-13 |
 | crates/zygo/tests/workspace_definition.rs | 726 | 1 | CC-13 |
 | crates/zygo/tests/workspace_definition.rs | 730 | 1 | CC-13 |
+| crates/zygo/tests/workspace_definition.rs | 748 | — | stays: test |
+| crates/zygo/tests/workspace_definition.rs | 781 | — | stays: test |
 | crates/zygo/tests/workspace_definition.rs | 788 | — | stays: test |
+| crates/zygo/tests/workspace_definition.rs | 826 | — | stays: test |
 | crates/zygo/tests/workspace_definition.rs | 842 | — | stays: test |
-| crates/zygo/tests/workspace_definition.rs | 1017 | — | stays: comment |
+| crates/zygo/tests/workspace_definition.rs | 865 | — | stays: test |
+| crates/zygo/tests/workspace_definition.rs | 871 | — | stays: test |
+| crates/zygo/tests/workspace_definition.rs | 1017 | 1 | CC-10 |
 | crates/zygo/tests/workspace_down.rs | 22 | — | stays: comment |
 | crates/zygo/tests/workspace_down.rs | 23 | — | stays: test |
+| crates/zygo/tests/workspace_down.rs | 111 | — | stays: test |
+| crates/zygo/tests/workspace_down.rs | 134 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 139 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 145 | — | stays: test |
+| crates/zygo/tests/workspace_down.rs | 172 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 196 | — | stays: test |
+| crates/zygo/tests/workspace_down.rs | 217 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 221 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 225 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 230 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 236 | — | stays: test |
+| crates/zygo/tests/workspace_down.rs | 249 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 255 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 256 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 258 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 261 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 262 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 264 | — | stays: test |
+| crates/zygo/tests/workspace_down.rs | 265 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 266 | — | stays: test |
+| crates/zygo/tests/workspace_down.rs | 290 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 294 | — | stays: test |
+| crates/zygo/tests/workspace_down.rs | 323 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 328 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 332 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 334 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 340 | — | stays: comment |
+| crates/zygo/tests/workspace_down.rs | 370 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 374 | — | stays: test |
+| crates/zygo/tests/workspace_down.rs | 451 | — | stays: test |
+| crates/zygo/tests/workspace_down.rs | 481 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 485 | — | stays: test |
+| crates/zygo/tests/workspace_down.rs | 541 | — | stays: test |
+| crates/zygo/tests/workspace_down.rs | 577 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 581 | — | stays: test |
 | crates/zygo/tests/workspace_down.rs | 582 | — | stays: test |
 | crates/zygo/tests/workspace_mail.rs | 19 | — | stays: test |
+| crates/zygo/tests/workspace_mail.rs | 28 | — | stays: comment |
+| crates/zygo/tests/workspace_mail.rs | 33 | — | stays: test |
 | crates/zygo/tests/workspace_mail.rs | 76 | — | stays: test |
 | crates/zygo/tests/workspace_mail.rs | 81 | — | stays: test |
 | crates/zygo/tests/workspace_mail.rs | 83 | — | stays: test |
@@ -2702,6 +3153,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/workspace_member.rs | 412 | 1 | CC-13 |
 | crates/zygo/tests/workspace_member.rs | 415 | — | stays: test |
 | crates/zygo/tests/workspace_member.rs | 420 | 8 | CC-8 |
+| crates/zygo/tests/workspace_member.rs | 447 | — | stays: test |
 | crates/zygo/tests/workspace_member.rs | 450 | 1 | CC-13 |
 | crates/zygo/tests/workspace_member.rs | 451 | — | stays: test |
 | crates/zygo/tests/workspace_member.rs | 462 | 1 | CC-13 |
@@ -2712,6 +3164,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/workspace_member.rs | 513 | 1 | CC-13 |
 | crates/zygo/tests/workspace_member.rs | 517 | 1 | CC-13 |
 | crates/zygo/tests/workspace_member.rs | 535 | — | stays: test |
+| crates/zygo/tests/workspace_member.rs | 537 | — | stays: test |
 | crates/zygo/tests/workspace_member.rs | 543 | 1 | CC-13 |
 | crates/zygo/tests/workspace_member.rs | 544 | 1 | CC-13 |
 | crates/zygo/tests/workspace_member.rs | 545 | 1 | CC-13 |
@@ -2729,6 +3182,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/workspace_member.rs | 573 | — | stays: test |
 | crates/zygo/tests/workspace_member.rs | 575 | — | stays: test |
 | crates/zygo/tests/workspace_member.rs | 580 | — | stays: comment |
+| crates/zygo/tests/workspace_member.rs | 583 | — | stays: test |
 | crates/zygo/tests/workspace_member.rs | 587 | — | stays: test |
 | crates/zygo/tests/workspace_member.rs | 592 | 1 | CC-13 |
 | crates/zygo/tests/workspace_member.rs | 594 | — | stays: test |
@@ -2868,19 +3322,38 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/workspace_member.rs | 2020 | — | stays: test |
 | crates/zygo/tests/workspace_restore.rs | 30 | — | stays: test |
 | crates/zygo/tests/workspace_restore.rs | 31 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 32 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 33 | — | stays: test |
 | crates/zygo/tests/workspace_restore.rs | 37 | — | stays: test |
 | crates/zygo/tests/workspace_restore.rs | 90 | — | stays: comment |
+| crates/zygo/tests/workspace_restore.rs | 140 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 229 | — | stays: test |
 | crates/zygo/tests/workspace_restore.rs | 244 | — | stays: test |
 | crates/zygo/tests/workspace_restore.rs | 249 | — | stays: test |
 | crates/zygo/tests/workspace_restore.rs | 250 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 251 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 252 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 307 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 343 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 430 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 475 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 525 | — | stays: test |
 | crates/zygo/tests/workspace_restore.rs | 570 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 620 | — | stays: test |
 | crates/zygo/tests/workspace_restore.rs | 642 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 700 | — | stays: test |
 | crates/zygo/tests/workspace_restore.rs | 715 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 743 | — | stays: test |
 | crates/zygo/tests/workspace_restore.rs | 749 | — | stays: comment |
 | crates/zygo/tests/workspace_restore.rs | 751 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 762 | — | stays: test |
 | crates/zygo/tests/workspace_restore.rs | 781 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 814 | — | stays: test |
 | crates/zygo/tests/workspace_restore.rs | 817 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 851 | — | stays: test |
 | crates/zygo/tests/workspace_restore.rs | 869 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 905 | — | stays: test |
+| crates/zygo/tests/workspace_restore.rs | 1091 | — | stays: test |
 | crates/zygo/tests/workspace_restore.rs | 1195 | — | stays: comment |
 | crates/zygo/tests/workspace_run.rs | 143 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 144 | 1 | CC-13 |
@@ -2898,20 +3371,24 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/workspace_run.rs | 288 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 310 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 313 | 1 | CC-13 |
+| crates/zygo/tests/workspace_run.rs | 357 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 358 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 360 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 379 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 380 | 1 | CC-13 |
+| crates/zygo/tests/workspace_run.rs | 382 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 401 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 402 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 413 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 414 | 1 | CC-13 |
+| crates/zygo/tests/workspace_run.rs | 426 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 428 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 431 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 461 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 470 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 492 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 493 | 1 | CC-13 |
+| crates/zygo/tests/workspace_run.rs | 503 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 505 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 506 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 519 | 1 | CC-13 |
@@ -2928,6 +3405,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/workspace_run.rs | 594 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 597 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 599 | — | stays: test |
+| crates/zygo/tests/workspace_run.rs | 606 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 608 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 609 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 612 | — | stays: test |
@@ -2956,6 +3434,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/workspace_run.rs | 761 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 772 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 773 | 1 | CC-13 |
+| crates/zygo/tests/workspace_run.rs | 787 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 788 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 812 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 813 | 1 | CC-13 |
@@ -2967,6 +3446,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/workspace_run.rs | 887 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 898 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 981 | — | stays: comment |
+| crates/zygo/tests/workspace_run.rs | 983 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 986 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 987 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 988 | 1 | CC-13 |
@@ -2989,6 +3469,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/workspace_run.rs | 1165 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 1172 | — | stays: comment |
 | crates/zygo/tests/workspace_run.rs | 1173 | — | stays: comment |
+| crates/zygo/tests/workspace_run.rs | 1179 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 1182 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 1202 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 1228 | — | stays: test |
@@ -2997,10 +3478,13 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/workspace_run.rs | 1337 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 1371 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 1376 | 1 | CC-13 |
+| crates/zygo/tests/workspace_run.rs | 1390 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 1393 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 1396 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 1402 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 1408 | — | stays: comment |
+| crates/zygo/tests/workspace_run.rs | 1412 | — | stays: test |
+| crates/zygo/tests/workspace_run.rs | 1414 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 1415 | 1 | CC-13 |
 | crates/zygo/tests/workspace_run.rs | 1424 | — | stays: test |
 | crates/zygo/tests/workspace_run.rs | 1425 | — | stays: test |
@@ -3023,56 +3507,112 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/workspace_session.rs | 49 | — | stays: test |
 | crates/zygo/tests/workspace_session.rs | 62 | — | stays: test |
 | crates/zygo/tests/workspace_session.rs | 66 | — | stays: test |
+| crates/zygo/tests/workspace_session.rs | 126 | — | stays: test |
+| crates/zygo/tests/workspace_session.rs | 153 | — | stays: test |
 | crates/zygo/tests/workspace_session.rs | 163 | — | stays: test |
 | crates/zygo/tests/workspace_session.rs | 171 | — | stays: test |
 | crates/zygo/tests/workspace_session.rs | 173 | — | stays: test |
 | crates/zygo/tests/workspace_session.rs | 188 | — | stays: test |
+| crates/zygo/tests/workspace_session.rs | 215 | — | stays: test |
+| crates/zygo/tests/workspace_session.rs | 242 | — | stays: test |
+| crates/zygo/tests/workspace_session.rs | 263 | — | stays: test |
 | crates/zygo/tests/workspace_session.rs | 264 | — | stays: test |
 | crates/zygo/tests/workspace_session.rs | 265 | — | stays: test |
+| crates/zygo/tests/workspace_session.rs | 305 | — | stays: test |
 | crates/zygo/tests/workspace_session.rs | 309 | — | stays: test |
 | crates/zygo/tests/workspace_session.rs | 325 | — | stays: test |
 | crates/zygo/tests/workspace_session.rs | 336 | — | stays: comment |
+| crates/zygo/tests/workspace_session.rs | 340 | — | stays: test |
+| crates/zygo/tests/workspace_session.rs | 343 | — | stays: test |
 
-Counts (review round 1, widened search): 3011 sites in 198 files. By node: CC-3 18, CC-4 18, CC-5 6, CC-6 28, CC-7 16, CC-8 68, CC-9 143, CC-10 51, CC-13 1178, stays: test 1211, stays: comment 272, stays: exception list 2. By concern (CC rows): 1 1300, 2 22, 3 16, 4 5, 5 8, 6 24, 7 28, 8 82, 9 20, 10 4, 11 17. By node and concern: CC-3 (1: 15, 2: 3); CC-4 (9: 18); CC-5 (5: 6); CC-6 (2: 8, 3: 16, 4: 4); CC-7 (7: 16); CC-8 (8: 68); CC-9 (1: 78, 2: 11, 4: 1, 5: 2, 6: 24, 7: 8, 9: 2, 11: 17); CC-10 (1: 29, 7: 4, 8: 14, 10: 4); CC-13 (1: 1178). No row goes to CC-15 as a new exception.
+Counts (review round 2): 3503 sites in 210 files. By node: CC-3 25, CC-4 38, CC-5 11, CC-6 33, CC-7 33, CC-8 76, CC-9 213, CC-10 61, CC-13 1178, stays: test 1560, stays: comment 268, stays: exception list 7. By concern (owner rows): 1 1318, 2 28, 3 22, 4 10, 5 13, 6 61, 7 46, 8 97, 9 43, 10 2, 11 28. By node and concern: CC-3 (1: 18, 2: 7); CC-4 (9: 38); CC-5 (5: 11); CC-6 (2: 8, 3: 21, 4: 4); CC-7 (7: 33); CC-8 (8: 76); CC-9 (1: 77, 2: 13, 3: 1, 4: 6, 5: 2, 6: 61, 7: 10, 8: 10, 9: 5, 11: 28); CC-10 (1: 45, 7: 3, 8: 11, 10: 2); CC-13 (1: 1178). No row goes to CC-15 as a new exception.
 
-Search (completeness is bounded by these patterns): the rows are exactly the lines that `git grep -nE` finds at the base with the patterns below, in `crates/*/src/**`, `crates/*/tests/**`, `crates/zygo-config/data/agents.toml` and `crates/zygo-launch/assets/opencode-plugin.js`. A client branch that matches none of them is not in this inventory. Not searched: a literal that only contains a client name (`"zygo claude: …"`, `"/b/claude"`), except the id `claude-code`; the words Claude, OpenCode and Codex in prose; the Codex names other than `CODEX_*` variables (no Codex client exists at the base).
+Concerns per node (each owner of a code row and the concerns its contract takes; `docs/work/phase4/cc1_check.py` holds the same table and fails when this one differs). CC-9 takes every concern its adapters serve (K§6.1.3: the adapters hold each client's behavior, `prepare_resume` and `env_rows`); CC-11 and CC-15 hold no row at this base. CC-12 (registry entries) and CC-14 (opaque kind) own no site.
 
-- `Agent::(ClaudeCode|OpenCode|\{|\*)`
-- `PaneKind::(ClaudeCode|OpenCode)`
-- `Plugins::`
-- `"(claude-code|claude|opencode|\.claude|\.opencode|CLAUDE_CONFIG_DIR|OPENCODE_CONFIG_DIR|Claude Code|OpenCode)"`
-- `(^|[^A-Za-z0-9_])(claude|opencode|claude_code|open_code)[a-z_]*: bool`
-- `(^|[^A-Za-z0-9_])!(claude|opencode|claude_code)([^A-Za-z0-9_]|$)`
-- `(^|[^A-Za-z0-9_])(CLAUDE[A-Z_]*|OPENCODE_[A-Z_]+|CODEX_[A-Z_]+)([^A-Za-z0-9_]|$)`
-- `(^|[^A-Za-z0-9_])(LOADOUT_KINDS|AGENT_ONLY|CLAUDE_ONLY)([^A-Za-z0-9_]|$)`
-- `[xX]-[cC]laude-[cC]ode-`
-- `claude-code`
-- `^\[(claude-code|opencode)\]`
-- `agents\.toml`
-- `(^|[^A-Za-z0-9_])(PreToolUse|PostToolUse|PostToolUseFailure|PreCompact|SessionStart|SessionEnd|SubagentStart|SubagentStop|UserPromptSubmit)([^A-Za-z0-9_]|$)`
-- `"(Stop|StopFailure|Notification)"`
-- `mcp__`
-- `pub fn compact_tool\(|is_some_and\(compact_tool\)|window::compact_tool`
-- `(^|[^A-Za-z0-9_])(ClaudeCode|OpenCode)([^A-Za-z0-9_]|$)`
-- `(^|[^A-Za-z0-9_])(Claude|Opencode)\(`
-- `(^|[^A-Za-z0-9_])(claude|opencode|claude_code)::|mod (claude|opencode|claude_code);`
+| Node | Concerns |
+|---|---|
+| CC-3 | 1, 2 |
+| CC-4 | 9 |
+| CC-5 | 5 |
+| CC-6 | 2, 3, 4 |
+| CC-7 | 7 |
+| CC-8 | 8 |
+| CC-9 | 1, 2, 3, 4, 5, 6, 7, 8, 9, 11 |
+| CC-10 | 1, 7, 8, 10 |
+| CC-11 | 1 |
+| CC-13 | 1 |
+| CC-15 | 1 |
+
+Search: the rows are exactly the lines that `git grep -nE` finds at the base with the patterns below (one `-e` each), in `crates/*/src/**`, `crates/*/tests/**`, `crates/zygo-config/data/agents.toml` and `crates/zygo-launch/assets/opencode-plugin.js`. Completeness is bounded by these patterns: a client branch that matches none of them is not in this inventory.
+
+- Pattern: `Agent::(ClaudeCode|OpenCode|\{|\*)`
+- Pattern: `PaneKind::(ClaudeCode|OpenCode)`
+- Pattern: `Plugins::`
+- Pattern: `(enum |: |, |\{)Plugins([,};]| \{|$)`
+- Pattern: `"(claude-code|claude|opencode|\.claude|\.opencode|CLAUDE_CONFIG_DIR|OPENCODE_CONFIG_DIR|Claude Code|OpenCode|claude-ai)"`
+- Pattern: `(^|[^A-Za-z0-9_])(claude|opencode|claude_code|open_code)[a-z_]*: bool`
+- Pattern: `(^|[^A-Za-z0-9_])!(claude|opencode|claude_code)([^A-Za-z0-9_]|$)`
+- Pattern: `(^|[^A-Za-z0-9_])(if|&&|\|\|) (claude|opencode)([^A-Za-z0-9_.-]|$)`
+- Pattern: `(^|[^A-Za-z0-9_."/:-])(claude|opencode)(\)|\.[a-z_]+\()`
+- Pattern: `(^|[^A-Za-z0-9_])(CLAUDE[A-Z_]*|OPENCODE[A-Z_]*|CODEX_[A-Z_]+|ANTHROPIC_[A-Z_]+|DISABLE_LOG(IN|OUT)_COMMAND)([^A-Za-z0-9_]|$)`
+- Pattern: `[A-Za-z0-9_]([Cc]laude|[Oo]pen_?[Cc]ode)|([Cc]laude|[Oo]pen_?[Cc]ode)[A-Za-z0-9_]`
+- Pattern: `(^|[^A-Za-z0-9_])(ClaudeCode|OpenCode)([^A-Za-z0-9_]|$)`
+- Pattern: `(^|[^A-Za-z0-9_])(Claude|Opencode)\(`
+- Pattern: `(^|[^A-Za-z0-9_])(claude|opencode|claude_code)::|mod (claude|opencode|claude_code);`
+- Pattern: `(^|[^A-Za-z0-9_])(LOADOUT_KINDS|AGENT_ONLY)([^A-Za-z0-9_]|$)`
+- Pattern: `[xX]-[cC]laude-[cC]ode-`
+- Pattern: `claude-code`
+- Pattern: `\.claude-plugin`
+- Pattern: `"opencode/`
+- Pattern: `^\[(claude-code|opencode)\]`
+- Pattern: `agents\.toml`
+- Pattern: `installed_plugins\.json`
+- Pattern: `(^|[^A-Za-z0-9_])(PreToolUse|PostToolUse|PostToolUseFailure|PreCompact|SessionStart|SessionEnd|SubagentStart|SubagentStop|UserPromptSubmit)([^A-Za-z0-9_]|$)`
+- Pattern: `"(Stop|StopFailure|Notification)"`
+- Pattern: `hookSpecificOutput`
+- Pattern: `mcp__`
+- Pattern: `(^|[^A-Za-z0-9_.])compact_tool\(|\(compact_tool\)|, compact_tool[,}]|window::compact_tool`
+- Pattern: `(^|[^A-Za-z0-9_])let (mut )?(claude|opencode|claude_code) =`
+
+Not searched (review round 2): a client name inside a longer string or comment that none of the patterns matches, that is `claude`, `opencode`, `Claude` or `OpenCode` as a plain word (`"zygo claude: …"`, `"claude config: …"`, `"also installed in Claude Code as …"`, `"/b/claude"`) and Anthropic model ids (`"claude-…"`); `codex` in any form other than a `CODEX_*` name (no Codex client exists at the base); and the files outside the four pathspecs: the other `crates/zygo-config/data/` tables (`roles.toml` and `catalog.toml` hold model ids only), `crates/zygo-plugins/data/`, `crates/zygo-plugins/embedded/`, `crates/*/examples/`, `crates/*/Cargo.toml`, and everything outside `crates/`.
+
+Test code at the base: each file under `crates/*/tests/`, and in a `src` file the lines from its first column-0 `#[cfg(test)]` or `#[cfg(all(test, …))]` to its end (at the base no production line follows that attribute in any `src` file). The ranges of the `src` files that hold a site:
+
+- Test range: crates/zygo-hooks/src/prompt.rs 147-469
+- Test range: crates/zygo-mcp/src/tools/work.rs 263-328
+- Test range: crates/zygo/src/cmd/claude.rs 88-239
+- Test range: crates/zygo/src/cmd/compact.rs 128-333
+- Test range: crates/zygo/src/cmd/keys.rs 164-380
+- Test range: crates/zygo/src/cmd/loadout.rs 480-1003
+- Test range: crates/zygo/src/cmd/mail.rs 763-950
+- Test range: crates/zygo/src/cmd/marketplace.rs 186-637
+- Test range: crates/zygo/src/cmd/member.rs 1117-2047
+- Test range: crates/zygo/src/cmd/mod.rs 647-783
+- Test range: crates/zygo/src/cmd/opencode.rs 59-128
+- Test range: crates/zygo/src/cmd/plugins.rs 160-702
+- Test range: crates/zygo/src/cmd/verbs.rs 338-766
+- Test range: crates/zygo/src/cmd/ws.rs 683-1034
 
 Rules for each row:
 
-- Test sites: a site in a `#[cfg(test)]` item of a `src` file, or in `crates/*/tests/`. Test items at the base that hold a site: `crates/zygo-hooks/src/prompt.rs` 147-469; `crates/zygo-mcp/src/tools/work.rs` 263-328; `crates/zygo/src/cmd/claude.rs` 88-239; `cmd/compact.rs` 128-130, 132-333; `cmd/loadout.rs` 480-1003; `cmd/mail.rs` 763-934 (`all(test, unix)`); `cmd/member.rs` 1117-2047; `cmd/mod.rs` 647-783; `cmd/opencode.rs` 59-128; `cmd/verbs.rs` 338-766; `cmd/ws.rs` 683-1034. A test line with an `Agent` variant path or import, or a bare variant use after such an import (`crates/zygo/src/cmd/member.rs:1796`-`:1803`), is CC-13 (concern 1); a `PaneKind` variant path is CC-8 (8); `Plugins::` is CC-9 (6); the launch adapter type or module (`ClaudeCode`, `OpenCode`, `zygo_launch::claude_code`, `zygo_launch::opencode`) is CC-9 (1); the CLI shim (`Cmd::Claude`, `Cmd::Opencode`, `super::super::claude`, `super::super::opencode`) is CC-10 (1). Only a test line with a literal and nothing else stays (`stays: test`), as does each non-Rust fixture line under `tests/`.
-- Comment sites: a line that starts with `//` (doc or plain comment) is `stays: comment`.
-- Code sites: one concern each, by K§6.1.2, and the node per concern of the planning notes, with these calls (author, review round 1):
-  - Hook event names. The hooks read and write Claude Code's event names, which are the common form that concern 2 makes. An event-name check on hook input is 2, a rendered `hookSpecificOutput` is 3. Both go to CC-6, which owns the hook crates' event handling (`zygo-hooks`, and the guard and work hooks of `zygo-work`); CC-3 owns only the conversion in `zygo-core` (`hook.rs`, `hook_opencode.rs`). The event registration in the Claude Code adapter (`claude_code.rs:495`-`:527`) is 2 and goes to CC-9 with the adapter.
-  - Adapters (`crates/zygo-launch/src/claude_code.rs`, `opencode.rs`, `assets/opencode-plugin.js`) go to CC-9; each line takes the concern it serves: the program name, the client id, the adapter type, `agent()`, the install hint and the config folder names and managed-settings paths are 1; event registration is 2; the subagent model variable is 4; the `mcp__zygo__` tool names are 5; `Plugins` and `CLAUDE_PLUGIN_ROOT` are 6; the argument walk, `has_session_arg` and the bare mode (`CLAUDE_CODE_SIMPLE`) are 7; the gateway hint header variable and the passthrough credential variables are 9; a set environment row is 11.
-  - Adapter selection outside the adapters (`cmd/claude.rs:4`, `:21`; `cmd/opencode.rs:5`, `:21`; `cmd/ws.rs:15`, `:18`, `:407`, `:413`, `:418`; `cmd/member.rs:17`, `:19`, `:662`, `:678`) is 1 and goes to CC-9, which adds `adapter_for`.
+- Test sites. A test line that names a product symbol that a CC node changes is that node's row (review round 2 F4): an `Agent` variant path or import, or a bare variant after `use Agent::{ClaudeCode, OpenCode}` (`crates/zygo/src/cmd/member.rs:1796`-`:1803`), is CC-13 (1); `PaneKind::`, `LOADOUT_KINDS`, `AGENT_ONLY`, `CLAUDE_ONLY` are CC-8 (8); `Plugins` and the doctor field `claude_config_dir` are CC-9 (6); the launch adapter type or module (`ClaudeCode`, `OpenCode`, `zygo_launch::claude_code`, `zygo_launch::opencode`) is CC-9 (1); the CLI shim (`Cmd::Claude`, `Cmd::Opencode`, `super::super::claude`, `super::super::opencode`, `LaunchOpenCode`, `launch_open_code_of`) is CC-10 (1); `CLAUDE_AI` is CC-4 (9); `compact_tool` in `crates/zygo-proxy/tests/` is CC-5 (5); `opencode_subcommand` is CC-7 (7); `hook_opencode` is CC-3 (2). Every other test line (literals, environment names, test-local names) is `stays: test`, as is each non-Rust fixture line under `tests/`. A test comment line is `stays: comment` unless it names an item that a node deletes or moves.
+- Comment sites (`//` lines). A comment that names an item that a CC node deletes or moves is that node's row, so the node updates it (review round 2 F9): `data/agents.toml` → CC-3 (`crates/zygo-config/src/builtin.rs:49`, `crates/zygo-core/tests/conformance/model.rs:1281`, `crates/zygo-launch/tests/stub_agent/harness.rs:21`); `LOADOUT_KINDS` → CC-8 (`crates/zygo-config/src/schema.rs:867`); the adapter type `ClaudeCode` → CC-9 (`crates/zygo-launch/src/claude_code.rs:67`, `opencode.rs:31`, `crates/zygo-launch/tests/launcher.rs:703`, `stub_member.rs:228`); `zygo_launch::claude_code::simple_mode` → CC-9 (`crates/zygo/src/cmd/member.rs:235`, `:470`); `claude_code.rs` line references → CC-9 (`crates/zygo/tests/definition_hooks.rs:752`, `:844`); `opencode_subcommand` → CC-7 (`crates/zygo-launch/src/launcher.rs:805`, `crates/zygo-workspace/src/args.rs:593`, `:629`); `launch_open_code_of` and `claude::launch_opts` → CC-10 (`crates/zygo/src/cmd/member.rs:631`, `crates/zygo/src/cmd/ws.rs:608`, `crates/zygo/tests/workspace_definition.rs:1017`). Every other comment is `stays: comment`.
+- Code sites: one concern each, by K§6.1.2, and the node per concern of the planning notes, with these calls (author):
+  - Hook event names and `hookSpecificOutput`: an event-name check on hook input is 2, a rendered `hookSpecificOutput` is 3; both go to CC-6, which owns the hook crates' event handling (`zygo-hooks`, and the guard and work hooks of `zygo-work`). CC-3 owns the conversion in `zygo-core` (`hook.rs`, `hook_opencode.rs`, the `hook_opencode` module and imports). The event registration in the Claude Code adapter is 2 and the plugin's read of `hookSpecificOutput` (`opencode-plugin.js:36`) is 3, both CC-9.
+  - Adapters (`crates/zygo-launch/src/claude_code.rs`, `opencode.rs`, `adapter.rs`, `assets/opencode-plugin.js`) go to CC-9; each line takes the concern it serves: program name, client id, adapter type, `agent()`, install hint, config folder names and managed-settings paths 1; event registration 2; the plugin's hook-output read 3; the model variables (`ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_*_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`) 4; the `mcp__zygo__` tool names 5; `Plugins`, `CLAUDE_PLUGIN_ROOT`, `.claude-plugin` and `opencode/plugin.js` 6; the argument walk, `has_session_arg` and the bare mode (`CLAUDE_CODE_SIMPLE`) 7; the proxy variables (`ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, the gateway hint) and the passthrough credential names 9; a set environment row (`DISABLE_LOGIN_COMMAND`, `OPENCODE_CONFIG_DIR`) 11.
+  - Plugin form in `zygo-plugins` (`.claude-plugin/…`, `opencode/plugin.js`, `CLAUDE_PLUGIN_ROOT`) is 6, CC-9.
+  - Adapter selection outside the adapters (imports and `ClaudeCode::…`/`OpenCode::…` in `cmd/claude.rs`, `cmd/opencode.rs`, `cmd/ws.rs`, `cmd/member.rs`) is 1, CC-9, which adds `adapter_for`.
+  - The resume match (`crates/zygo/src/cmd/ws.rs:405`-`:435`, `crates/zygo/src/cmd/member.rs:644`-`:679`): every site in it is 8 and CC-9, which moves it into `prepare_resume` (K§6.1.3; review round 2 F7).
+  - The doctor's check that a selected plugin is also installed in Claude Code (`crates/zygo/src/cmd/doctor.rs:49`, `:391`, `:459`, `:460`, `:467`: the `claude_config_dir` field and `installed_plugins.json`) is 6, CC-9: the client's own plugin list is a fact of the adapter's plugin delivery (K§6.1.3), not of the K§6.2.7 doctor listing that CC-11 owns.
   - A default `Agent::ClaudeCode` that becomes `Agent::DEFAULT` is 1 everywhere (`session_view.rs:61`, `cmd/hook.rs:106`, `cmd/loadout.rs:330`).
-  - The resume command and the `CLAUDE_CONFIG_DIR` saved for resume (AU61) are 8 everywhere (`cmd/member.rs:107`, `:108`, `:573`, `:645`, `:664`, `:691`-`:693`; `cmd/ws.rs:651`).
-  - The dispatch from a member record to the CLI shim's `launch_opts` (`cmd/ws.rs:612`, `:613`) is 10 and stays with CC-10.
-  - The CLI enum and its dispatch (`cmd/mod.rs:12`, `:29`, `:205`, `:279`, `:281`, `:609`, `:610`) are 1 (program name and CLI verb), CC-10. The review gave "(10)"; that is read as the node CC-10, because concern 10 (compaction) does not apply to these lines.
-  - The `Agent` variant declarations (`crates/zygo-core/src/lib.rs:39`, `:41`) are 1, CC-3, which moves them into `client/mod.rs`; CC-14 then makes them private. The `PaneKind` variant declarations (`crates/zygo-workspace/src/state.rs:243`, `:245`) are 8 (the pane-kind id of K§6.1.2 concern 8, as their serde names at `:242`, `:244`), CC-8, whose contract replaces `PaneKind`.
-  - `zygo_workspace::args::{occurrences, flags, has_session_arg}` keep their signatures in CC-7 (recorded in the CC-7 contract), so the CC-9 adapter rows that call them need no CC-7 edit.
+  - The resume command and the `CLAUDE_CONFIG_DIR` saved for resume (AU61) are 8 everywhere (`cmd/member.rs:95`, `:107`, `:108`, `:573`, `:691`-`:693`; `cmd/ws.rs:471`, `:651`, `:673`); `cmd/member.rs:95` (the pre-assigned session id of a Claude Code member) is 8 (review round 2 F6).
+  - The CLI shim (`cmd/mod.rs` enum, `LaunchOpenCode`, `launch_open_code_of`, the `cmd/claude.rs` and `cmd/opencode.rs` shims, and the dispatch from a member record to a shim at `cmd/ws.rs:612`, `:613`) is 1, CC-10 (review round 2 F5).
+  - The `Agent` variant declarations (`crates/zygo-core/src/lib.rs:39`, `:41`) are 1, CC-3, which moves them into `client/mod.rs`. The `PaneKind` variant declarations (`crates/zygo-workspace/src/state.rs:243`, `:245`) are 8, CC-8.
+  - The no-attribution guard: the item `claude_attribution` and its four calls (`crates/zygo-work/src/guards.rs:905`, `:910`, `:928`, `:1020`) are `stays: exception list (CC-15, K§6.1.4)`; they match attribution text and do not branch on a client.
+  - `ANTHROPIC_VERSION` (`crates/zygo-proxy/src/forward.rs:47`, `:480`) is the Messages wire header: 9, CC-4, which keys wire format on `Dialect`.
+  - `zygo_workspace::args::{occurrences, flags, has_session_arg}` keep their signatures in CC-7 (recorded in the CC-7 contract), so the CC-9 adapter rows that call them need no CC-7 edit. `opencode_subcommand` has no CC-9 caller at the base (its one production caller is `crates/zygo-launch/src/launcher.rs:810`, a CC-7 row), so it is not in that note.
 
-Files added to a node's **Files** line in review round 1: CC-4 `crates/zygo-proxy/src/forward.rs`, `crates/zygo-proxy/src/redact_stage.rs`; CC-5 `crates/zygo-proxy/src/window.rs`; CC-6 `crates/zygo-hooks/src/role_guard.rs`, `crates/zygo-hooks/src/trim.rs`, `crates/zygo-work/src/guards.rs`, `crates/zygo-work/src/hooks.rs`; CC-9 `crates/zygo-plugins/src/check.rs`, `crates/zygo/src/cmd/claude.rs`, `crates/zygo/src/cmd/opencode.rs`, `crates/zygo/src/cmd/member.rs`, `crates/zygo/src/cmd/ws.rs`; CC-10 `crates/zygo/src/cmd/mcp.rs`; CC-13 the `#[cfg(test)]` items of `crates/zygo-hooks/src/prompt.rs`, `crates/zygo-mcp/src/tools/work.rs`, `crates/zygo/src/cmd/claude.rs`, `compact.rs`, `loadout.rs`, `mail.rs`, `member.rs`, `opencode.rs`, `verbs.rs`, `ws.rs`. In the first run: CC-8 `crates/zygo-config/src/repo_def/loadout.rs`, `crates/zygo/src/cmd/workspace_approve.rs`.
+Files added to a node's **Files** line: in the first run, CC-8 `crates/zygo-config/src/repo_def/loadout.rs`, `crates/zygo/src/cmd/workspace_approve.rs`. In review round 1: CC-4 `crates/zygo-proxy/src/forward.rs`, `crates/zygo-proxy/src/redact_stage.rs`; CC-5 `crates/zygo-proxy/src/window.rs`; CC-6 `crates/zygo-hooks/src/role_guard.rs`, `crates/zygo-hooks/src/trim.rs`, `crates/zygo-work/src/guards.rs`, `crates/zygo-work/src/hooks.rs`; CC-9 `crates/zygo-plugins/src/check.rs`, `crates/zygo/src/cmd/claude.rs`, `crates/zygo/src/cmd/opencode.rs`, `crates/zygo/src/cmd/member.rs`, `crates/zygo/src/cmd/ws.rs`; CC-10 `crates/zygo/src/cmd/mcp.rs`; CC-13 the `#[cfg(test)]` items of ten `src` files. In review round 2: CC-3 `crates/zygo-core/tests/conformance/model.rs`, `crates/zygo-launch/tests/opencode.rs`, `crates/zygo-launch/tests/stub_agent/harness.rs`; CC-4 `crates/zygo-proxy/tests/passthrough.rs`; CC-5 `crates/zygo-proxy/tests/window.rs`; CC-7 `crates/zygo-workspace/tests/args.rs`; CC-8 `crates/zygo-config/tests/config_layers.rs`, `crates/zygo-config/tests/definition_keys.rs`; CC-9 `crates/zygo-plugins/src/builtin.rs`, `embedded.rs`, `marketplace.rs`, `store.rs`, `sync.rs`, `crates/zygo/src/cmd/doctor.rs`.
 
 Phase 3 client features (for CC-12), at the base:
 
@@ -3169,6 +3709,8 @@ Assignment (the planning notes' node-per-concern rule applied to each file at th
 | each site inside a `#[cfg(test)]` or `#[cfg(all(test, …))]` item: `prompt.rs` 173, 449; `tools/work.rs` 322; `cmd/claude.rs` 140, 207, 209, 234; `cmd/opencode.rs` 108, 115, 123; `cmd/compact.rs` 173, 269; `cmd/loadout.rs` 590, 624, 648, 733, 851; `cmd/mail.rs` 893; `cmd/mod.rs` 705, 707, 709; `cmd/verbs.rs` 451; `cmd/member.rs` from 1117 (84 sites); `cmd/ws.rs` from 683 (16 sites) | | — | stays: test |
 
 Expected counts: CC-3 10, CC-4 7, CC-5 3, CC-6 7, CC-7 11, CC-8 17, CC-9 28, CC-10 35, stays: comment 3, stays: exception list 2, stays: test 122; total 245. No row goes to CC-15 as a new exception (every non-branching literal at the base is either the guard or a test or comment site).
+
+Review round 2 (2026-11-27): the search was widened again and the acceptance moved into `docs/work/phase4/cc1_check.py`; the table and counts under `## Observed` are current.
 
 Review round 1 (2026-11-27): the search of **Acceptance** was widened (see `## Observed`), so the table under `## Observed` supersedes the Assignment table above and the expected counts; the counts are under `## Observed`.
 
