@@ -25,4 +25,80 @@ None.
 
 ## Plan
 
-Written when the node starts.
+**Base commit: `b324e1dc7f00b38d410d577a307c05c80068b353`** (planning, 2026-11-27). It is the CC-0 merge commit (PR #245; parents `33fd7bc5`, `060c4c2d`) that the contract names. Why this commit and not the head of `phase-4` at planning (`68ccb89e`): `git diff --stat b324e1dc HEAD` names only `docs/` files, so no `crates/` path has changed since the merge, and the contract fixes the base as the CC-0 merge. `origin/phase-3` is at `4ed521d7`, two commits past the pin `74748ae7`. `git diff --stat 74748ae7 origin/phase-3` names only `docs/` files, so the next phase-3 merge layer adds no client site. The merge base of `phase-4` and `origin/phase-3` is now `74748ae7`. Both `b7e9d45d` (the acceptance's phase 3 commit) and the pin `74748ae7` are ancestors of `b324e1dc`.
+
+Interfaces:
+
+- Consumes `phase_3_in_phase_4` (CC-0): phase 3 at `74748ae7` is in `phase-4` through `b324e1dc`.
+- Produces `base`: the line `Base: b324e1dc7f00b38d410d577a307c05c80068b353` under `## Observed`.
+- Produces `inventory`: the table under `## Observed` with the header `| File | Line | Concern | Node |` and one row per site in the form `| <file> | <line> | <concern 1-11 or —> | <CC-n or stays: reason> |`, with no backtick in a row.
+
+Premise check (planning, at `b324e1dc`): the acceptance grep finds **245 sites in 44 files** (209 at `c21b32e0`). Phase 3 added `crates/zygo/src/cmd/member.rs` (98 sites, 84 of them in its `#[cfg(test)] mod tests` from line 1117 to the end of the file), `crates/zygo-config/src/repo_def/shape.rs` and `repo_def/loadout.rs`, `crates/zygo-workspace/src/env.rs`, `crates/zygo-hooks/src/prompt.rs`, `crates/zygo-mcp/src/tools/work.rs`, `crates/zygo/src/cmd/mail.rs`, `verbs.rs` and `workspace_approve.rs`. `crates/zygo-proxy/src/cache.rs` has no match at the base, because its per-client default is now in `crates/zygo-config/src/schema.rs:470`. The `#[cfg(test)]` forms at the base are `#[cfg(test)]`, `#[cfg(all(test, unix))]` and `#[cfg(all(test, windows))]`. No out-of-line `#[cfg(test)] mod x;` exists. `#[cfg(feature = "test-hooks")]` is production code and its sites are not `stays: test`.
+
+Assignment (the planning notes' node-per-concern rule applied to each file at the base; the code at the base decides if a line differs):
+
+| File | Lines | Concern | Node |
+|---|---|---|---|
+| `crates/zygo-core/src/lib.rs` | 38, 40, 49, 50, 56, 57, 81, 82 | 1 | CC-3 |
+| `crates/zygo-core/src/hook.rs` | 23 | 2 | CC-3 |
+| `crates/zygo-core/src/session_view.rs` | 61 (`Default`, becomes `Agent::DEFAULT`) | 1 | CC-3 |
+| `crates/zygo-config/src/schema.rs` | 470 (`insert_markers` default) | 9 | CC-4 |
+| `crates/zygo-config/src/schema.rs` | 809 (`LOADOUT_KINDS`) | 8 | CC-8 |
+| `crates/zygo-config/src/schema.rs` | 879, 885, 888 (doc comments) | — | stays: comment |
+| `crates/zygo-proxy/src/passthrough.rs` | 35 | 9 | CC-4 |
+| `crates/zygo-proxy/src/window.rs` | 132 | 9 | CC-4 |
+| `crates/zygo-redact/src/content.rs` | 262 | 9 | CC-4 |
+| `crates/zygo-redact/src/harness.rs` | 45 (`opencode: bool`) | 9 | CC-4 |
+| `crates/zygo-usage/src/savings.rs` | 77 | 9 | CC-4 |
+| `crates/zygo-work/src/join.rs` | 16 | 9 | CC-4 |
+| `crates/zygo-work/src/hooks.rs` | 371, 372 | 5 | CC-5 |
+| `crates/zygo-mcp/src/tools/mod.rs` | 22 | 5 | CC-5 |
+| `crates/zygo-hooks/src/session_start.rs` | 79 | 3 | CC-6 |
+| `crates/zygo-hooks/src/session_text.rs` | 83 | 4 | CC-6 |
+| `crates/zygo-hooks/src/workspace.rs` | 325 (prompt blocked while stopping), 335 (delivery line per prompt), 749 (per-request session start) | 4 | CC-6 |
+| `crates/zygo-hooks/src/workspace.rs` | 768, 786 (session-start reply shape) | 3 | CC-6 |
+| `crates/zygo-workspace/src/args.rs` | 358, 359, 402, 406, 507, 597, 598, 654, 655 | 7 | CC-7 |
+| `crates/zygo-launch/src/launcher.rs` | 809, 810 (insertion point of session arguments) | 7 | CC-7 |
+| `crates/zygo-config/src/check.rs` | 253, 254 | 8 | CC-8 |
+| `crates/zygo-config/src/repo_def/shape.rs` | 123, 139 (kinds, pool rule) | 8 | CC-8 |
+| `crates/zygo-config/src/repo_def/loadout.rs` | 19, 38 (default member kind) | 8 | CC-8 |
+| `crates/zygo-workspace/src/loadout.rs` | 113 (`builtin_solo`) | 8 | CC-8 |
+| `crates/zygo-workspace/src/state.rs` | 242, 244 (`PaneKind` serde names) | 8 | CC-8 |
+| `crates/zygo-workspace/src/snapshot.rs` | 263, 264 | 8 | CC-8 |
+| `crates/zygo-workspace/src/up.rs` | 932, 933, 1014 (`claude_code: bool` of `pool_member`), 1039 | 8 | CC-8 |
+| `crates/zygo/src/cmd/workspace_approve.rs` | 180 (calls `up::pool_member`, which CC-8 changes) | 8 | CC-8 |
+| `crates/zygo-launch/src/claude_code.rs` | 70, 90, 95, 101, 573, 578, 587, 619, 630, 701 | 6 | CC-9 |
+| `crates/zygo-launch/src/opencode.rs` | 78, 172, 286, 430, 433, 465, 470, 496, 512, 572, 591 | 6 | CC-9 |
+| `crates/zygo-launch/src/launcher.rs` | 592, 593, 606, 608, 616 (plugin delivery, `Plugins`) | 6 | CC-9 |
+| `crates/zygo-plugins/src/snapshot.rs` | 264 | 6 | CC-9 |
+| `crates/zygo-workspace/src/env.rs` | 43 (`OPENCODE_CONFIG_DIR` row) | 11 | CC-9 |
+| `crates/zygo/src/cmd/claude.rs` | 34, 61, 68 | 1 | CC-10 |
+| `crates/zygo/src/cmd/opencode.rs` | 34, 55 | 1 | CC-10 |
+| `crates/zygo/src/cmd/compact.rs` | 61 | 10 | CC-10 |
+| `crates/zygo/src/cmd/config.rs` | 131, 132 | 1 | CC-10 |
+| `crates/zygo/src/cmd/doctor.rs` | 200, 459, 460 | 1 | CC-10 |
+| `crates/zygo/src/cmd/doctor.rs` | 352 (pool rule, inline) | 8 | CC-10 |
+| `crates/zygo/src/cmd/hook.rs` | 106 (`Agent::DEFAULT`) | 1 | CC-10 |
+| `crates/zygo/src/cmd/loadout.rs` | 330 (`Agent::DEFAULT`) | 8 | CC-10 |
+| `crates/zygo/src/cmd/member.rs` | 95, 107, 108, 236, 573, 581, 582, 645, 664, 691, 692, 693, 759, 760 | 1, 7 or 8 by the line | CC-10 |
+| `crates/zygo/src/cmd/ws.rs` | 406, 417, 471, 612, 613, 651, 673 | 8 | CC-10 |
+| `crates/zygo-work/src/guards.rs` | 1047, 1059 | — | stays: exception list (CC-15, K§6.1.4) |
+| each site inside a `#[cfg(test)]` or `#[cfg(all(test, …))]` item: `prompt.rs` 173, 449; `tools/work.rs` 322; `cmd/claude.rs` 140, 207, 209, 234; `cmd/opencode.rs` 108, 115, 123; `cmd/compact.rs` 173, 269; `cmd/loadout.rs` 590, 624, 648, 733, 851; `cmd/mail.rs` 893; `cmd/mod.rs` 705, 707, 709; `cmd/verbs.rs` 451; `cmd/member.rs` from 1117 (84 sites); `cmd/ws.rs` from 683 (16 sites) | | — | stays: test |
+
+Expected counts: CC-3 10, CC-4 7, CC-5 3, CC-6 7, CC-7 11, CC-8 17, CC-9 28, CC-10 35, stays: comment 3, stays: exception list 2, stays: test 122; total 245. No row goes to CC-15 as a new exception (every non-branching literal at the base is either the guard or a test or comment site).
+
+Steps:
+
+- [ ] 1. Check the base. Run `git merge-base --is-ancestor b7e9d45d b324e1dc7f00b38d410d577a307c05c80068b353 && git merge-base --is-ancestor 74748ae7 b324e1dc7f00b38d410d577a307c05c80068b353 && git merge-base --is-ancestor b324e1dc7f00b38d410d577a307c05c80068b353 origin/phase-4` → exit 0. Run `git diff --stat b324e1dc HEAD -- crates` → no output. If a later merge layer on `phase-4` changed `crates/` before this node starts, the base stays `b324e1dc` (the contract), and each site that the grep finds at the new head and not at the base is a found issue (§5.4): write it into K§6.9 and add a node for it.
+- [ ] 2. In `docs/work/phase4/nodes/CC-1.md`, replace the line `Written when the node runs.` under `## Observed` with `Base: b324e1dc7f00b38d410d577a307c05c80068b353`, a blank line, then the table header `| File | Line | Concern | Node |` and `|---|---|---|---|`.
+- [ ] 3. Run the acceptance grep alone with the base, its output to a file in a temporary directory outside the checkout: `T=$(mktemp -d) && git grep -nE 'Agent::(ClaudeCode|OpenCode|\{|\*)|PaneKind::(ClaudeCode|OpenCode)|Plugins::|"(claude-code|claude|opencode|\.claude|\.opencode|CLAUDE_CONFIG_DIR|OPENCODE_CONFIG_DIR)"|(^|[^A-Za-z0-9_])(claude|opencode|claude_code|open_code)[a-z_]*: bool' b324e1dc7f00b38d410d577a307c05c80068b353 -- 'crates/*/src/**' > "$T/sites"` (the pattern of **Acceptance**, unchanged). Check: `wc -l < "$T/sites"` prints `245`.
+- [ ] 4. Find the test items. For each of the 44 files, read it at the base (`git show b324e1dc:<file>`) and take the line range of each item whose `cfg` predicate requires `test` (`test`, or `all(…)` with `test` in it). Check: the ranges agree with the last row of the Assignment table; a site inside a range is `stays: test`, with concern `—`.
+- [ ] 5. Write one row per site, sorted by file and then line, as the Assignment table says. A site on a `///` or `//!` line is `stays: comment`. Where the code at a line differs from its Assignment note, the code decides, by the planning notes' node-per-concern rule. Check: each `crates/zygo/src/cmd/member.rs` row before line 1117 names concern 1 (program name and CLI verb: 581, 582, 691, 692, 693), 7 (session flags and the bare rule: 95, 236, 759, 760) or 8 (resume command and the config folder saved for resume: 107, 108, 573, 645, 664).
+- [ ] 6. Add the files that rows give to a node whose **Files** line does not list them: append `` `crates/zygo-config/src/repo_def/loadout.rs` `` and `` `crates/zygo/src/cmd/workspace_approve.rs` `` to the **Files** line of `docs/work/phase4/nodes/CC-8.md` (CC-8 changes `up::pool_member`, which `workspace_approve.rs:180` calls). Every other file in a CC-n row is already on that node's **Files** line (checked at planning). Check: `python3 /home/kagemartin/.cache/zygo/sessions/01M8CKYAD9C5W51MRT0M1T8299/plugins/act101/skills/work-graph/scripts/work_graph.py check docs/work/phase4/graph.md` (the act101 plugin's `skills/work-graph/scripts/work_graph.py`) → exit 0.
+- [ ] 7. Under the table, write `Phase 3 client features (for CC-12), at the base:` and one bullet for each feature, with its files and tests at the base:
+  - output shaping: `crates/zygo-results/src/shape/` (`mod.rs`, `clean.rs`, `command.rs`, `dedup.rs`, `kind_view.rs`, `runner.rs`); tests `crates/zygo-results/tests/shape_*.rs` (9 files), `crates/zygo-hooks/tests/shaping.rs`, `shaping_hook.rs`, `shaping_off.rs`, `shaping_fixtures.rs`, `shaping_latency.rs`, the golden folders `crates/zygo-hooks/tests/golden/shape_off/claude-code/` and `.../opencode/`;
+  - mail wake and delivery: `crates/zygo-workspace/src/mail/` (`mod.rs`, `names.rs`, `store.rs`, `wake.rs`), `crates/zygo-hooks/src/mail.rs`, the delivery sites `crates/zygo-hooks/src/workspace.rs:335` and `:749`-`:786`, `crates/zygo-mcp/src/tools/mail.rs`, `crates/zygo/src/cmd/mail.rs`, `crates/zygo-mail-sync/src/`; tests `crates/zygo-workspace/tests/mail_*.rs` (4 files), `crates/zygo-hooks/tests/mail_sync_text.rs`, `mail_sync_trigger.rs`, `crates/zygo-mcp/tests/mail_tools.rs`, `mail_remote.rs`, `crates/zygo/tests/mail_*.rs` (5 files), `workspace_mail.rs`, `crates/zygo-mail-sync/tests/`;
+  - run-time status line: `crates/zygo-hooks/src/statusline/` (`mod.rs`, `data.rs`, `mail.rs`, `phase.rs`, `render.rs`, `width.rs`), `crates/zygo/src/cmd/statusline.rs`, `status.rs`; tests `crates/zygo-hooks/tests/statusline_*.rs` (5 files), `crates/zygo/tests/statusline_cmd.rs`, `statusline_git.rs`.
+  Check: `git ls-tree -r --name-only b324e1dc -- <each path>` lists each named path.
+- [ ] 8. Run the **Acceptance** command alone, as one command → exit 0 (`cmp` silent).
+- [ ] 9. Commit `docs/work/phase4/nodes/CC-1.md` and `CC-8.md` on the node branch: `docs(work): CC-1 inventory at b324e1dc`, with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:CC-1`.
