@@ -103,16 +103,31 @@ pub fn probe_command(https_url: &str, empty_home: &Path) -> Command {
     c
 }
 
-/// S§8.2 step 3, S-C9: the production probe, an anonymous `git ls-remote` killed after 10 s.
+/// S§8.2 step 3: how long one probe may run.
+const PROBE_SECS: u64 = 10;
+
+/// S§8.2 step 3, S§8.3 step 4 (FX-40 review F4): the end of a probe that starts at `now` in a pass that ends at
+/// `deadline`: 10 s after `now`, or the pass deadline when that comes first.
+pub fn probe_deadline(now: Instant, deadline: Instant) -> Instant {
+    (now + Duration::from_secs(PROBE_SECS)).min(deadline)
+}
+
+/// S§8.2 step 3, S-C9: the production probe, an anonymous `git ls-remote` killed after 10 s, or at the pass deadline
+/// when that comes first ([`Probe::probe_until`]).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LsRemote;
 
 impl Probe for LsRemote {
     fn probe(&self, https_url: &str) -> Verdict {
+        let now = Instant::now();
+        self.probe_until(https_url, now + Duration::from_secs(PROBE_SECS))
+    }
+
+    fn probe_until(&self, https_url: &str, deadline: Instant) -> Verdict {
         let Ok(dir) = tempfile::TempDir::new() else {
             return Verdict::Unknown("cannot make an empty home folder".into());
         };
-        match run_whole(probe_command(https_url, dir.path()), Instant::now() + Duration::from_secs(10)) {
+        match run_whole(probe_command(https_url, dir.path()), probe_deadline(Instant::now(), deadline)) {
             Ok(w) => classify(&w),
             Err(RunError::TimedOut) => Verdict::Unknown("git ls-remote timed out".into()),
             Err(RunError::NotRun) => Verdict::Unknown("git ls-remote did not start".into()),
@@ -147,10 +162,12 @@ pub fn remote_urls(main_root: &Path, remote: &str, deadline: Instant) -> Result<
 const CACHE_SECS: u64 = 3600;
 
 /// S§8.2, S§13 limit 7: the verdict of the remote with fetch and push URLs `urls`, from the cache when it is under
-/// 1 h old and holds the same URLs, else from `probe` on each distinct `https` form. `check` loads and saves
+/// 1 h old and holds the same URLs, else from `probe` on each distinct `https` form, each probe ended by the pass
+/// deadline `deadline` (S§8.3 step 4). A check that reached the deadline before it probed every URL is `Unknown` and
+/// is not cached (FX-40 review F4). `check` loads and saves
 /// `state.json` under the caller's lock (S§15: the pass under the lock is the only writer of `state.json`); a caller
 /// that holds a `State` must load it again after `check`.
-pub fn check(sp: &SyncPaths, urls: &[String], probe: &dyn Probe, clock: &dyn Clock) -> Verdict {
+pub fn check(sp: &SyncPaths, urls: &[String], probe: &dyn Probe, clock: &dyn Clock, deadline: Instant) -> Verdict {
     let now = clock.now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let mut keys: Vec<String> = urls.iter()
         .map(|u| hex::encode(Sha256::digest(scrub_userinfo(u).as_bytes()))).collect();
@@ -167,7 +184,9 @@ pub fn check(sp: &SyncPaths, urls: &[String], probe: &dyn Probe, clock: &dyn Clo
             _ => {}
         }
     }
-    let verdict = fold(urls, probe);
+    let Some(verdict) = fold(urls, probe, deadline) else {
+        return Verdict::Unknown("the pass deadline passed".into());
+    };
     if let Ok(mut s) = state {
         let name = match verdict {
             Verdict::Public => "public",
@@ -181,11 +200,11 @@ pub fn check(sp: &SyncPaths, urls: &[String], probe: &dyn Probe, clock: &dyn Clo
     verdict
 }
 
-/// S§8.2 steps 1, 2 and 4: probe each distinct `https` form once; any `Public` wins, else the first `Unknown`,
-/// else any `Private`, else `Local`.
-fn fold(urls: &[String], probe: &dyn Probe) -> Verdict {
+/// S§8.2 steps 1, 2 and 4: probe each distinct `https` form once, each until `deadline`; any `Public` wins, else the
+/// first `Unknown`, else any `Private`, else `Local`. `None` when the deadline passed before a URL was probed.
+fn fold(urls: &[String], probe: &dyn Probe, deadline: Instant) -> Option<Verdict> {
     if urls.is_empty() {
-        return Verdict::Unknown("the remote has no URL".into());
+        return Some(Verdict::Unknown("the remote has no URL".into()));
     }
     let mut asked: Vec<String> = Vec::new();
     let mut verdicts = Vec::new();
@@ -194,17 +213,20 @@ fn fold(urls: &[String], probe: &dyn Probe) -> Verdict {
             Mapped::Local => verdicts.push(Verdict::Local),
             Mapped::Unknown => verdicts.push(Verdict::Unknown("the remote URL has no https form".into())),
             Mapped::Https(h) if !asked.contains(&h) => {
-                verdicts.push(probe.probe(&h));
+                if Instant::now() >= deadline {
+                    return None;
+                }
+                verdicts.push(probe.probe_until(&h, deadline));
                 asked.push(h);
             }
             Mapped::Https(_) => {}
         }
     }
     if verdicts.contains(&Verdict::Public) {
-        return Verdict::Public;
+        return Some(Verdict::Public);
     }
     if let Some(u) = verdicts.iter().find(|v| matches!(v, Verdict::Unknown(_))) {
-        return u.clone();
+        return Some(u.clone());
     }
-    if verdicts.contains(&Verdict::Private) { Verdict::Private } else { Verdict::Local }
+    Some(if verdicts.contains(&Verdict::Private) { Verdict::Private } else { Verdict::Local })
 }

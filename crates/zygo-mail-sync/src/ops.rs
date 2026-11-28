@@ -69,7 +69,8 @@ fn write(c: &Ctx, identity: &str, deadline: Instant,
                 return Ok(());
             }
             Pushed::Moved => {}
-            Pushed::Other(_) => return Err(stop("push")),
+            // FX-40 review F1: a push that some push URL took and another did not stops as any other error.
+            Pushed::Split | Pushed::Other(_) => return Err(stop("push")),
         }
     }
     Err(Fail::Stop { line: MOVED_LINE.into(), check: "moved" })

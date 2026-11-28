@@ -468,7 +468,7 @@ fn classify_reads_only_the_target_ref_line() {
 /// a line for every URL and every line an accept; `Moved` needs a line for every URL and every line a moved
 /// rejection; a URL that accepted while another did not is `Split`; else `Other`.
 #[test]
-fn classify_several_push_urls() {
+fn classify_one_accept_and_one_reject_is_not_accepted() {
     let accept = " \tC:refs/heads/zygo/mail\t[new branch]\n";
     let moved = "!\tC:refs/heads/zygo/mail\t[rejected] (fetch first)\n";
     let stale = "!\tC:refs/heads/zygo/mail\t[rejected] (stale info)\n";

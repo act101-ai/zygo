@@ -544,7 +544,8 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: 
                     return Err(Fail::Stop { line: MOVED_LINE.into(), check: "moved" });
                 }
             }
-            Pushed::Other(_) => return Err(stop("push")),
+            // FX-40 review F1: a push that some push URL took and another did not stops the pass as any other error.
+            Pushed::Split | Pushed::Other(_) => return Err(stop("push")),
         }
     };
     prune_step(c, report, &base, &base_meta, &identity, forced, deadline)?;
@@ -561,7 +562,8 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: 
 /// [`prune::COMMITS_DUE`] commits. A done prune adds the note `pruned <n> files`. A lost lease writes no line (the
 /// next pass tries again, S§9), but a forced prune notes it. A failed count, commit or push skips the prune and adds
 /// the note `prune skipped (<check>)`: the pass ends as without a prune (D11). A failed branch-name or `ZYGO-MAIL`
-/// check stops the pass (S-C3).
+/// check stops the pass (S-C3). A root that one push URL took and another did not (`Split`) stops the pass with the
+/// `push` stop (S§9 Push, FX-40 review F2).
 fn prune_step(c: &Ctx, report: &mut Report, base: &str, meta: &TipMeta, identity: &str, forced: bool,
     deadline: Instant) -> Result<(), Fail> {
     let own_len = own_hosts(meta, identity, &c.s.host).iter()
@@ -580,6 +582,8 @@ fn prune_step(c: &Ctx, report: &mut Report, base: &str, meta: &TipMeta, identity
     match pruned {
         Ok(Pruned::Done { removed }) => report.notes.push(format!("pruned {removed} files")),
         Ok(Pruned::LeaseLost) if forced => report.notes.push(PRUNE_MOVED_NOTE.into()),
+        // FX-40 review F2: a root that some push URL took and another did not: the branch differs between the URLs.
+        Ok(Pruned::Split) => return Err(stop("push")),
         Ok(_) => {}
         Err(e @ BranchError::Refused("branch" | "marker")) => return Err(e.into()),
         Err(e) => report.notes.push(format!("prune skipped ({})", branch_check(&e))),
@@ -600,7 +604,7 @@ pub(crate) fn public_check(c: &Ctx, report: &mut Report, deadline: Instant) -> R
         return Err(Fail::Stop { line: REMOTE_LINE.into(), check: "remote" });
     }
     let urls = public::remote_urls(root, &c.s.remote, deadline).map_err(|_| stop("remote"))?;
-    match public::check(&c.sp, &urls, &*c.env.probe, &*c.env.clock) {
+    match public::check(&c.sp, &urls, &*c.env.probe, &*c.env.clock, deadline) {
         Verdict::Public => Err(Fail::Stop { line: PUBLIC_LINE.into(), check: "public" }),
         Verdict::Unknown(r) => {
             report.notes.push(format!("zygo: cannot check if the remote is public: {r}"));
