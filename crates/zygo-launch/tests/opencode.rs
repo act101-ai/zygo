@@ -405,14 +405,14 @@ fn agents_map_to_roles() {
     for (name, role) in [("build", "lead"), ("plan", "plan"), ("general", "code"), ("explore", "read")] {
         assert_eq!(a[name]["model"], format!("zygo/{role}"), "{name}");
     }
-    let mech = mechanics(&c.view);
     for (r, role) in &c.config.roles {
         let key = format!("zygo-{r}");
         if *r == c.config.main_role {
             assert!(a.get(&key).is_none(), "{key}");
             continue;
         }
-        let mut want = json!({"mode": "subagent", "description": role.description, "prompt": format!("{} {mech}", role.prompt), "model": format!("zygo/{r}")});
+        // ST4 verified (SX-10, T§7.2 item 3): the prompt is the role prompt only.
+        let mut want = json!({"mode": "subagent", "description": role.description, "prompt": role.prompt, "model": format!("zygo/{r}")});
         if !role.writes {
             want["permission"] = json!({"edit": "deny"});
         }
@@ -430,6 +430,31 @@ fn agents_map_to_roles() {
         c.config.roles.remove("read");
     });
     assert!(built(&c).1["agent"].get("explore").is_none());
+}
+
+/// T§17 check 14, ST4 verified (`docs/premises.md` row ST4, SX-10): each OpenCode `zygo-<role>` prompt, of a built-in
+/// and of a custom role, equals the role prompt and holds no mechanics text; the system-prompt transform is the one
+/// owner of that text (session text design T§7.2 item 3).
+#[test]
+fn st4_verified_zygo_role_prompt_is_the_role_prompt() {
+    let fx = fx();
+    let custom = CustomRole { model: "claude-sonnet-5-5".into(), description: "custom".into(), prompt: "C".into(), writes: true };
+    let c = ctx(&fx, |c| {
+        c.config.custom_roles.insert("cu".into(), custom.clone());
+    });
+    let (_, cfg) = built(&c);
+    let mech = mechanics(&c.view);
+    assert!(!mech.is_empty());
+    let prompts = c.config.roles.iter().map(|(k, r)| (k, &r.prompt)).chain(c.config.custom_roles.iter().map(|(k, r)| (k, &r.prompt)));
+    let mut n = 0;
+    for (r, prompt) in prompts.filter(|(k, _)| **k != c.config.main_role) {
+        let p = &cfg["agent"][format!("zygo-{r}")]["prompt"];
+        assert_eq!(p, &json!(prompt), "zygo-{r}");
+        assert!(!p.as_str().unwrap().contains(&mech), "zygo-{r}");
+        n += 1;
+    }
+    assert!(n >= 2, "{n}");
+    assert_eq!(cfg["agent"]["zygo-cu"]["prompt"], "C");
 }
 
 #[test]

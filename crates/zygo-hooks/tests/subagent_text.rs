@@ -128,6 +128,27 @@ fn subagent_start_other_types_get_the_same() {
     assert_eq!(both(t.path(), &d, &input(&without(sub, "agent_type"))), want, "no agent_type");
 }
 
+/// SX-10 (T§16 fixture row, T§12.1 ST2 verified): `SubagentStart-plugin-sub.json` is the `p315:probe`
+/// `SubagentStart` line of the recorded `st-hooks.jsonl` (SX-9), and `session-start` gives that plugin subagent M.
+#[test]
+fn subagent_start_plugin_fixture_gets_mechanics() {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/claude-code/live/st-hooks.jsonl");
+    let lines = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+    let recorded: Vec<Value> = lines
+        .lines()
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .filter(|v| v["hook_event_name"] == "SubagentStart" && v["agent_type"] == "p315:probe")
+        .collect();
+    assert_eq!(recorded.len(), 1);
+    let sub = fixture("SubagentStart-plugin-sub");
+    assert_eq!(sub, recorded[0]);
+    let (t, d) = sd();
+    view().save(&d).unwrap();
+    let m = [REDACT, ATTRIBUTION, STORE, NAV, TRAILER].join(" ");
+    assert_eq!(m.len(), 721);
+    assert_eq!(both(t.path(), &d, &input(&sub)), envelope(&m));
+}
+
 #[test]
 fn subagent_start_zygo_type_gets_nothing() {
     // T§17 check 3
