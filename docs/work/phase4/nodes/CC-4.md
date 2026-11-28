@@ -19,6 +19,8 @@ None.
 
 ## Plan
 
+Parent: d4e3fd279fcfd4f61afa7932d875f37204be0be7
+
 Step 1 writes the first line of this section: `Parent: <40-hex>`, the commit this node's layer starts from. This file has no `Parent:` line until step 1.
 
 Planning base: `phase-4` at `39db6e0c` (2026-11-28; CC-3 merged at `4194b7a7`). Since the inventory base `b324e1dc`, only `crates/zygo-config/src/schema.rs` of this node's code changed: CC-3 replaced the `Dialect` enum (`:184-190`) by `pub use zygo_core::Dialect;`, so each inventory line after it is 5 lines lower (`schema.rs:470` is now `:465`). `git diff --stat b324e1dc 39db6e0c -- crates/zygo-proxy crates/zygo-redact crates/zygo-usage crates/zygo-work` is empty, so every other row and line below holds.
@@ -71,7 +73,7 @@ Descriptor values (K-D3: today's behavior):
 
 Steps:
 
-- [ ] 1. **Parent line.** When the node starts, insert as the first line under `## Plan` the line `Parent: <40-hex>` = `git merge-base HEAD <layer base branch>`, where the layer base branch is the branch of the open layer directly below this one, or `origin/phase-4` when the stack below is empty (Workflows (2); CC-2 Definitions "Parent"). CC-12's layer is open but shares no file with this node, so, as in CC-3, the layer branches from `origin/phase-4`. After every merge into the node branch, recompute the line and rewrite it in the merge commit. Check: `sed -n 's/^Parent: \([0-9a-f]\{40\}\)$/\1/p' docs/work/phase4/nodes/CC-4.md` prints exactly one hash, equal to `git merge-base HEAD <layer base branch>`. Commit `docs(work): CC-4 parent`.
+- [x] 1. **Parent line.** When the node starts, insert as the first line under `## Plan` the line `Parent: <40-hex>` = `git merge-base HEAD <layer base branch>`, where the layer base branch is the branch of the open layer directly below this one, or `origin/phase-4` when the stack below is empty (Workflows (2); CC-2 Definitions "Parent"). CC-12's layer is open but shares no file with this node, so, as in CC-3, the layer branches from `origin/phase-4`. After every merge into the node branch, recompute the line and rewrite it in the merge commit. Check: `sed -n 's/^Parent: \([0-9a-f]\{40\}\)$/\1/p' docs/work/phase4/nodes/CC-4.md` prints exactly one hash, equal to `git merge-base HEAD <layer base branch>`. Commit `docs(work): CC-4 parent`.
 - [ ] 2. **Failing tests**, five new files (K-C7 does not check a file that is new in the node). No test names an `Agent` variant by path (CC-13, CC-14): a client comes from its id.
   - `crates/zygo-core/tests/client_proxy.rs`:
     ```rust
