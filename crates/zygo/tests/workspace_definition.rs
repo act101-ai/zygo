@@ -247,6 +247,8 @@ fn run(fx: &Fx, git: Arc<dyn GitRunner + Send + Sync>, f: impl FnOnce(&mut Launc
     o.stderr = Some(buf.clone());
     o.definition_git = Some(git);
     o.profile = Some("rust".into());
+    // The member wrapper sets the main worktree of the workspace (R§7.4, FX-39 R1); here it is `app`.
+    o.definition_root = Some(fx.app.clone());
     let called = Arc::new(AtomicBool::new(false));
     let c = called.clone();
     o.on_session = Some(Box::new(move |_, _, _, _, _| {
@@ -415,18 +417,28 @@ fn l10_a_default_branch_read_gives_its_pin_to_the_caller() { // R§7.4 bullet 2 
 }
 
 #[test]
-fn l11_a_pin_outside_a_checkout_stops() { // R§7.4 bullet 4 (rewritten)
+fn l11_a_pin_outside_a_checkout_reads_at_the_main_worktree() { // R§7.4 "The repository of a member launch" (FX-39 R1)
     let fx = fx();
     let pin = approve(&fx.app, &fx.paths.approvals_file);
     let plain = fx.root.join("plain");
     std::fs::create_dir(&plain).unwrap();
+    // A launch folder outside any checkout, with the main worktree `app`: the pinned read runs there.
     let r = run(&fx, Arc::new(Rec::default()), |o| {
         o.cwd = plain.clone();
         o.definition = Some(pin.clone());
     });
+    assert_eq!(r.code, 2, "{}", r.err);
+    let p = r.seen.expect("build ran").0.expect("the pinned profile was sent");
+    assert_eq!(p.overrides, BTreeMap::from([("code".to_string(), "claude-haiku-5-5".to_string())]));
+    // No main worktree: the launch with a pin stops with the not-read line.
+    let r = run(&fx, Arc::new(Rec::default()), |o| {
+        o.cwd = plain.clone();
+        o.definition = Some(pin.clone());
+        o.definition_root = None;
+    });
     assert_eq!(r.code, 1, "{}", r.err);
-    assert!(r.seen.is_none() && !r.called);
-    assert_eq!(count(&r.err, &pin_line(&pin, NO_LONGER)), 1, "{}", r.err);
+    assert!(r.seen.is_none() && !r.called, "the launch went on: {}", r.err);
+    assert_eq!(count(&r.err, &pin_line(&pin, NOT_READ)), 1, "{}", r.err);
 }
 
 #[test]
@@ -579,10 +591,15 @@ fn git_log(h: &Harness) -> String {
 
 /// panes[] = KEY (Claude Code) in `app`; members[KEY] = `m`; the workspace's checkout is `app`.
 fn seed_member(h: &Harness, app: &Path, m: &MemberRecord) {
+    seed_member_at(h, app, app, m);
+}
+
+/// [`seed_member`] with the pane folder `cwd` (FX-39): the workspace's checkout stays `app`.
+fn seed_member_at(h: &Harness, app: &Path, cwd: &Path, m: &MemberRecord) {
     h.seed(WS_ID, &mut |w| {
         w.common_dir = app.join(".git");
         w.main_root = app.to_path_buf();
-        w.panes = vec![Pane { key: KEY.into(), cwd: app.to_path_buf(), kind: PaneKind::ClaudeCode, ..Default::default() }];
+        w.panes = vec![Pane { key: KEY.into(), cwd: cwd.to_path_buf(), kind: PaneKind::ClaudeCode, ..Default::default() }];
         w.members.clear();
         w.members.insert(KEY.into(), m.clone());
     });
@@ -1006,6 +1023,8 @@ struct Wrapped {
     /// follows that write (`member.rs` `Callback::run`). The exit write of a start that never spawned clears the
     /// start fields again (T§3.2), so the folder is the trace of the write.
     wrote: bool,
+    /// The profile that `build` saw, when it ran.
+    profile: Option<Profile>,
     calls: Vec<Vec<String>>,
     before: Vec<u8>,
     after: Vec<u8>,
@@ -1019,7 +1038,13 @@ struct Wrapped {
 /// records each git call of the definition read. The stub's preflight refuses after `build`, so a launch that
 /// reaches the agent exits 2 and no child starts.
 fn wrapped(h: &Harness, app: &Path, m: &MemberRecord, env: &[(OsString, OsString)]) -> Wrapped {
-    seed_member(h, app, m);
+    wrapped_at(h, app, app, m, env)
+}
+
+/// [`wrapped`] with the pane folder `cwd` in place of `app` (FX-39): the workspace's main worktree (`main_root`) stays
+/// `app`, the launch runs in `cwd`.
+fn wrapped_at(h: &Harness, app: &Path, cwd: &Path, m: &MemberRecord, env: &[(OsString, OsString)]) -> Wrapped {
+    seed_member_at(h, app, cwd, m);
     let results = h.paths.workspace_cache_dir().join(WS_ID).join("results").join(KEY);
     let _ = std::fs::remove_dir_all(&results);
     let before = state_bytes(h);
@@ -1030,7 +1055,7 @@ fn wrapped(h: &Harness, app: &Path, m: &MemberRecord, env: &[(OsString, OsString
         (OsString::from("ACT_CONFIG_DIR"), OsString::from(h.root().join("act"))),
     ];
     vars.extend(env.iter().cloned());
-    let mut o = zygo::cmd::ws::member_launch_opts(m, m.agent_session.is_some(), Env(vars), app.to_path_buf(), h.paths.clone())
+    let mut o = zygo::cmd::ws::member_launch_opts(m, m.agent_session.is_some(), Env(vars), cwd.to_path_buf(), h.paths.clone())
         .expect("the saved launch maps");
     o.builtin = Some(builtin());
     let buf: Arc<Mutex<Vec<u8>>> = Arc::default();
@@ -1053,8 +1078,9 @@ fn wrapped(h: &Harness, app: &Path, m: &MemberRecord, env: &[(OsString, OsString
     };
     let code = zygo::cmd::member::run_wrapped(&stub, o, &ctx).code;
     let err = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
-    let built = stub.seen.lock().unwrap().is_some();
-    Wrapped { code, err, built, wrote: results.is_dir(), calls: rec.calls(), before, after: state_bytes(h) }
+    let seen = stub.seen.lock().unwrap().take();
+    let (built, profile) = (seen.is_some(), seen.and_then(|s| s.0));
+    Wrapped { code, err, built, wrote: results.is_dir(), profile, calls: rec.calls(), before, after: state_bytes(h) }
 }
 
 /// One member of [`pin_gone_stops_exactly_the_r11_members`].
@@ -1155,5 +1181,217 @@ fn pin_gone_stops_exactly_the_r11_members() { // R§11 row "A pinned commit or o
         }
         server.shutdown();
         assert!(is_workspace_approved_in(&h.paths.approvals_file, &id, OTHER_DIGEST), "{gone:?}: the other entry is gone");
+    }
+}
+
+/// FX-39: `app` with `RUST` on `main` in a fresh harness, `OTHER_DIGEST` and the default-branch read approved; the
+/// pin of that read and the workspace id of `app`.
+fn approved_app(h: &Harness) -> (PathBuf, Pin, String) {
+    let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
+    let id = ws_id(&app);
+    approve_workspace_in(&h.paths.approvals_file, &id, OTHER_DIGEST).unwrap();
+    let pin = approve(&app, &h.paths.approvals_file);
+    (app, pin, id)
+}
+
+/// The record of [`pinned`] with `pin` and no profile: the launch makes no pinned read.
+fn no_profile(pin: &Pin) -> MemberRecord {
+    let mut m = pinned(Some(pin));
+    m.launch.profile = None;
+    m
+}
+
+/// Asserts that `r` stopped before the session with exactly one `line`: exit 1, no build, no record write, no git
+/// read of the definition.
+fn assert_stopped(r: &Wrapped, line: &str, what: &str) {
+    assert_eq!(r.code, 1, "{what}: did not stop: {}", r.err);
+    assert_eq!(count(&r.err, line), 1, "{what}: {}", r.err);
+    assert!(!r.built && !r.wrote, "{what}: the launch went on: {}", r.err);
+    assert_eq!(r.after, r.before, "{what}: the record changed");
+    assert!(r.calls.is_empty(), "{what}: a git read: {:?}", r.calls);
+}
+
+#[test]
+fn withdrawn_pin_stops_a_member_whose_folder_is_dot_git() { // R§7.4 approval bullet (FX-39 D1); R-F1
+    let h = Harness::no_tmux();
+    let (app, pin, id) = approved_app(&h);
+    withdraw(&h.paths.approvals_file, &id, &pin.digest);
+    let r = wrapped_at(&h, &app, &app.join(".git"), &no_profile(&pin), &[]);
+    assert_stopped(&r, &member_line(&pin, NO_LONGER), "a member in .git");
+}
+
+/// The R§7.4 not-read reason of a member launch whose main worktree gives no checkout (FX-39 R1).
+const NOT_READ: &str = "were not read (git found no checkout at the main worktree of the workspace)";
+
+/// The R§7.4 pane-folder line for the resolved folder `p` (FX-39 R2).
+fn dir_line(p: &Path) -> String {
+    format!("zygo: the folder of this member is inside a git dir ({}); the agent was not started", p.display())
+}
+
+/// The fixture of [`withdrawn_pin_checkout_child`], set on the child process only: the folder `app`, the pin as JSON
+/// and the approvals file of the parent.
+const CHILD_APP: &str = "ZYGO_TEST_FX39_APP";
+const CHILD_PIN: &str = "ZYGO_TEST_FX39_PIN";
+const CHILD_APPROVALS: &str = "ZYGO_TEST_FX39_APPROVALS";
+/// The line the child prints when its assertions hold.
+const CHILD_OK: &str = "WITHDRAWN_PIN_CHILD ok";
+
+/// Builds `app` with the real git, approves its read, withdraws it, writes `<root>/stubbin/git` = `stub` and runs
+/// [`withdrawn_pin_checkout_child`] with `PATH` = that folder: the launch's checkout reads run the `git` of the process
+/// `PATH` (P7). Asserts that the child ran its checks.
+fn run_checkout_child(stub: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let h = Harness::no_tmux();
+    let (app, pin, id) = approved_app(&h);
+    withdraw(&h.paths.approvals_file, &id, &pin.digest);
+    let stubbin = h.root().join("stubbin");
+    std::fs::create_dir_all(&stubbin).unwrap();
+    let p = stubbin.join("git");
+    std::fs::write(&p, stub).unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    ready_exe(&p);
+    let o = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "withdrawn_pin_checkout_child", "--ignored", "--nocapture", "--test-threads=1"])
+        .env("PATH", &stubbin)
+        .env(CHILD_APP, &app)
+        .env(CHILD_PIN, serde_json::to_string(&pin).unwrap())
+        .env(CHILD_APPROVALS, &h.paths.approvals_file)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
+    assert!(out.contains(CHILD_OK), "the child did not run its checks: {out}{}", String::from_utf8_lossy(&o.stderr));
+}
+
+#[test]
+fn withdrawn_pin_stops_when_the_checkout_read_fails() { // R§7.4 "The repository of a member launch" (FX-39 R1); R§18 item 16
+    run_checkout_child("#!/bin/sh\necho 'fatal: stub failure' >&2\nexit 128\n");
+}
+
+#[test]
+#[ignore = "timing: the stub git sleeps 5 s past the 2 s checkout bound"]
+fn withdrawn_pin_stops_when_the_checkout_read_times_out() { // R§7.4 "The repository of a member launch" (FX-39 R1, R7); R§18 item 16
+    run_checkout_child("#!/bin/sh\nsleep 5\n");
+}
+
+#[test]
+#[ignore = "child of withdrawn_pin_stops_when_the_checkout_read_fails and withdrawn_pin_stops_when_the_checkout_read_times_out"]
+fn withdrawn_pin_checkout_child() {
+    let Some(app) = std::env::var_os(CHILD_APP) else { return };
+    let pin: Pin = serde_json::from_str(&std::env::var(CHILD_PIN).unwrap()).unwrap();
+    let h = Harness::no_tmux();
+    std::fs::create_dir_all(h.paths.approvals_file.parent().unwrap()).unwrap();
+    std::fs::copy(std::env::var_os(CHILD_APPROVALS).unwrap(), &h.paths.approvals_file).unwrap();
+    let r = wrapped(&h, Path::new(&app), &no_profile(&pin), &[]);
+    assert_stopped(&r, &member_line(&pin, NOT_READ), "no checkout at the main worktree");
+    println!("{CHILD_OK}");
+}
+
+/// `<root>/app` (as [`repo_at`] with `RUST`) with a submodule `sub` (of the bare `<root>/sub.git`), committed and
+/// pushed, and an untracked repository `nested` of its own. Nothing is approved.
+fn app_with_sub_and_nested(root: &Path) -> PathBuf {
+    let sw = root.join("sw");
+    std::fs::create_dir_all(&sw).unwrap();
+    std::fs::write(sw.join("lib.txt"), "lib").unwrap();
+    git(root, &["init", "-q", "--bare", "-b", "main", "sub.git"]);
+    git(&sw, &["init", "-q", "-b", "main"]);
+    git(&sw, &["add", "-A"]);
+    git(&sw, &["commit", "-q", "-m", "c"]);
+    git(&sw, &["push", "-q", root.join("sub.git").to_str().unwrap(), "main"]);
+    let app = repo_at(root, &[(".zygo/profiles/rust.toml", RUST)]);
+    git(&app, &["-c", "protocol.file.allow=always", "submodule", "add", "-q", root.join("sub.git").to_str().unwrap(), "sub"]);
+    git(&app, &["commit", "-q", "-m", "sub"]);
+    git(&app, &["push", "-q", "origin", "HEAD:main"]);
+    let nested = app.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(nested.join("n.txt"), "n").unwrap();
+    git(&nested, &["init", "-q", "-b", "main"]);
+    git(&nested, &["add", "-A"]);
+    git(&nested, &["commit", "-q", "-m", "c"]);
+    app
+}
+
+#[test]
+fn approved_member_in_a_submodule_launches() { // R§7.4 "The repository of a member launch" (FX-39 R1); R§18 item 16
+    let h = Harness::no_tmux();
+    let app = app_with_sub_and_nested(h.root());
+    let pin = approve(&app, &h.paths.approvals_file);
+    for dir in [app.join("sub"), app.join("nested")] {
+        let what = dir.display().to_string();
+        let r = wrapped_at(&h, &app, &dir, &no_profile(&pin), &[]);
+        assert_eq!(r.code, 2, "{what}: did not start: {}", r.err);
+        assert!(r.built && r.wrote, "{what}: not built or not recorded: {}", r.err);
+        assert!(!r.err.contains("no longer"), "{what}: {}", r.err);
+        assert_eq!(member_of(&h).launch.definition.as_ref(), Some(&pin), "{what}: the pin was not kept");
+    }
+}
+
+#[test]
+fn approved_member_with_a_profile_in_a_submodule_gets_the_pinned_profile() { // R§7.4 "The repository of a member launch" (FX-39 R1, R7); R§18 item 16
+    let h = Harness::no_tmux();
+    let app = app_with_sub_and_nested(h.root());
+    let pin = approve(&app, &h.paths.approvals_file);
+    for dir in [app.join("sub"), app.join("nested")] {
+        let what = dir.display().to_string();
+        let r = wrapped_at(&h, &app, &dir, &pinned(Some(&pin)), &[]);
+        assert_eq!(r.code, 2, "{what}: did not start: {}", r.err);
+        assert!(r.built, "{what}: not built: {}", r.err);
+        let p = r.profile.unwrap_or_else(|| panic!("{what}: no profile was sent: {}", r.err));
+        assert_eq!(p.name, "rust", "{what}");
+        assert_eq!(p.overrides, BTreeMap::from([("code".to_string(), "claude-haiku-5-5".to_string())]), "{what}");
+        assert!(!r.err.contains("no longer") && !r.err.contains("were not read"), "{what}: {}", r.err);
+        assert!(r.calls.iter().any(|c| c[0] == "ls-tree" && c.contains(&pin.commit)), "{what}: no pinned read: {:?}", r.calls);
+    }
+}
+
+#[test]
+fn a_state_id_does_not_change_the_check() { // R§7.4 "The repository of a member launch" (FX-39 R1): the id comes from git at the main worktree
+    let h = Harness::no_tmux();
+    let app = app_with_sub_and_nested(h.root());
+    let id = ws_id(&app);
+    approve_workspace_in(&h.paths.approvals_file, &id, OTHER_DIGEST).unwrap();
+    let pin = approve(&app, &h.paths.approvals_file);
+    // The submodule's own id approves the same digest; the main worktree's entry is withdrawn. The workspace record
+    // (`WS_ID`, seeded) and the pin (`{ commit, digest }`) hold no id that the check could take.
+    let sub = app.join("sub");
+    let sub_id = ws_id(&sub);
+    assert_ne!(sub_id, id);
+    approve_workspace_in(&h.paths.approvals_file, &sub_id, &pin.digest).unwrap();
+    withdraw(&h.paths.approvals_file, &id, &pin.digest);
+    let bare = Pin::new(pin.commit.clone(), pin.digest.clone());
+    let r = wrapped_at(&h, &app, &sub, &no_profile(&bare), &[]);
+    assert_stopped(&r, &member_line(&bare, NO_LONGER), "withdrawn at the main worktree, approved in the submodule");
+}
+
+#[test]
+fn a_main_worktree_without_a_checkout_stops_a_pinned_member() { // R§7.4 "The repository of a member launch" (FX-39 R1); R§11 row
+    let h = Harness::no_tmux();
+    let (app, pin, _) = approved_app(&h);
+    let plain = h.root().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let r = wrapped_at(&h, &plain, &app, &no_profile(&pin), &[]);
+    assert_stopped(&r, &member_line(&pin, NOT_READ), "no profile");
+    let r = wrapped_at(&h, &plain, &app, &pinned(Some(&pin)), &[]);
+    assert_stopped(&r, &pin_line(&pin, NOT_READ), "profile rust");
+}
+
+#[test]
+fn a_pane_folder_linked_into_the_git_dir_stops() { // R§7.4 "The pane folder" (FX-39 R2); R§6.2 `cwd`; R§18 item 16
+    let h = Harness::no_tmux();
+    let app = app_with_sub_and_nested(h.root());
+    // A committed link `w -> .git`: the text of `cwd = "w"` passes R§6.2.
+    std::os::unix::fs::symlink(".git", app.join("w")).unwrap();
+    git(&app, &["add", "w"]);
+    git(&app, &["commit", "-q", "-m", "link"]);
+    git(&app, &["push", "-q", "origin", "HEAD:main"]);
+    let pin = approve(&app, &h.paths.approvals_file);
+    for (dir, resolved) in [
+        (app.join("w"), app.join(".git")),
+        (app.join(".git"), app.join(".git")),
+        (app.join("nested/.git"), app.join("nested/.git")),
+    ] {
+        let r = wrapped_at(&h, &app, &dir, &no_profile(&pin), &[]);
+        assert_stopped(&r, &dir_line(&resolved), &dir.display().to_string());
     }
 }

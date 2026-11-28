@@ -92,6 +92,10 @@ pub(crate) enum HandErr {
 pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberCtx) -> LaunchOutcome {
     let kind = adapter.agent();
     opts.member = Some(Member { ws_id: m.ws_id.clone(), pane: m.pane.clone(), name: m.name.clone(), ..Default::default() });
+    // R§7.4 "The repository of a member launch" (FX-39 R1): every definition step of a member launch runs at the main
+    // worktree of its workspace. A state read that fails, or a record with no main worktree, leaves it none: a launch
+    // with a pin then stops with the not-read line.
+    opts.definition_root = m.store.read().ok().flatten().map(|w| w.main_root).filter(|r| !r.as_os_str().is_empty());
     if opts.agent_session.is_none() && kind == Agent::ClaudeCode && !adapter.has_session_arg(&opts.args) {
         opts.agent_session = Some(AgentSession::Preassign(new_session_uuid()));
     }

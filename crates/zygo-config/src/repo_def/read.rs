@@ -36,11 +36,12 @@ impl SystemGit {
 }
 
 impl GitRunner for SystemGit {
+    /// Keeps at most [`LISTING_BYTES_MAX`] bytes of stdout; past that the call gives `output larger than 131072 bytes`
+    /// (R§6.1 step 4).
     fn git(&self, top: &Path, args: &[&str], deadline: Instant) -> Result<Output, String> {
         super::trap("SystemGit::git");
-        crate::repo_file::git_out_with(Self::command(), top, args, deadline)
+        crate::repo_file::git_out_with(Self::command(), top, args, deadline, Some(LISTING_BYTES_MAX))
             .map(|o| Output { status: o.status, stdout: o.out, stderr: o.err })
-            .map_err(str::to_owned)
     }
 }
 
@@ -75,6 +76,10 @@ pub const WORKSPACE_MAX: u64 = 64 * 1024;
 pub const PROFILE_MAX: u64 = 16 * 1024;
 /// R§6.1 step 4.
 pub const PROFILES_MAX: usize = 32;
+/// R§6.1 step 4 "The listings": the entries of one listing.
+pub const LISTING_ENTRIES_MAX: usize = 256;
+/// R§6.1 step 4 "The listings": the stdout bytes that zygo keeps of each git call of the read (128 KiB).
+pub const LISTING_BYTES_MAX: usize = 131072;
 
 /// R§6.1 steps 2-5 on the default branch, as a full ref, under one budget.
 pub fn read_default(top: &Path, git: &dyn GitRunner) -> Read {
@@ -225,10 +230,15 @@ fn files(top: &Path, git: &dyn GitRunner, full_ref: &Option<String>, commit: &st
     let invalid = |why: String, workspace: bool| {
         Stop::Read(Read::Invalid { full_ref: full_ref.clone(), commit: commit.to_string(), why, workspace })
     };
-    let list = |spec: &str, oid: Option<&str>, prefix: &[u8]| list(top, git, commit, spec, oid, prefix, d);
+    // `ws`: as `workspace` of `invalid`, for a listing past a limit of R§6.1 step 4.
+    let list = |spec: &str, oid: Option<&str>, prefix: &[u8], ws: bool| match list(top, git, commit, spec, oid, prefix, d) {
+        Ok(ents) => Ok(ents),
+        Err(ListFail::Fail(f)) => Err(Stop::Fail(f)),
+        Err(ListFail::Invalid(why)) => Err(invalid(why, ws)),
+    };
 
     // Step 3, then the step 4 checks in order.
-    let l1 = list(".zygo", None, b"")?;
+    let l1 = list(".zygo", None, b"", false)?;
     let Some(zygo) = l1.first() else { return Err(Stop::Read(Read::Absent { full_ref: full_ref.clone() })) };
     if l1.len() != 1 || zygo.path != b".zygo" {
         return Err(Fail { why: "git ls-tree: failed".into(), oid: None }.into());
@@ -237,7 +247,9 @@ fn files(top: &Path, git: &dyn GitRunner, full_ref: &Option<String>, commit: &st
         return Err(invalid(".zygo is not a directory".into(), false));
     }
     let (mut workspace, mut dir, mut ignored) = (None, None, Vec::new());
-    for e in list(".zygo/", Some(&zygo.oid), b".zygo/")? {
+    // R§10 `zygo loadout list` (FX-39 R5): a `.zygo/` listing above a limit counts as a read with
+    // `.zygo/workspace.toml`, because it is not known whether it has one; so it gives the `invalid` row.
+    for e in list(".zygo/", Some(&zygo.oid), b".zygo/", true)? {
         match &e.path[b".zygo/".len()..] {
             b"workspace.toml" => workspace = Some(e),
             b"profiles" => dir = Some(e),
@@ -253,7 +265,7 @@ fn files(top: &Path, git: &dyn GitRunner, full_ref: &Option<String>, commit: &st
         if !dir.tree() {
             return Err(invalid(".zygo/profiles is not a directory".into(), ws));
         }
-        for e in list(".zygo/profiles/", Some(&dir.oid), b".zygo/profiles/")? {
+        for e in list(".zygo/profiles/", Some(&dir.oid), b".zygo/profiles/", ws)? {
             if e.path.ends_with(b".toml") {
                 profiles.push(e);
             } else {
@@ -313,21 +325,45 @@ fn files(top: &Path, git: &dyn GitRunner, full_ref: &Option<String>, commit: &st
     Ok(Files { full_ref: full_ref.clone(), commit: commit.to_string(), workspace, profiles: read, ignored })
 }
 
+/// Why a listing gave no entries: a failed call, or a listing past a limit of R§6.1 step 4 (the invalid reason).
+enum ListFail {
+    Fail(Fail),
+    Invalid(String),
+}
+
+impl From<Fail> for ListFail {
+    fn from(f: Fail) -> Self {
+        ListFail::Fail(f)
+    }
+}
+
 /// `ls-tree -z --long --full-tree <commit> -- <spec>`, sorted by path bytes. Every path must be `prefix` and one more
-/// name (with an empty `prefix`, any path without `/`). `oid`: the tree listed, for the gone check.
-fn list(top: &Path, git: &dyn GitRunner, commit: &str, spec: &str, oid: Option<&str>, prefix: &[u8], d: Instant) -> Result<Vec<Ent>, Fail> {
+/// name (with an empty `prefix`, any path without `/`). `oid`: the tree listed, for the gone check. R§6.1 step 4: a
+/// listing above [`LISTING_BYTES_MAX`] bytes or [`LISTING_ENTRIES_MAX`] entries is invalid, named by `spec` without
+/// its trailing `/`.
+fn list(top: &Path, git: &dyn GitRunner, commit: &str, spec: &str, oid: Option<&str>, prefix: &[u8], d: Instant) -> Result<Vec<Ent>, ListFail> {
     let fail = |w: &str| Fail { why: format!("git ls-tree: {w}"), oid: oid.map(str::to_owned) };
-    let o = git.git(top, &["ls-tree", "-z", "--long", "--full-tree", commit, "--", spec], d).map_err(|w| fail(&w))?;
+    let dir = spec.trim_end_matches('/');
+    let o = match git.git(top, &["ls-tree", "-z", "--long", "--full-tree", commit, "--", spec], d) {
+        Ok(o) => o,
+        Err(w) if w == crate::repo_file::output_larger(LISTING_BYTES_MAX) => {
+            return Err(ListFail::Invalid(format!("{dir}: the listing is larger than {LISTING_BYTES_MAX} bytes")));
+        }
+        Err(w) => return Err(fail(&w).into()),
+    };
     if !o.status.success() {
-        return Err(fail("failed"));
+        return Err(fail("failed").into());
     }
     let Some(mut ents) = parse(&o.stdout) else {
         // `ls-tree --long` lists a blob it does not have with the size `BAD`, and exits 0: name that blob.
-        return Err(Fail { oid: bad_blob(&o.stdout).or(oid.map(str::to_owned)), ..fail("failed") });
+        return Err(Fail { oid: bad_blob(&o.stdout).or(oid.map(str::to_owned)), ..fail("failed") }.into());
     };
+    if ents.len() > LISTING_ENTRIES_MAX {
+        return Err(ListFail::Invalid(format!("{dir} lists more than {LISTING_ENTRIES_MAX} entries")));
+    }
     let child = |p: &[u8]| p.strip_prefix(prefix).is_some_and(|r| !r.is_empty() && !r.contains(&b'/'));
     if !ents.iter().all(|e| child(&e.path)) {
-        return Err(fail("failed"));
+        return Err(fail("failed").into());
     }
     ents.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(ents)
