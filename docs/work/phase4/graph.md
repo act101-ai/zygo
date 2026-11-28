@@ -111,7 +111,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | TF-3 | check-premises.sh: no bash warning on a binary file in the name scan | TF-2 | DONE | implementation | PR #216 merged 0dd46bf9, head 931ca6a6; acceptance exit 0 (`sh scripts/test-check-premises.sh` → test-check-premises: ok (211 cases), also bash 211; check-premises ok; scrub tests ok (156)); CI run on 931ca6a6 green (test ubuntu/macos/windows, premises ubuntu/macos) |
 | TF-4 | Premise tests leave no `__pycache__` in the checkout | TF-3 | IN-PROGRESS | mechanical | .worktrees/phase4/TF-4 (branch phase-4--TF-4) |
 | TF-5 | live-selftest.sh: T5 and U5 pass again; each planted-name case fails on its planted line | CC-0 | IN-PROGRESS | implementation | `.worktrees/phase4/TF-5` |
-| TF-6 | Tests: every child-stdin write in `crates/zygo/tests` goes through `common::write_stdin` (`feed_stdin` removed) | CC-0, TF-1 | PLANNED | mechanical | — |
+| TF-6 | Tests: every child-stdin write in `crates/zygo/tests` goes through `common::write_stdin` (`feed_stdin` removed) | CC-0, TF-1 | IN-PROGRESS | mechanical | `.worktrees/phase4/TF-6` |
 
 ## Log
 
