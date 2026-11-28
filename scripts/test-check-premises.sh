@@ -1445,8 +1445,8 @@ run "$D"
 expect_ok
 
 # TF-5 round 1 F1: only the exempt x-api-key occurrence ("<name><separator>[omitted]" followed by a
-# character outside [A-Za-z0-9_-] or the line end) is dropped from a hit line; a value left on the
-# line still fails, in any case. One tree, the planted file written again for each line.
+# value end or the line end; round 2 F1) is dropped from a hit line; a value left on the line still
+# fails, in any case. One tree, the planted file written again for each line.
 D=$(mk tf5_xk)
 XN="x-api""-key"
 XU="X-Api""-Key"
@@ -1465,6 +1465,86 @@ CASE="TF-5 R1 F1: an omitted x-api-key value in any case passes"
 printf '%s\n' "$XU: [omitted]" "X-API""-KEY: [omitted]" "{\"$XU\":\"[omitted]\"}" > "$D/fixtures/codex/xk.txt"
 run "$D"
 expect_ok
+
+# TF-5 round 2: the value end after "[omitted]" is the one of scrub.py (a blank, ", ', \, "," or the
+# line end; F1); a byte that is not UTF-8 (F2); a value that starts with a backslash and the
+# double-escaped JSON form (older gaps). FF: the byte 0xff. BQ: a backslash-escaped quote of a
+# JSON string inside a JSON string (three backslashes and a quote).
+FF=$(printf '\377')
+BQ='\\\"'
+for l in \
+    "$XN: [omitted].realvalue1" \
+    "$XN: [omitted]+AbCd/123=" \
+    "$XN: [omitted]/abc" \
+    "$XN: [omitted]:abc" \
+    "$XN: [omitted]=abc" \
+    "$XN: realkey$FF" \
+    "$XN: [omitted]$FF" \
+    "$XN: \\abc" \
+    "$BQ$XN$BQ:${BQ}realvalue$BQ"; do
+    CASE="TF-5 R2: an x-api-key value that is not an omitted one ($l)"
+    printf '%s\n' "$l" > "$D/fixtures/codex/xk.txt"
+    run "$D"
+    expect_fail "forbidden content (x-api-key value): fixtures/codex/xk.txt:1:$l"
+done
+CASE="TF-5 R2: an omitted value before a comma and the omitted double-escaped JSON form pass"
+printf '%s\n' "$XN: [omitted],abc" "$BQ$XN$BQ:$BQ[omitted]$BQ" > "$D/fixtures/codex/xk.txt"
+run "$D"
+expect_ok
+# Rejected (round 2): a NUL after "[omitted]" becomes a blank, a value end, so the word after it
+# stands with no header name and passes.
+CASE="TF-5 R2: an omitted value, a NUL and a word pass"
+printf '%s\n' "$XN: [omitted]${SOH}realvalue" > "$D/fixtures/codex/xk.txt"
+soh_to_nul "$D/fixtures/codex/xk.txt"
+run "$D"
+expect_ok
+# F2: sed shims for the x-api-key drop script only (its script holds "\[omitted\]"); every other sed
+# call runs the real sed (SED_REAL). sedfail: the drop sed fails on the planted line, so the line must
+# count as a hit (fail closed). sedbsd: as BSD sed in a UTF-8 locale, the drop sed fails on a byte that is not UTF-8
+# unless LC_ALL is C, so the drop step must run with LC_ALL=C.
+SED_REAL=$(command -v sed)
+mkdir -p "$T/sedfail" "$T/sedbsd"
+cat > "$T/sedfail/sed" <<'SHIM'
+#!/bin/sh
+case "$*" in *'\[omitted\]'*)
+    in=$(cat)
+    case "$in" in fixtures/codex/xk.txt:*) exit 1 ;; esac
+    printf '%s\n' "$in" | "$SED_REAL" "$@"
+    exit ;;
+esac
+exec "$SED_REAL" "$@"
+SHIM
+cat > "$T/sedbsd/sed" <<'SHIM'
+#!/bin/sh
+case "$*" in *'\[omitted\]'*)
+    if [ "${LC_ALL:-}" != C ]; then
+        in=$(cat)
+        case "$in" in *"$(printf '\377')"*) echo "sed: RE error: illegal byte sequence" >&2; exit 1 ;; esac
+        printf '%s\n' "$in" | "$SED_REAL" "$@"
+        exit
+    fi ;;
+esac
+exec "$SED_REAL" "$@"
+SHIM
+chmod +x "$T/sedfail/sed" "$T/sedbsd/sed"
+# run_shim <dir> <shim dir>: as run, with the shim dir first on PATH.
+run_shim() {
+    tick other
+    OUT=$(unset N2_FORBIDDEN_NAMES; SED_REAL="$SED_REAL" PATH="$2:$PATH" sh "$1/scripts/check-premises.sh" 2>&1)
+    RC=$?
+    N=$((N + 1))
+    tick check
+}
+CASE="TF-5 R2: an omitted value fails when the drop sed fails"
+printf '%s\n' "$XN: [omitted]" > "$D/fixtures/codex/xk.txt"
+run_shim "$D" "$T/sedfail"
+expect_fail "forbidden content (x-api-key value): fixtures/codex/xk.txt:1:$XN: [omitted]"
+for l in "$XN: realkey$FF" "$XN: [omitted]$FF"; do
+    CASE="TF-5 R2: a value with a byte that is not UTF-8, under a sed that stops on it ($l)"
+    printf '%s\n' "$l" > "$D/fixtures/codex/xk.txt"
+    run_shim "$D" "$T/sedbsd"
+    expect_fail "forbidden content (x-api-key value): fixtures/codex/xk.txt:1:$l"
+done
 
 # PC-13 review round 1 F4: the rescrub_codex.py tests (same(), the folders and verbatim lists, ENV_LEAKS).
 CASE="PC-13 R1: rescrub_test.py"
