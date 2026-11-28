@@ -222,6 +222,51 @@ fn shaping_steps_on_4_mib_p95_within_100_ms() {
     assert!(over.is_empty(), "O§8.5 steps on 4 MiB, p95 > 100 ms: {over:?}");
 }
 
+/// FX-42 review F1: `\r`-heavy lines of 4 MiB. A long first segment then many short ones (unsure: the text stays
+/// in order), and equal spinner frames (only the last frame stays).
+fn cr_heavy_4_mib() -> Vec<(&'static str, String)> {
+    let mut long_first = "a".repeat(3_000_000);
+    while long_first.len() + 3 <= STEPS_LARGE_BYTES {
+        long_first.push_str("\rx");
+    }
+    long_first.push('\n');
+    let mut spinner = String::new();
+    let mut i = 0u64;
+    loop {
+        let frame = format!("\u{280b} {i:>9} building\r");
+        if spinner.len() + frame.len() + 1 > STEPS_LARGE_BYTES {
+            break;
+        }
+        spinner.push_str(&frame);
+        i += 1;
+    }
+    spinner.push('\n');
+    vec![("long-first-then-short", long_first), ("braille-spinner", spinner)]
+}
+
+#[test]
+#[ignore = "timing: shaping latency budget, run on demand"]
+fn clean_cr_heavy_4_mib_p95_within_100_ms() {
+    let _g = serial();
+    let mut over = vec![];
+    for (name, text) in cr_heavy_4_mib() {
+        assert!(text.len() <= STEPS_LARGE_BYTES, "{name}");
+        let times = (0..RUNS)
+            .map(|_| {
+                let start = Instant::now();
+                std::hint::black_box(shape::clean::clean(std::hint::black_box(&text), false));
+                start.elapsed()
+            })
+            .collect();
+        let label = format!("clean 4 MiB {name}");
+        let p95 = report(&label, times);
+        if p95 > STEPS_LARGE_P95 {
+            over.push(format!("{label}: p95 {p95:?}"));
+        }
+    }
+    assert!(over.is_empty(), "O§8.5 clean on 4 MiB of `\\r` lines, p95 > 100 ms: {over:?}");
+}
+
 #[test]
 #[ignore = "timing: shaping latency budget, run on demand"]
 fn hook_process_shape_on_p95_within_50_ms_of_shape_off() {
