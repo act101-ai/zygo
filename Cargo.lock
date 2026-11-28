@@ -3777,6 +3777,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "zygo-test-edits"
+version = "0.2.1"
+dependencies = [
+ "proc-macro2",
+ "syn 3.0.10",
+ "toml",
+]
+
+[[package]]
 name = "zygo-usage"
 version = "0.2.1"
 dependencies = [

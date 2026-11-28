@@ -1,0 +1,11 @@
+[package]
+name = "zygo-test-edits"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+syn.workspace = true
+proc-macro2 = "1.0.107"
+toml.workspace = true
