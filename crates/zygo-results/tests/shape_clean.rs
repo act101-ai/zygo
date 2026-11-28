@@ -200,9 +200,10 @@ fn osc_stops_at_carriage_return() {
     // F2: an escape never takes `\r`.
     let input = "a\x1b]0;t\rb\x07c\r\n";
     assert_eq!(got(input, true), ("a0;t\rb\x07c\r\n".into(), vec![ColorCodesRemoved]));
+    // FX-42: `b` overwrites `a`; `BEL` takes no column for sure, so the overwrite stops and `0;t` stays.
     assert_eq!(
         got(input, false),
-        ("b\x07c\n".into(), vec![ColorCodesRemoved, ProgressLinesRemoved])
+        ("b\x07c0;t\n".into(), vec![ColorCodesRemoved, ProgressLinesRemoved])
     );
 }
 
@@ -332,4 +333,21 @@ fn nf_intermediates_before_a_c0_control_lose_only_esc() {
     // FX-21 review F5: a C0 control is not a final byte (`clean.rs` `_ => 1`)
     color("a\x1b(\tb", "a(\tb");
     color("a\x1b$(\x07b", "a$(\x07b");
+}
+
+// FX-42 O-F1: a `\r` then a shorter text overwrites only the columns that text covers (O§7.4, O-C9).
+#[test]
+fn cr_overwrite_keeps_the_columns_a_terminal_shows() {
+    assert_eq!(
+        got("error[E0425]: cannot find value `x` in this scope at src/main.rs:10\r   \n", false),
+        (
+            "   or[E0425]: cannot find value `x` in this scope at src/main.rs:10\n".into(),
+            vec![ProgressLinesRemoved]
+        )
+    );
+    assert_eq!(got("50%\r100%\n", false), ("100%\n".into(), vec![ProgressLinesRemoved]));
+    // Unsure of a column count (a wide character, a tab): the overwrite stops there, so more stays.
+    assert_eq!(got("ab\u{6f22}cd\rxyz\n", false).0, "xyz\u{6f22}cd\n");
+    assert_eq!(got("a\tb\rxyz\n", false).0, "xyz\tb\n");
+    assert_eq!(got("abc\r\u{6f22}\n", false).0, "\u{6f22}abc\n");
 }

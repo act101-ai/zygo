@@ -126,19 +126,37 @@ fn osc_stop(b: &[u8], j: usize) -> usize {
     k
 }
 
-/// O§7.4 bullet 2: `\r\n` becomes `\n`; in each line only the text after the last `\r` stays.
-/// A `\r` with nothing after it on the line overwrites nothing.
+/// O§7.4 bullet 2: `\r\n` becomes `\n`; each line becomes the text a terminal shows (`overlay`).
 fn overwrite_cr(text: &str) -> Option<String> {
     if !text.contains('\r') {
         return None;
     }
     let text = text.replace("\r\n", "\n");
-    let lines: Vec<&str> = text
-        .split('\n')
-        .map(|l| {
-            let l = l.trim_end_matches('\r');
-            l.rsplit('\r').next().unwrap_or(l)
-        })
-        .collect();
+    let lines: Vec<String> = text.split('\n').map(overlay).collect();
     Some(lines.join("\n"))
+}
+
+/// One column for sure: a printable ASCII character.
+fn one_column(c: char) -> bool {
+    matches!(c, ' '..='~')
+}
+
+/// The text a terminal shows for a line with `\r`: each `\r` returns to the first column and the
+/// next segment overwrites only the columns it covers; the rest of the shown text stays. A column
+/// count is sure only over printable ASCII characters, so the overwrite stops at the first other
+/// character of either text (a tab, a wide or combining character): there the shown text stays
+/// whole after the segment, which keeps more, never less (O-C9). An empty segment overwrites nothing.
+fn overlay(line: &str) -> String {
+    let mut segments = line.split('\r');
+    let mut shown = segments.next().unwrap_or_default().to_string();
+    for seg in segments {
+        let covered = seg
+            .chars()
+            .zip(shown.chars())
+            .take_while(|&(a, b)| one_column(a) && one_column(b))
+            .count();
+        // `covered` characters of `shown` are ASCII, so they are `covered` bytes.
+        shown = format!("{seg}{}", &shown[covered..]);
+    }
+    shown
 }
