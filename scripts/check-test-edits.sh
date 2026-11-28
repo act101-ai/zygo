@@ -65,11 +65,11 @@ if [ ! -x "$BIN" ]; then
     trap 'rm -rf "$SRC"' EXIT
     git archive --format=tar "$PSHA" | (cd "$SRC" && tar -xf -) || usage "git archive of $PSHA failed"
     printf '%s\n' "check-test-edits: building the checker of <parent> (tree $TREE)" >&2
-    CARGO_TARGET_DIR="$CACHE/target" cargo build -q --locked --manifest-path "$SRC/Cargo.toml" -p zygo-test-edits || {
+    CARGO_TARGET_DIR="$CACHE/target" cargo build -q --release --locked --manifest-path "$SRC/Cargo.toml" -p zygo-test-edits || {
         printf '%s\n' "check-test-edits: the checker of <parent> does not build; exit 2" >&2
         exit 2
     }
-    OUT="$CACHE/target/debug/zygo-test-edits"
+    OUT="$CACHE/target/release/zygo-test-edits"
     [ -f "$OUT" ] || OUT="$OUT.exe"
     cp "$OUT" "$BIN.tmp.$$" && mv "$BIN.tmp.$$" "$BIN" || usage "cannot store the checker in $CACHE"
     rm -rf "$SRC"

@@ -1355,6 +1355,54 @@ impl Git {
     fn show(&self, rev: &str, path: &str) -> Result<Vec<u8>, String> {
         self.run(&["show", &format!("{rev}:{path}")])
     }
+
+    /// The blobs `<rev>:<path>` of many paths through one `git cat-file --batch`; `None` for a
+    /// missing one.
+    fn show_many(&self, rev: &str, paths: &[String]) -> Result<Vec<Option<Vec<u8>>>, String> {
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::process::Stdio;
+        let mut child = Command::new("git")
+            .arg("-C")
+            .arg(&self.top)
+            .args(["cat-file", "--batch"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("git cat-file --batch: {e}"))?;
+        let mut stdin = child.stdin.take().ok_or("git cat-file: no stdin")?;
+        let input: String = paths.iter().map(|p| format!("{rev}:{p}\n")).collect();
+        // Write from a thread, so a full output pipe cannot block the input.
+        let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
+        let mut out = BufReader::new(child.stdout.take().ok_or("git cat-file: no stdout")?);
+        let mut blobs = Vec::with_capacity(paths.len());
+        for p in paths {
+            let mut header = String::new();
+            out.read_line(&mut header)
+                .map_err(|e| format!("git cat-file {rev}:{p}: {e}"))?;
+            let fields: Vec<&str> = header.split_whitespace().collect();
+            if fields.len() != 3 {
+                blobs.push(None);
+                continue;
+            }
+            let size: usize = fields[2]
+                .parse()
+                .map_err(|_| format!("git cat-file {rev}:{p}: bad header {header:?}"))?;
+            let mut buf = vec![0; size + 1];
+            out.read_exact(&mut buf)
+                .map_err(|e| format!("git cat-file {rev}:{p}: {e}"))?;
+            buf.pop();
+            blobs.push(Some(buf));
+        }
+        writer
+            .join()
+            .map_err(|_| "git cat-file: writer failed".to_string())?
+            .map_err(|e| format!("git cat-file: {e}"))?;
+        let status = child.wait().map_err(|e| format!("git cat-file: {e}"))?;
+        if !status.success() {
+            return Err("git cat-file --batch failed".to_string());
+        }
+        Ok(blobs)
+    }
 }
 
 /// What the check reads at one revision.
@@ -1476,18 +1524,21 @@ fn merge_decls(
 fn read_rev(git: &Git, rev: &str) -> Result<Rev, String> {
     let all = git.paths(&["ls-tree", "-r", "--name-only", "-z", rev])?;
     let mut ctx = Ctx::default();
-    for m in all
+    let manifests: Vec<String> = all
         .iter()
         .filter(|p| *p == "Cargo.toml" || p.ends_with("/Cargo.toml"))
-    {
-        let text = String::from_utf8_lossy(&git.show(rev, m)?).into_owned();
+        .cloned()
+        .collect();
+    for (m, raw) in manifests.iter().zip(git.show_many(rev, &manifests)?) {
+        let text = String::from_utf8_lossy(&raw.unwrap_or_default()).into_owned();
         manifest_paths(m, &text, &mut ctx);
     }
     let mut out = Rev::default();
     let mut parsed: BTreeMap<String, Parsed> = BTreeMap::new();
     let exists: BTreeSet<String> = all.iter().filter(|p| p.ends_with(".rs")).cloned().collect();
-    for file in all.iter().filter(|f| in_scope(f, &ctx)) {
-        let raw = git.show(rev, file)?;
+    let files: Vec<String> = all.iter().filter(|f| in_scope(f, &ctx)).cloned().collect();
+    for (file, raw) in files.iter().zip(git.show_many(rev, &files)?) {
+        let raw = raw.ok_or_else(|| format!("git cat-file {rev}:{file}: missing"))?;
         match String::from_utf8(raw)
             .map_err(|_| format!("unreadable {file}: not UTF-8"))
             .and_then(|src| parse(file, &src))
