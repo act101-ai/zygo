@@ -87,14 +87,14 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | CC-2 | `scripts/check-test-edits.sh` and its `syn` helper: the per-node test-edit check (K-C7, amended) | CC-0 | DONE | implementation | PR #252 merged afc1b488, head ff699a9a; acceptance exit 0 (shell suite 100 ok, 35 unit tests; check on the real repo ok (273 units), parent-built, root/subfolder/piped); `cargo test --workspace` 4574 passed, 0 failed; CI on ff699a9a green (test ubuntu/macos/windows, premises ubuntu/macos) |
 | CC-3 | Core client module `zygo_core::client`: descriptor type, concerns 1 and 2, `Agent::ALL`/`DEFAULT`/`spec()`, `Dialect` in core, minimum version from the descriptor | CC-1, CC-2, CF-4 | DONE | judgment | PR #258 merged 4194b7a7, head 89e5154c; acceptance exit 0; K-C7 gate ok (273 units); cargo test --workspace 4584 passed 0 failed (at 89ae96ca); CI green 5/5 (run 46143015689); 3 review rounds |
 | CC-4 | Proxy, redaction, usage and work-join client facts (concern 9) read the descriptor | CC-3, RS-6, RS-7 | DONE | judgment | PR #261 merged a081c87b, head 9b3f8280; acceptance exit 0 (1582 passed); cargo test --workspace 4596 passed 0 failed; K-C7 gate ok (275 units); CI green 5/5 (run 46158508752); 3 review rounds |
-| CC-5 | MCP tool naming and `compact` tool listing (concern 5) read the descriptor | CC-4 | PLANNED | implementation | — |
+| CC-5 | MCP tool naming and `compact` tool listing (concern 5) read the descriptor | CC-4 | IN-PROGRESS | implementation | .worktrees/phase4/CC-5 |
 | CC-6 | Hook output and session text delivery (concerns 3, 4) read the descriptor | CC-5 | TODO | implementation | — |
 | CC-7 | Argument grammar and session flags (concern 7) read the descriptor | CC-6 | TODO | implementation | — |
 | CC-8 | Pane kind, resume kind, turn events, workspace definition kinds (concern 8); `PaneKind` = `Agent(Agent)` or `Shell` | CC-7, TF-1, TF-6 | TODO | judgment | — |
 | CC-9 | Launch layer: `adapter_for` registry, adapters under `client/`, plugin delivery and env rows (concerns 6, 11), `Plugins` removed | CC-8 | TODO | judgment | — |
 | CC-10 | CLI shims under `cmd/client/`; binary-crate client sites read the registry (concern 10) | CC-9 | TODO | implementation | — |
 | CC-11 | Preview gate at launch for every entry point, loadout check, hidden help and doctor (K§6.2.7) | CC-10 | TODO | judgment | — |
-| CC-12 | Phase 3 client features in the registry: output shaping, mail wake and delivery, run-time status line (K-D51; PR stops for the operator) | CC-1, CC-2, CF-4 | IN-PROGRESS | judgment | `.worktrees/phase4/CC-12`; PR #257 head 968ba063, 3 review rounds, CI green 5/5 (run 46141385969); waits for the operator (K§6.2.1 stop) |
+| CC-12 | Phase 3 client features in the registry: output shaping, mail wake and delivery, run-time status line (K-D51; PR stops for the operator) | CC-1, CC-2, CF-4, CC-5 | IN-PROGRESS | judgment | `.worktrees/phase4/CC-12`; PR #257 head 968ba063, 3 review rounds, CI green 5/5 (run 46141385969); waits for the operator (K§6.2.1 stop) |
 | CC-13 | Sweep the `Agent::` variant paths left in tests | CC-11 | TODO | mechanical | — |
 | CC-14 | Opaque client kind `pub struct Agent(Kind)` and the `trybuild` compile-fail cases | CC-13 | TODO | judgment | — |
 | CC-15 | Boundary check `client_boundary` (K§6.1.4) with its exception list | CC-14 | TODO | judgment | — |
@@ -240,3 +240,4 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-28 | Author's call (CC-4 R2 D2): the redaction harness prefixes and spans are moved into the descriptor. OpenCode keeps Claude Code's set (K-D3). §16.2 accepts that a forged prefix skips the content pass. |
 | 2026-11-28 | Process note: a CC-4 agent piped a cargo log through grep, which breaks the session rule; no result was taken from it. |
 | 2026-11-28 | CC-5 planned: ClientSpec mcp_server (name, tool → server), lists_compact_tool; K§6.1.2 row 5 rewritten (author's call: OpenCode `<server>_<tool>` has no one split); 4 new test files, 1 test edit entry; 8 steps; no edge. |
+| 2026-11-28 | Author's call: CC-12 depends on CC-5 (both change the client-model spec; CC-5 R2 F-B). CC-12 merges phase-4 again after CC-5 merges. |
