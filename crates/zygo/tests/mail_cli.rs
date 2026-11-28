@@ -268,23 +268,49 @@ mod unix {
         }
     }
 
-    #[test] // M1: the messages already moved to `cur/` are printed; the failed member is named
-    fn read_over_members_prints_what_it_has_when_a_later_member_fails() {
+    #[test] // M1: a member whose mail cannot be read is named; nothing is printed or moved
+    fn read_of_one_member_names_it_when_its_mail_cannot_be_read() {
         use std::os::unix::fs::PermissionsExt;
         let h = Harness::no_tmux();
         let w = ws(&h);
-        let id1 = put(&h, &w, "elena", "s1", "b1", 1);
         put(&h, &w, "bob", "s2", "b2", 2);
         let new = dir(&h).join(KEY2).join("new");
         std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let o = run(&h, &["mail", "read", "--name", "all"], &[]);
+        let o = run(&h, &["mail", "read", "--name", "bob"], &[]);
         std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(o.status.code(), Some(1), "{}", err(&o));
-        let text = out(&o);
-        assert!(text.starts_with(&format!("{id1} cli ")), "{text}");
-        assert!(text.contains("  b1\n"), "{text}");
-        assert!(err(&o).contains("mail of kbbbbbbbb (bob)"), "{}", err(&o));
-        assert_eq!(store::unread(&dir(&h), KEY).unwrap(), 0);
+        assert_eq!(out(&o), "");
+        let e = err(&o);
+        assert!(e.ends_with("; mail of kbbbbbbbb (bob)\n") && e.lines().count() == 1, "{e}");
+        assert_eq!(store::unread(&dir(&h), KEY2).unwrap(), 1);
+    }
+
+    #[test] // FX-36 (M§8, M§6): `read` takes one member, as `watch` does; `all` and a shared name are refused
+    fn read_refuses_a_name_that_is_not_one_member() {
+        let h = Harness::no_tmux();
+        let w = ws(&h);
+        put(&h, &w, "elena", "s1", "b1", 1);
+        put(&h, &w, "bob", "s2", "b2", 2);
+        let o = run(&h, &["mail", "read", "--name", "all"], &[]);
+        assert_eq!(o.status.code(), Some(2), "{}", err(&o));
+        assert_eq!(err(&o), "zygo mail read: all is not one member\n");
+        assert_eq!(out(&o), "");
+        assert_eq!((store::unread(&dir(&h), KEY).unwrap(), store::unread(&dir(&h), KEY2).unwrap()), (1, 1));
+
+        let h = Harness::no_tmux();
+        // Hand starts can give one name to two panes; the record holds nothing more than the name.
+        let w = h.seed(WS_ID, &mut |w| {
+            for k in [KEY, KEY2] {
+                w.members.insert(k.to_string(), MemberRecord { name: Some("twin".into()), ..MemberRecord::new(Agent::ClaudeCode) });
+            }
+        });
+        put(&h, &w, KEY, "s1", "b1", 1);
+        put(&h, &w, KEY2, "s2", "b2", 2);
+        let o = run(&h, &["mail", "read", "--name", "twin"], &[]);
+        assert_eq!(o.status.code(), Some(2), "{}", err(&o));
+        assert_eq!(err(&o), "zygo mail read: twin is not one member\n");
+        assert_eq!(out(&o), "");
+        assert_eq!((store::unread(&dir(&h), KEY).unwrap(), store::unread(&dir(&h), KEY2).unwrap()), (1, 1));
     }
 
     #[test] // L1: a refused send names the target key and member name
