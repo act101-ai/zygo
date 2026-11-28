@@ -204,7 +204,6 @@ Session text (T, SX nodes):
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | DONE | mechanical | fc991ad1^..7018a2f3 · acceptance pass (builtin 13, check-premises ok) · PR #229 |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | DONE | judgment | check-premises ok ST1-ST4 verified; workspace 4131 passed · PR #254 |
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | DONE | judgment | 0715e396^..213355f7 · acceptance pass (session_text 70 passed; opencode 52 passed, end-to-end item 8 test) · PR #256 |
-| FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
 | FX-24 | Mail sync deliveries and ws forget take the M§5 mail lock | FX-13, MS-21 | DONE | judgment | f1661e09^..f20d5502 · acceptance pass (import 32, sync_pass 57, admin 40) · PR #224 |
 | FX-25 | `zygo up` reads the definition at the current checkout; `find_checkout` keeps a failed or timed-out `git worktree list` (exit 1) | WD-15 | DONE | implementation | a8092a70^..3c511812 · acceptance pass (up_definition 42, up 82, workspace_approve 29) · PR #226 |
 | FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | DONE | judgment | ccb3aaec^..336d5654 · acceptance pass (mail_sync_no_content 5 passed) · PR #236 |
@@ -222,7 +221,7 @@ Session text (T, SX nodes):
 | FX-38 | `live-sp1.sh`: known_hosts restore breaks a symlink, a failed append is recorded as added, note 3.4 reads other workspaces | — | TODO | implementation | — |
 | FX-39 | Pin withdrawal check skipped without a common dir; pane-folder workspace id; uncapped `.zygo` listing | — | TODO | judgment | — |
 | FX-40 | Mail sync checks only the first push URL; the 500-candidate cap is per attempt, not per pass | — | TODO | implementation | — |
-| FX-41 | Decision gate: batch reads keep the spawn deadline, records read before the 64 KiB check, a `docs` link and an empty `ZYGO_SESSION_DIR` pass the verb guards | — | TODO | implementation | — |
+| FX-41 | Decision gate: batch reads keep the spawn deadline, records read before the 64 KiB check, a `docs` link and an empty `ZYGO_SESSION_DIR` pass the verb guards | — | DONE | implementation | 345222eb^..ef5c561d · acceptance pass (decision_verdict 51 passed, decision_git 41 passed, decision_cli 19 passed) · PR #266 |
 | FX-42 | Shaping: CR overwrite deletes text a terminal shows, xargs `--max-chars`/`--eof`, missing wrappers, PO2 comment | — | TODO | implementation | — |
 
 ## Log
@@ -488,3 +487,6 @@ Session text (T, SX nodes):
 | 2026-11-28 | FX-33 author's call: an OpenCode turn end wakes the member by M§7.3 for unannounced mail, recorded only when Woken; the message line is only for the recorded main session, so a child never gets it whatever the event order |
 | 2026-11-28 | FX-33 review: F1 (busy member never told of mail), F3 (stale comment) and the Gap defect (ids marked seen on a skipped wake) fixed; F2 refuted: the title request seeing the line breaks no spec requirement |
 | 2026-11-28 | Final stage (§5.6) at b628e1ad: 7 area reviews; confirmed findings → FX-35..FX-42; refuted: S-F3, X-F3, FX-33 F2 (reasons in the report) |
+| 2026-11-28 | FX-41 DONE; the decision gate's `cat-file` reads no longer time out after merge-base/rev-list/log, a record over 64 KiB is malformed with no contents read, a `docs` link and an empty `ZYGO_SESSION_DIR` are refused by the operator verbs; FX-22 row archived · PR #266 |
+| 2026-11-28 | FX-41 review: F1 (info requests cut the 2,048 cap), F2 (per-read bounds broke D-C6), F3 (a non-tree `docs/decisions` read whole) and F4 (boundary tests) confirmed and fixed (ef5c561d) |
+| 2026-11-28 | FX-41 author's call: D-C6 kept: merge-base, rev-list and log run before the `--batch-command` process, which then has its own 2 s; only `contents` reads count toward 2,048 objects, `info` requests do not (D§9.4 rewritten) |
