@@ -192,7 +192,6 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | DONE | lookup | SP1 verified 8/8, run c, claude 2.1.332, opencode 1.19.6 · PR #247 |
-| MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | DONE | implementation | e887478a^..a9ed0c7b · acceptance pass (mail_sync_forget 9 passed, admin 31 passed) · PR #217 |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | DONE | mechanical | check-premises ok SP1-SP6, git: 2.50.1 · PR #253 |
 | OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45, OS-47 | DONE | lookup | 5 passed, release, 01855abf · PR #239 |
 | WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | DONE | implementation | 15ea1e5b^..9a264b0a · acceptance pass (definition_hooks 11 passed) · PR #218 |
@@ -217,7 +216,7 @@ Session text (T, SX nodes):
 | FX-29 | config check rejects default_loadout = "repository" that zygo up accepts | WD-20 | DONE | implementation | cf92636c^..2f28c271 · acceptance pass (config_check_default_loadout_repository_follows_zygo_up 1 passed, zygo-config all pass) · PR #237 |
 | FX-30 | A crash-recovered delivery gets no wake and no count | FX-26, FX-28 | DONE | judgment | 1f871269^..c0675e47 · acceptance pass (crash_recovery_wake 11 passed, mail_sync_no_content 5 passed) · PR #240 |
 | FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | DONE | judgment | 3279f092^..4bae96ba · acceptance pass (pin_gone_stops_exactly_the_r11_members 1 passed, workspace_definition 17 passed + 9 ignored passed) · PR #238 |
-| FX-32 | The P and Q arms of `check-premises.sh` refuse a dated note whose text holds `)` | SX-10 | TODO | mechanical | — |
+| FX-32 | The P and Q arms of `check-premises.sh` refuse a dated note whose text holds `)` | SX-10 | DONE | mechanical | e6d86033^..ae1f7beb · acceptance pass (ver tests: ok (92), check-premises ok) · PR #255 |
 
 ## Log
 
@@ -475,3 +474,4 @@ Session text (T, SX nodes):
 | 2026-11-27 | MS-23 DONE: SP1 verified on 3 arms (ssh-agent via zygo up env, the user's ssh-key setup, https gh helper) × 2 agents; one review, 16 findings, all fixed; author's calls: zygo's built-in marketplace fetch listed, not failed; run scripts widen Files · PR #247 |
 | 2026-11-27 | MS-25 DONE: SP1-SP6 recorded; git: 2.50.1 is the pin (a minimum; S§18 rewritten, author's call); SP3-SP6 run on 2.50.1; one review, 9 findings, all fixed (an SP6 control step, uncited checks deleted). |
 | 2026-11-28 | SX-10 DONE: ST1-ST4 verified (SX-9 record); ST4 change: OpenCode zygo-<role> prompt is the role prompt only; one review, 6 findings, all fixed (7 subagent tests now in CI); FX-32 added for the P/Q note `)` limit (pre-existing); MS-18 row archived · PR #254 |
+| 2026-11-28 | FX-32 DONE; P/Q/PW/ST note text may hold `)` up to its own `)*`, real date shape; one review, 5 findings fixed, F4 refuted (no §19 rule against code spans); MS-21 row archived · PR #255 |

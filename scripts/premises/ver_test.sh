@@ -2,7 +2,8 @@
 # Tests of ver_ge (scripts/premises/ver.sh), the agent version rule of pinned_agents
 # (scripts/premises/live.sh) and the agent row rule of scripts/check-premises.sh (node PRB-2:
 # a pinned agent version is a minimum; act-lite stays exact), and its SP rows and `git:` header
-# (node MS-25), and its ST rows and failed-ST-row note rule (node SX-10).
+# (node MS-25), and its ST rows and failed-ST-row note rule (node SX-10), and its failed P, Q, ST and PW
+# row note text and date shape (node FX-32).
 # Usage: sh scripts/premises/ver_test.sh   ->  "ver tests: ok (<n>)", exit 0
 # No agent, no network; not run by CI. Stub claude and opencode programs print fixed text.
 set -u
@@ -179,8 +180,9 @@ K=$T/k
 kmiss=""
 MS=docs/specs/2026-11-24-mail-sync-design.md
 TS=docs/specs/2026-11-24-session-text-design.md   # node SX-10: the ST arm reads failed-row notes from it
+WS=docs/specs/2026-11-20-workspaces-design.md   # node FX-32 (review F5): the PW arm reads failed-row notes from it
 for f in scripts/check-premises.sh scripts/premises/ver.sh docs/specs/2026-11-18-zygo-design.md docs/conformance.md \
-  "$MS" "$TS"; do
+  "$MS" "$TS" "$WS"; do
   [ -f "$REPO/$f" ] || { kmiss=$f; break; }
 done
 [ -n "$kmiss" ] || [ -d "$REPO/fixtures" ] || kmiss=fixtures
@@ -193,7 +195,7 @@ if [ -z "$kmiss" ]; then
   mkdir -p "$K/scripts/premises" "$K/docs/specs"
   cp "$REPO/scripts/check-premises.sh" "$K/scripts/"
   cp "$REPO/scripts/premises/ver.sh" "$K/scripts/premises/"
-  cp "$REPO/docs/specs/2026-11-18-zygo-design.md" "$REPO/$MS" "$REPO/$TS" "$K/docs/specs/"
+  cp "$REPO/docs/specs/2026-11-18-zygo-design.md" "$REPO/$MS" "$REPO/$TS" "$REPO/$WS" "$K/docs/specs/"
   cp "$REPO/docs/conformance.md" "$K/docs/"
   cp -R "$REPO/fixtures" "$K/"
   for f in $KNODES; do
@@ -296,6 +298,60 @@ ksplant "K28 failed ST4 with its note only in a T§12.2 code block" "$ST4F" \
 ksplant "K29 failed ST4 with a note dated 0000-99-99" "$ST4F" "$(stnote '*(Note 0000-99-99, P3-15, ST4: failed)*')" 1 "$NONOTE"
 ksplant "K30 failed ST4 with a T§12.1 note whose text holds )" "$ST4F" \
   "$(stnote '*(Note 2026-11-25, P3-15, ST4: failed (see SX-9))*')" 0 "check-premises: ok"
+
+# --- K (node FX-32): a failed P or Q row's dated N2 note may hold ")" (spec §19, §19a; P6a also §10.5) -------
+ZS=docs/specs/2026-11-18-zygo-design.md
+# kzplant <case> <premises.md sed, or ''> <zygo spec sed, or ''> <want rc> <fixed text>
+kzplant() { kplant_in "$ZS" "$@"; }
+P2F='s/^\(| P2 | .*| 2026-11-18 | \)verified |/\1failed |/'
+Q3F='s/^\(| Q3 | .*| 2026-11-18 | \)verified |/\1failed |/'
+P2Q3F="$P2F;$Q3F"
+# znotes <P2 note> <Q3 note>: a sed that puts the P2 note on a line of its own in §19 (after the line that
+# names PW1-PW17) and the Q3 note on a line of its own in §19a (after the Q1 note).
+znotes() { printf '/^The workspace premises PW1-PW17/a %s\n/^\\*(Note 2026-11-18, N2, Q1:/a %s\n' "$1" "$2"; }
+kzplant "K31 failed P2 and Q3 with §19 and §19a notes whose text holds )" "$P2Q3F" \
+  "$(znotes '*(Note 2026-11-28, N2, P2: failed (see FX-32))*' '*(Note 2026-11-28, N2, Q3: failed (see FX-32))*')" 0 \
+  "check-premises: ok"
+kzplant "K32 failed P6a with §19 and §10.5 notes whose text holds )" '' 's/(Note 2026-11-18, N2, P6a: /&(see P6) /' 0 \
+  "check-premises: ok"
+kzplant "K33 failed P6a with only its §10.5 note holding )" '' \
+  '/^- \*\*Source file\*\*/s/(Note 2026-11-18, N2, P6a: /&(see P6) /' 0 "check-premises: ok"
+kzplant "K34 failed P2 with a note that holds ) but has no closing )*" "$P2Q3F" \
+  "$(znotes '*(Note 2026-11-28, N2, P2: failed (see FX-32)' '*(Note 2026-11-28, N2, Q3: failed (see FX-32))*')" 1 \
+  "check-premises: P2: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, P2: …)*"
+kzplant "K35 failed Q3 with a note that holds ) but has no closing )*" "$P2Q3F" \
+  "$(znotes '*(Note 2026-11-28, N2, P2: failed (see FX-32))*' '*(Note 2026-11-28, N2, Q3: failed (see FX-32)')" 1 \
+  "check-premises: Q3: failed, but spec §19a has no dated note *(Note YYYY-MM-DD, N2, Q3: …)*"
+kzplant "K36 failed Q3 alone with a §19a note whose text holds )" "$Q3F" \
+  '/^\*(Note 2026-11-18, N2, Q1:/a *(Note 2026-11-28, N2, Q3: failed (see FX-32))*' 0 "check-premises: ok"
+# FX-32 review F1/F2: the text runs to its own ")*"; outside a code span it holds no "*" (no start of another note,
+# no italic span) and no ")*". An unclosed note is not closed by a later ")*" on its line.
+P2MSG="check-premises: P2: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, P2: …)*"
+Q3MSG="check-premises: Q3: failed, but spec §19a has no dated note *(Note YYYY-MM-DD, N2, Q3: …)*"
+P2OK='*(Note 2026-11-28, N2, P2: failed (see FX-32))*'
+Q3OK='*(Note 2026-11-28, N2, Q3: failed (see FX-32))*'
+kzplant "K37 failed P2 with an unclosed note, then a closed P1 note on its line" "$P2Q3F" \
+  "$(znotes '*(Note 2026-11-28, N2, P2: fallback not written (see FX-32); *(Note 2026-11-18, N2, P1: x)*' "$Q3OK")" 1 \
+  "$P2MSG"
+kzplant "K38 failed Q3 with an unclosed note, then a closed Q1 note on its line" "$P2Q3F" \
+  "$(znotes "$P2OK" '*(Note 2026-11-28, N2, Q3: fallback not written (see FX-32); *(Note 2026-11-18, N2, Q1: x)*')" 1 \
+  "$Q3MSG"
+ksplant "K39 failed ST4 with an unclosed T§12.1 note, then a closed ST3 note on its line" "$ST4F" \
+  "$(stnote '*(Note 2026-11-25, P3-15, ST4: failed (see SX-9); *(Note 2026-11-25, P3-15, ST3: x)*')" 1 "$NONOTE"
+kzplant "K40 failed P2 with an unclosed note whose line ends in *§7.6)*" "$P2Q3F" \
+  "$(znotes '*(Note 2026-11-28, N2, P2: fallback not written, see *§7.6)*' "$Q3OK")" 1 "$P2MSG"
+# FX-32 review F3: a real date shape, as in the ST arm (spec §19 and §19a: Note YYYY-MM-DD).
+kzplant "K41 failed P2 with a note dated 0000-99-99" "$P2Q3F" \
+  "$(znotes '*(Note 0000-99-99, N2, P2: failed)*' "$Q3OK")" 1 "$P2MSG"
+kzplant "K42 failed Q3 with a note dated 0000-99-99" "$P2Q3F" \
+  "$(znotes "$P2OK" '*(Note 0000-99-99, N2, Q3: failed)*')" 1 "$Q3MSG"
+# FX-32 review F5: the PW arm (workspaces spec W§17 notes) has the same note text rule.
+kwplant() { kplant_in "$WS" "$@"; }
+PW6MSG="check-premises: PW6: failed, but the workspaces spec has no dated note *(Note 2026-11-22, <node>, PW6: …)*"
+kwplant "K43 failed PW6 with a W§17 note whose text holds )" '' \
+  's/^\(\*(Note 2026-11-22, P1, PW6: failed on tmux 3\.2a\):/\1 (see W§17):/' 0 "check-premises: ok"
+kwplant "K44 failed PW6 with an unclosed note, then a closed PW15 note on its line" '' \
+  's/^\(\*(Note 2026-11-22, P1, PW6: .*\)\.)\*$/\1 (see W§17); *(Note 2026-11-22, P1, PW15: x)*/' 1 "$PW6MSG"
 
 # --- L (node PRB-1): a LIVE line names the agent version that pinned_agents found, never the pin ----
 # The fallback of each LIVE_VER site in the live scripts is LIVE_CC_VER or LIVE_OC_VER (both set by
