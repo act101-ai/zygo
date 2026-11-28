@@ -43,3 +43,10 @@ name = "stub-agent"
 path = "tests/stub_agent/stub.rs"
 test = false
 doc = false
+
+# FX-34: the real-hook stub is its own binary, so `stub-agent` does not link `zygo_hooks`.
+[[bin]]
+name = "stub-hook"
+path = "tests/stub_hook/stub.rs"
+test = false
+doc = false

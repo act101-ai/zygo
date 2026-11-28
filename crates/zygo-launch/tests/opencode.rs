@@ -1001,10 +1001,10 @@ fn subagent_transform_without_system_array_calls_nothing() {
 }
 
 /// One main-role transform with `input.sessionID` = `session` through the generated plugin under node, whose `zygo` is
-/// `stub-agent` in its real `session-start` mode (`ZYGO_STUB_HOOK_PATHS`): the pushed `output.system`.
+/// `stub-hook`, the real `session-start` hook (`ZYGO_STUB_HOOK_PATHS`): the pushed `output.system`.
 #[cfg(unix)]
 fn real_transform(fx: &Fx, dir: &Path, sd: &SessionDir, session: &str) -> Value {
-    let zygo = Path::new(env!("CARGO_BIN_EXE_stub-agent"));
+    let zygo = Path::new(env!("CARGO_BIN_EXE_stub-hook"));
     std::fs::write(dir.join("plugin.mjs"), with_fail_safe_limit(&plugin_js(&ctx(fx, |_| {}), zygo))).unwrap();
     std::fs::write(
         dir.join("real.mjs"),
