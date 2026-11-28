@@ -15,7 +15,7 @@ use zygo_launch::claude_code::ClaudeCode;
 use zygo_launch::env::Env;
 use zygo_launch::launcher::AgentSession;
 use zygo_launch::opencode::OpenCode;
-use zygo_launch::AgentAdapter;
+use zygo_launch::{AgentAdapter, LaunchOpts};
 use zygo_mail_sync::branch::remove_worktree;
 use zygo_mail_sync::outbox;
 use zygo_mail_sync::state::SyncPaths;
@@ -356,10 +356,7 @@ fn launch_member(
 ) {
     let kind = rec.launch.kind;
     let resumed = if zygo_workspace::args::has_session_arg(kind, &rec.launch.args) { None } else { rec.agent_session.clone() };
-    let built = match kind {
-        Agent::ClaudeCode => super::claude::launch_opts(&launch_of(rec, resumed.is_some()), Env(env.to_vec()), cwd.to_path_buf(), paths.clone()),
-        Agent::OpenCode => super::opencode::launch_opts(&launch_open_code_of(rec), Env(env.to_vec()), cwd.to_path_buf(), paths.clone()),
-    };
+    let built = member_launch_opts(rec, resumed.is_some(), Env(env.to_vec()), cwd.to_path_buf(), paths.clone());
     let mut opts = match built {
         Ok(o) => o,
         Err(text) => {
@@ -567,6 +564,16 @@ pub(crate) fn resume_note(rec: &MemberRecord, resumed: Option<&str>) -> Option<R
         agent_session: resumed.map(String::from),
         ..Default::default()
     })
+}
+
+/// W§8.2 step 2: the launch options of the saved launch of `rec`, as `ws run` and a restore build them: the flags of
+/// [`launch_of`] (Claude Code) or [`launch_open_code_of`] (OpenCode), mapped by that agent's `launch_opts`. `resumed`:
+/// the launch resumes the member's agent session.
+pub fn member_launch_opts(rec: &MemberRecord, resumed: bool, env: Env, cwd: PathBuf, paths: Paths) -> Result<LaunchOpts, String> {
+    match rec.launch.kind {
+        Agent::ClaudeCode => super::claude::launch_opts(&launch_of(rec, resumed), env, cwd, paths),
+        Agent::OpenCode => super::opencode::launch_opts(&launch_open_code_of(rec), env, cwd, paths),
+    }
 }
 
 /// The `zygo claude` flags of a saved member launch (AU45): the saved fields, the AU32 compaction, at a resume no

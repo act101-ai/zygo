@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use zygo_config::profile::{requested, select, valid_name, validate, Profile};
 use zygo_config::keys::default_store;
-use zygo_config::repo_def::{check_default, check_pinned, short, GitRunner, Pin, PinnedUse, SystemGit, Use};
+use zygo_config::repo_def::{check_default, check_pinned, is_workspace_approved_in, short, GitRunner, Pin, PinnedUse, SystemGit, Use};
 use zygo_config::{load, Dialect, LoadContext, Merged};
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
@@ -344,6 +344,17 @@ impl Launcher {
         let mut profile = None;
         let known = known_plugins(&selection(&cfg, None), &zygo_plugins::store::state(&opts.paths.plugin_store));
         let name = requested(&cfg, opts.profile.as_deref());
+        // R§7.4, R§11 (FX-31 review F1): a withdrawn approval of the pin stops every pinned member launch, whatever its
+        // profile and in passthrough too, before the passthrough drop and the profile step. It reads the approvals file
+        // only (no git read); outside a checkout there is no workspace id, and only the pinned read below stops.
+        if let (Some(pin), Some(cd)) = (&opts.definition, common_dir.as_deref())
+            && !is_workspace_approved_in(&opts.paths.approvals_file, &workspace_id(cd), &pin.digest)
+        {
+            // The profile name is in the line only for a launch that makes the pinned read; else "this member".
+            let reads = name.as_deref().filter(|n| !opts.passthrough && valid_name(n) && !cfg.config.profile.contains_key(*n));
+            out.line(&pin_line(reads.map(zygo_core::esc).as_deref(), pin, NO_LONGER));
+            return 1;
+        }
         // R§8 "Passthrough": no profile from any source, and no read; a requested name is reported.
         let name = match name {
             Some(n) if opts.passthrough => {
@@ -945,10 +956,12 @@ enum Pinned {
     Stop(String),
 }
 
-/// The R§7.4 line; `n` is the escaped profile name; the commit and the digest are escaped after `short` (C6).
-fn pin_line(n: &str, pin: &Pin, which: &str) -> String {
+/// The R§7.4 line; `n` is the escaped name of the repository profile that the launch asks for, `None` for a launch that
+/// asks for no such profile ("this member"); the commit and the digest are escaped after `short` (C6).
+fn pin_line(n: Option<&str>, pin: &Pin, which: &str) -> String {
+    let who = n.map_or_else(|| "this member".to_string(), |n| format!("profile {n} of this member"));
     format!(
-        "zygo: profile {n} of this member comes from the workspace files at commit {} (digest {}), which {which}; the agent was not started; to start from the current files: zygo down, then zygo up --reset",
+        "zygo: {who} comes from the workspace files at commit {} (digest {}), which {which}; the agent was not started; to start from the current files: zygo down, then zygo up --reset",
         zygo_core::esc(short(&pin.commit)),
         zygo_core::esc(short(&pin.digest))
     )
@@ -959,13 +972,13 @@ fn pin_line(n: &str, pin: &Pin, which: &str) -> String {
 fn pinned_profile(opts: &LaunchOpts, cfg: &Merged, name: &str, pin: &Pin, top: Option<&Path>, common_dir: Option<&Path>) -> Pinned {
     let n = zygo_core::esc(name);
     let (Some(top), Some(cd)) = (top, common_dir) else {
-        return Pinned::Stop(pin_line(&n, pin, NO_LONGER));
+        return Pinned::Stop(pin_line(Some(&n), pin, NO_LONGER));
     };
     match check_pinned(top, &workspace_id(cd), pin, &opts.paths.approvals_file, definition_git(opts).as_ref()) {
         PinnedUse::Approved { def } if def.profiles.contains_key(name) => Pinned::Apply(cfg.with_definition(&def)),
         PinnedUse::Approved { .. } => Pinned::NotFound(format!("zygo: profile {n} not found; launching without it")),
-        PinnedUse::Gone | PinnedUse::NotApproved => Pinned::Stop(pin_line(&n, pin, NO_LONGER)),
-        PinnedUse::Unread { why } => Pinned::Stop(pin_line(&n, pin, &format!("were not read ({})", zygo_core::esc(&why)))),
+        PinnedUse::Gone | PinnedUse::NotApproved => Pinned::Stop(pin_line(Some(&n), pin, NO_LONGER)),
+        PinnedUse::Unread { why } => Pinned::Stop(pin_line(Some(&n), pin, &format!("were not read ({})", zygo_core::esc(&why)))),
     }
 }
 
