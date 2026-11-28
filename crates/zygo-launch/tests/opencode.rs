@@ -665,7 +665,17 @@ fn plugin_text_matches_the_fixtures() {
         assert!(TEMPLATE.contains(&format!("\"{hook}\"")), "{hook}");
         hooks.insert(hook.to_string());
     }
-    assert_eq!(hooks.len(), 4);
+    assert_eq!(hooks.len(), 5);
+    // FX-33: the recorded `chat.message` call (OpenCode 1.19.6) carries what the plugin reads.
+    let cm = fixture("plugin-hooks/chat.message.json");
+    assert!(cm["input"]["sessionID"].is_string());
+    assert!(cm["output"]["message"]["id"].is_string());
+    assert!(cm["output"]["message"]["model"]["providerID"].is_string());
+    assert!(cm["output"]["message"]["model"]["modelID"].is_string());
+    assert!(cm["output"]["parts"].is_array());
+    for t in ["\"message\"", "synthetic: true", "output.message.model", "output.parts.push", "randomBytes"] {
+        assert!(TEMPLATE.contains(t), "{t}");
+    }
     for t in [
         "directory", "\"--agent\", \"opencode\"", "10000", "permissionDecision", "updatedToolOutput", "output.output =", "output.system.push",
         "output.context.push", "ZYGO_MAIN_ROLE", "input.model", "stdin.on(\"error\"", "\"guard\"", "\"trim\"", "\"work\"", "\"session-start\"", "\"pre-compact\"", "\"subagent\"",
@@ -1079,6 +1089,263 @@ fn opencode_transform_item_8_fixed_per_session_end_to_end() {
     assert_eq!(real_transform(&fx, &dir, &sd, "ses_E2E"), first);
     let other = real_transform(&fx, &dir, &sd, "ses_E2F");
     assert!(other[0].as_str().unwrap().contains("Members: `elena, kai, lena`."), "{other}");
+}
+
+/// One main-role request of the OpenCode session `session` through the generated plugin under node, with the member
+/// gate on: `chat.message` for a user message, then the main-role transform, as OpenCode 1.19.6 runs them for a prompt.
+/// The `zygo` is `stub-agent` in its real `session-start` and `workspace --event message` modes
+/// (`ZYGO_STUB_HOOK_PATHS`). The result: `{"system": <pushed output.system>, "parts": <output.parts after chat.message>}`.
+#[cfg(unix)]
+fn real_request(fx: &Fx, dir: &Path, sd: &SessionDir, session: &str) -> Value {
+    let zygo = Path::new(env!("CARGO_BIN_EXE_stub-agent"));
+    std::fs::write(dir.join("plugin.mjs"), with_fail_safe_limit(&plugin_js(&ctx(fx, |_| {}), zygo))).unwrap();
+    std::fs::write(
+        dir.join("request.mjs"),
+        r#"import { ZygoPlugin } from "./plugin.mjs";
+const h = await ZygoPlugin({ directory: "/r" });
+const sid = process.env.SID;
+const msg = { message: { id: "msg_1", role: "user", sessionID: sid, model: { providerID: "zygo", modelID: "lead" } },
+  parts: [{ id: "prt_000000000000AAAAAAAAAAAAAA", type: "text", text: "hi", messageID: "msg_1", sessionID: sid }] };
+await h["chat.message"]({ sessionID: sid }, msg);
+const out = { system: [] };
+await h["experimental.chat.system.transform"]({ sessionID: sid, model: { id: "lead", providerID: "zygo" } }, out);
+console.log(JSON.stringify({ system: out.system, parts: msg.parts }));
+"#,
+    )
+    .unwrap();
+    let home = fx.root.join("home");
+    let mut cmd = std::process::Command::new("node");
+    cmd.arg("request.mjs")
+        .current_dir(dir)
+        .env("SID", session)
+        .env("ZYGO_MAIN_ROLE", "lead")
+        .env("ZYGO_SESSION_DIR", &sd.root)
+        .env("ZYGO_STUB_HOOK_PATHS", &home)
+        .env("ZYGO_WORKSPACE", "app")
+        .env("HOME", &home);
+    let out = output_within(cmd, FAIL_SAFE);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+/// True for an id of the OpenCode 1.19.6 part form: `prt_`, 12 lower-case hex digits, 14 base62 characters.
+#[cfg(unix)]
+fn part_id_form(id: &str) -> bool {
+    id.strip_prefix("prt_").is_some_and(|r| {
+        r.len() == 26
+            && r[..12].bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            && r[12..].bytes().all(|b| b.is_ascii_alphanumeric())
+    })
+}
+
+// FX-33 acceptances 1 and 2, end to end through the real plugin and the real hooks (M§7.2, §10.4, T§11): the
+// main-role system text is byte-equal while the unread count changes, and the line reaches the agent as a synthetic
+// text part of the user message.
+#[cfg(unix)]
+#[test]
+fn opencode_mail_line_reaches_the_user_turn_not_the_system_end_to_end() {
+    use zygo_core::session_view::{Member, ViewWorkspace};
+    use zygo_workspace::state::{MemberRecord, Phase, Store};
+    if no_node("opencode_mail_line_reaches_the_user_turn_not_the_system_end_to_end") {
+        return;
+    }
+    const WS_ID: &str = "0123456789abcdef";
+    const L2: &str = "zygo: 2 new messages; read them with mail_read";
+    let fx = fx();
+    let dir = fx.root.join("e2e-mail");
+    std::fs::create_dir_all(&dir).unwrap();
+    // Not `S1`: `ctx`, which builds the plugin, saves its own view there.
+    let sd = SessionDir::new(fx.paths.sessions_dir.join("S2"));
+    sd.create().unwrap();
+    let marker = ViewWorkspace { member: Member { ws_id: WS_ID.into(), pane: "kaaaaaaaa".into(), ..Default::default() }, ..Default::default() };
+    SessionView { session: "S2".into(), agent: Agent::OpenCode, main_role: "lead".into(), workspace: Some(marker), mail: true, ..Default::default() }
+        .save(&sd)
+        .unwrap();
+    let root = fx.root.join("app");
+    Store::open(&fx.paths, WS_ID)
+        .update(Duration::from_secs(5), &mut |ws| {
+            ws.name = "app".into();
+            ws.tmux_session = "zygo-app".into();
+            ws.common_dir = root.join(".git");
+            ws.main_root = root.clone();
+            ws.loadout = "solo".into();
+            ws.phase = Phase::Up;
+            ws.members = [("kaaaaaaaa", "elena"), ("kbbbbbbbb", "kai")]
+                .iter()
+                .map(|(k, n)| (k.to_string(), MemberRecord { name: Some(n.to_string()), ..MemberRecord::new(Agent::OpenCode) }))
+                .collect();
+            Ok(())
+        })
+        .unwrap();
+    let before = real_request(&fx, &dir, &sd, "ses_E2E");
+    assert_eq!(before["parts"].as_array().unwrap().len(), 1, "{before}");
+    let new = zygo_workspace::mail::mail_dir(&fx.paths, WS_ID).join("kaaaaaaaa").join("new");
+    std::fs::create_dir_all(&new).unwrap();
+    for i in 0..2 {
+        std::fs::write(new.join(format!("01J{i:023}.json")), "{}").unwrap();
+    }
+    let after = real_request(&fx, &dir, &sd, "ses_E2E");
+    assert_eq!(after["system"], before["system"]);
+    let system = after["system"].as_array().unwrap();
+    assert_eq!(system.len(), 1, "{after}");
+    assert!(!system[0].as_str().unwrap().contains("new messages"), "{after}");
+    let parts = after["parts"].as_array().unwrap();
+    assert_eq!(parts.len(), 2, "{after}");
+    let part = &parts[1];
+    let id = part["id"].as_str().unwrap();
+    assert!(part_id_form(id), "{id}");
+    assert!(id > parts[0]["id"].as_str().unwrap(), "{id}");
+    assert_eq!(
+        part,
+        &json!({"id": id, "sessionID": "ses_E2E", "messageID": "msg_1", "type": "text", "text": L2, "synthetic": true})
+    );
+}
+
+/// One `chat.message` call of the generated plugin under node with a stub `zygo` that prints `LINE` for
+/// `hook workspace ... --event message` (`mode` `ok`), prints nothing (`empty`) or exits 1 (`fail`); `missing` names a
+/// zygo path that does not exist. `steps` are `event` hook events sent before the call. The result holds `threw`,
+/// `parts` (after the call) and the stub's call lines.
+#[cfg(unix)]
+struct Chat<'a> {
+    name: &'a str,
+    member: bool,
+    role: Option<&'a str>,
+    mode: &'a str,
+    steps: Value,
+    input: Value,
+    output: Value,
+}
+
+#[cfg(unix)]
+fn chat_node(fx: &Fx, c: Chat) -> NodeRun {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = fx.root.join(c.name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let stub = dir.join("zygo-stub");
+    let script = r#"#!/bin/sh
+d=$(dirname "$0")
+echo "$*" >> "$d/calls.txt"
+cat > "$d/stdin-$2-$6.json"
+case "$2:$6:$STUB_MODE" in
+  workspace:message:ok) printf LINE ;;
+  workspace:message:fail) printf LINE; exit 1 ;;
+esac
+"#;
+    std::fs::write(&stub, script).unwrap();
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let zygo = if c.mode == "missing" { dir.join("no-such-zygo") } else { stub };
+    std::fs::write(dir.join("plugin.mjs"), with_fail_safe_limit(&plugin_js(&ctx(fx, |_| {}), &zygo))).unwrap();
+    std::fs::write(
+        dir.join("chat.mjs"),
+        r#"import { ZygoPlugin } from "./plugin.mjs";
+const h = await ZygoPlugin({ directory: "/r" });
+for (const [type, properties] of JSON.parse(process.env.STEPS)) await h.event({ event: { type, properties } });
+const output = JSON.parse(process.env.OUTPUT);
+const res = { threw: null };
+try { await h["chat.message"](JSON.parse(process.env.INPUT), output); } catch (e) { res.threw = e.message; }
+res.parts = output.parts;
+process.stdout.write(JSON.stringify(res) + "\n", () => process.exit(0));
+"#,
+    )
+    .unwrap();
+    let mut cmd = std::process::Command::new("node");
+    cmd.arg("chat.mjs")
+        .current_dir(&dir)
+        .env("STUB_MODE", c.mode)
+        .env("STEPS", c.steps.to_string())
+        .env("INPUT", c.input.to_string())
+        .env("OUTPUT", c.output.to_string())
+        .env_remove("ZYGO_WORKSPACE")
+        .env_remove("ZYGO_MAIN_ROLE");
+    if c.member {
+        cmd.env("ZYGO_WORKSPACE", "app");
+    }
+    if let Some(r) = c.role {
+        cmd.env("ZYGO_MAIN_ROLE", r);
+    }
+    let out = output_within(cmd, FAIL_SAFE);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    NodeRun { result: serde_json::from_slice(&out.stdout).ok(), calls: std::fs::read_to_string(dir.join("calls.txt")).unwrap_or_default(), dir }
+}
+
+/// A user message of session `s` on `provider/model` with one text part.
+#[cfg(unix)]
+fn chat_output(s: &str, provider: &str, model: &str) -> Value {
+    json!({"message": {"id": "msg_1", "role": "user", "sessionID": s, "model": {"providerID": provider, "modelID": model}},
+        "parts": [{"id": "prt_000000000000AAAAAAAAAAAAAA", "type": "text", "text": "hi", "messageID": "msg_1", "sessionID": s}]})
+}
+
+/// The `hook workspace ... --event message` calls of a run.
+#[cfg(unix)]
+fn message_calls(r: &NodeRun) -> Vec<&str> {
+    r.calls.lines().filter(|l| l.starts_with("hook workspace") && l.ends_with("--event message")).collect()
+}
+
+// M§7.2 (FX-33): the plugin's `chat.message` asks for the mail line only for a user message of the main session (the
+// member gate, the main role's `zygo/` model, not a known child), adds it as one synthetic text part, and never
+// throws or changes the message when `zygo` gives nothing, fails or is missing (C6, T-C1).
+#[cfg(unix)]
+#[test]
+fn plugin_chat_message_sends_message_only_for_the_main_session() {
+    if no_node("plugin_chat_message_sends_message_only_for_the_main_session") {
+        return;
+    }
+    let fx = fx();
+    let base = |name| Chat {
+        name,
+        member: true,
+        role: Some("lead"),
+        mode: "ok",
+        steps: json!([]),
+        input: json!({"sessionID": "A"}),
+        output: chat_output("A", "zygo", "lead"),
+    };
+    let r = chat_node(&fx, base("cm-main"));
+    let v = r.result.clone().unwrap();
+    assert_eq!(v["threw"], Value::Null);
+    assert_eq!(message_calls(&r), ["hook workspace --agent opencode --event message"]);
+    let stdin: Value = serde_json::from_slice(&std::fs::read(r.dir.join("stdin-workspace-message.json")).unwrap()).unwrap();
+    assert_eq!(stdin, json!({"sessionID": "A", "cwd": "/r"}));
+    let parts = v["parts"].as_array().unwrap();
+    assert_eq!(parts.len(), 2, "{v}");
+    let id = parts[1]["id"].as_str().unwrap();
+    assert!(part_id_form(id), "{id}");
+    assert_eq!(parts[1], json!({"id": id, "sessionID": "A", "messageID": "msg_1", "type": "text", "text": "LINE", "synthetic": true}));
+
+    let unchanged = chat_output("A", "zygo", "lead")["parts"].clone();
+    let cases = [
+        ("cm-not-member", Chat { member: false, ..base("cm-not-member") }),
+        ("cm-other-role", Chat { output: chat_output("A", "zygo", "code"), ..base("cm-other-role") }),
+        ("cm-other-provider", Chat { output: chat_output("A", "anthropic", "lead"), ..base("cm-other-provider") }),
+        ("cm-no-main-role", Chat { role: None, ..base("cm-no-main-role") }),
+        ("cm-empty-main-role", Chat { role: Some(""), ..base("cm-empty-main-role") }),
+        (
+            "cm-child",
+            Chat { steps: json!([["session.created", {"info": {"id": "A", "parentID": "P"}}]]), ..base("cm-child") },
+        ),
+        ("cm-no-session", Chat { input: json!({}), ..base("cm-no-session") }),
+    ];
+    for (name, c) in cases {
+        let r = chat_node(&fx, c);
+        let v = r.result.clone().unwrap();
+        assert_eq!(v["threw"], Value::Null, "{name}");
+        assert_eq!(v["parts"], unchanged, "{name}");
+        assert!(message_calls(&r).is_empty(), "{name}: {}", r.calls);
+    }
+    // `parts` that is not an array: no call, no throw.
+    let mut no_parts = chat_output("A", "zygo", "lead");
+    no_parts["parts"] = json!({});
+    let r = chat_node(&fx, Chat { output: no_parts, ..base("cm-no-parts") });
+    assert_eq!(r.result.clone().unwrap()["threw"], Value::Null);
+    assert_eq!(r.result.clone().unwrap()["parts"], json!({}));
+    assert!(message_calls(&r).is_empty(), "{}", r.calls);
+    // `zygo` prints nothing, fails or is missing: the message is unchanged.
+    for (mode, name) in [("empty", "cm-empty"), ("fail", "cm-fail"), ("missing", "cm-missing")] {
+        let r = chat_node(&fx, Chat { mode, ..base(name) });
+        let v = r.result.clone().unwrap();
+        assert_eq!(v["threw"], Value::Null, "{mode}");
+        assert_eq!(v["parts"], unchanged, "{mode}");
+    }
 }
 
 // ---- Task 4: delivery ----

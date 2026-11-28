@@ -155,6 +155,11 @@ fn oc_start() -> HookInput {
     hook(Agent::OpenCode, &json!({"input": {"model": {"providerID": "zygo", "id": "lead"}}, "output": {"system": []}}))
 }
 
+/// `oc_start` for the OpenCode session `id` (`input.sessionID`, as OpenCode 1.19.6 sends it on each main request).
+fn oc_start_id(id: &str) -> HookInput {
+    hook(Agent::OpenCode, &json!({"input": {"sessionID": id, "model": {"providerID": "zygo", "id": "lead"}}, "output": {"system": []}}))
+}
+
 fn context(v: &Value) -> String {
     v["hookSpecificOutput"]["additionalContext"].as_str().expect("no additionalContext").to_string()
 }
@@ -1235,7 +1240,7 @@ fn opencode_note_belongs_to_one_agent_session() {
     assert_eq!(view_note(&f), Some(note_iu()));
     ws_with(&f, &missing, "session", oc("ses_A")).unwrap();
     assert_eq!(view_note(&f), Some(bound(note_iu(), "ses_A")));
-    assert_eq!(ss_text(&f, &oc_start(), &missing), format!("{}\n\n{I1}\n{U12}", base(&f)));
+    assert_eq!(ss_text(&f, &oc_start_id("ses_A"), &missing), format!("{}\n\n{I1}\n{U12}", base(&f)));
     ws_with(&f, &missing, "session", oc("ses_A")).unwrap();
     assert_eq!(view_note(&f), Some(bound(note_iu(), "ses_A")));
     ws_with(&f, &missing, "session", oc("ses_B")).unwrap();
@@ -2090,25 +2095,60 @@ fn mail_session_start_line_follows_the_resume_note() {
     assert_eq!(ss_text(&g, &ss(AS1), &missing), format!("{}\n\n{item}\n\n{I1}\n{U12}", base(&g)));
 }
 
-#[test] // M§7.2, AU104; ML-10 D5
-fn mail_opencode_request_text_holds_the_line_while_new_is_not_empty() {
+#[test] // M§7.2, §10.4, T§11, AU104; FX-33 acceptance 1
+fn opencode_system_text_is_byte_equal_while_the_unread_count_changes() {
     let _s = serial();
     let f = fx(Agent::OpenCode);
     mail_on(&f);
+    ws_state(&f, Phase::Up, rec_pending());
     let missing = f.t.path().join("missing");
-    let new = put_new(&f, 2);
-    for _ in 0..2 {
-        assert_eq!(ss_text(&f, &oc_start(), &missing), format!("{}\n\n{L2}", base(&f)));
-    }
-    for e in entries(&new) {
-        fs::remove_file(new.join(e)).unwrap();
-    }
-    assert_eq!(ss_text(&f, &oc_start(), &missing), base(&f));
+    let none = ss_text(&f, &oc_start_id("ses_A"), &missing);
+    put_new(&f, 2);
+    let two = ss_text(&f, &oc_start_id("ses_A"), &missing);
+    put_new(&f, 3);
+    let three = ss_text(&f, &oc_start_id("ses_A"), &missing);
+    assert_eq!(none, two);
+    assert_eq!(two, three);
+    assert!(!three.contains("new messages"), "{three}");
+    assert!(three.starts_with(&base(&f)), "{three}");
+}
+
+#[test] // M§7.2, M§8; FX-33 acceptance 2 (the hook part of the OpenCode `chat.message` path)
+fn mail_opencode_message_event_gives_the_line() {
+    let _s = serial();
+    let o = fx(Agent::OpenCode);
+    mail_on(&o);
+    assert_eq!(ws(&o, "message", oc("ses_A")).unwrap(), None); // no mail
+    put_new(&o, 2);
+    set_act(&o, false, 0);
+    assert_eq!(ws(&o, "message", oc("ses_A")).unwrap(), Some(L2.to_string()));
+    assert_eq!(bt(&o), (false, 0)); // no turn change
+    assert_eq!(ws(&o, "message", with(oc("ses_A"), "agent_id", json!("a1"))).unwrap(), None); // not the main loop
+    // `[features] mail` off: no line.
+    let g = fx(Agent::OpenCode);
+    put_new(&g, 2);
+    assert_eq!(ws(&g, "message", oc("ses_A")).unwrap(), None);
+}
+
+#[test] // W§9.4, AU72, AU104; FX-33 acceptance 3
+fn opencode_note_bound_to_another_session_never_shows() {
+    let _s = serial();
+    let f = fx_with(Agent::OpenCode, Some(marker(ID, KEY, Some(bound(note_iu(), "ses_A")))));
+    let missing = f.t.path().join("missing");
+    assert_eq!(ss_text(&f, &oc_start_id("ses_B"), &missing), base(&f));
+    assert_eq!(ss_text(&f, &oc_start(), &missing), base(&f)); // no session id: not the bound session
+    assert_eq!(ss_text(&f, &oc_start_id("ses_A"), &missing), format!("{}\n\n{I1}\n{U12}", base(&f)));
+    assert_eq!(ss_text(&f, &oc_start_id("ses_B"), &missing), base(&f));
+    assert_eq!(view_note(&f), Some(bound(note_iu(), "ses_A"))); // the request text removes nothing
+    // Inputs not bound yet show to any session.
+    let g = fx_with(Agent::OpenCode, Some(marker(ID, KEY, Some(note_iu()))));
+    let missing = g.t.path().join("missing");
+    assert_eq!(ss_text(&g, &oc_start_id("ses_B"), &missing), format!("{}\n\n{I1}\n{U12}", base(&g)));
 }
 
 /// Child half of `mail_unreadable_folder_changes_no_decision`: one hook call as the binary runs it, so its stderr line
-/// can be read. `ZYGO_ML10_CHILD` is the fixture's temp root and `ZYGO_ML10_EVENT` the event (`stop`, `prompt` or
-/// `session-start`); an `Err` fails the child. It prints `OUT=<JSON string of the output text>` (`""` for none). In a
+/// can be read. `ZYGO_ML10_CHILD` is the fixture's temp root and `ZYGO_ML10_EVENT` the event (`stop`, `prompt`,
+/// `message` or `session-start`); an `Err` fails the child. It prints `OUT=<JSON string of the output text>` (`""` for none). In a
 /// normal run it returns at once.
 #[test]
 fn mail_hook_child() {
@@ -2121,8 +2161,12 @@ fn mail_hook_child() {
     let sd = dir.root.clone().into_os_string();
     let env = |k: &str| if k == "ZYGO_SESSION_DIR" { Some(sd.clone()) } else { None };
     let out = match event.as_str() {
-        "stop" | "prompt" => {
-            let payload = if event == "stop" { fixture("Stop-main") } else { ups("hello") };
+        "stop" | "prompt" | "message" => {
+            let payload = match event.as_str() {
+                "stop" => fixture("Stop-main"),
+                "prompt" => ups("hello"),
+                _ => oc("ses_A"),
+            };
             workspace::run(&event, &serde_json::to_vec(&payload).unwrap(), &paths, &env, &zygo).unwrap().unwrap_or_default()
         }
         "session-start" => {
@@ -2197,13 +2241,15 @@ fn mail_unreadable_folder_changes_no_decision() {
     assert_eq!((prompt.0.as_str(), prompt.1.len()), ("", 1), "{prompt:?}");
     assert_eq!(prompt_bt, (true, 0));
     assert_eq!((start.0, start.1.len()), (base(&f), 1), "{:?}", start.1);
-    // OpenCode
+    // OpenCode: the request text does not read `mail/` (M§7.2); the `message` call does.
     let o = fx(Agent::OpenCode);
     mail_on(&o);
     let m = lock_mail(&o);
     let start = child(&o, "session-start");
+    let message = child(&o, "message");
     fs::set_permissions(&m, fs::Permissions::from_mode(0o700)).unwrap();
-    assert_eq!((start.0, start.1.len()), (base(&o), 1), "{:?}", start.1);
+    assert_eq!((start.0, start.1.len()), (base(&o), 0), "{:?}", start.1);
+    assert_eq!((message.0.as_str(), message.1.len()), ("", 1), "{message:?}");
 }
 
 #[test] // M§7.2 last sentence, M-C2
@@ -2255,11 +2301,12 @@ fn mail_off_reads_no_mail() {
     assert_eq!(ws(&f, "prompt", ups("hello")).unwrap(), None);
     assert_eq!(bt(&f), (true, 0));
     assert_eq!(ss_text(&f, &ss(AS1), &missing), base(&f));
-    // OpenCode: no per-request line.
+    // OpenCode: no line in the request text or from the `message` call.
     let o = fx(Agent::OpenCode);
     let missing = o.t.path().join("missing");
     put_new(&o, 2);
     assert_eq!(ss_text(&o, &oc_start(), &missing), base(&o));
+    assert_eq!(ws(&o, "message", oc("ses_A")).unwrap(), None);
     // `mail/` is not read at all: an unreadable `mail/` writes no stderr line. Root reads it, so that part is skipped.
     // SAFETY: `geteuid` takes no argument and cannot fail.
     if unsafe { libc::geteuid() } == 0 {
