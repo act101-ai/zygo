@@ -98,10 +98,13 @@ pub fn compact_tool(client: &ClientSpec, name: &str) -> bool {
     client.lists_compact_tool && (client.mcp_server)(name, "compact").is_some_and(|s| s.ends_with("zygo"))
 }
 
-/// The compact tool in a Responses `function_call` item (K§6.4.5): its `name`, joined to its `namespace` by
-/// `flat_name` when it has one, is the §10.2.3 name `mcp__<server>__compact` with `<server>` ending in `zygo`. The
-/// joined form is wire format (K§6.4.3), the same for every client, so it is not read with `ClientSpec::mcp_server`;
-/// never for a client that zygo does not list `compact` to (`ClientSpec::lists_compact_tool`).
+/// The compact tool on the Responses route (K§6.4.5): the `name`, joined to its `namespace` by `flat_name` when it has
+/// one, is matched with one fixed §10.2.3 parse, `mcp__<server>__compact` with `<server>` ending in `zygo`, the same
+/// for every client, not with `ClientSpec::mcp_server`. The parse is correct for a namespaced tool, joined as
+/// `<namespace>__<name>` (K§6.4.3 obligation 6). A plain `function` tool keeps the name the client sent and gets the
+/// same parse, so a Responses client whose own form is not Claude Code's would need a per-tool namespace flag to be
+/// matched in its own form (known limit; no such client exists). Never for a client that zygo does not list
+/// `compact` to (`ClientSpec::lists_compact_tool`).
 pub fn responses_compact_tool(client: &ClientSpec, namespace: Option<&str>, name: &str) -> bool {
     if !client.lists_compact_tool {
         return false;
@@ -113,10 +116,10 @@ pub fn responses_compact_tool(client: &ClientSpec, namespace: Option<&str>, name
     name.strip_suffix("__compact").and_then(|ns| ns.strip_prefix("mcp__")).is_some_and(|s| s.ends_with("zygo"))
 }
 
-/// The compact tool in a tool name of the model's answer to a request on `route`, read as Messages lines: a
-/// Responses-route request's tool names are the fixed flat form (K§6.4.3; also when an Anthropic or chat upstream
-/// answers it), matched as `responses_compact_tool` matches them; a Messages-route request's are the client's own
-/// form (`compact_tool`).
+/// The compact tool in a tool name of the model's answer to a request on `route`, read as Messages lines: on the
+/// Responses route (also when an Anthropic or chat upstream answers it) the name is matched as
+/// `responses_compact_tool` matches it, with the fixed §10.2.3 parse; on the Messages route, in the client's own form
+/// (`compact_tool`).
 pub fn route_compact_tool(client: &ClientSpec, route: ModelRoute, name: &str) -> bool {
     match route {
         ModelRoute::Responses => responses_compact_tool(client, None, name),
