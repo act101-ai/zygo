@@ -101,7 +101,7 @@ struct Env<'a> {
 
 fn zygo(home: &Path, args: &[&str], env: &Env, stdin: &[u8]) -> (i32, String, String) {
     let mut child = spawn_zygo(home, args, env);
-    common::feed_stdin(child.stdin.take().unwrap(), stdin);
+    common::write_stdin(child.stdin.take().unwrap(), stdin);
     let out = child.wait_with_output().unwrap();
     (out.status.code().unwrap(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
 }
