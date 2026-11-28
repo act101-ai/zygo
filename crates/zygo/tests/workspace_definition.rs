@@ -247,6 +247,8 @@ fn run(fx: &Fx, git: Arc<dyn GitRunner + Send + Sync>, f: impl FnOnce(&mut Launc
     o.stderr = Some(buf.clone());
     o.definition_git = Some(git);
     o.profile = Some("rust".into());
+    // The member wrapper sets the main worktree of the workspace (R§7.4, FX-39 R1); here it is `app`.
+    o.definition_root = Some(fx.app.clone());
     let called = Arc::new(AtomicBool::new(false));
     let c = called.clone();
     o.on_session = Some(Box::new(move |_, _, _, _, _| {
@@ -428,6 +430,15 @@ fn l11_a_pin_outside_a_checkout_reads_at_the_main_worktree() { // R§7.4 "The re
     assert_eq!(r.code, 2, "{}", r.err);
     let p = r.seen.expect("build ran").0.expect("the pinned profile was sent");
     assert_eq!(p.overrides, BTreeMap::from([("code".to_string(), "claude-haiku-5-5".to_string())]));
+    // No main worktree: the launch with a pin stops with the not-read line.
+    let r = run(&fx, Arc::new(Rec::default()), |o| {
+        o.cwd = plain.clone();
+        o.definition = Some(pin.clone());
+        o.definition_root = None;
+    });
+    assert_eq!(r.code, 1, "{}", r.err);
+    assert!(r.seen.is_none() && !r.called, "the launch went on: {}", r.err);
+    assert_eq!(count(&r.err, &pin_line(&pin, NOT_READ)), 1, "{}", r.err);
 }
 
 #[test]
