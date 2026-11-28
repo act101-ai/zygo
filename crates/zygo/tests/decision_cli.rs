@@ -1,4 +1,5 @@
 //! DR-3: `zygo decision ls|show|deps|check` and `/zygo:decision` (D§10.1, D§7, D§6.7, D§6.8, D§14, D-C2).
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -26,15 +27,17 @@ fn put(top: &Path, n: u32, deps: &[u32]) -> String { // an open decision titled 
 fn put_text(top: &Path, name: &str, t: &str) { fs::write(dir(top).join(name), t).unwrap(); }
 type Commits = Result<Vec<(String, String)>, String>;
 struct Ran { code: i32, out: String, err: String }
-fn go(top: &dyn Fn() -> Option<PathBuf>, commits: Commits, args: &[&str]) -> Ran {
+fn go(top: &dyn Fn() -> Option<PathBuf>, commits: Commits, args: &[&str]) -> Ran { go_with(top, commits, &|_| None, false, args) }
+/// [`go`] with the environment `env` and a terminal when `tty`; stdin is empty.
+fn go_with(top: &dyn Fn() -> Option<PathBuf>, commits: Commits, env: &dyn Fn(&str) -> Option<OsString>, tty: bool, args: &[&str]) -> Ran {
     let list = move |_: &Path, _: &str, limit: usize| { assert_eq!(limit, 50); commits.clone() };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     let mut input = std::io::empty();
-    let mut io = DecisionIo { input: &mut input, out: &mut out, err: &mut err, tty: false };
+    let mut io = DecisionIo { input: &mut input, out: &mut out, err: &mut err, tty };
     let checkout = || top().map(|t| { let c = t.join(".git"); (t, c) });
     let repo = Repo { checkout: &checkout, commits: &list, head: &|_| None, today: &String::new, usage_db: Path::new("") };
-    let code = run_in(&repo, &|_| None, &args, &mut io);
+    let code = run_in(&repo, env, &args, &mut io);
     Ran { code, out: String::from_utf8(out).unwrap(), err: String::from_utf8(err).unwrap() }
 }
 fn run(top: &Path, args: &[&str]) -> Ran { go(&|| Some(top.to_path_buf()), Ok(vec![]), args) }
@@ -315,5 +318,35 @@ fn slash_reply_carries_the_args_as_given() { // D§10.1: `--` and `--save` are t
         let o = child.wait_with_output().unwrap();
         let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
         assert_eq!(v["reason"].as_str(), Some(want), "{a}");
+    }
+}
+#[cfg(unix)]
+#[test] fn operator_verbs_refuse_a_docs_link() { // D§6.8, D§14 row 2: a link at `docs` is not followed
+    let t = tempfile::tempdir().unwrap();
+    let rid = id(1);
+    let check = |what: &str| {
+        let top = || Some(t.path().to_path_buf());
+        for a in [&["ratify", rid.as_str(), "--yes"][..], &["review"]] {
+            let r = go_with(&top, Ok(vec![]), &|_| None, true, a);
+            assert_eq!((r.code, r.out.as_str(), r.err.as_str()), (1, "", "zygo decision: docs/decisions is not a directory\n"), "{what}: {a:?}");
+        }
+    };
+    std::os::unix::fs::symlink(t.path().join("nowhere"), t.path().join("docs")).unwrap();
+    check("dangling docs link");
+    fs::remove_file(t.path().join("docs")).unwrap();
+    fs::create_dir(t.path().join("elsewhere")).unwrap();
+    std::os::unix::fs::symlink(t.path().join("elsewhere"), t.path().join("docs")).unwrap();
+    check("docs link to a folder with no decisions");
+}
+#[test] fn operator_verbs_refuse_an_empty_zygo_session_dir() { // D§11.1: set, empty included
+    let t = tempfile::tempdir().unwrap();
+    let rid = id(1);
+    let top = || Some(t.path().to_path_buf());
+    let env = |k: &str| (k == "ZYGO_SESSION_DIR").then(OsString::new);
+    for (verb, a) in [("ratify", &["ratify", rid.as_str(), "--yes"][..]), ("overturn", &["overturn", rid.as_str(), "--reason", "r", "--yes"]),
+        ("review", &["review"])] {
+        let r = go_with(&top, Ok(vec![]), &env, true, a);
+        let want = format!("zygo decision {verb}: run it in your own shell, not in an agent session\n");
+        assert_eq!((r.code, r.out.as_str(), r.err.as_str()), (2, "", want.as_str()), "{a:?}");
     }
 }
