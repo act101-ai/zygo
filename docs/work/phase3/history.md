@@ -160,6 +160,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | DONE | implementation | 15ea1e5b^..9a264b0a · acceptance pass (definition_hooks 11 passed) · PR #218 |
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | DONE | judgment | 87a292d6^..da0207f1 · acceptance pass (mail_lifecycle 23 passed) · PR #219 |
 | FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | DONE | implementation | bb21eadf^..c99eeb95 · acceptance pass (offline: 7 test files, 0 failed) · PR #220 |
+| FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
 
 ## Log
 
