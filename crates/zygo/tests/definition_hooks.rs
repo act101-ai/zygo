@@ -260,7 +260,7 @@ mod unix {
     use zygo_workspace::identity::workspace_id;
     use zygo_workspace::state::{MemberRecord, MemberState, Pane, PaneKind};
 
-    use crate::common::feed_stdin;
+    use crate::common::write_stdin;
     use crate::common::workspace::{ready_exe, wait_child, Guarded, Harness, WS_ID};
 
     const RUST: &str = "overrides = { code = \"claude-haiku-5-5\" }\ndisabled = [\"design\"]\n";
@@ -697,7 +697,7 @@ mod unix {
         let mut c = fx.h.zygo(args, &extra);
         c.current_dir(&fx.app).stdin(Stdio::piped());
         let mut g = Guarded::spawn(c);
-        feed_stdin(g.stdin().unwrap(), stdin);
+        write_stdin(g.stdin().unwrap(), stdin);
         let o: Output = g.output(&args.join(" "));
         Out {
             code: o.status.code(),
@@ -991,7 +991,7 @@ mod unix {
             .spawn()
             .unwrap();
         if let Some(s) = stdin {
-            feed_stdin(c.stdin.take().unwrap(), s.as_bytes());
+            write_stdin(c.stdin.take().unwrap(), s.as_bytes());
         }
         wait_child(&mut c, &format!("bin/git {args:?}")).success()
     }
@@ -1050,7 +1050,7 @@ mod unix {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        feed_stdin(c.stdin.take().unwrap(), format!("{rust_blob}\n").as_bytes());
+        write_stdin(c.stdin.take().unwrap(), format!("{rust_blob}\n").as_bytes());
         assert!(wait_child(&mut c, "bin/git cat-file --batch").success());
         let lines = take_log(&fx);
         assert!(lines.contains(&format!("{STDIN}{rust_blob}")), "{lines:?}");
