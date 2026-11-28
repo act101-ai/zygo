@@ -265,100 +265,11 @@ fn sigdump() {
     }
 }
 
-/// `hook session-start --agent <a> [--event <e>]` with `ZYGO_STUB_HOOK_PATHS=<root>` (FX-9 review F2, the end-to-end
-/// OpenCode test): the real hook, `zygo_hooks::session_start::run_member` on stdin, the session folder of
-/// `ZYGO_SESSION_DIR` and the paths of the launch tests' layout under `<root>` (`<root>/config.toml`, `cache`, `data`,
-/// as `fx` in `tests/opencode.rs`), with the parse and the output of `zygo hook` (`crates/zygo/src/cmd/hook.rs`):
-/// the output on stdout and exit 0.
-fn real_session_start(argv: &[String], root: &Path) {
-    use std::io::{Read, Write};
-    use std::str::FromStr;
-    let agent = flag(argv, "--agent").and_then(|a| zygo_core::Agent::from_str(&a).ok()).unwrap_or(zygo_core::Agent::ClaudeCode);
-    let event = flag(argv, "--event");
-    let paths = stub_paths(root);
-    let mut stdin = Vec::new();
-    let _ = std::io::stdin().read_to_end(&mut stdin);
-    let (out, _) = zygo_core::hook::guarded(
-        &|b| {
-            let mut i = zygo_core::hook::HookInput::parse(agent, b)?;
-            i.cli_event = event.clone();
-            let Some(dir) = zygo_core::session_dir::SessionDir::from_env() else {
-                return Ok(zygo_core::hook::HookOutput::None);
-            };
-            zygo_hooks::session_start::run_member(&i, &dir, &paths, Path::new("/nonexistent/zygo"), &mut std::io::stdout())
-        },
-        &stdin,
-    );
-    let mut so = std::io::stdout();
-    let _ = so.write_all(out.as_bytes());
-    let _ = so.flush();
-}
-
-/// The paths of the launch tests' layout under `root` (`<root>/config.toml`, `cache`, `data`, as `fx` in
-/// `tests/opencode.rs`).
-fn stub_paths(root: &Path) -> zygo_core::paths::Paths {
-    zygo_core::paths::Paths {
-        config_file: root.join("config.toml"),
-        cache_dir: root.join("cache"),
-        data_dir: root.join("data"),
-        sessions_dir: root.join("cache/sessions"),
-        marketplaces_dir: root.join("cache/marketplaces"),
-        plugin_store: root.join("data/plugins"),
-        approvals_file: root.join("data/approvals.toml"),
-        usage_db: root.join("data/usage.db"),
-    }
-}
-
-/// `hook workspace --agent <a> --event message` with `ZYGO_STUB_HOOK_PATHS=<root>` (FX-33, the end-to-end OpenCode
-/// mail test): the real `zygo_hooks::workspace::run` on stdin with the process environment, the paths of
-/// [stub_paths] and the zygo path `/nonexistent/zygo`, with the parse and the output of `zygo hook`
-/// (`crates/zygo/src/cmd/hook.rs`, `workspace_hook`): the line on stdout, or nothing, and exit 0.
-fn real_workspace_message(argv: &[String], root: &Path) {
-    use std::io::{Read, Write};
-    use std::str::FromStr;
-    let agent = flag(argv, "--agent").and_then(|a| zygo_core::Agent::from_str(&a).ok()).unwrap_or(zygo_core::Agent::ClaudeCode);
-    let paths = stub_paths(root);
-    let mut stdin = Vec::new();
-    let _ = std::io::stdin().read_to_end(&mut stdin);
-    let (out, _) = zygo_core::hook::guarded(
-        &|b| {
-            let i = zygo_core::hook::HookInput::parse(agent, b)?;
-            let out = zygo_hooks::workspace::run(
-                "message",
-                &serde_json::to_vec(&i.raw)?,
-                &paths,
-                &|k| std::env::var_os(k),
-                Path::new("/nonexistent/zygo"),
-            )?;
-            Ok(out.map_or(zygo_core::hook::HookOutput::None, zygo_core::hook::HookOutput::Text))
-        },
-        &stdin,
-    );
-    let mut so = std::io::stdout();
-    let _ = so.write_all(out.as_bytes());
-    let _ = so.flush();
-}
-
 fn main() {
     sigdump();
     let argv: Vec<String> = std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()).collect();
     if argv == ["--version"] {
         println!("{}", var("ZYGO_STUB_VERSION").unwrap_or_default());
-        return;
-    }
-    if argv.first().map(String::as_str) == Some("hook")
-        && argv.get(1).map(String::as_str) == Some("session-start")
-        && let Some(root) = var("ZYGO_STUB_HOOK_PATHS")
-    {
-        real_session_start(&argv, Path::new(&root));
-        return;
-    }
-    if argv.first().map(String::as_str) == Some("hook")
-        && argv.get(1).map(String::as_str) == Some("workspace")
-        && flag(&argv, "--event").as_deref() == Some("message")
-        && let Some(root) = var("ZYGO_STUB_HOOK_PATHS")
-    {
-        real_workspace_message(&argv, Path::new(&root));
         return;
     }
     if matches!(argv.first().map(String::as_str), Some("hook" | "mcp")) {
