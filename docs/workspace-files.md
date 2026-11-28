@@ -144,7 +144,7 @@ Each member keeps the files it started with: its record saves the commit and the
 
 The pin is checked only for a member that asks for a profile (its `profile`, or your default profile from `zygo profile use`) that only the workspace files define, not a user profile or a team preset, and that does not run in passthrough. For such a member, when the pinned commit is gone, its approval is withdrawn, or the member's folder is not in a git checkout, the member does not start, and zygo prints `zygo: profile <n> of this member comes from the workspace files at commit <12> (digest <12>), which this repository no longer has or no longer approves; the agent was not started; to start from the current files: zygo down, then zygo up --reset`. When the read of the pinned commit fails, the line says `which were not read (<why>)` in place of `which this repository no longer has or no longer approves`.
 
-A member with no such profile, and a pool member in passthrough, still start after the commit is gone or the approval is withdrawn, also at a restore.
+Every other member starts when its pinned commit is gone, its approval is withdrawn or the read of the pinned commit fails, also at a resume and at a restore: a member with no profile, a member whose profile is a user profile or a team preset, and a pool member in passthrough. zygo reads nothing at the pin for these members, because they take nothing from the pinned commit; their jobs and folders are in the saved workspace state.
 
 ## Profiles
 
