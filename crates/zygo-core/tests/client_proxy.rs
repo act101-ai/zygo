@@ -22,3 +22,13 @@ fn client_specs_hold_the_concern_9_values() {
     assert!(o.cache_markers);
     assert_eq!(o.redact_skip_tags, &["file", "shell"][..]);
 }
+
+#[test] // round 2 D2: the harness rule of the content pass; OpenCode keeps the base set (K-D3), so both clients are equal
+fn client_specs_hold_the_harness_rule() {
+    let prefixes = ["<system-reminder>", "<bash-stdout>", "<bash-stderr>", "<system-update>", "Stop hook feedback:", "SubagentStop hook feedback:"];
+    for id in ["claude-code", "opencode"] {
+        let s = id.parse::<Agent>().unwrap().spec();
+        assert_eq!(s.redact_harness_prefixes, &prefixes[..], "{id}");
+        assert_eq!(s.redact_harness_spans, &["command-name"][..], "{id}");
+    }
+}
