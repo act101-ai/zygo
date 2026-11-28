@@ -231,6 +231,22 @@ fn each_call_gets_min_of_step_and_total_deadline() {
 }
 
 #[test]
+fn each_object_read_gets_its_own_step_bound() {
+    let canned = format!("{} commit 0\n\n", hex('a')).repeat(3).into_bytes();
+    let Rig { mut g, t0, clock, log } = rig(Vec::new(), canned);
+    assert_eq!(g.commit("a"), Ok(Some(hex('a'))));
+    clock.set(t0 + S(3));
+    assert_eq!(g.commit("a"), Ok(Some(hex('a'))));
+    clock.set(t0 + S(9));
+    assert_eq!(g.commit("a"), Ok(Some(hex('a'))));
+    assert_eq!(log.borrow().runs, vec![("cat-file", t0 + S(2))]);
+    assert_eq!(log.borrow().deadlines, vec![t0 + S(2), t0 + S(5), t0 + S(10)]);
+    clock.set(t0 + S(10));
+    assert_eq!(g.commit("a"), Err(failed("git cat-file", "over 10 s in all")));
+    assert_eq!(log.borrow().sent.len(), 3);
+}
+
+#[test]
 fn fifth_process_is_refused_with_no_run() {
     let base = format!("{}\n", hex('a'));
     let canned = format!("{} commit 0\n\n", hex('a')).into_bytes();

@@ -1,9 +1,12 @@
 //! DR-12: the keep check (D§9.4) over the node range, on a fixture repository with a linked node checkout. No test
 //! waits on wall-clock time: real-git tests run with every deadline an hour away, and no developer git config is read.
 
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use zygo_work::decisions::record::Class;
@@ -619,6 +622,89 @@ fn acceptance_7_fixed_after_overturn_passes() {
     assert_eq!(keep(&fx, 2, Some(&h), None, Some(ds.clone())), Vec::<String>::new());
     let p = check_keep(&req(2, Some(&h), Some(&fx.base), Some(ds)), &mut far_git(&fx.n));
     assert_eq!(p, Vec::<String>::new());
+}
+
+// ---- FX-41: the bound of each object read, and the record size read before the body ----
+
+/// The `(test clock, n)` of each `read_exact` of the `--batch` process.
+type Reads = Rc<RefCell<Vec<(Instant, usize)>>>;
+
+/// [`Iso`] on a test clock that starts an hour ahead (so every real deadline is an hour away and machine load cannot
+/// fail a test) and advances `step` after each whole process. Its `--batch` process is [`Timed`].
+struct Clocked {
+    iso: Iso,
+    clock: Rc<Cell<Instant>>,
+    step: Duration,
+    reads: Reads,
+}
+
+impl GitRunner for Clocked {
+    fn run(&mut self, cmd: Command, deadline: Instant) -> Result<Whole, RunError> {
+        let r = self.iso.run(cmd, deadline);
+        self.clock.set(self.clock.get() + self.step);
+        r
+    }
+    fn batch(&mut self, cmd: Command, deadline: Instant) -> Result<Box<dyn BatchIo>, RunError> {
+        let io = self.iso.batch(cmd, deadline)?;
+        Ok(Box::new(Timed { io, clock: self.clock.clone(), deadline, reads: self.reads.clone() }))
+    }
+    fn now(&self) -> Instant { self.clock.get() }
+}
+
+/// The real `--batch` process judged on the test clock: a read at or past the deadline it holds (the one of its spawn,
+/// or the last one set) is `TimedOut`, as `Piped` gives it at that deadline.
+struct Timed {
+    io: Box<dyn BatchIo>,
+    clock: Rc<Cell<Instant>>,
+    deadline: Instant,
+    reads: Reads,
+}
+
+impl Timed {
+    fn due(&self) -> Result<(), RunError> {
+        if self.clock.get() >= self.deadline { Err(RunError::TimedOut) } else { Ok(()) }
+    }
+}
+
+impl BatchIo for Timed {
+    fn send(&mut self, line: &[u8]) -> Result<(), RunError> { self.io.send(line) }
+    fn read_line(&mut self, max: usize) -> Result<Vec<u8>, RunError> {
+        self.due()?;
+        self.io.read_line(max)
+    }
+    fn read_exact(&mut self, n: usize) -> Result<Vec<u8>, RunError> {
+        self.due()?;
+        self.reads.borrow_mut().push((self.clock.get(), n));
+        self.io.read_exact(n)
+    }
+    fn set_deadline(&mut self, deadline: Instant) {
+        self.deadline = deadline;
+        self.io.set_deadline(deadline);
+    }
+}
+
+/// A [`ProcessGit`] in `root` on [`Clocked`]: the clock origin `t0` and the read log.
+fn clocked_git(root: &Path, step: Duration) -> (ProcessGit, Instant, Reads) {
+    let t0 = Instant::now() + Duration::from_secs(3600);
+    let reads = Reads::default();
+    let iso = Iso { far: Far(ProcessRunner), home: TempDir::new().unwrap() };
+    let runner = Clocked { iso, clock: Rc::new(Cell::new(t0)), step, reads: reads.clone() };
+    (ProcessGit::with_runner(root, Box::new(runner)), t0, reads)
+}
+
+#[test]
+fn keep_reads_after_merge_base_rev_list_and_log_get_their_own_bound() {
+    let fx = fixture();
+    let c1 = code(&fx);
+    let h = add(&fx, 'R', &[]);
+    let ms = Duration::from_millis;
+    let (mut g, t0, reads) = clocked_git(&fx.w, ms(1_500));
+    let ds = vec![fixed("R3-1", &c1), recorded("R3-2", Class::None, 'R')];
+    assert_eq!(check_keep(&req(3, Some(&h), None, Some(ds)), &mut g), Vec::<String>::new());
+    // Step 1 at t0; steps 5 and 7 after `merge-base` and `rev-list` (t0 + 3 s); steps 8 and 9 after `log` (t0 + 4.5 s):
+    // each past the 2 s the `--batch` process got at its spawn.
+    let at: BTreeSet<Duration> = reads.borrow().iter().map(|(t, _)| *t - t0).collect();
+    assert_eq!(at, BTreeSet::from([ms(0), ms(3_000), ms(4_500)]));
 }
 
 // ---- a stub VerdictGit: the limits and git failures without real git ----
