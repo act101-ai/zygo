@@ -24,6 +24,16 @@ pub(super) static SPEC: ClientSpec = ClientSpec {
     passthrough_credential: None,
     cache_markers: true,
     redact_skip_tags: &["file", "shell"],
+    // The base content pass applied the Claude Code harness rule to every client; OpenCode keeps it (K-D3).
+    redact_harness_prefixes: &[
+        "<system-reminder>",
+        "<bash-stdout>",
+        "<bash-stderr>",
+        "<system-update>",
+        "Stop hook feedback:",
+        "SubagentStop hook feedback:",
+    ],
+    redact_harness_spans: &["command-name"],
 };
 
 /// The Claude Code name of an OpenCode tool; any other name is unchanged.

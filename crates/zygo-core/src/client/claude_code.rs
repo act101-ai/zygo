@@ -24,6 +24,15 @@ pub(super) static SPEC: ClientSpec = ClientSpec {
     passthrough_credential: Some("claude-ai"),
     cache_markers: false,
     redact_skip_tags: &[],
+    redact_harness_prefixes: &[
+        "<system-reminder>",
+        "<bash-stdout>",
+        "<bash-stderr>",
+        "<system-update>",
+        "Stop hook feedback:",
+        "SubagentStop hook feedback:",
+    ],
+    redact_harness_spans: &["command-name"],
 };
 
 /// Claude Code's hook JSON is the common form: it is returned unchanged.

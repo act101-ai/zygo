@@ -88,6 +88,10 @@ pub struct ClientSpec {
     pub cache_markers: bool,
     /// The element names whose spans the content pass skips in user text (the harness span rule).
     pub redact_skip_tags: &'static [&'static str],
+    /// The prefixes of harness text: a user text that starts with one is skipped by the content pass (§16.2).
+    pub redact_harness_prefixes: &'static [&'static str],
+    /// The element names whose spans the content pass skips inside a `<command-message>` block (§16.2).
+    pub redact_harness_spans: &'static [&'static str],
 }
 
 impl Agent {

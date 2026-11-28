@@ -8,10 +8,10 @@ fn skipped_spans_take_the_descriptor_tags() {
     let oc: Agent = "opencode".parse().unwrap();
     let cc: Agent = "claude-code".parse().unwrap();
     let s = r#"<file path="a">x</file> <shell>y</shell> z"#;
-    assert_eq!(skipped_spans(s, oc.spec().redact_skip_tags), vec![0..23, 24..40]);
-    assert!(skipped_spans(s, cc.spec().redact_skip_tags).is_empty());
+    assert_eq!(skipped_spans(s, oc.spec()), vec![0..23, 24..40]);
+    assert!(skipped_spans(s, cc.spec()).is_empty());
     let cmd = "<command-message>m</command-message><command-name>/x</command-name>";
     for a in [oc, cc] {
-        assert_eq!(skipped_spans(cmd, a.spec().redact_skip_tags), vec![36..67], "{a}");
+        assert_eq!(skipped_spans(cmd, a.spec()), vec![36..67], "{a}");
     }
 }
