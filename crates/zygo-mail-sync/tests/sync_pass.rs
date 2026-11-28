@@ -802,6 +802,160 @@ fn public_remote_stops_before_any_fetch() {
     assert!(!a.wt.exists());
 }
 
+/// The injected public probe that records each URL it is asked and says `Public`.
+struct Asked(Arc<Mutex<Vec<String>>>);
+impl env::Probe for Asked {
+    fn probe(&self, url: &str) -> Verdict {
+        self.0.lock().unwrap().push(url.to_string());
+        Verdict::Public
+    }
+}
+
+#[test] // FX-40 (S-F1), S§8.2 step 1: `git push` sends to every push URL, so a public second push URL stops the pass
+fn second_push_url_that_is_public_refuses_the_pass() {
+    let _g = shared();
+    let (r, a) = one();
+    let fetch = git(&a.root, &["remote", "get-url", "origin"]);
+    git(&a.root, &["remote", "set-url", "--add", "--push", "origin", &fetch]);
+    git(&a.root, &["remote", "set-url", "--add", "--push", "origin", "https://example.invalid/mirror.git"]);
+    let refs0 = git(&r.bare, &["for-each-ref"]);
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let mut e = plain_env(&a);
+    e.probe = Box::new(Asked(asked.clone()));
+    let err = run(&e, WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!(err, SyncError::Stopped { line: "zygo: the remote can be read without a login; mail sync refused".into(), check: "public" });
+    assert_eq!(*asked.lock().unwrap(), vec!["https://example.invalid/mirror.git".to_string()]);
+    assert_eq!(git(&r.bare, &["for-each-ref"]), refs0);
+    assert!(!a.root.join(".git/refs/remotes/origin/zygo").exists());
+    assert!(!a.wt.exists());
+}
+
+#[test] // FX-40 review F1, S§8.3 step 15: two `file://` push URLs, the second moved: the first takes the commit and the
+        // second refuses it; the pass stops with the `push` line (exit 1), keeps the outbox and records no own blob as
+        // pushed, and does not report success
+fn push_taken_by_one_push_url_only_stops_the_pass() {
+    let _g = shared();
+    let (r, a, _b) = pair();
+    let r2 = r.mirror();
+    common::push_urls(&a, &[&r.url, &r2.url]);
+    let moved = common::advance(&r2, BRANCH);
+    let id = send(&a, "alice", ("bob", "b"), "two urls");
+    let pushed0 = load(&a.sp()).unwrap().pushed;
+    let e = run(&plain_env(&a), WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!(e, SyncError::Stopped { line: "zygo: mail sync stopped (push); the outbox is kept".into(), check: "push" });
+    assert_eq!(e.exit_code(Mode::Cli), 1);
+    assert!(a.sp().outbox.join(format!("{id}.json")).is_file());
+    let st = load(&a.sp()).unwrap();
+    assert_eq!(st.pushed, pushed0);
+    assert!(!st.pending.is_empty());
+    assert_eq!(st.last_error.as_deref(), Some("push"));
+    assert!(a.errors().contains("push"), "{}", a.errors());
+    assert_eq!(r2.tip(BRANCH), Some(moved));
+}
+
+/// The `push` stop of S§8.3 step 15.
+fn push_stop() -> SyncError {
+    SyncError::Stopped { line: "zygo: mail sync stopped (push); the outbox is kept".into(), check: "push" }
+}
+
+#[test] // FX-40 review, S§8.3 steps 11 and 15: after a split stop the flag is set; a pass with nothing new keeps the
+        // outbox file and pushes the tip again (a split again: the `push` stop, flag kept); when the second URL
+        // takes it, the flag clears, the outbox file is deleted and both URLs hold the message
+fn split_flag_keeps_the_outbox_and_pushes_the_tip_until_every_url_takes_it() {
+    let _g = shared();
+    let (r, a, _b) = pair();
+    let r2 = r.mirror();
+    common::push_urls(&a, &[&r.url, &r2.url]);
+    let before = r2.tip(BRANCH).unwrap();
+    common::advance(&r2, BRANCH);
+    let id = send(&a, "alice", ("bob", "b"), "two urls");
+    let outbox_file = a.sp().outbox.join(format!("{id}.json"));
+    let path = format!("bob@b/{id}.json");
+    assert_eq!(run(&plain_env(&a), WS_ID, Mode::Cli).unwrap_err(), push_stop());
+    assert!(load(&a.sp()).unwrap().push_split);
+    assert!(tip_file(&r, BRANCH, &path).is_some() && tip_file(&r2, BRANCH, &path).is_none());
+    // the second URL still refuses: the tip is pushed again, split again
+    assert_eq!(run(&plain_env(&a), WS_ID, Mode::Cli).unwrap_err(), push_stop());
+    assert!(outbox_file.is_file());
+    assert!(load(&a.sp()).unwrap().push_split);
+    // the second URL is back where this machine knew it: the tip push is a fast-forward there
+    git(&r2.bare, &["update-ref", &format!("refs/heads/{BRANCH}"), &before]);
+    let rep = run(&plain_env(&a), WS_ID, Mode::Cli).unwrap();
+    assert_eq!(rep.passes, 1);
+    let st = load(&a.sp()).unwrap();
+    assert!(!st.push_split);
+    assert!(st.pending.is_empty());
+    assert!(!outbox_file.exists());
+    assert_eq!(r2.tip(BRANCH), r.tip(BRANCH));
+    assert!(tip_file(&r2, BRANCH, &path).is_some());
+}
+
+#[test] // FX-40 review, S§9 Push: a pass with the split flag set does not prune: a forced prune pass pushes the tip
+        // again, stops with the `push` stop, and no URL's history is rewritten
+fn split_flag_stops_the_prune() {
+    let _g = shared();
+    let (r, a, _b) = pair();
+    let r2 = r.mirror();
+    common::push_urls(&a, &[&r.url, &r2.url]);
+    let moved = common::advance(&r2, BRANCH);
+    send(&a, "alice", ("bob", "b"), "two urls");
+    assert_eq!(run(&plain_env(&a), WS_ID, Mode::Cli).unwrap_err(), push_stop());
+    let tip = r.tip(BRANCH).unwrap();
+    let e = run_with(&plain_env(&a), WS_ID, Mode::Cli, &Opts { prune: true }).unwrap_err();
+    assert_eq!(e, push_stop());
+    assert_eq!(r.tip(BRANCH), Some(tip));
+    assert_eq!(r2.tip(BRANCH), Some(moved));
+    assert!(load(&a.sp()).unwrap().push_split);
+}
+
+/// A valid message file for `bob@b` from `alice@a`, named by `id`.
+fn bob_message(id: Ulid) -> Vec<u8> {
+    format!(r#"{{"version":1,"id":"{id}","from":"alice@a","to":"bob@b","sent_at":"2026-11-25T10:00:00Z","subject":"s","body":"b"}}"#)
+        .into_bytes()
+}
+
+/// `n` messages for `bob@b` put on the tip, with ULID time `secs` and random parts `from..from + n`.
+fn bob_messages_on_tip(r: &Remote, secs: u64, from: u128, n: u128) -> Vec<Ulid> {
+    let ids: Vec<Ulid> = (from..from + n).map(|i| Ulid::from_parts(secs * 1000, i)).collect();
+    let files: Vec<(String, Vec<u8>)> = ids.iter().map(|id| (format!("bob@b/{id}.json"), bob_message(*id))).collect();
+    let adds: Vec<(&str, &[u8])> = files.iter().map(|(p, b)| (p.as_str(), b.as_slice())).collect();
+    edit_tip(r, &adds, &[]);
+    ids
+}
+
+#[test] // FX-40 (S-F2), S§8.5, S§19 #13: the 500 candidates are counted over every push attempt of the pass
+fn one_pass_reads_at_most_500_candidates_across_moved_attempts() {
+    let _g = shared();
+    let (r, _a, b) = pair();
+    b.config(Some("b\"\nmax_unread = 5000\n#"), "");
+    let late = bob_messages_on_tip(&r, T0 + 5000, 0, 600);
+    let counts = Arc::new(Mutex::new(BTreeMap::new()));
+    let r = Arc::new(r);
+    let r2 = r.clone();
+    let early = Arc::new(Mutex::new(Vec::new()));
+    let early2 = early.clone();
+    let h = counting(counts.clone(), move |p, n| {
+        if p == "before_push" && n == 1 {
+            // older ULIDs: they sort before the 500 that the first attempt took
+            *early2.lock().unwrap() = bob_messages_on_tip(&r2, T0 + 1000, 0, 10);
+        }
+    });
+    let rep = run(&hook_env(&b, h), WS_ID, Mode::Cli).unwrap();
+    assert_eq!(counts.lock().unwrap()["before_push"], 2);
+    assert_eq!(rep.delivered, 500);
+    let got: BTreeSet<String> = new_messages(&b, BOB).iter().map(|v| v["id"].as_str().unwrap().to_string()).collect();
+    assert_eq!(got.len(), 500);
+    let first: BTreeSet<String> = late[..500].iter().map(|u| u.to_string()).collect();
+    assert_eq!(got, first);
+    assert_eq!(imported(&r, "ack/b.json"), first);
+    let rep = sync(&b);
+    assert_eq!(rep.delivered, 110);
+    let got: Vec<String> = new_messages(&b, BOB).iter().map(|v| v["id"].as_str().unwrap().to_string()).collect();
+    let all: BTreeSet<String> = late.iter().chain(early.lock().unwrap().iter()).map(|u| u.to_string()).collect();
+    assert_eq!(got.len(), 610);
+    assert_eq!(got.into_iter().collect::<BTreeSet<_>>(), all);
+}
+
 #[test] // S§19 #6 unknown
 fn unknown_public_verdict_is_a_note() {
     let _g = shared();

@@ -392,7 +392,21 @@ fn good_state() -> State {
         ci_note_shown: true,
         // FX-30: a delivery that the import began and no pass end counted yet (ULID → pane key).
         pending_wake: BTreeMap::from([("01HF0000000000000000000000".into(), "kbobbb222".into())]),
+        // FX-40 review: a push or prune ended Split; the push URLs may hold different branches.
+        push_split: true,
     }
+}
+
+#[test] // FX-40 review, S§8.3 step 15: `push_split` round-trips; a state.json written before it loads as not set
+fn push_split_round_trips_and_an_old_file_loads_as_not_set() {
+    let (_t, sp) = setup();
+    let s = good_state();
+    save(&sp, &s).unwrap();
+    assert!(load(&sp).unwrap().push_split);
+    write_atomic(&sp.state, br#"{"last_ok":1700000000,"pushed":{},"pending":{}}"#).unwrap();
+    let old = load(&sp).unwrap();
+    assert!(!old.push_split);
+    assert_eq!(old.last_ok, Some(1_700_000_000));
 }
 
 fn bad_states() -> Vec<(&'static str, State)> {

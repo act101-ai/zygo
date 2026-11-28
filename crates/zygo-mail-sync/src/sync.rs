@@ -127,6 +127,18 @@ impl From<BranchError> for Fail {
     fn from(e: BranchError) -> Fail { stop(branch_check(&e)) }
 }
 
+/// FX-40 review, S§8.3 step 15, S§9 Push: the `push` stop of a push or prune that one push URL took and another did
+/// not. It first sets `push_split` in `state.json` (under the caller's sync lock, atomic write); a state that cannot be
+/// read or written is the `state` stop.
+pub(crate) fn split_stop(sp: &SyncPaths) -> Fail {
+    let Ok(mut st) = state::load(sp) else { return stop("state") };
+    st.push_split = true;
+    if state::save(sp, &st).is_err() {
+        return stop("state");
+    }
+    stop("push")
+}
+
 /// A stop with the author's line (Open O6): the check name and that the outbox is kept.
 pub(crate) fn stop(check: &'static str) -> Fail {
     Fail::Stop { line: format!("zygo: mail sync stopped ({check}); the outbox is kept"), check }
@@ -441,6 +453,10 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: 
     // FX-30: each ULID that this pass counted, once across the rounds of the push loop.
     let mut counted = BTreeSet::<Ulid>::new();
     let mut carried: Option<BTreeMap<String, String>> = None;
+    // FX-40, S§8.5: the ULIDs taken as candidates, one set over every push attempt of the pass (at most
+    // `import::CANDIDATE_CAP`), and the ULIDs acknowledged by any attempt, which each later attempt's commit holds.
+    let mut taken = BTreeSet::<Ulid>::new();
+    let mut acked = BTreeSet::<Ulid>::new();
     if first {
         public_check(c, report, deadline)?;
     }
@@ -483,8 +499,9 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: 
         let targets: Vec<Target> = names::members(&c.ws).into_iter()
             .filter_map(|t| Some(Target { name: t.name?, pane_key: t.key }))
             .collect();
-        let imp = import::run(sp, &c.store, wt, &tip, &own, &targets, &own_ack, c.cfg.mail.max_unread, deadline,
-            &*env.seam, &mut log)?;
+        let imp = import::run(sp, &c.store, wt, &tip, &own, &targets, &own_ack, &mut taken, c.cfg.mail.max_unread,
+            deadline, &*env.seam, &mut log)?;
+        acked.extend(imp.acked.iter().copied());
         // The import wrote its `pending_wake` entries to `state.json`; this round's later saves of `st` keep them.
         st.pending_wake = state::load(sp).map_err(|_| stop("state"))?.pending_wake;
         // S§8.3 step 10 (FX-30): the delivered set is step 5's result, the import's deliveries and, in the first round,
@@ -504,17 +521,27 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: 
         wake(c, imp.read.as_ref().or(lock_read.as_ref()), &keys);
         clear_pending(sp, &mut st, &counted)?;
         let mut notified = Notified::default();
-        let (mut changes, sent) = outbox(c, &tip, fetched.then_some(&meta), (deadline, pass_end), &mut notified)?;
+        // FX-40 review: while the push URLs may differ (`push_split`), a file at the tip is not taken as pushed.
+        let split = st.push_split;
+        let (mut changes, sent) = outbox(c, &tip, fetched.then_some(&meta), split, (deadline, pass_end),
+            &mut notified)?;
         notified.keys.sort();
         notified.keys.dedup();
         wake(c, notified.read.as_ref(), &notified.keys);
         let files = own_files(wt, &tip, &own, deadline)?;
-        changes.extend(own_changes(c, &meta, &identity, &own, &files, &imp.acked, &own_ack));
-        if changes.is_empty() {
+        let pass_acked: Vec<Ulid> = acked.iter().copied().collect();
+        changes.extend(own_changes(c, &meta, &identity, &own, &files, &pass_acked, &own_ack));
+        if changes.is_empty() && !split {
             break (tip, meta);
         }
-        let commit = branch::commit(wt, &tip, Some(&tip), &changes, deadline)?;
-        let commit_meta = read_meta(wt, &commit, deadline, &mut |_| {})?;
+        // FX-40 review, S§8.3 step 15: with the split flag set and no change, the tip itself goes to every push URL.
+        let (commit, commit_meta) = if changes.is_empty() {
+            (tip, meta)
+        } else {
+            let commit = branch::commit(wt, &tip, Some(&tip), &changes, deadline)?;
+            let commit_meta = read_meta(wt, &commit, deadline, &mut |_| {})?;
+            (commit, commit_meta)
+        };
         st.pending = own_blobs(&commit_meta, &identity);
         state::save(sp, &st).map_err(|_| stop("state"))?;
         env.seam.at("before_push")?;
@@ -522,6 +549,8 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: 
             Pushed::Accepted => {
                 env.seam.at("after_push")?;
                 st.pushed.extend(std::mem::take(&mut st.pending));
+                // Every push URL took this commit: they hold the same branch again.
+                st.push_split = false;
                 state::save(sp, &st).map_err(|_| stop("state"))?;
                 branch::set_tracking(wt, remote, branch_name, &commit, deadline)?;
                 env.seam.at("before_outbox_delete")?;
@@ -538,6 +567,9 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: 
                     return Err(Fail::Stop { line: MOVED_LINE.into(), check: "moved" });
                 }
             }
+            // FX-40 review F1: a push that some push URL took and another did not stops the pass as any other error,
+            // and sets the split flag.
+            Pushed::Split => return Err(split_stop(sp)),
             Pushed::Other(_) => return Err(stop("push")),
         }
     };
@@ -555,9 +587,14 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: 
 /// [`prune::COMMITS_DUE`] commits. A done prune adds the note `pruned <n> files`. A lost lease writes no line (the
 /// next pass tries again, S§9), but a forced prune notes it. A failed count, commit or push skips the prune and adds
 /// the note `prune skipped (<check>)`: the pass ends as without a prune (D11). A failed branch-name or `ZYGO-MAIL`
-/// check stops the pass (S-C3).
+/// check stops the pass (S-C3). A root that one push URL took and another did not (`Split`) stops the pass with the
+/// `push` stop (S§9 Push, FX-40 review F2).
 fn prune_step(c: &Ctx, report: &mut Report, base: &str, meta: &TipMeta, identity: &str, forced: bool,
     deadline: Instant) -> Result<(), Fail> {
+    // FX-40 review, S§9 Push: no prune while the push URLs may hold different branches.
+    if state::load(&c.sp).map_err(|_| stop("state"))?.push_split {
+        return Ok(());
+    }
     let own_len = own_hosts(meta, identity, &c.s.host).iter()
         .filter_map(|h| own_ack(meta, h, identity))
         .map(|a| a.imported.len())
@@ -574,6 +611,8 @@ fn prune_step(c: &Ctx, report: &mut Report, base: &str, meta: &TipMeta, identity
     match pruned {
         Ok(Pruned::Done { removed }) => report.notes.push(format!("pruned {removed} files")),
         Ok(Pruned::LeaseLost) if forced => report.notes.push(PRUNE_MOVED_NOTE.into()),
+        // FX-40 review F2: a root that some push URL took and another did not: the branch differs between the URLs.
+        Ok(Pruned::Split) => return Err(split_stop(&c.sp)),
         Ok(_) => {}
         Err(e @ BranchError::Refused("branch" | "marker")) => return Err(e.into()),
         Err(e) => report.notes.push(format!("prune skipped ({})", branch_check(&e))),
@@ -594,7 +633,7 @@ pub(crate) fn public_check(c: &Ctx, report: &mut Report, deadline: Instant) -> R
         return Err(Fail::Stop { line: REMOTE_LINE.into(), check: "remote" });
     }
     let urls = public::remote_urls(root, &c.s.remote, deadline).map_err(|_| stop("remote"))?;
-    match public::check(&c.sp, &urls, &*c.env.probe, &*c.env.clock) {
+    match public::check(&c.sp, &urls, &*c.env.probe, &*c.env.clock, deadline) {
         Verdict::Public => Err(Fail::Stop { line: PUBLIC_LINE.into(), check: "public" }),
         Verdict::Unknown(r) => {
             report.notes.push(format!("zygo: cannot check if the remote is public: {r}"));
@@ -610,11 +649,12 @@ pub(crate) fn public_check(c: &Ctx, report: &mut Report, deadline: Instant) -> R
 /// the fetched tip ([`read_host`]; review F1: a stale member cache after a rename): when its path is at the tip it
 /// is deleted, else, while the pass deadline holds, it moves with the check `no-host` and the notice to the sender;
 /// a bootstrap tip (`None`) holds no registry yet and refuses nothing (S§19 #8). A
-/// file whose path is at the tip was pushed before and is deleted now. Else, while the pass deadline holds, the
+/// file whose path is at the tip was pushed before and is deleted now, or, with `split` (the `push_split` flag,
+/// FX-40 review), kept and put in the returned list, so it is deleted only after an accepted push. Else, while the pass deadline holds, the
 /// secret pass: clear, an add of its bytes at `<to>/<ULID>.json` (and the file in the returned list, deleted after
 /// the push); a finding, the move to `refused/` and the notice to the sender, whose keys go into `notified`; could
 /// not run, the file stays.
-fn outbox(c: &Ctx, tip: &str, meta: Option<&TipMeta>, (deadline, pass_end): (Instant, SystemTime),
+fn outbox(c: &Ctx, tip: &str, meta: Option<&TipMeta>, split: bool, (deadline, pass_end): (Instant, SystemTime),
     notified: &mut Notified) -> Result<(Vec<Change>, Vec<PathBuf>), Fail> {
     let (sp, wt) = (&c.sp, &c.sp.worktree);
     let (mut items, mut no_host) = (Vec::new(), Vec::new());
@@ -641,10 +681,12 @@ fn outbox(c: &Ctx, tip: &str, meta: Option<&TipMeta>, (deadline, pass_end): (Ins
             Flow::Go
         })?;
     }
-    // A file pushed before (the tip check) is deleted before the host check, so it gets no wrong notice.
+    let (mut changes, mut sent) = (Vec::new(), Vec::new());
+    // A file pushed before (the tip check) is deleted before the host check, so it gets no wrong notice. With the
+    // split flag set (FX-40 review), it is kept and deleted only after an accepted push of this pass.
     for (id, p, path, to) in no_host {
         if at_tip.contains(&path) {
-            let _ = std::fs::remove_file(&p);
+            if split { sent.push(p) } else { let _ = std::fs::remove_file(&p); }
             continue;
         }
         if Instant::now() >= deadline || c.env.clock.now() >= pass_end {
@@ -655,10 +697,9 @@ fn outbox(c: &Ctx, tip: &str, meta: Option<&TipMeta>, (deadline, pass_end): (Ins
         let body = format!("zygo did not send message {id} to {to}: host {h} has no registry on the side branch. The message is kept on this machine in mail/outbox/refused/.");
         refuse(c, id, &[], Some(&body), notified);
     }
-    let (mut changes, mut sent) = (Vec::new(), Vec::new());
     for (id, p, bytes, value, path, _) in items {
         if at_tip.contains(&path) {
-            let _ = std::fs::remove_file(&p);
+            if split { sent.push(p) } else { let _ = std::fs::remove_file(&p); }
             continue;
         }
         if Instant::now() >= deadline || c.env.clock.now() >= pass_end {

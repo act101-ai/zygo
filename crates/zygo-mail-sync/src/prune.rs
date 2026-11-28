@@ -21,8 +21,12 @@ pub const OWN_ACK_DUE: usize = 100000;
 pub enum Pruned {
     /// The new root is pushed, with `removed` message files fewer than the base.
     Done { removed: usize },
-    /// Another push came after the base: the lease failed and the prune is skipped in this pass (S§9 Push).
+    /// Another push came after the base: the lease failed at every push URL and the prune is skipped in this pass
+    /// (S§9 Push).
     LeaseLost,
+    /// With several push URLs, at least one took the new root and at least one did not (FX-40 review F2): the branch
+    /// differs between the URLs, and the pass stops (S§9 Push).
+    Split,
     /// Not due (S§9 When); never returned by [`run`].
     NotDue,
 }
@@ -58,8 +62,9 @@ pub fn removable(e: &Entry) -> bool {
 /// S§9 Tree, Commit, Push, Only its own branch: a commit with no parent of the tree of `base` less each message file
 /// `<addr>/<ULID>.json` ([`removable`]) whose ULID the valid ack of the host of `<addr>` lists; a refused ack lists
 /// nothing (S§7.4 Validation). Just before the force push, `branch` must be a zygo branch name and `base` must have
-/// the marker (S-C3); else `Refused("branch")` or `Refused("marker")`. The push has `base` as lease: a failed lease is
-/// `LeaseLost`; any other failed push is `Git(Failed, "push")`.
+/// the marker (S-C3); else `Refused("branch")` or `Refused("marker")`. The push has `base` as lease: a lease that
+/// failed at every push URL is `LeaseLost`; a push that some URL took and another did not is `Split`; any other failed
+/// push is `Git(Failed, "push")`.
 pub fn run(wt: &Path, remote: &str, branch: &str, base: &str, meta: &TipMeta, deadline: Instant)
     -> Result<Pruned, BranchError> {
     let acked: BTreeMap<&str, &BTreeSet<Ulid>> = meta.acks.iter()
@@ -95,6 +100,7 @@ pub fn run(wt: &Path, remote: &str, branch: &str, base: &str, meta: &TipMeta, de
     match branch::push(wt, remote, branch, &root, Some(base), deadline)? {
         Pushed::Accepted => Ok(Pruned::Done { removed }),
         Pushed::Moved => Ok(Pruned::LeaseLost),
+        Pushed::Split => Ok(Pruned::Split),
         Pushed::Other(_) => Err(BranchError::Git(RunError::Failed, "push")),
     }
 }
