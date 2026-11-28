@@ -2,6 +2,8 @@
 //! round trip, `Agent::DEFAULT`, the hook input function and `Dialect` in core. No test names a client variant by
 //! path: clients come from `Agent::ALL`, `Agent::DEFAULT` or an id.
 
+use serde::de::IntoDeserializer;
+use serde::Deserialize;
 use serde_json::json;
 use zygo_core::hook::HookInput;
 use zygo_core::Agent;
@@ -56,8 +58,12 @@ fn unknown_client_id_is_refused_by_serde() {
         let e = serde_json::from_value::<Agent>(json!(bad)).unwrap_err().to_string();
         assert_eq!(e, format!("unknown variant `{bad}`, expected `claude-code` or `opencode`"));
     }
+    // serde's own value deserializer: its text does not hang on the `serde_json` features of the build (with
+    // `arbitrary_precision`, which zygo-proxy and zygo-plugins turn on, a JSON number reads as "number").
+    let number = Agent::deserialize(IntoDeserializer::<serde::de::value::Error>::into_deserializer(1u64));
+    assert_eq!(number.unwrap_err().to_string(), "invalid type: integer `1`, expected a client id");
     let text = |v| serde_json::from_value::<Agent>(v).unwrap_err().to_string();
-    assert_eq!(text(json!(1)), "invalid type: integer `1`, expected a client id");
+    assert!(text(json!(1)).ends_with(", expected a client id"), "{}", text(json!(1)));
     assert_eq!(text(json!(null)), "invalid type: null, expected a client id");
     // The enum-map form of the old derive; `Serialize` never wrote it.
     assert_eq!(text(json!({"opencode": null})), "invalid type: map, expected a client id");
