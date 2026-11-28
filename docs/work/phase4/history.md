@@ -23,6 +23,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | PC-6 | Codex resume and update captures: PC10, PC16 | PC-2, PC-10 | DONE | implementation | PR #138 merged 7ecef460; acceptance exit 0 @ 86ddb8e3 (real codex 0.172.0; PC10 PC16 verified); CI run 45735047521 green (ubuntu, macos, windows) |
 | RS-2 | Messages → Responses encoder: SSE stream and JSON response (`translate/responses_client.rs`) | RS-1 | DONE | judgment | PR #156 merged 1ad733f0; acceptance exit 0 on merged tree (responses_stream 29); CI run 45738657210 green (ubuntu, macos, windows) |
 | RS-3 | `POST /openai/v1/responses` route, test harness, request side of forward, errors before the first byte, redaction on `input` | RS-1 | DONE | judgment | PR #157 merged f37bba43; acceptance exit 0 on merged tree (responses_route 20); CI run 45740502290 green (ubuntu, macos, windows) |
+| RS-9 | Codex namespace tools: flatten into function tools for Anthropic and chat upstreams, map their calls back | RS-1, RS-2, PC-5 | DONE | judgment | PR #161 merged 01d4b522; acceptance pass on merged tree (responses_request 59, responses_stream 34; workspace: only the 2 known guard_hook failures) |
 
 ## Log
 
