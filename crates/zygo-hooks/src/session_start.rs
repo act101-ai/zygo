@@ -114,7 +114,12 @@ pub fn item_path(dir: &SessionDir, agent_session: &str) -> Option<PathBuf> {
 pub fn fixed_item(dir: &SessionDir, agent_session: &str, build: &mut dyn FnMut() -> Option<String>) -> Option<String> {
     let Some(path) = item_path(dir, agent_session) else { return build() };
     let folder = dir.root.join(ITEM_DIR);
-    match folder_state(&folder) {
+    let state = folder_state(&folder);
+    #[cfg(all(unix, feature = "test-hooks"))]
+    if matches!(state, Folder::Usable) {
+        testing::fire(&folder);
+    }
+    match state {
         Folder::Unusable => return build(),
         Folder::Missing => {}
         Folder::Usable => match read_item(&path) {
@@ -297,8 +302,9 @@ pub mod testing {
     /// The hooks by `session-item` folder path, so parallel tests do not meet.
     static HOOKS: Mutex<BTreeMap<PathBuf, Hook>> = Mutex::new(BTreeMap::new());
 
-    /// Sets (`Some`) or clears (`None`) the hook of the `session-item` folder `folder`. The hook runs in `store_item`
-    /// after the folder is opened and checked, before the first step on it (a test replaces the folder there).
+    /// Sets (`Some`) or clears (`None`) the hook of the `session-item` folder `folder`. The hook runs one time, in
+    /// `fixed_item` after the folder is opened and checked, before the first read or store step on it (a test replaces
+    /// the folder there); it is then cleared.
     pub fn set_after_open(folder: &Path, hook: Option<Hook>) {
         let mut hooks = HOOKS.lock().unwrap_or_else(|e| e.into_inner());
         match hook {
@@ -307,9 +313,9 @@ pub mod testing {
         };
     }
 
-    /// Runs the hook of `folder`, if one is set.
+    /// Runs the hook of `folder`, if one is set, and clears it.
     pub(crate) fn fire(folder: &Path) {
-        let hook = HOOKS.lock().unwrap_or_else(|e| e.into_inner()).get(folder).cloned();
+        let hook = HOOKS.lock().unwrap_or_else(|e| e.into_inner()).remove(folder);
         if let Some(h) = hook {
             h();
         }
