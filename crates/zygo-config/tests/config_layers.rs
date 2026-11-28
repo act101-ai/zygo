@@ -537,6 +537,24 @@ fn repo_file_origin_head() {
 
 #[test]
 #[ignore = "timing: git calls run under the 2 s production bound (GIT_BOUND)"]
+fn repo_file_over_the_cap_is_invalid() {
+    // §13.5 (FX-43): at most REPO_FILE_MAX bytes; one byte more is invalid, with the load warning and no key used.
+    let head = "version = 1\n[guards]\nclaims = \"enforce\"\n";
+    let pad = |len: usize| format!("{head}#{}\n", "x".repeat(len - head.len() - 2));
+    let at = pad(repo_file::REPO_FILE_MAX);
+    assert_eq!(at.len(), repo_file::REPO_FILE_MAX);
+    assert!(matches!(repo_file::read_default_branch(&repo_with("fx43-at", &at)), RepoFile::Found { .. }));
+    let over = pad(repo_file::REPO_FILE_MAX + 1);
+    let d = repo_with("fx43-over", &over);
+    let why = format!(".zygo.toml is larger than {} bytes", repo_file::REPO_FILE_MAX);
+    assert_eq!(repo_file::read_default_branch(&d), RepoFile::Invalid { branch: "main".into(), why: why.clone() });
+    let m = load(&ctx(None, Some(d.to_path_buf()), None)).unwrap();
+    assert!(m.warnings.contains(&format!(".zygo.toml: invalid ({why}); ignored")), "{:?}", m.warnings);
+    assert_eq!(m.config.guards.claims, Level::Monitor);
+}
+
+#[test]
+#[ignore = "timing: git calls run under the 2 s production bound (GIT_BOUND)"]
 fn repo_file_absent_and_invalid() {
     assert_eq!(repo_file::read_default_branch(&tmp("rf3")), RepoFile::Absent);
     let d = repo_with("rf4", "version = 2\n");

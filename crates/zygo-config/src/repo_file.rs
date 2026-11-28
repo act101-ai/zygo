@@ -38,6 +38,8 @@ pub fn syntax_error(text: &str, message: &str, span: Option<std::ops::Range<usiz
 
 const KEPT: [&str; 4] = ["guards", "navigation", "limits", "work"];
 const GIT_BOUND: Duration = Duration::from_secs(2);
+/// §13.5: the largest `.zygo.toml` zygo reads (64 KiB, as `.zygo/workspace.toml` in R§6.1 step 4).
+pub const REPO_FILE_MAX: usize = 65536;
 
 /// The stderr messages (under `LC_ALL=C`) of a `git` call that exits non-zero because the thing asked for is not there:
 /// no repository, no `origin/HEAD` symbolic ref, no such branch, no `.zygo.toml` in it. Any other failure is a failed read.
@@ -153,10 +155,13 @@ pub(crate) struct GitOut {
     pub(crate) err: Vec<u8>,
 }
 
-/// `git -C <repo> <args>` with `LC_ALL=C`: stdout on success; [`GitFail::Absent`] for a non-zero exit with a
-/// [`GIT_ABSENT`] message; else [`GitFail::Read`].
-fn git(repo: &Path, args: &[&str], deadline: Instant) -> Result<String, GitFail> {
-    let o = git_out(repo, args, deadline).map_err(GitFail::Read)?;
+/// Makes the `git` command of one call of the read: [`git_command`], or a test's fake.
+type MakeGit<'a> = &'a dyn Fn() -> Command;
+
+/// `git -C <repo> <args>` with `LC_ALL=C`, stdout capped as [`git_out_with`]: stdout on success; [`GitFail::Absent`]
+/// for a non-zero exit with a [`GIT_ABSENT`] message; else [`GitFail::Read`].
+fn git(mk: MakeGit, repo: &Path, args: &[&str], deadline: Instant, cap: Option<usize>) -> Result<String, GitFail> {
+    let o = git_out_with(mk(), repo, args, deadline, cap).map_err(GitFail::Read)?;
     if o.status.code() != Some(0) {
         let err = String::from_utf8_lossy(&o.err).into_owned();
         return Err(if git_absent(&err) { GitFail::Absent(err) } else { GitFail::Read("failed".into()) });
@@ -164,21 +169,15 @@ fn git(repo: &Path, args: &[&str], deadline: Instant) -> Result<String, GitFail>
     String::from_utf8(o.out).map_err(|_| GitFail::Read("output is not UTF-8".into()))
 }
 
-/// `git -C <repo> <args>` with `LC_ALL=C`, run to its end: a reason when it does not start, does not finish by
-/// `deadline` (the child is killed and its pipe readers, which a grandchild may hold open, are left behind) or its
-/// stdout cannot be read. Its stdout has no cap.
-pub(crate) fn git_out(repo: &Path, args: &[&str], deadline: Instant) -> Result<GitOut, String> {
-    git_out_with(git_command(), repo, args, deadline, None)
-}
-
 /// The reason of a call whose stdout is above `cap` bytes.
 pub(crate) fn output_larger(cap: usize) -> String {
     format!("output larger than {cap} bytes")
 }
 
-/// [`git_out`] with `git` as the command (a caller's [`git_command`] with more environment set). With `cap`, zygo keeps
-/// at most `cap` bytes of stdout: past that it stops the read, kills the child and gives [`output_larger`] (R§6.1
-/// step 4).
+/// `<git> -C <repo> <args>` (`git`: [`git_command`], or a caller's with more environment set), run to its end: a reason
+/// when it does not start, does not finish by `deadline` (the child is killed and its pipe readers, which a grandchild
+/// may hold open, are left behind) or its stdout cannot be read. With `cap`, zygo keeps at most `cap` bytes of stdout:
+/// past that it stops the read, kills the child and gives [`output_larger`] (R§6.1 step 4).
 pub(crate) fn git_out_with(
     mut git: Command,
     repo: &Path,
@@ -249,7 +248,7 @@ pub(crate) fn git_out_with(
 
 /// `git show` said `.zygo.toml` or the branch is absent (`said`, git's one stderr line); a corrupt object or ref can say
 /// the same, so a second call under the same deadline confirms it. `None`: absent; `Some(reason)`: a failed read.
-fn confirm_absent(repo: &Path, branch: &str, said: &str, deadline: Instant) -> Option<String> {
+fn confirm_absent(mk: MakeGit, repo: &Path, branch: &str, said: &str, deadline: Instant) -> Option<String> {
     let (args, absent): (Vec<&str>, fn(&GitOut) -> bool) = if said.contains("invalid object name") {
         // No such ref: exit 1, nothing printed. A ref to a missing object resolves (exit 0); a broken one warns.
         (vec!["rev-parse", "--verify", "--quiet", branch], |o| o.status.code() == Some(1) && o.out.is_empty() && o.err.is_empty())
@@ -260,7 +259,7 @@ fn confirm_absent(repo: &Path, branch: &str, said: &str, deadline: Instant) -> O
         // `not a git repository`: `repo` is no repository (the hooks find the checkout first and judge a `.git` entry).
         return None;
     };
-    match git_out(repo, &args, deadline) {
+    match git_out_with(mk(), repo, &args, deadline, None) {
         Ok(o) if absent(&o) => None,
         Ok(_) => Some("failed".into()),
         Err(w) => Some(w),
@@ -269,15 +268,23 @@ fn confirm_absent(repo: &Path, branch: &str, said: &str, deadline: Instant) -> O
 
 /// The `git` calls share one 2 s budget.
 pub fn read_default_branch(repo: &Path) -> RepoFile {
-    let deadline = Instant::now() + GIT_BOUND;
-    let branch = match git(repo, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], deadline) {
+    read_with(&git_command, repo, Instant::now() + GIT_BOUND)
+}
+
+/// [`read_default_branch`] with `mk` making each `git` command, every call by `deadline`.
+fn read_with(mk: MakeGit, repo: &Path, deadline: Instant) -> RepoFile {
+    let branch = match git(mk, repo, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], deadline, None) {
         Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
         Ok(_) | Err(GitFail::Absent(_)) => "main".into(),
         Err(GitFail::Read(w)) => return RepoFile::Unread { why: format!("git symbolic-ref: {w}") },
     };
-    let text = match git(repo, &["show", &format!("{branch}:.zygo.toml")], deadline) {
+    // §13.5: the read stops one byte past REPO_FILE_MAX and kills the call; the file is then invalid.
+    let text = match git(mk, repo, &["show", &format!("{branch}:.zygo.toml")], deadline, Some(REPO_FILE_MAX)) {
         Ok(t) => t,
-        Err(GitFail::Absent(said)) => match confirm_absent(repo, &branch, &said, deadline) {
+        Err(GitFail::Read(w)) if w == output_larger(REPO_FILE_MAX) => {
+            return RepoFile::Invalid { branch, why: format!(".zygo.toml is larger than {REPO_FILE_MAX} bytes") };
+        }
+        Err(GitFail::Absent(said)) => match confirm_absent(mk, repo, &branch, &said, deadline) {
             None => return RepoFile::Absent,
             Some(w) => return RepoFile::Unread { why: format!("git show: {w}") },
         },
@@ -372,6 +379,28 @@ mod process_tests {
         let o = git_out_with(sh("printf abc"), &dir, &["x"], far, Some(3)).unwrap();
         assert_eq!(o.out, b"abc");
         assert_eq!(git_out_with(sh("printf abc"), &dir, &["x"], far, Some(2)).err(), Some(output_larger(2)));
+    }
+
+    #[test] // §13.5 (FX-43): a `.zygo.toml` above the cap is invalid, and the read stops one byte past the cap
+    fn repo_file_read_stops_past_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let mark = dir.path().join("show-finished");
+        // `sh -c <script> sh -C <repo> <call> ...`: `$3` is the git call. `show` writes 16384 lines of 64 bytes
+        // (1 MiB), then the marker; a read that stops at the cap leaves `show` blocked on the full pipe, then killed.
+        let script = r#"case "$3" in
+            symbolic-ref) echo main ;;
+            show) i=0; while [ $i -lt 16384 ]; do printf '%063d\n' 0; i=$((i+1)); done; : > "$FX43_MARK" ;;
+            *) exit 2 ;;
+        esac"#;
+        let mk = || {
+            let mut c = Command::new("sh");
+            c.args(["-c", script, "sh"]).env("FX43_MARK", &mark);
+            c
+        };
+        let far = Instant::now() + Duration::from_secs(600);
+        let want = RepoFile::Invalid { branch: "main".into(), why: format!(".zygo.toml is larger than {REPO_FILE_MAX} bytes") };
+        assert_eq!(read_with(&mk, dir.path(), far), want);
+        assert!(!mark.exists(), "the show call ran to its end: the read did not stop at the cap");
     }
 
     #[test] // exited_unreaped: false while the child runs, true after it exits, and the status stays for wait
