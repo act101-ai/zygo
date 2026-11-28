@@ -198,7 +198,7 @@ Session text (T, SX nodes):
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | DONE | implementation | e887478a^..a9ed0c7b · acceptance pass (mail_sync_forget 9 passed, admin 31 passed) · PR #217 |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | TODO | mechanical | — |
 | OS-47 | Runner view cost on large inputs, output unchanged | — | DONE | judgment | f1d69ae0 · d56988df · c37c66d4 · acceptance pass (runner_fast_path 5, zygo-results, shaping 36, shaping_fixtures 22, shaping_hook 29) · PR #206 |
-| OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45, OS-47 | DONE | lookup | 5 passed, release, 01855abf |
+| OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45, OS-47 | DONE | lookup | 5 passed, release, 01855abf · PR #239 |
 | WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | DONE | implementation | 15ea1e5b^..9a264b0a · acceptance pass (definition_hooks 11 passed) · PR #218 |
 | WD-21 | PR1 live check (operator): two pool members send two logins | WD-14, ML-19 | TODO | mechanical | — |
 | WD-22 | PR2 live check (operator): per-session settings act the same on a pool directory | WD-14, WD-21 | TODO | mechanical | — |
@@ -473,4 +473,4 @@ Session text (T, SX nodes):
 | 2026-11-27 | FX-31 DONE; author's call: a withdrawal stops every pinned member, and a gone or unread pin stops only a launch that does the pinned read; review F1-F6 fixed; OS-45 row archived · PR #238 |
 | 2026-11-27 | Correction of the FX-28 re-plan line ("CLI lines start with zygo:"): only the two no-workspace lines of mail workspace_of get the prefix, at their source; finish and the other verbs do not change, so N42 holds (FX-28 review round 4 F3, author's call) |
 | 2026-11-27 | FX-28 DONE: rule B (send holds mail/lock shared; forget counts again under it and refuses on a higher count); review round 4 F1-F4 fixed; author's calls: step 10 fixed at the source line (workspace_of), N42 kept; F4 recorded as the FX-24 same-user limit · PR #234 |
-| 2026-11-27 | OS-38 DONE: 5 passed, release 01855abf, operator machine; p95 vs O§8.5: hook on 13.20, off 13.10 ms (≤ +50); 4 MiB max json/cargo-metadata 54.03 ms (≤ 100); write lock 105.71 ms (≤ 150; 159.27 before OS-45); 64 KiB max gotest/passing-verbose 1.16 ms (≤ 5); OS-46 row archived |
+| 2026-11-27 | OS-38 DONE: 5 passed, release 01855abf, operator machine; p95 vs O§8.5: hook on 13.20/off 13.10 ms (+50); 4 MiB max json/cargo-metadata 54.03 ms (≤ 100); write lock 105.71 ms (≤ 150; 159.27 before OS-45); 64 KiB max gotest/passing-verbose 1.16 ms (≤ 5); OS-46 row archived · PR #239 |
