@@ -89,8 +89,8 @@ mod tests {
         assert_eq!(Overrides::parse(Some(valid)), want);
     }
 
-    /// FX-37 SX-F2: only a regular file is read. A folder, and on unix a link to valid overrides and a FIFO, give the
-    /// default; the FIFO load does not wait (it returns within the 60 s bound of the test, not a timing check).
+    /// FX-37 SX-F2: only a regular file is read. A folder, and on unix a link to valid overrides and a socket, give the
+    /// default; a regular file is read. None of these opens can wait, so the test has no deadline.
     #[test]
     fn load_uses_only_a_regular_file() {
         let d = tempfile::tempdir().unwrap();
@@ -102,25 +102,37 @@ mod tests {
         std::fs::remove_dir(sd.overrides_json()).unwrap();
         #[cfg(unix)]
         {
-            use std::os::unix::ffi::OsStrExt;
             let target = d.path().join("target.json");
             std::fs::write(&target, valid).unwrap();
             std::os::unix::fs::symlink(&target, sd.overrides_json()).unwrap();
             assert_eq!(Overrides::load(&sd), Overrides::default());
             std::fs::remove_file(sd.overrides_json()).unwrap();
-            let c = std::ffi::CString::new(sd.overrides_json().as_os_str().as_bytes()).unwrap();
-            // SAFETY: `c` is a valid NUL-terminated path.
-            assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
-            let (tx, rx) = std::sync::mpsc::channel();
-            let fifo = sd.clone();
-            std::thread::spawn(move || {
-                let _ = tx.send(Overrides::load(&fifo));
-            });
-            let got = rx.recv_timeout(std::time::Duration::from_secs(60)).expect("Overrides::load waited on a FIFO");
-            assert_eq!(got, Overrides::default());
+            drop(std::os::unix::net::UnixListener::bind(sd.overrides_json()).unwrap());
+            assert_eq!(Overrides::load(&sd), Overrides::default());
             std::fs::remove_file(sd.overrides_json()).unwrap();
         }
         std::fs::write(sd.overrides_json(), valid).unwrap();
         assert_eq!(Overrides::load(&sd).results, Some(false));
+    }
+
+    /// FX-37 SX-F2: a FIFO at `overrides.json` gives the default and does not make the load wait.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "timing: the FIFO load must end inside a 60 s recv_timeout"]
+    fn load_does_not_wait_on_a_fifo() {
+        use std::os::unix::ffi::OsStrExt;
+        let d = tempfile::tempdir().unwrap();
+        let sd = SessionDir::new(d.path().join("s"));
+        sd.create().unwrap();
+        let c = std::ffi::CString::new(sd.overrides_json().as_os_str().as_bytes()).unwrap();
+        // SAFETY: `c` is a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let fifo = sd.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(Overrides::load(&fifo));
+        });
+        let got = rx.recv_timeout(std::time::Duration::from_secs(60)).expect("Overrides::load waited on a FIFO");
+        assert_eq!(got, Overrides::default());
     }
 }

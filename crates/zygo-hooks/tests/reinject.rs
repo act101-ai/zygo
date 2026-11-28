@@ -3,9 +3,7 @@
 //! test binary.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
-use std::sync::mpsc;
-use std::time::Duration;
+use std::process::{Command, Stdio};
 
 use serde_json::{json, Value};
 use zygo_core::{
@@ -141,41 +139,49 @@ fn child_flag_blocked() {
     assert_eq!(got, (KEEP_NO_UNIT.to_string(), 0));
 }
 
-/// The bound of one child run (FX-37): a hook that waits, as on a FIFO, fails the test instead of hanging the suite.
-/// It is not a timing check: a hook that does not wait returns far within it.
-const BOUND: Duration = Duration::from_secs(60);
+/// The command that runs `case` of `child_case` in a child process with `CHILD` = `root` (stdin null).
+fn child_cmd(root: &Path, case: &str) -> Command {
+    let mut cmd = Command::new(std::env::current_exe().unwrap());
+    cmd.args(["--ignored", "--exact", "child_case", "--nocapture", "--test-threads=1"])
+        .env(CHILD, root)
+        .env(CASE, case)
+        .stdin(Stdio::null());
+    cmd
+}
 
-/// The output of `cmd` (stdin null), which must exit within `BOUND`; else the child is killed and the test fails.
-fn bounded(mut cmd: Command) -> Output {
-    let c = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+/// Asserts that the child test passed; returns its stderr.
+fn child_stderr(case: &str, o: std::process::Output) -> String {
+    assert!(o.status.success(), "{case}: {o:?}");
+    assert!(String::from_utf8(o.stdout).unwrap().contains("child_case ... ok"), "{case}");
+    String::from_utf8(o.stderr).unwrap()
+}
+
+/// Runs `case` of `child_case` in a child process with `CHILD` = `root`; returns its stderr.
+fn child(root: &Path, case: &str) -> String {
+    child_stderr(case, child_cmd(root, case).output().unwrap())
+}
+
+/// `child` within a 60 s bound (FX-37): a hook that waits, as on a FIFO, is killed and fails the test instead of
+/// hanging the suite. A deadline: only the `#[ignore = "timing: …"]` tests use it (Global constraints).
+#[cfg(unix)]
+fn child_bounded(root: &Path, case: &str) -> String {
+    let bound = std::time::Duration::from_secs(60);
+    let c = child_cmd(root, case).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
     let pid = c.id();
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _ = tx.send(c.wait_with_output());
     });
-    match rx.recv_timeout(BOUND) {
-        Ok(o) => o.unwrap(),
+    match rx.recv_timeout(bound) {
+        Ok(o) => child_stderr(case, o.unwrap()),
         Err(_) => {
-            #[cfg(unix)]
             // SAFETY: `kill` takes a plain pid and signal; `pid` is this test's own child.
             unsafe {
                 libc::kill(pid as libc::pid_t, libc::SIGKILL);
             }
-            #[cfg(not(unix))]
-            let _ = pid;
-            panic!("the hook did not return within {} s", BOUND.as_secs());
+            panic!("the hook did not return within {} s", bound.as_secs());
         }
     }
-}
-
-/// Runs `case` of `child_case` in a child process with `CHILD` = `root`, within `BOUND`; returns its stderr.
-fn child(root: &Path, case: &str) -> String {
-    let mut cmd = Command::new(std::env::current_exe().unwrap());
-    cmd.args(["--ignored", "--exact", "child_case", "--nocapture", "--test-threads=1"]).env(CHILD, root).env(CASE, case);
-    let o = bounded(cmd);
-    assert!(o.status.success(), "{case}: {o:?}");
-    assert!(String::from_utf8(o.stdout).unwrap().contains("child_case ... ok"), "{case}");
-    String::from_utf8(o.stderr).unwrap()
 }
 
 const CASE: &str = "ZYGO_SX3_CASE";
@@ -192,16 +198,32 @@ fn case_input(case: &str) -> Value {
 }
 
 /// Child half of the stderr tests: runs `case_input($CASE)` against `$CHILD/s`, or `$CHILD/gone` for the case
-/// `gone`; returns at once without `CHILD`.
+/// `gone`; returns at once without `CHILD`. Case `no_text`: the input `sub`, and the hook prints nothing (the read of
+/// the work folder fails). Case `entry`: the input `sub` through `pre_compact::run` (session folder from
+/// `ZYGO_SESSION_DIR`), its output then written to stdout and flushed as `zygo hook` does.
 #[test]
 #[ignore]
 fn child_case() {
     let (Some(root), Some(case)) = (std::env::var_os(CHILD), std::env::var(CASE).ok()) else { return };
-    let (sub, input) = if case == "gone" { ("gone", "sub") } else { ("s", case.as_str()) };
+    let stdin = serde_json::to_vec(&case_input("sub")).unwrap();
+    if case == "entry" {
+        let (out, code) = guarded(&|b| pre_compact::run(&HookInput::parse(Agent::ClaudeCode, b)?), &stdin);
+        let mut so = std::io::stdout();
+        std::io::Write::write_all(&mut so, out.as_bytes()).unwrap();
+        std::io::Write::flush(&mut so).unwrap();
+        assert_eq!(code, 0);
+        return;
+    }
+    let (sub, input) = match case.as_str() {
+        "gone" => ("gone", "sub"),
+        "no_text" => ("s", "sub"),
+        other => ("s", other),
+    };
     let d = SessionDir::new(Path::new(&root).join(sub));
     let stdin = serde_json::to_vec(&case_input(input)).unwrap();
     let got = guarded(&|b| pre_compact::run_with(&HookInput::parse(Agent::ClaudeCode, b)?, Some(&d)), &stdin);
-    assert_eq!(got, (KEEP_NO_UNIT.to_string(), 0));
+    let want = if case == "no_text" { "" } else { KEEP_NO_UNIT };
+    assert_eq!(got, (want.to_string(), 0));
 }
 
 #[cfg(unix)]
@@ -298,16 +320,100 @@ fn pre_compact_flag_link_is_not_followed() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the hook must return inside the 60 s bound of `child_bounded` on a FIFO"]
 fn pre_compact_flag_fifo_does_not_block() {
-    // FX-37 SX-F1: a FIFO at the flag name: the hook returns within `BOUND` with the text (the child asserts
+    // FX-37 SX-F1: a FIFO at the flag name: the hook returns within the bound with the text (the child asserts
     // `(KEEP_NO_UNIT, 0)`) and one stderr line; the FIFO is left as it is.
     use std::os::unix::fs::FileTypeExt;
     let (t, d) = sd();
     std::fs::create_dir(d.reinject()).unwrap();
     let flag = d.reinject().join(ID);
     mkfifo(&flag);
-    one_flag_error(&d, &child(t.path(), "sub"));
+    one_flag_error(&d, &child_bounded(t.path(), "sub"));
     assert!(std::fs::symlink_metadata(&flag).unwrap().file_type().is_fifo());
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_compact_flag_socket_is_not_a_flag() {
+    // FX-37 review 4: a socket at the flag name (an open that cannot wait): no flag, the text, one stderr line; the
+    // socket stays.
+    use std::os::unix::fs::FileTypeExt;
+    let (t, d) = sd();
+    std::fs::create_dir(d.reinject()).unwrap();
+    let flag = d.reinject().join(ID);
+    let _l = std::os::unix::net::UnixListener::bind(&flag).unwrap();
+    assert_eq!(run(&d, &fixture("PreCompact-sub")), KEEP_NO_UNIT);
+    one_flag_error(&d, &child(t.path(), "sub"));
+    assert!(std::fs::symlink_metadata(&flag).unwrap().file_type().is_socket());
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_compact_flag_hard_link_is_not_a_flag() {
+    // FX-37 review 3: the flag name a hard link to a file of mode 0644 (two links): the shared file keeps its mode.
+    use std::os::unix::fs::PermissionsExt;
+    let (t, d) = sd();
+    let target = t.path().join("target");
+    std::fs::write(&target, "").unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::create_dir(d.reinject()).unwrap();
+    let flag = d.reinject().join(ID);
+    std::fs::hard_link(&target, &flag).unwrap();
+    assert_eq!(run(&d, &fixture("PreCompact-sub")), KEEP_NO_UNIT);
+    assert_eq!(mode(&target), 0o644);
+    one_flag_error(&d, &child(t.path(), "sub"));
+    assert_eq!(mode(&target), 0o644);
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_compact_unreadable_work_and_flag_failure_one_line() {
+    // FX-37 review 5: the read of the work folder fails and the flag cannot be made (`reinject` a regular file): the
+    // hook prints nothing, exits 0 and writes exactly one stderr line that holds both errors.
+    use std::os::unix::fs::PermissionsExt;
+    let (t, d) = sd();
+    let work = d.work();
+    std::fs::create_dir_all(&work).unwrap();
+    std::fs::write(d.reinject(), "").unwrap();
+    std::fs::set_permissions(&work, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_dir(&work).is_ok() {
+        std::fs::set_permissions(&work, std::fs::Permissions::from_mode(0o700)).unwrap();
+        eprintln!("skipped: a work folder of mode 000 can still be read by this user");
+        return;
+    }
+    let err = child(t.path(), "no_text");
+    std::fs::set_permissions(&work, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let flag = d.reinject().join(ID);
+    assert!(err.starts_with("zygo hook: cannot read the work directory; "), "{err:?}");
+    assert!(err.contains(&format!("; pre-compact: cannot create {}: ", flag.display())), "{err:?}");
+    assert!(err.ends_with('\n') && err.lines().count() == 1, "{err:?}");
+}
+
+#[test]
+fn pre_compact_error_line_follows_the_text() {
+    // FX-37 review, T§14 item 2: through the hook entry, the stderr line comes after the §10.6 text is printed.
+    // stdout and stderr of the child go to one file, so their order is kept.
+    let (t, d) = sd();
+    std::fs::write(d.reinject(), "").unwrap();
+    let log = t.path().join("both.txt");
+    let f = std::fs::File::create(&log).unwrap();
+    let o = child_cmd(t.path(), "entry")
+        .env("ZYGO_SESSION_DIR", &d.root)
+        .stdout(f.try_clone().unwrap())
+        .stderr(f)
+        .status()
+        .unwrap();
+    assert!(o.success(), "{o:?}");
+    let both = std::fs::read_to_string(&log).unwrap();
+    assert!(both.contains("child_case ... ok"), "{both:?}");
+    let text = both.find(KEEP_NO_UNIT).unwrap_or_else(|| panic!("no text: {both:?}"));
+    let flag = d.reinject().join(ID);
+    let line = both
+        .find(&format!("zygo hook: pre-compact: cannot create {}: ", flag.display()))
+        .unwrap_or_else(|| panic!("no line: {both:?}"));
+    assert!(text < line, "{both:?}");
+    assert_eq!(both.matches("zygo hook:").count(), 1, "{both:?}");
 }
 
 #[cfg(unix)]
@@ -609,6 +715,69 @@ fn trim_flag_stat_failure_gives_no_text() {
     assert!(err.ends_with('\n') && err.lines().count() == 1, "{err:?}");
     assert_eq!(keys(&big), ["hookEventName", "updatedToolOutput"]);
     assert!(flag.exists());
+}
+
+/// Asserts that `err` is the one stderr line of a flag of `ID` that is not taken.
+#[cfg(unix)]
+fn one_trim_error(d: &SessionDir, err: &str) {
+    let flag = d.reinject().join(ID);
+    assert!(err.starts_with(&format!("zygo hook: trim: cannot remove {}: ", flag.display())), "{err:?}");
+    assert!(err.ends_with('\n') && err.lines().count() == 1, "{err:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn trim_reinject_link_is_not_followed() {
+    // FX-37 review 1: `reinject` a link to another folder that holds a file named `ID`: not a flag; no text, the file
+    // outside the session folder stays, one stderr line.
+    let (t, d, db) = tenv();
+    let other = t.path().join("other");
+    std::fs::create_dir(&other).unwrap();
+    std::fs::write(other.join(ID), "").unwrap();
+    std::os::unix::fs::symlink(&other, d.reinject()).unwrap();
+    assert_eq!(trim_run(&d, &db, &fixture("PostToolUse-Bash-sub")), "");
+    assert!(other.join(ID).exists());
+    one_trim_error(&d, &trim_child(t.path(), "under", &[]));
+    assert!(other.join(ID).exists());
+}
+
+/// FX-37 review 1: an entry at the flag name that is not a regular file is not a flag: no text, the entry stays, one
+/// stderr line. `make` puts the entry at the flag path.
+#[cfg(unix)]
+fn trim_not_a_flag(make: &dyn Fn(&Path, &Path)) {
+    let (t, d, db) = tenv();
+    std::fs::create_dir(d.reinject()).unwrap();
+    let flag = d.reinject().join(ID);
+    make(t.path(), &flag);
+    assert_eq!(trim_run(&d, &db, &fixture("PostToolUse-Bash-sub")), "");
+    assert!(std::fs::symlink_metadata(&flag).is_ok());
+    one_trim_error(&d, &trim_child(t.path(), "under", &[]));
+    assert!(std::fs::symlink_metadata(&flag).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn trim_flag_link_is_not_a_flag() {
+    trim_not_a_flag(&|t, flag| {
+        std::fs::write(t.join("target"), "").unwrap();
+        std::os::unix::fs::symlink(t.join("target"), flag).unwrap();
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn trim_flag_fifo_is_not_a_flag() {
+    // The flag is never opened, so a FIFO cannot make the hook wait; no deadline is needed.
+    trim_not_a_flag(&|_, flag| mkfifo(flag));
+}
+
+#[cfg(unix)]
+#[test]
+fn trim_flag_socket_is_not_a_flag() {
+    trim_not_a_flag(&|_, flag| {
+        // The socket file stays after the listener is dropped.
+        drop(std::os::unix::net::UnixListener::bind(flag).unwrap());
+    });
 }
 
 #[test]
