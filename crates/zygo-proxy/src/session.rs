@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use zygo_config::profile::{validate, Profile};
-use zygo_config::{CustomRole, Dialect, Features, GuardsConfig, Merged, Role, TokenUsage};
+use zygo_config::{CustomRole, Features, GuardsConfig, Merged, Role, TokenUsage};
 use zygo_core::ids::ulid;
 use zygo_core::Agent;
 use zygo_redact::act_lite_store::{StoredValue, MIN_VALUE_BYTES};
@@ -468,8 +468,10 @@ impl Sessions {
     ) -> Result<SessionGrant, ZygoError> {
         let c = &cfg.config;
         let mut profile_warning = None;
+        // The client's model API dialect (`ClientSpec::dialect`): the profile check and the session's model list.
+        let dialect = req.agent.spec().dialect;
         let profile = match req.profile {
-            Some(p) => match validate(&p, &c.role, &c.main_role, &c.catalog.view(), Dialect::Anthropic, &req.known_plugins) {
+            Some(p) => match validate(&p, &c.role, &c.main_role, &c.catalog.view(), dialect, &req.known_plugins) {
                 Ok(()) => Some(p),
                 Err(v) => {
                     profile_warning = Some(v.to_string());
@@ -492,7 +494,7 @@ impl Sessions {
             .view()
             .models
             .into_iter()
-            .filter(|(_, v)| v.dialects.contains(&Dialect::Anthropic))
+            .filter(|(_, v)| v.dialects.contains(&dialect))
             .map(|(id, _)| id)
             .collect();
         let config = SessionConfig {

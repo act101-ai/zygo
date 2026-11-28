@@ -10,7 +10,6 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::Value;
 use zygo_config::{Dialect, Facts, ModelRow};
-use zygo_core::Agent;
 
 use crate::errors::ZygoError;
 use crate::pipeline::{Adjustment, ModelRoute, RequestCtx, ResponseCtx, Stage};
@@ -125,12 +124,13 @@ pub fn effective(s: &SessionState, served: &ModelRow, agent_window: u64) -> Opti
 pub struct WindowStage;
 
 impl Stage for WindowStage {
-    /// Common conditions (§10.2.2): Messages or Responses (K§6.4.5), Claude Code (§10.2.5), not a compaction request,
-    /// the served model has a context window. The proxy step adds a 2xx SSE upstream response.
+    /// Common conditions (§10.2.2): Messages or Responses (K§6.4.5), armed for the client (`ClientSpec::window_rewrite`),
+    /// not a compaction request, the served model has a context window. The proxy step adds a 2xx SSE upstream response.
     fn on_request(&self, ctx: &mut RequestCtx) -> Result<(), ZygoError> {
+        let client = ctx.session.agent.spec();
         ctx.line_mode = matches!(ctx.route, ModelRoute::Messages | ModelRoute::Responses)
-            && ctx.session.agent == Agent::ClaudeCode
-            && !ctx.headers.contains_key("x-claude-code-compaction")
+            && client.window_rewrite
+            && !client.compaction_header.is_some_and(|h| ctx.headers.contains_key(h))
             && ctx.resolved.as_ref().and_then(|r| ctx.cfg.config.catalog.get(&r.model)).and_then(context_window).is_some();
         Ok(())
     }
@@ -226,7 +226,7 @@ fn triggers(ctx: &ResponseCtx, end_turn: bool) -> Option<(u64, [bool; 3])> {
     let aw = agent_window_for(ctx.resolved.one_m, &ctx.headers, row);
     let s = safety(cw, aw);
     let p = prompt(ctx.usage);
-    let main = ctx.headers.get("x-claude-code-request-class").is_some_and(|c| c == "main");
+    let main = ctx.session.agent.spec().request_class_header.and_then(|h| ctx.headers.get(h)).is_some_and(|c| c == "main");
     let t0 = s.is_some_and(|s| p > s);
     let t1 = main && end_turn && soft_threshold(ctx.session.compact(), row, s).is_some_and(|t| p > t);
     let t2 = ctx.compact_call;

@@ -300,17 +300,18 @@ fn ms(app: &App, start: Instant) -> u64 {
 pub(crate) async fn handle(app: Arc<App>, s: Arc<SessionState>, route: ModelRoute, req: Request) -> Response {
     let start = app.clock.now();
     let h = req.headers();
-    let hint = |n: &str| h.get(n).and_then(|v| v.to_str().ok()).map(str::to_string);
+    let client = s.agent.spec();
+    let hint = |n: Option<&str>| n.and_then(|n| h.get(n)).and_then(|v| v.to_str().ok()).map(str::to_string);
     let row = RequestRow {
         ts: app.clock.utc().unix_timestamp(),
         session: s.id.clone(),
         token_label: s.team_label.clone(),
         agent: s.agent.as_str().into(),
         agent_version: Some(s.agent_version.clone()),
-        agent_id: hint("x-claude-code-agent-id"),
-        agent_type: hint("x-claude-code-agent-type"),
-        request_class: hint("x-claude-code-request-class"),
-        compaction: h.contains_key("x-claude-code-compaction"),
+        agent_id: hint(client.agent_id_header),
+        agent_type: hint(client.agent_type_header),
+        request_class: hint(client.request_class_header),
+        compaction: client.compaction_header.is_some_and(|n| h.contains_key(n)),
         route: route.client_path().into(),
         profile: s.profile.as_ref().map(|p| p.name.clone()),
         passthrough: s.passthrough,
