@@ -196,16 +196,16 @@ struct Candidate {
 }
 
 /// The candidates of S§8.5 for each own host and target, in that order: entries `<folder>/<ULID>.json` not in
-/// `own_ack`, each ULID once, at most [`CANDIDATE_CAP`]. A folder's reading also stops at its target's inbox room
+/// `own_ack` and not in `taken`, the ULIDs that this pass took already (in an earlier push attempt or an earlier
+/// folder), each added to `taken`, while `taken` holds fewer than [`CANDIDATE_CAP`] (FX-40). A folder's reading also stops at its target's inbox room
 /// (`max_unread` less its unread count, over all own hosts); a candidate already in the imported log (`seen`) takes
 /// no room. Adds 1 to `left` for each folder stopped at its room, and once when the whole reading stopped early. A
 /// stop at the deadline is normal and writes no line.
 #[allow(clippy::too_many_arguments)]
 fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], own_ack: &BTreeSet<Ulid>,
-    seen: &HashSet<Ulid>, mail_dir: &Path, max_unread: u32, deadline: Instant, left: &mut usize,
+    taken: &mut BTreeSet<Ulid>, seen: &HashSet<Ulid>, mail_dir: &Path, max_unread: u32, deadline: Instant, left: &mut usize,
     log: &mut dyn FnMut(&str)) -> Vec<Candidate> {
     let mut out: Vec<Candidate> = Vec::new();
-    let mut ids = HashSet::new();
     let mut rooms: HashMap<&str, usize> = HashMap::new();
     for host in own_hosts {
         for t in targets {
@@ -226,10 +226,10 @@ fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], ow
                 let Some(id) = e.path.strip_prefix(&prefix).filter(|n| !n.contains('/')).and_then(ulid_file) else {
                     return Flow::Go;
                 };
-                if own_ack.contains(&id) || ids.contains(&id) {
+                if own_ack.contains(&id) || taken.contains(&id) {
                     return Flow::Go;
                 }
-                if out.len() == CANDIDATE_CAP {
+                if taken.len() >= CANDIDATE_CAP {
                     full = true;
                     return Flow::Stop;
                 }
@@ -240,7 +240,7 @@ fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], ow
                     }
                     *room -= 1;
                 }
-                ids.insert(id);
+                taken.insert(id);
                 out.push(Candidate { id, name: t.name.clone(), folder: folder.clone(), entry: e });
                 Flow::Go
             });
@@ -262,7 +262,9 @@ fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], ow
     out
 }
 
-/// S§8.5: one import pass over the side-branch tree `tip` in worktree `wt`. Each candidate is checked; a refused
+/// S§8.5: one import over the side-branch tree `tip` in worktree `wt`, as one push attempt of a pass; `taken` is the
+/// pass's set of ULIDs taken as candidates, kept by the caller across the attempts, so the pass reads at most
+/// [`CANDIDATE_CAP`] (FX-40). Each candidate is checked; a refused
 /// one is logged (one line with its ULID and check name) and acknowledged, a passing one is delivered through
 /// `incoming/` (steps 1-4, with the seams `after_incoming`, `after_log`, `after_new`, `after_ack`). A full inbox
 /// leaves the message neither delivered nor acknowledged. Steps 1-3 of each candidate run under `mail/lock` of
@@ -279,8 +281,8 @@ fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], ow
 /// imports nothing. `Err` only when a seam stops the run.
 #[allow(clippy::too_many_arguments)]
 pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target],
-    own_ack: &BTreeSet<Ulid>, max_unread: u32, deadline: Instant, seam: &dyn Seam, log: &mut dyn FnMut(&str))
-    -> Result<Imported, Crash> {
+    own_ack: &BTreeSet<Ulid>, taken: &mut BTreeSet<Ulid>, max_unread: u32, deadline: Instant, seam: &dyn Seam,
+    log: &mut dyn FnMut(&str)) -> Result<Imported, Crash> {
     let mail_dir = store.dir().join("mail");
     let mail_dir = mail_dir.as_path();
     let mut out = Imported::default();
@@ -294,7 +296,8 @@ pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[Str
         out.left = 1;
         return Ok(out);
     };
-    for c in candidates(wt, tip, own_hosts, targets, own_ack, &seen, mail_dir, max_unread, deadline, &mut out.left, log) {
+    for c in candidates(wt, tip, own_hosts, targets, own_ack, taken, &seen, mail_dir, max_unread, deadline,
+        &mut out.left, log) {
         if Instant::now() >= deadline {
             out.left += 1;
             break;

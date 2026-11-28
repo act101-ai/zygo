@@ -372,24 +372,39 @@ pub fn commit(wt: &Path, base: &str, parent: Option<&str>, changes: &[Change], d
 }
 
 /// S§8.3 step 15: the class of a `git push --porcelain` (exit success `ok`, stdout `out`) to `refs/heads/<branch>`.
+/// A remote with several push URLs gives one ref line per URL (FX-40): `Accepted` only when `ok` and every ref line
+/// of the target accepts; the first line that is neither an accept nor a "moved" rejection, or no ref line, gives
+/// `Other`; else any "moved" rejection gives `Moved`; else (every line accepts, `ok` false) `Other`.
 pub fn classify(ok: bool, out: &[u8], branch: &str) -> Pushed {
     let target = format!("refs/heads/{branch}");
     // A ref line: exactly 3 tab-separated fields, a 1-byte flag, and `<from>:<to>` with `<to>` the target ref.
-    let line = out.split(|&b| b == b'\n').map(|l| l.split(|&b| b == b'\t').collect::<Vec<_>>()).find(|f| {
+    let lines = out.split(|&b| b == b'\n').map(|l| l.split(|&b| b == b'\t').collect::<Vec<_>>()).filter(|f| {
         f.len() == 3 && f[0].len() == 1
             && f[1].iter().position(|&b| b == b':').is_some_and(|i| &f[1][i + 1..] == target.as_bytes())
     });
-    let Some(f) = line else { return Pushed::Other("push failed".into()) };
-    let (flag, summary) = (f[0][0], f[2]);
-    if ok && matches!(flag, b' ' | b'*' | b'+' | b'=') {
-        return Pushed::Accepted;
+    let (mut any, mut moved) = (false, false);
+    for f in lines {
+        any = true;
+        let (flag, summary) = (f[0][0], f[2]);
+        if matches!(flag, b' ' | b'*' | b'+' | b'=') {
+            continue;
+        }
+        if flag != b'!' {
+            return Pushed::Other("push failed".into());
+        }
+        // A `[remote rejected]` reason is server text: never "moved" (S§18).
+        let rejected = summary.len() >= 10 && summary[..10].eq_ignore_ascii_case(b"[rejected]");
+        if !(rejected && git::has_text(summary, MOVED_TEXT)) {
+            return Pushed::Other("push rejected".into());
+        }
+        moved = true;
     }
-    if flag != b'!' {
-        return Pushed::Other("push failed".into());
+    match (any, moved) {
+        (false, _) => Pushed::Other("push failed".into()),
+        (true, true) => Pushed::Moved,
+        (true, false) if ok => Pushed::Accepted,
+        (true, false) => Pushed::Other("push failed".into()),
     }
-    // A `[remote rejected]` reason is server text: never "moved" (S§18).
-    let rejected = summary.len() >= 10 && summary[..10].eq_ignore_ascii_case(b"[rejected]");
-    if rejected && git::has_text(summary, MOVED_TEXT) { Pushed::Moved } else { Pushed::Other("push rejected".into()) }
 }
 
 /// S§8.3 step 14, S§9: pushes `commit` to `refs/heads/<branch>` on `remote`, with the lease `lease` when given,

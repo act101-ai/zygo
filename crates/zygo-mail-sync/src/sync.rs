@@ -441,6 +441,10 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: 
     // FX-30: each ULID that this pass counted, once across the rounds of the push loop.
     let mut counted = BTreeSet::<Ulid>::new();
     let mut carried: Option<BTreeMap<String, String>> = None;
+    // FX-40, S§8.5: the ULIDs taken as candidates, one set over every push attempt of the pass (at most
+    // `import::CANDIDATE_CAP`), and the ULIDs acknowledged by any attempt, which each later attempt's commit holds.
+    let mut taken = BTreeSet::<Ulid>::new();
+    let mut acked = BTreeSet::<Ulid>::new();
     if first {
         public_check(c, report, deadline)?;
     }
@@ -483,8 +487,9 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: 
         let targets: Vec<Target> = names::members(&c.ws).into_iter()
             .filter_map(|t| Some(Target { name: t.name?, pane_key: t.key }))
             .collect();
-        let imp = import::run(sp, &c.store, wt, &tip, &own, &targets, &own_ack, c.cfg.mail.max_unread, deadline,
-            &*env.seam, &mut log)?;
+        let imp = import::run(sp, &c.store, wt, &tip, &own, &targets, &own_ack, &mut taken, c.cfg.mail.max_unread,
+            deadline, &*env.seam, &mut log)?;
+        acked.extend(imp.acked.iter().copied());
         // The import wrote its `pending_wake` entries to `state.json`; this round's later saves of `st` keep them.
         st.pending_wake = state::load(sp).map_err(|_| stop("state"))?.pending_wake;
         // S§8.3 step 10 (FX-30): the delivered set is step 5's result, the import's deliveries and, in the first round,
@@ -509,7 +514,8 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: 
         notified.keys.dedup();
         wake(c, notified.read.as_ref(), &notified.keys);
         let files = own_files(wt, &tip, &own, deadline)?;
-        changes.extend(own_changes(c, &meta, &identity, &own, &files, &imp.acked, &own_ack));
+        let pass_acked: Vec<Ulid> = acked.iter().copied().collect();
+        changes.extend(own_changes(c, &meta, &identity, &own, &files, &pass_acked, &own_ack));
         if changes.is_empty() {
             break (tip, meta);
         }

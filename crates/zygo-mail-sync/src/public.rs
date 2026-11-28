@@ -121,20 +121,26 @@ impl Probe for LsRemote {
     }
 }
 
-/// S§8.2 step 1: the fetch URL of `remote`, then its push URL when that differs.
+/// S§8.2 step 1: the fetch URL of `remote`, then each of its push URLs (`get-url --push --all`: every URL that
+/// `git push` sends to) not given before. `Err(Failed)` when git fails or gives no URL.
 pub fn remote_urls(main_root: &Path, remote: &str, deadline: Instant) -> Result<Vec<String>, RunError> {
-    let one = |args: &[&str]| -> Result<String, RunError> {
+    let lines = |args: &[&str]| -> Result<Vec<String>, RunError> {
         let w = crate::git::run(main_root, args, deadline)?;
         let out = String::from_utf8(w.out).map_err(|_| RunError::Failed)?;
-        let url = out.trim_end();
-        if !w.ok || url.is_empty() {
+        let urls: Vec<String> = out.lines().map(str::trim_end).filter(|l| !l.is_empty()).map(str::to_string).collect();
+        if !w.ok || urls.is_empty() {
             return Err(RunError::Failed);
         }
-        Ok(url.to_string())
+        Ok(urls)
     };
-    let fetch = one(&["remote", "get-url", "--", remote])?;
-    let push = one(&["remote", "get-url", "--push", "--", remote])?;
-    Ok(if push == fetch { vec![fetch] } else { vec![fetch, push] })
+    let mut urls = lines(&["remote", "get-url", "--", remote])?;
+    urls.truncate(1);
+    for push in lines(&["remote", "get-url", "--push", "--all", "--", remote])? {
+        if !urls.contains(&push) {
+            urls.push(push);
+        }
+    }
+    Ok(urls)
 }
 
 /// S§8.2: how long a cached verdict stands, in seconds of the injected clock (1 h).
