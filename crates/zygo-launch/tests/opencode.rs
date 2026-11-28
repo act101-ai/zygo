@@ -1000,6 +1000,87 @@ fn subagent_transform_without_system_array_calls_nothing() {
     assert_eq!(r.calls, "");
 }
 
+/// One main-role transform with `input.sessionID` = `session` through the generated plugin under node, whose `zygo` is
+/// `stub-agent` in its real `session-start` mode (`ZYGO_STUB_HOOK_PATHS`): the pushed `output.system`.
+#[cfg(unix)]
+fn real_transform(fx: &Fx, dir: &Path, sd: &SessionDir, session: &str) -> Value {
+    let zygo = Path::new(env!("CARGO_BIN_EXE_stub-agent"));
+    std::fs::write(dir.join("plugin.mjs"), with_fail_safe_limit(&plugin_js(&ctx(fx, |_| {}), zygo))).unwrap();
+    std::fs::write(
+        dir.join("real.mjs"),
+        r#"import { ZygoPlugin } from "./plugin.mjs";
+const h = await ZygoPlugin({ directory: "/r" });
+const out = { system: [] };
+await h["experimental.chat.system.transform"]({ sessionID: process.env.SID, model: { id: "lead", providerID: "zygo" } }, out);
+console.log(JSON.stringify(out.system));
+"#,
+    )
+    .unwrap();
+    let home = fx.root.join("home");
+    let mut cmd = std::process::Command::new("node");
+    cmd.arg("real.mjs")
+        .current_dir(dir)
+        .env("SID", session)
+        .env("ZYGO_MAIN_ROLE", "lead")
+        .env("ZYGO_SESSION_DIR", &sd.root)
+        .env("ZYGO_STUB_HOOK_PATHS", &home)
+        .env("HOME", &home)
+        .env_remove("ZYGO_WORKSPACE");
+    let out = output_within(cmd, FAIL_SAFE);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+// FX-9 review F2: end to end through the real plugin and the real hook, M§8a item 1: the item 8 of an OpenCode
+// session is fixed at its first main-role request and is the same in a later request after a member joins.
+#[cfg(unix)]
+#[test]
+fn opencode_transform_item_8_fixed_per_session_end_to_end() {
+    use zygo_core::session_view::{Member, ViewWorkspace};
+    use zygo_workspace::state::{MemberRecord, Phase, Store};
+    if no_node("opencode_transform_item_8_fixed_per_session_end_to_end") {
+        return;
+    }
+    const WS_ID: &str = "0123456789abcdef";
+    let fx = fx();
+    let dir = fx.root.join("e2e");
+    std::fs::create_dir_all(&dir).unwrap();
+    // Not `S1`: `ctx`, which builds the plugin, saves its own view there.
+    let sd = SessionDir::new(fx.paths.sessions_dir.join("S2"));
+    sd.create().unwrap();
+    let marker = ViewWorkspace { member: Member { ws_id: WS_ID.into(), pane: "kaaaaaaaa".into(), ..Default::default() }, ..Default::default() };
+    SessionView { session: "S2".into(), agent: Agent::OpenCode, main_role: "lead".into(), workspace: Some(marker), mail: true, ..Default::default() }
+        .save(&sd)
+        .unwrap();
+    let members = |names: &[(&str, &str)]| {
+        let root = fx.root.join("app");
+        Store::open(&fx.paths, WS_ID)
+            .update(Duration::from_secs(5), &mut |ws| {
+                ws.name = "app".into();
+                ws.tmux_session = "zygo-app".into();
+                ws.common_dir = root.join(".git");
+                ws.main_root = root.clone();
+                ws.loadout = "solo".into();
+                ws.phase = Phase::Up;
+                ws.members = names
+                    .iter()
+                    .map(|(k, n)| (k.to_string(), MemberRecord { name: Some(n.to_string()), ..MemberRecord::new(Agent::OpenCode) }))
+                    .collect();
+                Ok(())
+            })
+            .unwrap();
+    };
+    members(&[("kaaaaaaaa", "elena"), ("kbbbbbbbb", "kai")]);
+    let first = real_transform(&fx, &dir, &sd, "ses_E2E");
+    let text = first[0].as_str().unwrap().to_string();
+    assert!(text.contains("Workspace mail: you are `elena` in workspace `app`. Members: `elena, kai`."), "{text}");
+    assert!(zygo_hooks::session_start::item_path(&sd, "ses_E2E").unwrap().is_file());
+    members(&[("kaaaaaaaa", "elena"), ("kbbbbbbbb", "kai"), ("kcccccccc", "lena")]);
+    assert_eq!(real_transform(&fx, &dir, &sd, "ses_E2E"), first);
+    let other = real_transform(&fx, &dir, &sd, "ses_E2F");
+    assert!(other[0].as_str().unwrap().contains("Members: `elena, kai, lena`."), "{other}");
+}
+
 // ---- Task 4: delivery ----
 
 use std::time::{Duration, Instant};
