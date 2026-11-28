@@ -61,12 +61,17 @@ struct Fx { _t: tempfile::TempDir, w: PathBuf, c: PathBuf }
 /// `commit_index`), then `commit_index(ents)`, `remote add origin ../o.git`, `push -q origin main`.
 /// `c`: `clone -q --no-checkout o.git c` (so `refs/remotes/origin/HEAD` -> `refs/remotes/origin/main`).
 fn fx(ents: &[E]) -> Fx {
+    fx_with(|w| commit_index(w, ents))
+}
+
+/// [`fx`] with `build(w)` in place of `commit_index(ents)`: `build` makes the second commit of `main` in `w`.
+fn fx_with(build: impl FnOnce(&Path)) -> Fx {
     let t = tempfile::tempdir().unwrap();
     let (o, w, c) = (t.path().join("o.git"), t.path().join("w"), t.path().join("c"));
     git(t.path(), &["init", "-q", "--bare", "-b", "main", o.to_str().unwrap()]);
     git(t.path(), &["init", "-q", "-b", "main", w.to_str().unwrap()]);
     commit_index(&w, &[E::File("README", b"seed")]);
-    commit_index(&w, ents);
+    build(&w);
     git(&w, &["remote", "add", "origin", "../o.git"]);
     git(&w, &["push", "-q", "origin", "main"]);
     git(t.path(), &["clone", "-q", "--no-checkout", "o.git", "c"]);
@@ -584,4 +589,92 @@ fn ignored_is_in_byte_order() {
                  E::File(".zygo/profiles/notes.md", b"n"), E::File(".zygo/zzz", b"z")]);
     let files = found(repo_def::read_default(&f.c, &Rec::default()));
     assert_eq!(files.ignored, [".zygo/README", ".zygo/profiles/notes.md", ".zygo/zzz"]);
+}
+
+/// Runs `git -C <dir> <args>` with `input` on stdin; asserts success; stdout trimmed.
+fn git_in(dir: &Path, args: &[&str], input: &[u8]) -> String {
+    let mut child = git_cmd(dir, args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().expect("git on PATH");
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    let o = child.wait_with_output().unwrap();
+    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    String::from_utf8(o.stdout).unwrap().trim().to_string()
+}
+
+/// Adds `paths` to the index of `w`, each a regular file with `body`, by one `update-index --index-info`; then
+/// `commit -q -m c`.
+fn commit_many(w: &Path, paths: &[String], body: &[u8]) {
+    let b = blob(w, body);
+    let info: String = paths.iter().map(|p| format!("100644 {b}\t{p}\n")).collect();
+    git_in(w, &["update-index", "--add", "--index-info"], info.as_bytes());
+    git(w, &["commit", "-q", "-m", "c"]);
+}
+
+/// Records the stdout length of each call, then gives `SystemGit`'s result.
+#[derive(Default)]
+struct Sizes(RefCell<Vec<(Vec<String>, usize)>>);
+
+impl GitRunner for Sizes {
+    fn git(&self, top: &Path, args: &[&str], deadline: Instant) -> Result<Output, String> {
+        let r = SystemGit.git(top, args, deadline);
+        let n = r.as_ref().map_or(0, |o| o.stdout.len());
+        self.0.borrow_mut().push((args.iter().map(|a| a.to_string()).collect(), n));
+        r
+    }
+}
+
+impl Sizes {
+    /// Asserts that zygo kept at most 131072 bytes of each call's stdout (R§6.1 step 4).
+    fn assert_capped(&self, what: &str) {
+        for (args, n) in self.0.borrow().iter() {
+            assert!(*n <= 131072, "{what}: git {args:?} gave {n} bytes of stdout");
+        }
+    }
+}
+
+#[test] // R§6.1 step 4 "The listings" (FX-39 D3), R§6.1 "Oversized listings"
+fn listing_past_the_cap_refuses_the_definition() {
+    const WS: &str = ".zygo/workspace.toml";
+    let extra = |n: usize, dir: &str, ext: &str| -> Vec<String> { (0..n).map(|i| format!("{dir}/x{i:03}{ext}")).collect() };
+    // (a) `.zygo/` with workspace.toml and 256 more entries: 257 in all.
+    let f = fx_with(|w| {
+        commit_index(w, &[E::File(WS, b"version = 1\n")]);
+        commit_many(w, &extra(256, ".zygo", ""), b"x");
+    });
+    let s = Sizes::default();
+    assert_eq!(repo_def::read_default(&f.c, &s), invalid(&f, ".zygo lists more than 256 entries", false), "(a)");
+    s.assert_capped("(a)");
+    // (b) `.zygo/profiles/` with 257 `.md` entries.
+    let f = fx_with(|w| {
+        commit_index(w, &[E::File(WS, b"version = 1\n")]);
+        commit_many(w, &extra(257, ".zygo/profiles", ".md"), b"x");
+    });
+    let s = Sizes::default();
+    assert_eq!(repo_def::read_default(&f.c, &s), invalid(&f, ".zygo/profiles lists more than 256 entries", true), "(b)");
+    s.assert_capped("(b)");
+    // (c) A `.zygo/` tree whose 140 entries have 1000-byte names (no file system holds such a name, so `mktree`
+    // makes the tree): fewer than 256 entries, a listing larger than 131072 bytes.
+    let f = fx_with(|w| {
+        let b = blob(w, b"version = 1\n");
+        let mut zygo = format!("100644 blob {b}\tworkspace.toml\n");
+        for i in 0..140 {
+            zygo.push_str(&format!("100644 blob {b}\t{i:03}{}\n", "n".repeat(997)));
+        }
+        let zt = git_in(w, &["mktree"], zygo.as_bytes());
+        let readme = blob(w, b"seed");
+        let root = git_in(w, &["mktree"], format!("100644 blob {readme}\tREADME\n040000 tree {zt}\t.zygo\n").as_bytes());
+        let c = git(w, &["commit-tree", &root, "-p", "HEAD", "-m", "c"]);
+        git(w, &["update-ref", "refs/heads/main", &c]);
+    });
+    let s = Sizes::default();
+    assert_eq!(repo_def::read_default(&f.c, &s), invalid(&f, ".zygo: the listing is larger than 131072 bytes", false), "(c)");
+    s.assert_capped("(c)");
+    // (d) 255 more entries: 256 in all, at the cap, is read.
+    let f = fx_with(|w| {
+        commit_index(w, &[E::File(WS, b"version = 1\n")]);
+        commit_many(w, &extra(255, ".zygo", ""), b"x");
+    });
+    let s = Sizes::default();
+    let files = found(repo_def::read_default(&f.c, &s));
+    assert_eq!(files.ignored.len(), 255, "(d)");
+    s.assert_capped("(d)");
 }

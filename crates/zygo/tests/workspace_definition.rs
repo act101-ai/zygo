@@ -579,10 +579,15 @@ fn git_log(h: &Harness) -> String {
 
 /// panes[] = KEY (Claude Code) in `app`; members[KEY] = `m`; the workspace's checkout is `app`.
 fn seed_member(h: &Harness, app: &Path, m: &MemberRecord) {
+    seed_member_at(h, app, app, m);
+}
+
+/// [`seed_member`] with the pane folder `cwd` (FX-39): the workspace's checkout stays `app`.
+fn seed_member_at(h: &Harness, app: &Path, cwd: &Path, m: &MemberRecord) {
     h.seed(WS_ID, &mut |w| {
         w.common_dir = app.join(".git");
         w.main_root = app.to_path_buf();
-        w.panes = vec![Pane { key: KEY.into(), cwd: app.to_path_buf(), kind: PaneKind::ClaudeCode, ..Default::default() }];
+        w.panes = vec![Pane { key: KEY.into(), cwd: cwd.to_path_buf(), kind: PaneKind::ClaudeCode, ..Default::default() }];
         w.members.clear();
         w.members.insert(KEY.into(), m.clone());
     });
@@ -1019,7 +1024,13 @@ struct Wrapped {
 /// records each git call of the definition read. The stub's preflight refuses after `build`, so a launch that
 /// reaches the agent exits 2 and no child starts.
 fn wrapped(h: &Harness, app: &Path, m: &MemberRecord, env: &[(OsString, OsString)]) -> Wrapped {
-    seed_member(h, app, m);
+    wrapped_at(h, app, app, m, env)
+}
+
+/// [`wrapped`] with the pane folder `cwd` in place of `app` (FX-39): the workspace's checkout stays `app`, the
+/// launch runs in `cwd`.
+fn wrapped_at(h: &Harness, app: &Path, cwd: &Path, m: &MemberRecord, env: &[(OsString, OsString)]) -> Wrapped {
+    seed_member_at(h, app, cwd, m);
     let results = h.paths.workspace_cache_dir().join(WS_ID).join("results").join(KEY);
     let _ = std::fs::remove_dir_all(&results);
     let before = state_bytes(h);
@@ -1030,7 +1041,7 @@ fn wrapped(h: &Harness, app: &Path, m: &MemberRecord, env: &[(OsString, OsString
         (OsString::from("ACT_CONFIG_DIR"), OsString::from(h.root().join("act"))),
     ];
     vars.extend(env.iter().cloned());
-    let mut o = zygo::cmd::ws::member_launch_opts(m, m.agent_session.is_some(), Env(vars), app.to_path_buf(), h.paths.clone())
+    let mut o = zygo::cmd::ws::member_launch_opts(m, m.agent_session.is_some(), Env(vars), cwd.to_path_buf(), h.paths.clone())
         .expect("the saved launch maps");
     o.builtin = Some(builtin());
     let buf: Arc<Mutex<Vec<u8>>> = Arc::default();
@@ -1156,4 +1167,140 @@ fn pin_gone_stops_exactly_the_r11_members() { // R§11 row "A pinned commit or o
         server.shutdown();
         assert!(is_workspace_approved_in(&h.paths.approvals_file, &id, OTHER_DIGEST), "{gone:?}: the other entry is gone");
     }
+}
+
+/// FX-39: `app` with `RUST` on `main` in a fresh harness, `OTHER_DIGEST` and the default-branch read approved; the
+/// pin of that read and the workspace id of `app`.
+fn approved_app(h: &Harness) -> (PathBuf, Pin, String) {
+    let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
+    let id = ws_id(&app);
+    approve_workspace_in(&h.paths.approvals_file, &id, OTHER_DIGEST).unwrap();
+    let pin = approve(&app, &h.paths.approvals_file);
+    (app, pin, id)
+}
+
+/// The record of [`pinned`] with `pin` and no profile: the launch makes no pinned read.
+fn no_profile(pin: &Pin) -> MemberRecord {
+    let mut m = pinned(Some(pin));
+    m.launch.profile = None;
+    m
+}
+
+/// Asserts that `r` stopped before the session with exactly one `line`: exit 1, no build, no record write, no git
+/// read of the definition.
+fn assert_stopped(r: &Wrapped, line: &str, what: &str) {
+    assert_eq!(r.code, 1, "{what}: did not stop: {}", r.err);
+    assert_eq!(count(&r.err, line), 1, "{what}: {}", r.err);
+    assert!(!r.built && !r.wrote, "{what}: the launch went on: {}", r.err);
+    assert_eq!(r.after, r.before, "{what}: the record changed");
+    assert!(r.calls.is_empty(), "{what}: a git read: {:?}", r.calls);
+}
+
+#[test]
+fn withdrawn_pin_stops_a_member_whose_folder_is_dot_git() { // R§7.4 approval bullet (FX-39 D1); R-F1
+    let h = Harness::no_tmux();
+    let (app, pin, id) = approved_app(&h);
+    withdraw(&h.paths.approvals_file, &id, &pin.digest);
+    let r = wrapped_at(&h, &app, &app.join(".git"), &no_profile(&pin), &[]);
+    assert_stopped(&r, &member_line(&pin, NO_LONGER), "a member in .git");
+}
+
+/// The fixture of [`withdrawn_pin_checkout_child`], set on the child process only: the folder `app`, the pin as JSON
+/// and the approvals file of the parent.
+const CHILD_APP: &str = "ZYGO_TEST_FX39_APP";
+const CHILD_PIN: &str = "ZYGO_TEST_FX39_PIN";
+const CHILD_APPROVALS: &str = "ZYGO_TEST_FX39_APPROVALS";
+/// The line the child prints when its assertions hold.
+const CHILD_OK: &str = "WITHDRAWN_PIN_CHILD ok";
+
+#[test]
+fn withdrawn_pin_stops_when_the_checkout_read_fails() { // R§7.4 approval bullet (FX-39 D1); R-F1 (a failed git call)
+    use std::os::unix::fs::PermissionsExt;
+    let h = Harness::no_tmux();
+    let (app, pin, id) = approved_app(&h);
+    withdraw(&h.paths.approvals_file, &id, &pin.digest);
+    // The launch's checkout read runs the `git` of the process `PATH` (P7): the child's `PATH` holds only this stub.
+    let stubbin = h.root().join("stubbin");
+    std::fs::create_dir_all(&stubbin).unwrap();
+    let stub = stubbin.join("git");
+    std::fs::write(&stub, "#!/bin/sh\necho 'fatal: stub failure' >&2\nexit 128\n").unwrap();
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    ready_exe(&stub);
+    let o = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "withdrawn_pin_checkout_child", "--ignored", "--nocapture", "--test-threads=1"])
+        .env("PATH", &stubbin)
+        .env(CHILD_APP, &app)
+        .env(CHILD_PIN, serde_json::to_string(&pin).unwrap())
+        .env(CHILD_APPROVALS, &h.paths.approvals_file)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
+    assert!(out.contains(CHILD_OK), "the child did not run its checks: {out}{}", String::from_utf8_lossy(&o.stderr));
+}
+
+#[test]
+#[ignore = "child of withdrawn_pin_stops_when_the_checkout_read_fails"]
+fn withdrawn_pin_checkout_child() {
+    let Some(app) = std::env::var_os(CHILD_APP) else { return };
+    let pin: Pin = serde_json::from_str(&std::env::var(CHILD_PIN).unwrap()).unwrap();
+    let h = Harness::no_tmux();
+    std::fs::create_dir_all(h.paths.approvals_file.parent().unwrap()).unwrap();
+    std::fs::copy(std::env::var_os(CHILD_APPROVALS).unwrap(), &h.paths.approvals_file).unwrap();
+    let r = wrapped(&h, Path::new(&app), &no_profile(&pin), &[]);
+    assert_stopped(&r, &member_line(&pin, NO_LONGER), "a failed checkout read");
+    println!("{CHILD_OK}");
+}
+
+#[test]
+fn approved_member_in_a_submodule_launches() { // R§7.4 approval bullet (FX-39 D1); R-F2
+    let h = Harness::no_tmux();
+    let root = h.root();
+    // `sub.git`: a second bare repository with one commit.
+    let sw = root.join("sw");
+    std::fs::create_dir_all(&sw).unwrap();
+    std::fs::write(sw.join("lib.txt"), "lib").unwrap();
+    git(root, &["init", "-q", "--bare", "-b", "main", "sub.git"]);
+    git(&sw, &["init", "-q", "-b", "main"]);
+    git(&sw, &["add", "-A"]);
+    git(&sw, &["commit", "-q", "-m", "c"]);
+    git(&sw, &["push", "-q", root.join("sub.git").to_str().unwrap(), "main"]);
+    let app = repo_at(root, &[(".zygo/profiles/rust.toml", RUST)]);
+    git(&app, &["-c", "protocol.file.allow=always", "submodule", "add", "-q", root.join("sub.git").to_str().unwrap(), "sub"]);
+    git(&app, &["commit", "-q", "-m", "sub"]);
+    git(&app, &["push", "-q", "origin", "HEAD:main"]);
+    // `nested`: an untracked repository of its own inside `app`.
+    let nested = app.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(nested.join("n.txt"), "n").unwrap();
+    git(&nested, &["init", "-q", "-b", "main"]);
+    git(&nested, &["add", "-A"]);
+    git(&nested, &["commit", "-q", "-m", "c"]);
+    let pin = approve(&app, &h.paths.approvals_file);
+    for dir in [app.join("sub"), nested] {
+        let what = dir.display().to_string();
+        let r = wrapped_at(&h, &app, &dir, &no_profile(&pin), &[]);
+        assert_eq!(r.code, 2, "{what}: did not start: {}", r.err);
+        assert!(r.built && r.wrote, "{what}: not built or not recorded: {}", r.err);
+        assert!(!r.err.contains("no longer"), "{what}: {}", r.err);
+        assert_eq!(member_of(&h).launch.definition.as_ref(), Some(&pin), "{what}: the pin was not kept");
+    }
+}
+
+#[test]
+fn a_pin_without_a_workspace_id_is_checked_in_its_checkout() { // R§7.4 approval bullet, old pins (FX-39 D1); R§11 row
+    let h = Harness::no_tmux();
+    let (app, pin, id) = approved_app(&h);
+    let old = Pin::new(pin.commit.clone(), pin.digest.clone());
+    let m = no_profile(&old);
+    let r = wrapped_at(&h, &app, &app, &m, &[]);
+    assert_eq!(r.code, 2, "approved, in app: did not start: {}", r.err);
+    assert!(r.built && r.wrote, "approved, in app: {}", r.err);
+    let r = wrapped_at(&h, &app, &app.join(".git"), &m, &[]);
+    let not_read = "were not read (the pin has no workspace id and git found no checkout at the launch folder)";
+    assert_stopped(&r, &member_line(&old, not_read), "approved, in app/.git");
+    withdraw(&h.paths.approvals_file, &id, &old.digest);
+    let r = wrapped_at(&h, &app, &app, &m, &[]);
+    assert_stopped(&r, &member_line(&old, NO_LONGER), "withdrawn, in app");
 }

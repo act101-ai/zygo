@@ -274,6 +274,21 @@ fn cwd_absolute_check_is_textual_on_every_os() {
     assert_eq!(def.workspace.unwrap().members["a"].cwd.as_deref(), Some("ab:c"));
 }
 
+#[test] // R§6.2 `cwd` (FX-39 D2): a `.git` part in any ASCII letter case is refused; names that start with `.git` stay
+fn cwd_refuses_a_dot_git_part() {
+    for cwd in [".git", "a/.git", ".GIT/x", "x/.Git"] {
+        assert_eq!(
+            ws_err(&member(&format!("cwd = \"{cwd}\""))),
+            format!("{W}: members.a.cwd: must not hold a .git part"),
+            "cwd: {cwd}"
+        );
+    }
+    for cwd in [".github", ".gitignore", "git"] {
+        let def = repo_def::parse(&files(Some(&member(&format!("cwd = \"{cwd}\""))), &[])).unwrap();
+        assert_eq!(def.workspace.unwrap().members["a"].cwd.as_deref(), Some(cwd), "cwd: {cwd}");
+    }
+}
+
 #[test]
 fn pool_without_kind_is_claude_code() {
     let def = repo_def::parse(&files(Some(&member("pool = true")), &[])).unwrap();
