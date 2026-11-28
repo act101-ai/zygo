@@ -33,7 +33,12 @@ use zygo_mail_sync::public::LsRemote;
 use zygo_mail_sync::spawn::ChildSpawner;
 use zygo_workspace::activity::{self, Activity};
 use zygo_workspace::identity::{valid_pane_key, valid_ws_id};
+use std::time::SystemTime;
+use zygo_config::MailConfig;
+use zygo_workspace::mail::wake::{self as mail_wake, Outcome, Probe, RealProbe};
 use zygo_workspace::mail::{mail_dir, store};
+use zygo_workspace::mux::tmux::Tmux;
+use zygo_workspace::state::Workspace;
 use zygo_workspace::snapshot;
 use zygo_workspace::state::{MemberRecord, MemberState, Phase, StateError, Store};
 
@@ -298,9 +303,9 @@ fn main_session(c: &Ctx, id: Option<&str>) -> bool {
 /// M§7.3 at the end of an OpenCode turn (the plugin's `stop` call, AU27; FX-33 review F1): a member that was busy when
 /// mail came was not woken (M§7.3) and OpenCode has no Stop block (ML-10 D1), so when `new/` holds an id that this
 /// launch has not announced, the hook wakes the member's own pane by the M§7.3 steps (idle rule, `wake_gap`, pane
-/// checks) and records the ids as announced, so one arrival gives at most one wake. Not in phase `draining` or
+/// checks) and, when the wake typed its text, records the ids as announced, so one arrival gives at most one wake. Not in phase `draining` or
 /// `stopping` (M§9). The wake text is fixed (M-C5); its prompt then gets the `message` line.
-fn wake_after_turn(c: &Ctx, sync: &Env) {
+fn wake_after_turn(c: &Ctx, sync: &Env, turn_wake: &dyn TurnWake) {
     if matches!(c.store.phase_unlocked(), Some(Phase::Draining | Phase::Stopping)) {
         return;
     }
@@ -313,8 +318,47 @@ fn wake_after_turn(c: &Ctx, sync: &Env) {
     let cfg = zygo_config::load(&zygo_config::LoadContext { paths: c.paths.clone(), repo: None, team: None })
         .map(|m| m.config.mail)
         .unwrap_or_default();
-    set_mail_seen(c, &ids);
-    sync.wake.wake(c.paths, &ws, std::slice::from_ref(&c.pane), &cfg, sync.clock.now());
+    // Only a sent wake announces: after `Gap`, `Busy`, `NoPane`, `Mismatch`, `NotLive` or `Failed` no prompt was typed,
+    // so the ids stay unannounced and a later turn end tries again (FX-33 review).
+    if turn_wake.wake(c.paths, &ws, &c.pane, &cfg, sync.clock.now()) == Outcome::Woken {
+        set_mail_seen(c, &ids);
+    }
+}
+
+/// The turn-end wake of one member (M§7.3; FX-33 review): its [`Outcome`] says whether the text was typed. Tests
+/// replace it.
+pub trait TurnWake {
+    fn wake(&self, paths: &Paths, ws: &Workspace, key: &str, cfg: &MailConfig, now: SystemTime) -> Outcome;
+}
+
+/// The production turn-end wake: [`zygo_workspace::mail::wake::wake`] through the tmux program `tmux`, with the AU26
+/// idle rule of [`RealProbe`] and the clock `now`. A `wake_gap` that does not parse is 30 s, with one `errors.log`
+/// line, as the wake after a send (`after_send_with`, A7).
+pub struct TmuxTurnWake {
+    pub tmux: PathBuf,
+}
+
+/// [`RealProbe`]'s idle rule with a fixed clock.
+struct ProbeAt(SystemTime);
+
+impl Probe for ProbeAt {
+    fn idle(&self, session_dir: &Path) -> bool { RealProbe.idle(session_dir) }
+    fn now(&self) -> SystemTime { self.0 }
+}
+
+impl TurnWake for TmuxTurnWake {
+    fn wake(&self, paths: &Paths, ws: &Workspace, key: &str, cfg: &MailConfig, now: SystemTime) -> Outcome {
+        let store = Store::open(paths, &ws.id);
+        let gap = zygo_config::parse_duration(&cfg.wake_gap).unwrap_or_else(|| {
+            store.log_error(&format!(
+                "mail wake: [mail] wake_gap \"{}\" is not <n>s, <n>m, <n>h or <n>d; using 30s",
+                esc(&cfg.wake_gap)
+            ));
+            Duration::from_secs(30)
+        });
+        let mux = Tmux::new(self.tmux.clone(), ws.tmux_socket.clone());
+        mail_wake::wake(&store, ws, &mux, key, gap, &ProbeAt(now))
+    }
 }
 
 /// The main loop: the input object has no `agent_id` key (W§9.1, the test of W§8.3; D5).
@@ -348,6 +392,15 @@ pub fn run_with(
 pub fn run_with_sync(
     event: &str, stdin: &[u8], paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, zygo: &Path,
     dispatch: Option<SlashDispatch>, sync: &Env,
+) -> anyhow::Result<Option<String>> {
+    run_with_wake(event, stdin, paths, env, zygo, dispatch, sync, &TmuxTurnWake { tmux: tmux_program() })
+}
+
+/// `run_with_sync` with the OpenCode turn-end wake `turn_wake` (M§7.3; FX-33 review).
+#[allow(clippy::too_many_arguments)]
+pub fn run_with_wake(
+    event: &str, stdin: &[u8], paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, zygo: &Path,
+    dispatch: Option<SlashDispatch>, sync: &Env, turn_wake: &dyn TurnWake,
 ) -> anyhow::Result<Option<String>> {
     if !EVENTS.contains(&event) {
         bail!("workspace: unknown event \"{}\"", esc(event));
@@ -426,7 +479,7 @@ pub fn run_with_sync(
             });
             // M§7.3 (FX-33 review F1): after the clear, so the wake sees an idle member.
             if matches!(c.view.agent, Agent::OpenCode) {
-                wake_after_turn(&c, sync);
+                wake_after_turn(&c, sync, turn_wake);
             }
         }
         // M§7.2 (FX-33): the OpenCode plugin's `chat.message` call for a user message. Only for the recorded main
