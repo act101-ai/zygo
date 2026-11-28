@@ -216,6 +216,14 @@ Session text (T, SX nodes):
 | FX-32 | The P and Q arms of `check-premises.sh` refuse a dated note whose text holds `)` | SX-10 | DONE | mechanical | e6d86033^..ae1f7beb · acceptance pass (ver tests: ok (92), check-premises ok) · PR #255 |
 | FX-33 | OpenCode system text: the unread line and a foreign resume note break the prompt cache | FX-9, FX-34 | DONE | judgment | 828d282d^..c3a6939a · acceptance pass (workspace 31 passed; opencode 55 passed) · PR #260 |
 | FX-34 | Keep stub-agent small: the real-hook stub in its own binary | FX-9 | DONE | implementation | 7b1cde72^..c2853600 · acceptance pass (opencode 53 passed, zygo-launch 224 passed, stub.rs rg no match, scanners_find_a_planted_marker passed) · PR #259 |
+| FX-35 | Mail wake refused in the 10 s quiet window after a turn end (no retry); `message` marks mail seen before delivery; unbounded wake waits on the OpenCode stop hook | — | TODO | judgment | — |
+| FX-36 | `zygo mail read --name all` reads every member's mail; M§8 reads one member | — | TODO | implementation | — |
+| FX-37 | pre-compact flag and `overrides.json`: links followed, a FIFO blocks the hook, no flag when the work folder is unreadable | — | TODO | implementation | — |
+| FX-38 | `live-sp1.sh`: known_hosts restore breaks a symlink, a failed append is recorded as added, note 3.4 reads other workspaces | — | TODO | implementation | — |
+| FX-39 | Pin withdrawal check skipped without a common dir; pane-folder workspace id; uncapped `.zygo` listing | — | TODO | judgment | — |
+| FX-40 | Mail sync checks only the first push URL; the 500-candidate cap is per attempt, not per pass | — | TODO | implementation | — |
+| FX-41 | Decision gate: batch reads keep the spawn deadline, records read before the 64 KiB check, a `docs` link and an empty `ZYGO_SESSION_DIR` pass the verb guards | — | TODO | implementation | — |
+| FX-42 | Shaping: CR overwrite deletes text a terminal shows, xargs `--max-chars`/`--eof`, missing wrappers, PO2 comment | — | TODO | implementation | — |
 
 ## Log
 
@@ -479,3 +487,4 @@ Session text (T, SX nodes):
 | 2026-11-28 | FX-33 DONE; author's call: the OpenCode unread line goes in the user turn through the plugin's chat.message (synthetic part), not the per-request system text, so the cached system blocks stay byte-equal (§10.4, T§11); FX-23 row archived · PR #260 |
 | 2026-11-28 | FX-33 author's call: an OpenCode turn end wakes the member by M§7.3 for unannounced mail, recorded only when Woken; the message line is only for the recorded main session, so a child never gets it whatever the event order |
 | 2026-11-28 | FX-33 review: F1 (busy member never told of mail), F3 (stale comment) and the Gap defect (ids marked seen on a skipped wake) fixed; F2 refuted: the title request seeing the line breaks no spec requirement |
+| 2026-11-28 | Final stage (§5.6) at b628e1ad: 7 area reviews; confirmed findings → FX-35..FX-42; refuted: S-F3, X-F3, FX-33 F2 (reasons in the report) |
