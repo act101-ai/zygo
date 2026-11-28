@@ -731,8 +731,10 @@ fn bind_note(c: &Ctx, id: &str) {
 /// the member record is written (D8, D9), then the note inputs are removed from the view when it held them; the result
 /// is `None`; for the main loop the mail sync child then starts by the gap, and a child that does not start changes no
 /// output (S§8.1 row 2, S§8.4, S-C1). OpenCode adds the session text to every model request, so the result is
-/// `Some(output)` and nothing is written: the plugin's `session` call owns the record, the note rule (D10) and the
-/// sync start.
+/// `Some(output)` and nothing is written but the item 8 store: the plugin's `session` call owns the record, the note
+/// rule (D10) and the sync start. For OpenCode with a payload `input.sessionID`, item 8 comes from
+/// `session_start::fixed_item`: built at the first request of that session id and reused as it is by its later
+/// requests (M§8a item 1, FX-9); a payload with no id builds it at each request.
 pub fn session_start(
     payload: &Value, dir: &SessionDir, view: &SessionView, paths: &Paths, zygo: &Path, out: &mut dyn Write, text: &str,
 ) -> anyhow::Result<Option<String>> {
@@ -752,7 +754,15 @@ pub fn session_start_with_sync(
     // M§8a item 1: item 8 after the mechanics text, before the resume note, from `workspace.json` read at this start,
     // with the S§10.4 clause when sync is on and the member cache is not empty.
     // A read error or no state gives no item and no line of its own (record_session's read writes the one line, C6).
-    let item = if view.mail { c.store.read().ok().flatten().and_then(|ws| crate::mail::session_item_with(&ws, &c.pane, &crate::mail::remote_addresses(c.paths, &c.ws_id, &ws.name))) } else { None };
+    let mut built = || c.store.read().ok().flatten().and_then(|ws| crate::mail::session_item_with(&ws, &c.pane, &crate::mail::remote_addresses(c.paths, &c.ws_id, &ws.name)));
+    // FX-9: OpenCode calls this per model request; the main-loop SessionStart of M§8a item 1 is the first request of
+    // an OpenCode session id, and later requests of that id reuse its stored item 8.
+    let item = match (view.mail, view.agent, payload.pointer("/input/sessionID").and_then(Value::as_str)) {
+        (false, ..) => None,
+        // A store that cannot be used builds item 8 and writes no line (D6).
+        (true, Agent::OpenCode, Some(id)) => crate::session_start::fixed_item(dir, id, &mut built),
+        (true, ..) => built(),
+    };
     // M§7.2, ML-10 D5: the mail delivery line comes after the resume note while `new/` holds mail.
     let line = match unread_mail(&c) {
         0 => None,
