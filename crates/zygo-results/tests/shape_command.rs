@@ -486,3 +486,46 @@ fn r1_shell_option_arguments_before_c() {
     ]);
     assert!(!fp("bash -o pipefail -c 'true'"));
 }
+
+// FX-42 O-F2: GNU `--max-chars` takes the next word; `--eof` takes a value only after `=` (O§7.1).
+#[test]
+fn xargs_max_chars_and_bare_eof_find_the_printer() {
+    let want = parse("ls | xargs cat");
+    assert!(want.file_printer);
+    for c in [
+        "ls | xargs --max-chars 100 cat",
+        "ls | xargs --eof cat",
+        "ls | xargs --eof=x cat",
+        "ls | xargs -s 100 cat",
+        "ls | xargs --max-lines cat",
+        "ls | xargs --max-lines=1 cat",
+    ] {
+        assert_eq!(parse(c), want, "{c:?}");
+    }
+}
+
+// FX-42 O-F3: `doas`, `busybox`, `setsid` and `flock <file>` are skipped wrappers (O§7.2).
+#[test]
+fn doas_busybox_setsid_flock_are_skipped_wrappers() {
+    let want = parse("cat f");
+    assert!(want.file_printer);
+    for c in [
+        "doas cat f",
+        "busybox cat f",
+        "setsid cat f",
+        "flock /tmp/l cat f",
+        "doas -u root cat f",
+        "doas -n -C /etc/doas.conf cat f",
+        "setsid -f cat f",
+        "flock -w 5 /tmp/l cat f",
+        "flock -E 3 -x /tmp/l cat f",
+        "flock --timeout 5 /tmp/l cat f",
+    ] {
+        assert_eq!(parse(c), want, "{c:?}");
+    }
+    assert_eq!(parse("doas cargo test").name, "cargo test");
+    assert_eq!(parse("flock /tmp/l cargo test").name, "cargo test");
+    // flock runs the word after `-c` with `sh -c`.
+    all_fp(&["flock /tmp/l -c 'cat f'", "flock -n /tmp/l --command 'head f'"]);
+    assert!(!fp("flock /tmp/l -c 'cargo test'"));
+}

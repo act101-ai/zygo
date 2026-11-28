@@ -56,7 +56,9 @@ const PRINTERS: &[&str] = &[
 
 /// Wrappers that are skipped before the program, with their options that take an argument
 /// and the number of operand words skipped after the options.
-/// O§7.2 lists the first eight. `exec` and `nohup` are skipped too, for file printers only.
+/// O§7.2 lists all but `exec` and `nohup`, which are skipped too, for file printers only.
+/// After the options of `flock`, its lock file word is skipped, and `-c`/`--command` then
+/// gives the word that flock runs with `sh -c` (`argv`).
 const WRAPPERS: &[(&str, &[&str], usize)] = &[
     ("env", &["-u", "-C", "--unset", "--chdir"], 0),
     ("time", &["-f", "-o", "--format", "--output"], 0),
@@ -94,13 +96,22 @@ const WRAPPERS: &[(&str, &[&str], usize)] = &[
         0,
     ),
     ("builtin", &[], 0),
+    ("doas", &["-a", "-C", "-u"], 0),
+    ("busybox", &[], 0),
+    ("setsid", &[], 0),
+    (
+        "flock",
+        &["-w", "-E", "--wait", "--timeout", "--conflict-exit-code"],
+        1,
+    ),
     ("exec", &["-a"], 0),
     ("nohup", &[], 0),
 ];
 
 /// The wrappers that O§7.2 lists; a stage behind any other skipped word gives no name or runner.
 const LISTED_WRAPPERS: &[&str] = &[
-    "env", "time", "sudo", "nice", "command", "timeout", "stdbuf", "builtin",
+    "env", "time", "sudo", "nice", "command", "timeout", "stdbuf", "builtin", "doas", "busybox",
+    "setsid", "flock",
 ];
 
 /// Reserved words that are skipped at the start of a stage, for file printers only.
@@ -108,7 +119,8 @@ const RESERVED: &[&str] = &[
     "!", "{", "}", "if", "then", "else", "elif", "fi", "do", "done", "while", "until",
 ];
 
-/// `xargs` options that take the next word as their argument.
+/// `xargs` options that take the next word as their argument. GNU `--eof`, `--replace` and
+/// `--max-lines` take a value only after `=`, so their bare form takes no word.
 const XARGS_TAKES: &[&str] = &[
     "-I",
     "-n",
@@ -122,11 +134,10 @@ const XARGS_TAKES: &[&str] = &[
     "-R",
     "-S",
     "--max-args",
-    "--max-lines",
+    "--max-chars",
     "--max-procs",
     "--delimiter",
     "--arg-file",
-    "--eof",
     "--process-slot-var",
 ];
 
@@ -1023,6 +1034,19 @@ fn argv(words: &[Word]) -> Argv<'_> {
             };
         }
         i += operands;
+        // `flock <file> -c <command>` runs `<command>` with `sh -c`.
+        if wrapper == "flock"
+            && matches!(
+                words.get(i).map(|w| w.text.as_str()),
+                Some("-c" | "--command")
+            )
+        {
+            return Argv {
+                args: &[],
+                split: words.get(i + 1).map(|w| w.text.clone()),
+                listed,
+            };
+        }
     }
     Argv {
         args: &words[i.min(words.len())..],
