@@ -200,6 +200,21 @@ fn session_dir(env: &dyn Fn(&str) -> Option<OsString>) -> Option<SessionDir> {
     env("ZYGO_SESSION_DIR").filter(|v| !v.is_empty()).map(|v| SessionDir::new(PathBuf::from(v)))
 }
 
+/// D§14 row 1: `docs` or `docs/decisions` is absent. Each part is checked with `lstat` in turn, as `read_dir` does, so a
+/// link at `docs` is never followed: a link, a file, or an `lstat` error other than absent is not absent, and
+/// `read_dir` reports it (D§6.8).
+fn records_dir_absent(top: &Path) -> bool {
+    let dir = top.join(DIR);
+    for path in [dir.parent().unwrap_or(&dir), &dir] {
+        match fs::symlink_metadata(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
+            Ok(m) if m.file_type().is_dir() => {}
+            _ => return false,
+        }
+    }
+    false
+}
+
 /// Writes `esc(line)` and a newline; write errors are ignored.
 fn line(w: &mut dyn Write, s: &str) {
     let _ = writeln!(w, "{}", esc(s));
@@ -264,8 +279,9 @@ pub fn run_in(repo: &Repo, env: &dyn Fn(&str) -> Option<OsString>, args: &[Strin
         Sub::Review { .. } => Some("review"),
         _ => None,
     };
+    // Set is enough, empty included: `session_dir` drops an empty value, so it is not asked here.
     if let Some(verb) = operator_verb
-        && session_dir(env).is_some()
+        && env("ZYGO_SESSION_DIR").is_some()
     {
         line(io.err, &format!("zygo decision {verb}: run it in your own shell, not in an agent session"));
         return 2;
@@ -280,9 +296,7 @@ pub fn run_in(repo: &Repo, env: &dyn Fn(&str) -> Option<OsString>, args: &[Strin
         return 2;
     };
     // D§14 row 1: no records directory, nothing to review.
-    if operator_verb.is_some()
-        && fs::symlink_metadata(top.join(DIR)).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
-    {
+    if operator_verb.is_some() && records_dir_absent(&top) {
         line(io.out, "no open records");
         return 0;
     }
