@@ -355,7 +355,12 @@ pub fn list(mail_dir: &Path, key: &str) -> Result<Vec<Summary>, MailError> {
 
 /// The number of message files in `new/`: regular files only.
 pub fn unread(mail_dir: &Path, key: &str) -> Result<usize, MailError> {
-    Ok(ids(&maildir(mail_dir, key)?.join("new"))?.len())
+    Ok(unread_ids(mail_dir, key)?.len())
+}
+
+/// The message ids of the files in `new/`, oldest first: regular files only, and no file is opened (M-C2).
+pub fn unread_ids(mail_dir: &Path, key: &str) -> Result<Vec<String>, MailError> {
+    Ok(ids(&maildir(mail_dir, key)?.join("new"))?)
 }
 
 /// Deletes `cur/` files older than `keep` and `tmp/` files older than 1 h in each maildir; `new/` and folders that

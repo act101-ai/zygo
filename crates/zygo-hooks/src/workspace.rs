@@ -33,13 +33,18 @@ use zygo_mail_sync::public::LsRemote;
 use zygo_mail_sync::spawn::ChildSpawner;
 use zygo_workspace::activity::{self, Activity};
 use zygo_workspace::identity::{valid_pane_key, valid_ws_id};
+use std::time::SystemTime;
+use zygo_config::MailConfig;
+use zygo_workspace::mail::wake::{self as mail_wake, Outcome, Probe, RealProbe};
 use zygo_workspace::mail::{mail_dir, store};
+use zygo_workspace::mux::tmux::Tmux;
+use zygo_workspace::state::Workspace;
 use zygo_workspace::snapshot;
 use zygo_workspace::state::{MemberRecord, MemberState, Phase, StateError, Store};
 
 /// The `--event` values of `zygo hook workspace`.
-pub const EVENTS: [&str; 8] =
-    ["session", "prompt", "stop", "pre-tool", "tool-end", "session-end", "subagent-start", "subagent-stop"];
+pub const EVENTS: [&str; 9] =
+    ["session", "prompt", "stop", "pre-tool", "tool-end", "session-end", "subagent-start", "subagent-stop", "message"];
 
 /// The deny reason of an `Agent` call while `down` drains (W§9.2).
 pub const DRAINING: &str = "zygo: workspace is draining for down; finish your turn";
@@ -242,15 +247,117 @@ pub fn mark_busy(paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, bound: D
 /// ML-10 D4). A member with `[features] mail` off (`view.mail`) has no mail tools: 0, and `mail/` is not read (M§7.1,
 /// M§7.2, M§8; ML-10 review R1).
 fn unread_mail(c: &Ctx) -> usize {
+    unread_ids(c).len()
+}
+
+/// The ids of the unread messages of the member, oldest first, by the rules of `unread_mail` (an error or mail off:
+/// none).
+fn unread_ids(c: &Ctx) -> Vec<String> {
     if !c.view.mail {
-        return 0;
+        return Vec::new();
     }
-    match store::unread(&mail_dir(c.paths, &c.ws_id), &c.pane) {
-        Ok(n) => n,
+    match store::unread_ids(&mail_dir(c.paths, &c.ws_id), &c.pane) {
+        Ok(ids) => ids,
         Err(e) => {
             error_line(&format!("workspace hook {}: {e}", c.event));
-            0
+            Vec::new()
         }
+    }
+}
+
+/// The file of the session folder that holds the ids of the unread messages that this launch announced to the
+/// OpenCode member: by the `message` line or by a turn-end wake (M§7.2, M§7.3; FX-33 review F1). A JSON array of ids.
+const MAIL_SEEN: &str = "mail-seen.json";
+
+/// The announced ids of `MAIL_SEEN`; a missing file, or one that cannot be read or parsed, holds none (the next turn
+/// end then wakes at most once more, C6).
+fn mail_seen(c: &Ctx) -> Vec<String> {
+    match read_session_file(&c.dir.root.join(MAIL_SEEN)) {
+        Ok(Some(b)) => serde_json::from_slice(&b).unwrap_or_default(),
+        Ok(None) => Vec::new(),
+        Err(e) => {
+            slog(c.dir, c.event, &format!("{e:#}"));
+            Vec::new()
+        }
+    }
+}
+
+/// Writes `ids` as the announced ids (temporary file, then rename; `0600`); a failure writes one session-log line.
+fn set_mail_seen(c: &Ctx, ids: &[String]) {
+    let written = serde_json::to_vec(ids)
+        .map_err(anyhow::Error::from)
+        .and_then(|b| zygo_core::session_dir::write_atomic(&c.dir.root.join(MAIL_SEEN), &b));
+    if let Err(e) = written {
+        slog(c.dir, c.event, &format!("{MAIL_SEEN} not written: {e:#}"));
+    }
+}
+
+/// True when `id` is the OpenCode main session that the plugin's `session` call recorded for the member
+/// (`member.agent_session`, AU104). A child session is never recorded (AU27), so a child's user message gets no line
+/// whatever the order in which the plugin saw its events (FX-33 review). No `workspace.json` or no record: false.
+fn main_session(c: &Ctx, id: Option<&str>) -> bool {
+    let Some(id) = id else { return false };
+    matches!(c.store.read(), Ok(Some(ws)) if ws.members.get(&c.pane).and_then(|m| m.agent_session.as_deref()) == Some(id))
+}
+
+/// M§7.3 at the end of an OpenCode turn (the plugin's `stop` call, AU27; FX-33 review F1): a member that was busy when
+/// mail came was not woken (M§7.3) and OpenCode has no Stop block (ML-10 D1), so when `new/` holds an id that this
+/// launch has not announced, the hook wakes the member's own pane by the M§7.3 steps (idle rule, `wake_gap`, pane
+/// checks) and, when the wake typed its text, records the ids as announced, so one arrival gives at most one wake. Not in phase `draining` or
+/// `stopping` (M§9). The wake text is fixed (M-C5); its prompt then gets the `message` line.
+fn wake_after_turn(c: &Ctx, sync: &Env, turn_wake: &dyn TurnWake) {
+    if matches!(c.store.phase_unlocked(), Some(Phase::Draining | Phase::Stopping)) {
+        return;
+    }
+    let ids = unread_ids(c);
+    let seen = mail_seen(c);
+    if !ids.iter().any(|i| !seen.contains(i)) {
+        return;
+    }
+    let Ok(Some(ws)) = c.store.read() else { return };
+    let cfg = zygo_config::load(&zygo_config::LoadContext { paths: c.paths.clone(), repo: None, team: None })
+        .map(|m| m.config.mail)
+        .unwrap_or_default();
+    // Only a sent wake announces: after `Gap`, `Busy`, `NoPane`, `Mismatch`, `NotLive` or `Failed` no prompt was typed,
+    // so the ids stay unannounced and a later turn end tries again (FX-33 review).
+    if turn_wake.wake(c.paths, &ws, &c.pane, &cfg, sync.clock.now()) == Outcome::Woken {
+        set_mail_seen(c, &ids);
+    }
+}
+
+/// The turn-end wake of one member (M§7.3; FX-33 review): its [`Outcome`] says whether the text was typed. Tests
+/// replace it.
+pub trait TurnWake {
+    fn wake(&self, paths: &Paths, ws: &Workspace, key: &str, cfg: &MailConfig, now: SystemTime) -> Outcome;
+}
+
+/// The production turn-end wake: [`zygo_workspace::mail::wake::wake`] through the tmux program `tmux`, with the AU26
+/// idle rule of [`RealProbe`] and the clock `now`. A `wake_gap` that does not parse is 30 s, with one `errors.log`
+/// line, as the wake after a send (`after_send_with`, A7).
+pub struct TmuxTurnWake {
+    pub tmux: PathBuf,
+}
+
+/// [`RealProbe`]'s idle rule with a fixed clock.
+struct ProbeAt(SystemTime);
+
+impl Probe for ProbeAt {
+    fn idle(&self, session_dir: &Path) -> bool { RealProbe.idle(session_dir) }
+    fn now(&self) -> SystemTime { self.0 }
+}
+
+impl TurnWake for TmuxTurnWake {
+    fn wake(&self, paths: &Paths, ws: &Workspace, key: &str, cfg: &MailConfig, now: SystemTime) -> Outcome {
+        let store = Store::open(paths, &ws.id);
+        let gap = zygo_config::parse_duration(&cfg.wake_gap).unwrap_or_else(|| {
+            store.log_error(&format!(
+                "mail wake: [mail] wake_gap \"{}\" is not <n>s, <n>m, <n>h or <n>d; using 30s",
+                esc(&cfg.wake_gap)
+            ));
+            Duration::from_secs(30)
+        });
+        let mux = Tmux::new(self.tmux.clone(), ws.tmux_socket.clone());
+        mail_wake::wake(&store, ws, &mux, key, gap, &ProbeAt(now))
     }
 }
 
@@ -262,8 +369,9 @@ fn main_loop(p: &Value) -> bool {
 /// `zygo hook workspace --event <event>` (W§9.1, D4, D5). It checks the event, then reads `ZYGO_SESSION_DIR`
 /// through `env` (none or empty: nothing), then parses the input; a prompt line that `zygo hook prompt` consumes ends
 /// here (D4, R1); then the session folder, the view and the marker. `pre-tool` can give the deny JSON of W§9.2, a
-/// Claude Code `prompt` the block JSON of AU86 or the mail delivery line (M§7.2), and a Claude Code `stop` the mail
-/// block JSON of M§7.1; every other call gives `None`. `session` (main loop), `prompt`, `stop` and `tool-end` start the
+/// Claude Code `prompt` the block JSON of AU86 or the mail delivery line (M§7.2), a Claude Code `stop` the mail
+/// block JSON of M§7.1, and a main-loop `message` (the OpenCode plugin's `chat.message` call, M§7.2; FX-33) the
+/// delivery line as plain text while `new/` holds mail; every other call gives `None`. `session` (main loop), `prompt`, `stop` and `tool-end` start the
 /// mail sync child when sync is on and the gap has passed; a child that does not start changes no output (S§8.1,
 /// S§8.4, S-C1). The dispatcher is the one that the `zygo` binary registers (`slash_dispatch`).
 pub fn run(
@@ -284,6 +392,15 @@ pub fn run_with(
 pub fn run_with_sync(
     event: &str, stdin: &[u8], paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, zygo: &Path,
     dispatch: Option<SlashDispatch>, sync: &Env,
+) -> anyhow::Result<Option<String>> {
+    run_with_wake(event, stdin, paths, env, zygo, dispatch, sync, &TmuxTurnWake { tmux: tmux_program() })
+}
+
+/// `run_with_sync` with the OpenCode turn-end wake `turn_wake` (M§7.3; FX-33 review).
+#[allow(clippy::too_many_arguments)]
+pub fn run_with_wake(
+    event: &str, stdin: &[u8], paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, zygo: &Path,
+    dispatch: Option<SlashDispatch>, sync: &Env, turn_wake: &dyn TurnWake,
 ) -> anyhow::Result<Option<String>> {
     if !EVENTS.contains(&event) {
         bail!("workspace: unknown event \"{}\"", esc(event));
@@ -331,7 +448,7 @@ pub fn run_with_sync(
             if main {
                 change(&c, &mut start_turn);
                 // M§7.2, ML-10 D3: a Claude Code prompt adds the delivery line; the OpenCode plugin drops this output
-                // and gets the line from the per-request session text.
+                // and gets the line from its `chat.message` call (the `message` event, FX-33).
                 if matches!(c.view.agent, Agent::ClaudeCode) {
                     let n = unread_mail(&c);
                     if n > 0 {
@@ -359,7 +476,24 @@ pub fn run_with_sync(
             change(&c, &mut |a| {
                 a.busy = false;
                 a.tools_running = 0;
-            })
+            });
+            // M§7.3 (FX-33 review F1): after the clear, so the wake sees an idle member.
+            if matches!(c.view.agent, Agent::OpenCode) {
+                wake_after_turn(&c, sync, turn_wake);
+            }
+        }
+        // M§7.2 (FX-33): the OpenCode plugin's `chat.message` call for a user message. Only for the recorded main
+        // session (`main_session`), it gives the delivery line, which the plugin adds to that message, so the
+        // per-request session text holds no mail line, and records the ids as announced (`MAIL_SEEN`). It changes
+        // nothing in `activity.json` and starts no sync child (the turn's `prompt` does). A mail read error is ML-10 D4.
+        "message" if main => {
+            if main_session(&c, payload_id(&payload, "sessionID")) {
+                let ids = unread_ids(&c);
+                if !ids.is_empty() {
+                    set_mail_seen(&c, &ids);
+                    return Ok(Some(crate::mail::delivery_line(ids.len())));
+                }
+            }
         }
         // W§9.1 names no `busy` change for `SessionEnd`.
         "session-end" if main => change(&c, &mut |a| a.tools_running = 0),
@@ -725,8 +859,13 @@ fn bind_note(c: &Ctx, id: &str) {
 /// The member part of `SessionStart` (W§9.1, W§9.4, AU60, AU92, AU104; D11) for the main loop of a member view;
 /// `text` is the session text. The output is the session text, an empty line, item 8 when `view.mail` is on (with the
 /// S§10.4 clause when sync is on and the member cache is not empty), the
-/// state reads and holds a record for the pane, then the note, then the mail delivery line when `view.mail` is on and
-/// `new/` holds mail (M§7.2); empty parts are left out. Claude Code: the whole hook
+/// state reads and holds a record for the pane, then the note, then, for Claude Code only, the mail delivery line
+/// when `view.mail` is on and `new/` holds mail (M§7.2); empty parts are left out. OpenCode gets the delivery line in
+/// the user turn through the `message` event, so its per-request text does not change with the unread count and
+/// stays in the cached prefix (base design §10.4, session text design T§11; FX-33). The OpenCode note is shown only
+/// while its inputs are not bound to an agent session or are bound to the payload `input.sessionID` (W§9.4, AU72,
+/// AU104; FX-33): until the plugin's `session` call removes inputs of another session (D10), they are not shown to
+/// this one, and a payload with no id shows bound inputs to no session. Claude Code: the whole hook
 /// output is written to `out` and flushed first (a write error returns `Err` with nothing written to any file), then
 /// the member record is written (D8, D9), then the note inputs are removed from the view when it held them; the result
 /// is `None`; for the main loop the mail sync child then starts by the gap, and a child that does not start changes no
@@ -763,12 +902,24 @@ pub fn session_start_with_sync(
         (true, Agent::OpenCode, Some(id)) => crate::session_start::fixed_item(dir, id, &mut built),
         (true, ..) => built(),
     };
-    // M§7.2, ML-10 D5: the mail delivery line comes after the resume note while `new/` holds mail.
-    let line = match unread_mail(&c) {
-        0 => None,
-        n => Some(crate::mail::delivery_line(n)),
+    // M§7.2, ML-10 D5: the Claude Code mail delivery line comes after the resume note while `new/` holds mail. OpenCode
+    // gets it from the `message` event and does not read `mail/` here (FX-33).
+    let line = match view.agent {
+        Agent::ClaudeCode => match unread_mail(&c) {
+            0 => None,
+            n => Some(crate::mail::delivery_line(n)),
+        },
+        Agent::OpenCode => None,
     };
-    let output = [Some(text.to_string()), item, inputs.and_then(note), line]
+    // W§9.4, AU104 (FX-33): OpenCode shows the note only to the agent session its inputs are bound to.
+    let shown = inputs.filter(|n| match view.agent {
+        Agent::ClaudeCode => true,
+        Agent::OpenCode => match n.agent_session.as_deref() {
+            None => true,
+            Some(owner) => payload.pointer("/input/sessionID").and_then(Value::as_str) == Some(owner),
+        },
+    });
+    let output = [Some(text.to_string()), item, shown.and_then(note), line]
         .into_iter()
         .flatten()
         .filter(|s| !s.is_empty())

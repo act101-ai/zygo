@@ -1,0 +1,29 @@
+{
+  "input": {
+    "sessionID": "ses_ddddf451cffe7g542xU0rJuYPJ"
+  },
+  "output": {
+    "message": {
+      "id": "msg_22220baf9001phh1OyMlFYrUxw",
+      "role": "user",
+      "sessionID": "ses_ddddf451cffe7g542xU0rJuYPJ",
+      "time": {
+        "created": 1795868900089
+      },
+      "agent": "build",
+      "model": {
+        "providerID": "anthropic",
+        "modelID": "claude-sonnet-4-6"
+      }
+    },
+    "parts": [
+      {
+        "type": "text",
+        "text": "\"hello probe two\"",
+        "messageID": "msg_22220baf9001phh1OyMlFYrUxw",
+        "sessionID": "ses_ddddf451cffe7g542xU0rJuYPJ",
+        "id": "prt_22220bafd001dXdTh62yxY4ifj"
+      }
+    ]
+  }
+}

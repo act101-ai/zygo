@@ -205,7 +205,6 @@ Session text (T, SX nodes):
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | DONE | judgment | check-premises ok ST1-ST4 verified; workspace 4131 passed · PR #254 |
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | DONE | judgment | 0715e396^..213355f7 · acceptance pass (session_text 70 passed; opencode 52 passed, end-to-end item 8 test) · PR #256 |
 | FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
-| FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | DONE | implementation | bb21eadf^..c99eeb95 · acceptance pass (offline: 7 test files, 0 failed) · PR #220 |
 | FX-24 | Mail sync deliveries and ws forget take the M§5 mail lock | FX-13, MS-21 | DONE | judgment | f1661e09^..f20d5502 · acceptance pass (import 32, sync_pass 57, admin 40) · PR #224 |
 | FX-25 | `zygo up` reads the definition at the current checkout; `find_checkout` keeps a failed or timed-out `git worktree list` (exit 1) | WD-15 | DONE | implementation | a8092a70^..3c511812 · acceptance pass (up_definition 42, up 82, workspace_approve 29) · PR #226 |
 | FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | DONE | judgment | ccb3aaec^..336d5654 · acceptance pass (mail_sync_no_content 5 passed) · PR #236 |
@@ -215,7 +214,7 @@ Session text (T, SX nodes):
 | FX-30 | A crash-recovered delivery gets no wake and no count | FX-26, FX-28 | DONE | judgment | 1f871269^..c0675e47 · acceptance pass (crash_recovery_wake 11 passed, mail_sync_no_content 5 passed) · PR #240 |
 | FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | DONE | judgment | 3279f092^..4bae96ba · acceptance pass (pin_gone_stops_exactly_the_r11_members 1 passed, workspace_definition 17 passed + 9 ignored passed) · PR #238 |
 | FX-32 | The P and Q arms of `check-premises.sh` refuse a dated note whose text holds `)` | SX-10 | DONE | mechanical | e6d86033^..ae1f7beb · acceptance pass (ver tests: ok (92), check-premises ok) · PR #255 |
-| FX-33 | OpenCode system text: the unread line and a foreign resume note break the prompt cache | FX-9, FX-34 | TODO | judgment | — |
+| FX-33 | OpenCode system text: the unread line and a foreign resume note break the prompt cache | FX-9, FX-34 | DONE | judgment | 828d282d^..c3a6939a · acceptance pass (workspace 31 passed; opencode 55 passed) · PR #260 |
 | FX-34 | Keep stub-agent small: the real-hook stub in its own binary | FX-9 | DONE | implementation | 7b1cde72^..c2853600 · acceptance pass (opencode 53 passed, zygo-launch 224 passed, stub.rs rg no match, scanners_find_a_planted_marker passed) · PR #259 |
 
 ## Log
@@ -477,3 +476,6 @@ Session text (T, SX nodes):
 | 2026-11-28 | FX-32 DONE; P/Q/PW/ST note text may hold `)` up to its own `)*`, real date shape; one review, 5 findings fixed, F4 refuted (no §19 rule against code spans); MS-21 row archived · PR #255 |
 | 2026-11-28 | FX-9 DONE; OpenCode item 8 stored per session id at the first main request; one review, F1-F2 and F5-F8 fixed, F9 author's call (an in-launch switch is not a resume); FX-33 added (unread line and foreign resume note break the OpenCode cache); WD-19 row archived · PR #256 |
 | 2026-11-28 | FX-34 DONE; FX-9 made stub-agent link zygo_hooks (9.2 MB to 259 MB; CI ubuntu 16 to 55 min); real-hook path moved to a stub-hook binary; review F2, F3 fixed (c2853600), F1 refuted (a size or symbol guard is a new check without a citation), author's call; FX-13 row archived · PR #259 |
+| 2026-11-28 | FX-33 DONE; author's call: the OpenCode unread line goes in the user turn through the plugin's chat.message (synthetic part), not the per-request system text, so the cached system blocks stay byte-equal (§10.4, T§11); FX-23 row archived · PR #260 |
+| 2026-11-28 | FX-33 author's call: an OpenCode turn end wakes the member by M§7.3 for unannounced mail, recorded only when Woken; the message line is only for the recorded main session, so a child never gets it whatever the event order |
+| 2026-11-28 | FX-33 review: F1 (busy member never told of mail), F3 (stale comment) and the Gap defect (ids marked seen on a skipped wake) fixed; F2 refuted: the title request seeing the line breaks no spec requirement |
