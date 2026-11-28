@@ -98,7 +98,7 @@ No hook puts mail text into the context. A member with `[features] mail` off get
 
 1. Read `@zygo-pane` of the target pane and check that it equals the target pane key, and `@zygo-ws` of the session (AU63). A mismatch: no wake.
 2. `send-keys -t <pane id> -l "zygo: you have mail; read it with mail_read"`, then `send-keys -t <pane id> Enter` (two calls; the text is fixed, M-C5).
-3. When both calls succeeded, record `woken_at` for the pane in `mail/<key>/wake.json` under the wake lock (`mail/<key>/wake.lock`). A wake that fails or is stopped before this step records nothing, so the next wake types the text again: a duplicate, never a lost wake. A second wake within `[mail] wake_gap = "30s"` sends nothing: the first one already queued a turn.
+3. When both calls succeeded, record `woken_at` for the pane in `mail/<key>/wake.json` under the wake lock (`mail/<key>/wake.lock`). A wake that fails or is stopped before this step records nothing, so the next wake types the text again: a duplicate, never a lost wake. A `woken_at` that cannot be written after a sent text gives one `errors.log` line, and the wake counts as sent; the next wake inside `wake_gap` then types the text again, in the same direction. A second wake within `[mail] wake_gap = "30s"` sends nothing: the first one already queued a turn.
 
 The idle rule and `wake_gap` use one clock, the time of the wake, for all three AU26 rules.
 

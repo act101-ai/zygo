@@ -304,15 +304,21 @@ impl Probe for CountProbe {
     }
 }
 
-/// #23: the M§7.3 wake of each key with a `wake_gap` that does not parse, an idle member and a pane that takes no
-/// text ([`StubMux`] with no record).
+/// #23: two M§7.3 wakes of each key with a `wake_gap` that does not parse and an idle member: the first through a
+/// pane that takes the text ([`StubMux`] with a record), so the wake reaches the `woken_at` write, which M§7.3 does
+/// only after the text and the Enter (FX-35 F4); the second through a pane that takes no text ([`StubMux`] with no
+/// record). With `wake.json` a folder, the first wake types the text and its write fails, so no `woken_at` holds the
+/// second one back: it is tried and its send fails (a duplicate wake is the accepted direction, M§7.3 step 3).
 struct FailWake;
 impl Wake for FailWake {
     fn wake(&self, paths: &Paths, ws: &Workspace, keys: &[String], cfg: &MailConfig, now: SystemTime) {
         let cfg = MailConfig { wake_gap: "soon".into(), ..cfg.clone() };
         for k in keys {
-            let mux = StubMux { key: k.clone(), typed: None };
-            after_send_with(paths, ws, std::slice::from_ref(k), &cfg, &mux, &Idle { idle: true, now }, now);
+            let typed: Typed = Arc::default();
+            for mux in [StubMux { key: k.clone(), typed: Some(typed.clone()) }, StubMux { key: k.clone(), typed: None }] {
+                after_send_with(paths, ws, std::slice::from_ref(k), &cfg, &mux, &Idle { idle: true, now }, now);
+            }
+            assert_eq!(typed.lock().unwrap().len(), 1, "the first wake typed its text once");
         }
     }
 }
@@ -1933,7 +1939,7 @@ fn no_mail_content_after_the_scenarios() {
     assert_eq!(sync_in(&a).pushed, 2);
 
     // #23 (a wake that fails, after B's import): a `wake_gap` that does not parse, a `wake.json` that cannot be
-    // written, and a pane that takes no text each log one line.
+    // written (after a sent text, FX-35 F4), and a pane that takes no text each log one line.
     b.store(WS_ID).update(Duration::from_secs(5), &mut |w| {
         w.members.get_mut(BOB).unwrap().zygo_session = Some("sbob".into());
         Ok(())
