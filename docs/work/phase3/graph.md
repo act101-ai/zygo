@@ -198,7 +198,7 @@ Session text (T, SX nodes):
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | DONE | implementation | e887478a^..a9ed0c7b · acceptance pass (mail_sync_forget 9 passed, admin 31 passed) · PR #217 |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | TODO | mechanical | — |
 | OS-47 | Runner view cost on large inputs, output unchanged | — | DONE | judgment | f1d69ae0 · d56988df · c37c66d4 · acceptance pass (runner_fast_path 5, zygo-results, shaping 36, shaping_fixtures 22, shaping_hook 29) · PR #206 |
-| OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45, OS-47 | TODO | lookup | — |
+| OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45, OS-47 | DONE | lookup | 5 passed, release, 01855abf · PR #239 |
 | WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | DONE | implementation | 15ea1e5b^..9a264b0a · acceptance pass (definition_hooks 11 passed) · PR #218 |
 | WD-21 | PR1 live check (operator): two pool members send two logins | WD-14, ML-19 | TODO | mechanical | — |
 | WD-22 | PR2 live check (operator): per-session settings act the same on a pool directory | WD-14, WD-21 | TODO | mechanical | — |
@@ -208,7 +208,6 @@ Session text (T, SX nodes):
 | WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | DONE | mechanical | cff91852^..b884b0b7 · acceptance pass (docs_readme_and_passthrough_md 1 passed, cli_surface 21 passed) · PR #228 |
 | SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | DONE | implementation | 1b49483c^..7b96c5b5 · acceptance pass (builtin 13, check-premises ok) · PR #227 |
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | DONE | mechanical | fc991ad1^..7018a2f3 · acceptance pass (builtin 13, check-premises ok) · PR #229 |
-| OS-46 | Bound the hook's usage-store wait per Bash call | — | DONE | judgment | 75339a21 · d6be5653 · c727ff0e · 68f8e48c · acceptance pass (busy_wait_total/open_bounded_total 7, rollback_journal 1, zygo-usage, zygo-hooks, readbacks) · PR #205 |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | DONE | judgment | 87a292d6^..da0207f1 · acceptance pass (mail_lifecycle 23 passed) · PR #219 |
@@ -474,3 +473,4 @@ Session text (T, SX nodes):
 | 2026-11-27 | FX-31 DONE; author's call: a withdrawal stops every pinned member, and a gone or unread pin stops only a launch that does the pinned read; review F1-F6 fixed; OS-45 row archived · PR #238 |
 | 2026-11-27 | Correction of the FX-28 re-plan line ("CLI lines start with zygo:"): only the two no-workspace lines of mail workspace_of get the prefix, at their source; finish and the other verbs do not change, so N42 holds (FX-28 review round 4 F3, author's call) |
 | 2026-11-27 | FX-28 DONE: rule B (send holds mail/lock shared; forget counts again under it and refuses on a higher count); review round 4 F1-F4 fixed; author's calls: step 10 fixed at the source line (workspace_of), N42 kept; F4 recorded as the FX-24 same-user limit · PR #234 |
+| 2026-11-27 | OS-38 DONE: 5 passed, release 01855abf, operator machine; p95 vs O§8.5: hook on 13.20/off 13.10 ms (+50); 4 MiB max json/cargo-metadata 54.03 ms (≤ 100); write lock 105.71 ms (≤ 150; 159.27 before OS-45); 64 KiB max gotest/passing-verbose 1.16 ms (≤ 5); OS-46 row archived · PR #239 |
