@@ -399,25 +399,78 @@ fn reply(id: char, kind: &str, body: &[u8]) -> Vec<u8> {
     r
 }
 
+/// The `info` reply of one object: its header only.
+fn info(id: char, kind: &str, size: usize) -> Vec<u8> { format!("{} {kind} {size}\n", hex(id)).into_bytes() }
+
+/// The lines `sent` as bytes.
+fn lines(sent: &[String]) -> Vec<Vec<u8>> { sent.iter().map(|l| format!("{l}\n").into_bytes()).collect() }
+
 #[test]
 fn record_blob_reads_and_counts_each_tree_once() {
     let tree = tree_ab();
-    // tree + A + B = exactly 16 MiB; a second count of the tree goes past it.
-    let a = vec![b'x'; 16 * 1024 * 1024 - tree.len() - 1];
+    let (a, b) = (vec![b'x'; 64 * 1024], b"y".to_vec());
     let mut canned = reply('c', "tree", &tree);
+    canned.extend(info('a', "blob", a.len()));
     canned.extend(reply('a', "blob", &a));
-    canned.extend(reply('b', "blob", b"y"));
-    // 3 objects read; 2,045 more fit in 2,048, and the next is too much.
-    canned.extend(format!("{} commit 0\n\n", hex('d')).repeat(2_045).into_bytes());
+    canned.extend(info('b', "blob", b.len()));
+    canned.extend(reply('b', "blob", &b));
+    // tree + A + B + this commit = exactly 16 MiB; a second count of the tree goes past it.
+    canned.extend(reply('d', "commit", &vec![b'z'; 16 * 1024 * 1024 - tree.len() - a.len() - b.len()]));
+    canned.extend(info('d', "commit", 1));
     let Rig { mut g, log, .. } = rig(Vec::new(), canned);
     assert_eq!(g.record_blob("r", "A.md"), Ok(Blob::Data(a)));
-    assert_eq!(g.record_blob("r", "B.md"), Ok(Blob::Data(b"y".to_vec())));
-    assert_eq!(&log.borrow().sent[..3], [b"r:docs/decisions\n".to_vec(), format!("{}\n", hex('a')).into_bytes(),
-        format!("{}\n", hex('b')).into_bytes()]);
+    assert_eq!(g.record_blob("r", "B.md"), Ok(Blob::Data(b)));
+    let (ha, hb) = (hex('a'), hex('b'));
+    let sent = lines(&["contents r:docs/decisions".into(), format!("info {ha}"), format!("contents {ha}"), format!("info {hb}"),
+        format!("contents {hb}")]);
+    assert_eq!(log.borrow().sent, sent);
+    assert_eq!(g.commit("d"), Ok(Some(hex('d'))));
+    assert_eq!(g.commit("d"), Err(GitFail::TooMuch));
+}
+
+#[test]
+fn info_and_contents_requests_each_count_toward_2048() {
+    let mut canned = reply('c', "tree", &tree_ab());
+    canned.extend(info('a', "blob", 1));
+    canned.extend(reply('a', "blob", b"x"));
+    // 3 requests sent; 2,045 more fit in 2,048, and the next is too much.
+    canned.extend(format!("{} commit 0\n\n", hex('d')).repeat(2_045).into_bytes());
+    let Rig { mut g, log, .. } = rig(Vec::new(), canned);
+    assert_eq!(g.record_blob("r", "A.md"), Ok(Blob::Data(b"x".to_vec())));
     for _ in 0..2_045 {
         assert_eq!(g.commit("d"), Ok(Some(hex('d'))));
     }
     assert_eq!(g.commit("d"), Err(GitFail::TooMuch));
+    assert_eq!(log.borrow().sent.len(), 2_048);
+}
+
+#[test]
+fn record_blob_over_64_kib_is_too_large_with_no_contents_request() {
+    let b = vec![b'y'; 64 * 1024];
+    let mut canned = reply('c', "tree", &tree_ab());
+    canned.extend(info('a', "blob", 64 * 1024 + 1));
+    canned.extend(info('b', "blob", b.len()));
+    canned.extend(reply('b', "blob", &b));
+    let Rig { mut g, log, .. } = rig(Vec::new(), canned);
+    assert_eq!(g.record_blob("r", "A.md"), Ok(Blob::TooLarge));
+    assert_eq!(g.record_blob("r", "B.md"), Ok(Blob::Data(b)));
+    let (ha, hb) = (hex('a'), hex('b'));
+    let sent = lines(&["contents r:docs/decisions".into(), format!("info {ha}"), format!("info {hb}"), format!("contents {hb}")]);
+    assert_eq!(log.borrow().sent, sent);
+}
+
+#[test]
+fn record_blob_reads_each_blob_once() {
+    let mut canned = reply('c', "tree", &tree_ab());
+    canned.extend(info('a', "blob", 1));
+    canned.extend(reply('a', "blob", b"x"));
+    canned.extend(reply('d', "tree", &tree_ab()));
+    let Rig { mut g, log, .. } = rig(Vec::new(), canned);
+    assert_eq!(g.record_blob("r", "A.md"), Ok(Blob::Data(b"x".to_vec())));
+    assert_eq!(g.record_blob("s", "A.md"), Ok(Blob::Data(b"x".to_vec())));
+    // The second rev's tree names the same blob: only the tree is asked.
+    assert_eq!(log.borrow().sent.len(), 4);
+    assert_eq!(log.borrow().sent[3], b"contents s:docs/decisions\n".to_vec());
 }
 
 #[test]
@@ -437,9 +490,13 @@ fn record_blob_id_that_is_not_a_blob_is_bad_output() {
 #[test]
 fn record_blob_tree_bytes_count_toward_16_mib() {
     let tree = tree_ab();
-    let mut canned = reply('c', "tree", &tree);
-    canned.extend(format!("{} blob {}\n", hex('a'), 16 * 1024 * 1024 - tree.len() + 1).into_bytes());
+    // A commit, the tree and a 64 KiB blob: one byte past 16 MiB, so the blob's contents are too much.
+    let mut canned = reply('d', "commit", &vec![b'z'; 16 * 1024 * 1024 - tree.len() - 64 * 1024 + 1]);
+    canned.extend(reply('c', "tree", &tree));
+    canned.extend(info('a', "blob", 64 * 1024));
+    canned.extend(info('a', "blob", 64 * 1024));
     let Rig { mut g, log, .. } = rig(Vec::new(), canned);
+    assert_eq!(g.commit("d"), Ok(Some(hex('d'))));
     assert_eq!(g.record_blob("r", "A.md"), Err(GitFail::TooMuch));
     assert_eq!(log.borrow().drops, 1);
 }

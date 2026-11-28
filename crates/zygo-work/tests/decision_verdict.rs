@@ -707,6 +707,20 @@ fn keep_reads_after_merge_base_rev_list_and_log_get_their_own_bound() {
     assert_eq!(at, BTreeSet::from([ms(0), ms(3_000), ms(4_500)]));
 }
 
+#[test]
+fn record_blob_over_64_kib_is_malformed_with_no_body_read() {
+    let fx = fixture();
+    let mut big = record('R', &[]);
+    big.push_str(&"x".repeat(6 * 1024 * 1024 - big.len()));
+    // An operator commit (no `Zygo-Session:`): step 9 does not read it, so step 7 gives the one problem.
+    let h = commit(&fx.n, "add a 6 MiB record", &[(&path('R'), Some(&big))]);
+    let (mut g, _, reads) = clocked_git(&fx.w, Duration::ZERO);
+    let p = check_keep(&req(3, Some(&h), None, Some(vec![recorded("R3-1", Class::None, 'R')])), &mut g);
+    assert_eq!(p, vec![format!("R3-1: {} is not a valid record at head", id('R'))]);
+    let most = reads.borrow().iter().map(|r| r.1).max();
+    assert!(most.is_some_and(|n| n <= 64 * 1024), "largest read_exact: {most:?}");
+}
+
 // ---- a stub VerdictGit: the limits and git failures without real git ----
 
 const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
