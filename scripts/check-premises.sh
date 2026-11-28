@@ -152,8 +152,10 @@ EOF_PATHS
       # Node MS-25 Acceptance: "a failed SP row names the spec change or work node that answers it".
       SP*) sp_answered "$id" "$evidence" ||
         fail "$id: failed, but the evidence names no work node (docs/work/<phase>/nodes/<id>.md) and no spec change (an S§ section whose mail-sync change-log line names $id)" ;;
-      # Session text design T§12.1 items 3 and 4 (node SX-10 Acceptance): the dated P3-15 note in $SSPEC.
-      ST*) grep -Eq "\*\(Note [0-9]{4}-[0-9]{2}-[0-9]{2}, P3-15, $id: [^)]*\)\*" "$SSPEC" 2>/dev/null ||
+      # Session text design T§12.1 items 3 and 4 (node SX-10 Acceptance, review F5): the dated P3-15 note in T§12.1
+      # of $SSPEC (from "### 12.1 " to "### 12.2 "), with a real date shape; its text may hold ")".
+      ST*) awk '/^### 12\.1 /{f=1;next} /^### 12\.2 /{f=0} f' "$SSPEC" 2>/dev/null |
+        grep -Eq "\*\(Note [0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01]), P3-15, $id: .*\)\*" ||
         fail "$id: failed, but the session-text spec has no dated note *(Note YYYY-MM-DD, P3-15, $id: …)*" ;;
       P*) echo "$S19" | grep -Eq "$pat" || fail "$id: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
       Q*) echo "$S19A" | grep -Eq "$pat" || fail "$id: failed, but spec §19a has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
