@@ -2119,13 +2119,13 @@ fn rec_main(id: &str) -> MemberRecord {
 }
 
 /// The member keys of each turn-end wake that a hook asked for (M§7.3; FX-33 review F1), and the outcome that each
-/// gets (`Woken` unless a test sets another).
+/// gets (`Woken` unless a test sets another); and the session folders of each wake that a `stop` scheduled (FX-35 F4).
 #[derive(Clone)]
-struct Wakes(std::sync::Arc<Mutex<(Vec<Vec<String>>, zygo_workspace::mail::wake::Outcome)>>);
+struct Wakes(std::sync::Arc<Mutex<(Vec<Vec<String>>, zygo_workspace::mail::wake::Outcome, Vec<PathBuf>)>>);
 
 impl Default for Wakes {
     fn default() -> Self {
-        Wakes(std::sync::Arc::new(Mutex::new((Vec::new(), zygo_workspace::mail::wake::Outcome::Woken))))
+        Wakes(std::sync::Arc::new(Mutex::new((Vec::new(), zygo_workspace::mail::wake::Outcome::Woken, Vec::new()))))
     }
 }
 
@@ -2134,11 +2134,16 @@ impl workspace::TurnWake for Wakes {
         &self, _: &Paths, _: &zygo_workspace::state::Workspace, key: &str, _: &zygo_config::MailConfig,
         _: std::time::SystemTime, try_no: u8,
     ) -> zygo_workspace::mail::wake::Outcome {
-        // A turn end is try 1 (M§7.3; FX-35).
+        // The wake that a turn end schedules is try 1 (M§7.3; FX-35).
         assert_eq!(try_no, 1);
         let mut g = self.0.lock().unwrap();
         g.0.push(vec![key.to_string()]);
         g.1.clone()
+    }
+
+    fn schedule(&self, _: &zygo_workspace::state::Workspace, session_dir: &Path) -> anyhow::Result<()> {
+        self.0.lock().unwrap().2.push(session_dir.to_path_buf());
+        Ok(())
     }
 }
 
@@ -2148,6 +2153,21 @@ impl Wakes {
     }
     fn answer(&self, o: zygo_workspace::mail::wake::Outcome) {
         self.0.lock().unwrap().1 = o;
+    }
+    fn scheduled(&self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.0.lock().unwrap().2)
+    }
+}
+
+/// The end of an OpenCode turn (FX-35 F4): the `stop` call, which only schedules the wake with tmux, then the
+/// `mail-wake` job of try 1 that tmux runs when one was scheduled.
+fn turn_end(f: &Fx, w: &Wakes) {
+    assert_eq!(ws_wake(f, w, "stop", oc("ses_A")).unwrap(), None);
+    let s = w.scheduled();
+    assert!(s.len() <= 1, "{s:?}");
+    if !s.is_empty() {
+        assert_eq!(s[0], f.dir.root);
+        assert_eq!(ws_wake(f, w, "mail-wake", json!({"try": 1})).unwrap(), None);
     }
 }
 
@@ -2184,20 +2204,21 @@ fn opencode_turn_end_wake_that_is_not_sent_keeps_the_mail_unannounced() {
         let w = Wakes::default();
         let o = fx(Agent::OpenCode);
         mail_on(&o);
-        ws_state(&o, Phase::Up, rec_main("ses_A"));
+        let _pid = live(&o);
+        ws_state(&o, Phase::Up, rec_live(Agent::OpenCode));
         ws_wake(&o, &w, "prompt", oc("ses_A")).unwrap();
         put_new(&o, 2); // mail comes after the turn's message
         // The turn ends within `wake_gap` of an earlier wake (or the member is not idle yet, ...): no wake is sent.
         w.answer(first);
-        ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+        turn_end(&o, &w);
         assert_eq!(w.taken(), vec![vec![KEY.to_string()]], "{case}");
         // The ids stay unannounced: the next turn end asks again, and this one wakes.
         w.answer(Outcome::Woken);
         ws_wake(&o, &w, "prompt", oc("ses_A")).unwrap();
-        ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+        turn_end(&o, &w);
         assert_eq!(w.taken(), vec![vec![KEY.to_string()]], "{case}");
         // Once woken, the same mail gives no more wake.
-        ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+        turn_end(&o, &w);
         assert!(w.taken().is_empty(), "{case}");
     }
 }
@@ -2236,28 +2257,29 @@ fn opencode_turn_end_wakes_once_for_mail_that_came_during_the_turn() {
     let w = Wakes::default();
     let o = fx(Agent::OpenCode);
     mail_on(&o);
-    ws_state(&o, Phase::Up, rec_main("ses_A"));
+    let _pid = live(&o);
+    ws_state(&o, Phase::Up, rec_live(Agent::OpenCode));
     // The turn starts with no mail; the message call announces nothing.
     assert_eq!(ws_wake(&o, &w, "message", oc("ses_A")).unwrap(), None);
     ws_wake(&o, &w, "prompt", oc("ses_A")).unwrap();
     put_new(&o, 2); // mail comes while the member is busy
-    assert_eq!(ws_wake(&o, &w, "stop", oc("ses_A")).unwrap(), None);
+    turn_end(&o, &w);
     assert_eq!(bt(&o), (false, 0)); // the stop clears first, so the wake sees an idle member
     assert_eq!(w.taken(), vec![vec![KEY.to_string()]]);
     // Exactly once: the next turn end with the same mail does not wake again.
     ws_wake(&o, &w, "prompt", oc("ses_A")).unwrap();
-    ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+    turn_end(&o, &w);
     assert!(w.taken().is_empty());
     // One more message during a later turn: one more wake.
     ws_wake(&o, &w, "prompt", oc("ses_A")).unwrap();
     let new = put_new(&o, 3);
-    ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+    turn_end(&o, &w);
     assert_eq!(w.taken(), vec![vec![KEY.to_string()]]);
     // All mail read during the turn (moved out of `new/`): no wake.
     for e in entries(&new) {
         fs::remove_file(new.join(e)).unwrap();
     }
-    ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+    turn_end(&o, &w);
     assert!(w.taken().is_empty());
 }
 
@@ -2268,14 +2290,15 @@ fn opencode_turn_end_does_not_wake_without_new_mail() {
     // No mail at all.
     let o = fx(Agent::OpenCode);
     mail_on(&o);
-    ws_state(&o, Phase::Up, rec_main("ses_A"));
-    ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+    let _pid = live(&o);
+    ws_state(&o, Phase::Up, rec_live(Agent::OpenCode));
+    turn_end(&o, &w);
     assert!(w.taken().is_empty());
     // Mail that the turn's message already announced: the line reached the plugin, which then sent `message-seen`.
     put_new(&o, 2);
     assert_eq!(ws_wake(&o, &w, "message", oc("ses_A")).unwrap(), Some(L2.to_string()));
     assert_eq!(ws_wake(&o, &w, "message-seen", oc("ses_A")).unwrap(), None);
-    ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+    turn_end(&o, &w);
     assert!(w.taken().is_empty());
     // `draining` or `stopping`: no wake, so `down` does not wait for mail (M§9).
     for phase in [Phase::Draining, Phase::Stopping] {
@@ -2283,7 +2306,7 @@ fn opencode_turn_end_does_not_wake_without_new_mail() {
         mail_on(&d);
         ws_state(&d, phase, rec_main("ses_A"));
         put_new(&d, 2);
-        ws_wake(&d, &w, "stop", oc("ses_A")).unwrap();
+        turn_end(&d, &w);
         assert!(w.taken().is_empty(), "{phase:?}");
         assert_eq!(bt(&d), (false, 0), "{phase:?}");
     }
@@ -2291,7 +2314,7 @@ fn opencode_turn_end_does_not_wake_without_new_mail() {
     let g = fx(Agent::OpenCode);
     ws_state(&g, Phase::Up, rec_main("ses_A"));
     put_new(&g, 2);
-    ws_wake(&g, &w, "stop", oc("ses_A")).unwrap();
+    turn_end(&g, &w);
     assert!(w.taken().is_empty());
     // Claude Code: M§7.1 delivers at its Stop; a stop that does not block does not wake.
     let c = fx(Agent::ClaudeCode);
@@ -2324,9 +2347,14 @@ struct StatusServer {
 
 impl StatusServer {
     fn start(f: &Fx, status: Option<zygo_proxy::client::SessionStatus>) -> StatusServer {
+        StatusServer::start_in(&f.dir, status)
+    }
+
+    /// `start` for the session folder `dir`.
+    fn start_in(dir: &SessionDir, status: Option<zygo_proxy::client::SessionStatus>) -> StatusServer {
         use std::io::{Read as _, Write as _};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        fs::write(f.dir.url(), format!("http://127.0.0.1:{}/", listener.local_addr().unwrap().port())).unwrap();
+        fs::write(dir.url(), format!("http://127.0.0.1:{}/", listener.local_addr().unwrap().port())).unwrap();
         let reply = std::sync::Arc::new(Mutex::new(status.map(|s| serde_json::to_string(&s).unwrap())));
         let r = reply.clone();
         std::thread::spawn(move || {
@@ -2490,6 +2518,11 @@ impl workspace::TurnWake for RealWake {
     ) -> zygo_workspace::mail::wake::Outcome {
         workspace::turn_wake_with(paths, ws, key, cfg, now, &self.mux, &self.defers, try_no)
     }
+
+    /// The `stop` hook's scheduling as `TmuxTurnWake` does it: try 1 with no delay, through the same deferral.
+    fn schedule(&self, ws: &zygo_workspace::state::Workspace, session_dir: &Path) -> anyhow::Result<()> {
+        zygo_workspace::mail::wake::Defer::defer(&self.defers, ws, session_dir, Duration::ZERO, 1)
+    }
 }
 
 /// The clock of the hook's mail sync seams, fixed at `.0`.
@@ -2547,8 +2580,14 @@ fn opencode_turn_end_wake_with_the_real_idle_rule_reaches_the_member_once() {
     put_new(&o, 2); // mail comes while the member is busy
     // The last model request of the turn ended at T, and the plugin's `stop` call runs at T.
     let _srv = StatusServer::start(&o, Some(ended_at(T)));
+    // The stop only schedules try 1 with tmux, with no delay and no tmux call of the wake (FX-35 F4).
     assert_eq!(ws_at(&o, &w, "stop", oc("ses_A"), at(T)).unwrap(), None);
     assert_eq!(bt(&o), (false, 0));
+    assert!(w.mux.taken().is_empty());
+    assert_eq!(mail_seen(&o), None);
+    assert_eq!(w.defers.taken(), vec![(o.dir.root.clone(), Duration::ZERO, 1)]);
+    // Try 1, which tmux runs at once: the quiet window, so try 2 after 11 s.
+    assert_eq!(ws_at(&o, &w, "mail-wake", json!({"try": 1}), at(T)).unwrap(), None);
     assert!(w.mux.taken().is_empty());
     assert_eq!(mail_seen(&o), None);
     assert_eq!(w.defers.taken(), vec![(o.dir.root.clone(), Duration::from_secs(11), 2)]);
@@ -2557,7 +2596,7 @@ fn opencode_turn_end_wake_with_the_real_idle_rule_reaches_the_member_once() {
     assert_eq!(w.mux.taken(), WAKE_SENDS);
     assert_eq!(mail_seen(&o), Some(new_ids(&o)));
     assert_eq!(new_ids(&o).len(), 2);
-    // A second retry: the ids are announced, no keys.
+    // A second retry after the wake that typed the text: the ids are announced, no keys and no deferral.
     assert_eq!(ws_at(&o, &w, "mail-wake", json!({"try": 3}), at(T + 12)).unwrap(), None);
     assert!(w.mux.taken().is_empty());
     assert!(w.defers.taken().is_empty());
@@ -2569,7 +2608,8 @@ fn opencode_message_line_not_delivered_leaves_the_mail_unannounced() {
     let _s = serial();
     let o = fx(Agent::OpenCode);
     mail_on(&o);
-    ws_state(&o, Phase::Up, rec_main("ses_A"));
+    let _pid = live(&o);
+    ws_state(&o, Phase::Up, rec_live(Agent::OpenCode));
     put_new(&o, 2);
     let offered = o.dir.root.join("mail-offered.json");
     // The plugin's timer ends the call, or the hook exits non-zero: no `message-seen` follows.
@@ -2578,7 +2618,7 @@ fn opencode_message_line_not_delivered_leaves_the_mail_unannounced() {
     assert_eq!(fs::metadata(&offered).unwrap().permissions().mode() & 0o777, 0o600);
     // The turn end still finds the ids unannounced.
     let w = Wakes::default();
-    ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+    turn_end(&o, &w);
     assert_eq!(w.taken(), vec![vec![KEY.to_string()]]);
     fs::remove_file(o.dir.root.join("mail-seen.json")).unwrap(); // the recording wake said `Woken`
     // The next user message gets the line again.
@@ -2591,7 +2631,7 @@ fn opencode_message_line_not_delivered_leaves_the_mail_unannounced() {
     assert_eq!(ws(&o, "message-seen", oc("ses_A")).unwrap(), None);
     assert_eq!(mail_seen(&o), Some(new_ids(&o)));
     assert!(!offered.exists());
-    ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+    turn_end(&o, &w);
     assert!(w.taken().is_empty());
     // A `message-seen` with no offered file changes nothing.
     assert_eq!(ws(&o, "message-seen", oc("ses_A")).unwrap(), None);
@@ -2658,20 +2698,20 @@ impl Drop for LockHolder {
     }
 }
 
-/// The `stop` event of `o` at `now` with the production turn-end wake, in a thread: the elapsed time, or a panic when
-/// it has not returned after `guard` (a wait with no bound).
-fn timed_stop(
-    o: &Fx, now: std::time::SystemTime, guard: Duration,
+/// The hook `event` with `payload` of `o` at `now` with the production hook wake, in a thread: the elapsed time, the
+/// sends and the deferrals, or a panic when it has not returned after `guard` (a wait with no bound).
+fn timed_event(
+    o: &Fx, event: &str, payload: Value, now: std::time::SystemTime, guard: Duration,
 ) -> (Duration, Vec<String>, Vec<(PathBuf, Duration, u8)>) {
     std::thread::scope(|s| {
         let (tx, rx) = mpsc::channel();
         s.spawn(move || {
             let w = RealWake::default();
             let start = Instant::now();
-            ws_at(o, &w, "stop", oc("ses_A"), now).unwrap();
+            ws_at(o, &w, event, payload, now).unwrap();
             let _ = tx.send((start.elapsed(), w.mux.taken(), w.defers.taken()));
         });
-        rx.recv_timeout(guard).unwrap_or_else(|_| panic!("the stop hook waited with no bound"))
+        rx.recv_timeout(guard).unwrap_or_else(|_| panic!("the {event} hook waited with no bound"))
     })
 }
 
@@ -2688,23 +2728,28 @@ fn bound_fixture() -> (Fx, fs::File, LockHolder, StatusServer) {
     (o, pid, lock, srv)
 }
 
-#[test] // FX-35: M-F3, M§7.3 "Waits" with no clock: the hook's bounds are finite and are the AU56 bound
+#[test] // FX-35: M-F3, F4, M§7.3 "Waits" with no clock: the stop only schedules; the job's bounds are finite
 fn opencode_stop_hook_uses_finite_bounds() {
     let _s = serial();
-    // The hook's status and lock bound is the AU56 lock bound, 1 s (M§7.3 "Waits").
+    // The job's status and lock bound is the AU56 lock bound, 1 s (M§7.3 "Waits").
     assert_eq!(zygo_workspace::mail::wake::HOOK_BOUND, activity::LOCK_BOUND);
     assert_eq!(zygo_workspace::mail::wake::HOOK_BOUND, Duration::from_secs(1));
     let (o, _pid, _lock, srv) = bound_fixture();
-    // A status that never answers: the read ends at its bound, the member counts as busy, nothing is sent or deferred.
-    // A read with no bound never returns; the 60 s guard only reports that hang and measures nothing.
-    let (_, sends, defers) = timed_stop(&o, at(T), Duration::from_secs(60));
+    // The stop: with the lock held and the status hung, it neither reads the status nor takes the lock nor calls tmux
+    // for the wake; it schedules try 1. The guards below only report a hang and measure nothing.
+    let (_, sends, defers) = timed_event(&o, "stop", oc("ses_A"), at(T), Duration::from_secs(60));
+    assert!(sends.is_empty());
+    assert_eq!(defers, vec![(o.dir.root.clone(), Duration::ZERO, 1)]);
+    // Try 1 with a status that never answers: the read ends at its bound, the member counts as busy.
+    let try1 = || json!({"try": 1});
+    let (_, sends, defers) = timed_event(&o, "mail-wake", try1(), at(T), Duration::from_secs(60));
     assert!(sends.is_empty() && defers.is_empty());
     assert_eq!(mail_seen(&o), None);
     assert!(errors(&o).is_empty(), "{:?}", errors(&o));
     // An idle status and a lock held by another process: the lock wait ends at its bound with the failed-wake line;
     // a lock wait with no bound (the sender's `Duration::MAX`) never returns.
     srv.set(Some(ended_at(T - 100)));
-    let (_, sends, defers) = timed_stop(&o, at(T), Duration::from_secs(60));
+    let (_, sends, defers) = timed_event(&o, "mail-wake", try1(), at(T), Duration::from_secs(60));
     assert!(sends.is_empty() && defers.is_empty());
     assert_eq!(mail_seen(&o), None);
     let e = errors(&o);
@@ -2712,20 +2757,25 @@ fn opencode_stop_hook_uses_finite_bounds() {
     assert!(e[0].ends_with("mail wake kaaaaaaaa: wake.lock not taken"), "{e:?}");
 }
 
-#[test] // FX-35 acceptance: M-F3, M§7.3 "Waits", module contract of the hook
+#[test] // FX-35 acceptance: M-F3, F4, M§7.3 "Waits", module contract of the hook
 #[ignore = "timing: stop hook wait bounds"]
 fn opencode_stop_hook_waits_within_the_bounds() {
     let _s = serial();
     // `wake.lock` held by another process and a proxy status that does not answer.
     let (o, _pid, _lock, srv) = bound_fixture();
-    let (took, sends, defers) = timed_stop(&o, at(T), Duration::from_secs(10));
+    // The stop itself: one tmux call at most (here the recording deferral), far under the plugin's 10 s timer.
+    let (took, sends, _) = timed_event(&o, "stop", oc("ses_A"), at(T), Duration::from_secs(10));
+    assert!(took < Duration::from_secs(1), "{took:?}");
+    assert!(sends.is_empty());
+    // The job of try 1: the status read ends at 1 s.
+    let (took, sends, defers) = timed_event(&o, "mail-wake", json!({"try": 1}), at(T), Duration::from_secs(10));
     assert!(took < Duration::from_secs(2), "{took:?}");
     assert!(sends.is_empty() && defers.is_empty());
     assert_eq!(mail_seen(&o), None);
     assert!(errors(&o).is_empty(), "{:?}", errors(&o)); // a status that cannot be read is busy (AU26)
     // The status answers idle, the lock stays held: the wake fails after the 1 s lock bound with one line.
     srv.set(Some(ended_at(T - 100)));
-    let (took, sends, defers) = timed_stop(&o, at(T), Duration::from_secs(10));
+    let (took, sends, defers) = timed_event(&o, "mail-wake", json!({"try": 1}), at(T), Duration::from_secs(10));
     assert!(took < Duration::from_secs(2), "{took:?}");
     assert!(sends.is_empty() && defers.is_empty());
     assert_eq!(mail_seen(&o), None);
@@ -2734,7 +2784,7 @@ fn opencode_stop_hook_waits_within_the_bounds() {
     assert!(e[0].ends_with("mail wake kaaaaaaaa: wake.lock not taken"), "{e:?}");
 }
 
-#[test] // FX-35: M§7.3 `mail-wake` for a Claude Code member, M§9, the try check
+#[test] // FX-35: M§7.3 `mail-wake` for a Claude Code member, M§9, the try check, F1 (a retry after a sent wake)
 fn claude_code_mail_wake_wakes_only_with_unread_mail() {
     let _s = serial();
     let c = fx(Agent::ClaudeCode);
@@ -2745,7 +2795,8 @@ fn claude_code_mail_wake_wakes_only_with_unread_mail() {
     let _srv = StatusServer::start(&c, Some(ended_at(T - 100)));
     let w = RealWake::default();
     // An empty `new/`: no wake.
-    fs::create_dir_all(mail_dir(&c.paths, ID).join(KEY).join("new")).unwrap();
+    let new = mail_dir(&c.paths, ID).join(KEY).join("new");
+    fs::create_dir_all(&new).unwrap();
     assert_eq!(ws_at(&c, &w, "mail-wake", json!({"try": 2}), at(T)).unwrap(), None);
     assert!(w.mux.taken().is_empty());
     // One message: one wake.
@@ -2753,14 +2804,26 @@ fn claude_code_mail_wake_wakes_only_with_unread_mail() {
     assert_eq!(ws_at(&c, &w, "mail-wake", json!({"try": 2}), at(T)).unwrap(), None);
     assert_eq!(w.mux.taken(), WAKE_SENDS);
     assert_eq!(bt(&c), (false, 0)); // no change in `activity.json`
-    // Phase `draining` or `stopping`: no wake (after `wake_gap`, so only the phase stops it).
-    for phase in [Phase::Draining, Phase::Stopping] {
+    // F1: a retry inside the gap of that wake defers to its end (T + 30 + 1 s) ...
+    assert_eq!(ws_at(&c, &w, "mail-wake", json!({"try": 3}), at(T + 5)).unwrap(), None);
+    assert!(w.mux.taken().is_empty());
+    assert_eq!(w.defers.taken(), vec![(c.dir.root.clone(), Duration::from_secs(26), 4)]);
+    // ... where the member's turn has read the mail: no text again, no deferral.
+    for e in entries(&new) {
+        fs::remove_file(new.join(e)).unwrap();
+    }
+    assert_eq!(ws_at(&c, &w, "mail-wake", json!({"try": 4}), at(T + 31)).unwrap(), None);
+    assert!(w.mux.taken().is_empty());
+    assert!(w.defers.taken().is_empty());
+    put_new(&c, 1);
+    // Phase `draining`, `stopping` or `down`: no wake (after `wake_gap`, so only the phase stops it).
+    for phase in [Phase::Draining, Phase::Stopping, Phase::Down] {
         set_phase(&store, phase);
         assert_eq!(ws_at(&c, &w, "mail-wake", json!({"try": 3}), at(T + 100)).unwrap(), None);
         assert!(w.mux.taken().is_empty(), "{phase:?}");
     }
     set_phase(&store, Phase::Up);
-    // A try that is not 2 or 3: nothing, and one session-log line.
+    // A try that is not 1 to 4: nothing, and one session-log line.
     let before = slog(&c).len();
     assert_eq!(ws_at(&c, &w, "mail-wake", json!({"try": 7}), at(T + 100)).unwrap(), None);
     assert!(w.mux.taken().is_empty());
@@ -2769,6 +2832,51 @@ fn claude_code_mail_wake_wakes_only_with_unread_mail() {
     assert!(lines[before].contains("workspace hook mail-wake: "), "{lines:?}");
     assert!(w.defers.taken().is_empty());
     assert!(errors(&c).is_empty(), "{:?}", errors(&c));
+}
+
+#[test] // FX-35 F3: a queued retry wakes only the launch it was queued for, and never after the workspace is gone
+fn mail_wake_for_a_launch_that_is_not_live_does_nothing() {
+    let _s = serial();
+    let o = fx(Agent::OpenCode);
+    mail_on(&o);
+    let pid = live(&o);
+    let store = ws_state(&o, Phase::Up, rec_live(Agent::OpenCode));
+    put_new(&o, 2);
+    let _srv = StatusServer::start(&o, Some(ended_at(T - 100)));
+    let w = RealWake::default();
+    // The member was started again in the window: its record names another live session folder.
+    let other = SessionDir::new(o.paths.sessions_dir.join(OTHER));
+    other.create().unwrap();
+    fs::write(other.token(), "t").unwrap();
+    // The new launch is idle, so a retry that woke the live launch would type the text.
+    let _other_srv = StatusServer::start_in(&other, Some(ended_at(T - 100)));
+    let other_pid =
+        fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(other.root.join("pid")).unwrap();
+    // SAFETY: `flock` on a descriptor that `other_pid` owns.
+    assert_eq!(unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&other_pid), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+    drop(pid); // the old launcher ended
+    store
+        .update(S5, &mut |ws| {
+            ws.members.get_mut(KEY).unwrap().zygo_session = Some(OTHER.into());
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(ws_at(&o, &w, "mail-wake", json!({"try": 2}), at(T)).unwrap(), None);
+    assert!(w.mux.taken().is_empty() && w.defers.taken().is_empty());
+    assert_eq!(mail_seen(&o), None);
+    // The record names the queued launch again, and it is live; then the workspace state is removed: nothing.
+    let _pid = live(&o);
+    store
+        .update(S5, &mut |ws| {
+            ws.members.get_mut(KEY).unwrap().zygo_session = Some(SID.into());
+            Ok(())
+        })
+        .unwrap();
+    fs::remove_file(o.paths.workspaces_dir().join(ID).join("workspace.json")).unwrap();
+    assert_eq!(ws_at(&o, &w, "mail-wake", json!({"try": 2}), at(T)).unwrap(), None);
+    assert!(w.mux.taken().is_empty() && w.defers.taken().is_empty());
+    assert_eq!(mail_seen(&o), None);
+    assert!(errors(&o).is_empty(), "{:?}", errors(&o));
 }
 
 #[test] // W§9.4, AU72, AU104; FX-33 acceptance 3

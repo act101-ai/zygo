@@ -28,8 +28,9 @@ const STATUS_BOUND: Duration = Duration::from_secs(2);
 /// The bound of the proxy status read and of the wake lock on a hook path: the OpenCode `stop` call and the
 /// `mail-wake` event (M§7.3 "Waits"; AU56 `activity::LOCK_BOUND`).
 pub const HOOK_BOUND: Duration = Duration::from_secs(1);
-/// The last try of a wake that meets the quiet window: the first wake is try 1, its retries 2 and 3 (M§7.3).
-pub const MAX_TRIES: u8 = 3;
+/// The last try of a wake that meets the quiet window or `wake_gap`: the first wake is try 1, its retries 2 to 4
+/// (M§7.3). Four tries let a chain of quiet window, gap and quiet window again still end in a wake (FX-35 F1).
+pub const MAX_TRIES: u8 = 4;
 const WAKE_FILE: &str = "wake.json";
 const LOCK: &str = "wake.lock";
 /// The `wake_gap` used when the configured one does not parse (M§11 default).
@@ -45,7 +46,7 @@ pub enum Outcome {
     /// The member is idle by AU26 rules 1 and 2 and only the rule 3 time test fails: its last model request ended
     /// less than `REQUEST_QUIET` ago. The value is the rest of the window. Nothing was locked or sent.
     Quiet(Duration),
-    /// A `Quiet` wake for which a retry after the value was queued with tmux ([`settle`]).
+    /// A `Quiet` or `Gap` wake for which a retry after the value was queued with tmux ([`settle`]).
     Deferred(Duration),
     /// The key is not a pane key or not a member, the member's launcher is not live, or its maildir is missing.
     NotLive,
@@ -118,7 +119,7 @@ impl Probe for RealProbe {
 
 /// Wakes the member `key` when it is idle (M§7.3): checks the key, the member and its maildir, applies the AU26 rule
 /// at `probe.now()`, waits at most `lock_bound` for the wake lock of the maildir, checks `wake_gap` at the same time,
-/// `@zygo-ws` and `@zygo-pane`, writes `wake.json`, then types [`WAKE_TEXT`] and Enter. It returns at the first check
+/// `@zygo-ws` and `@zygo-pane`, types [`WAKE_TEXT`] and Enter, then writes `wake.json`. It returns at the first check
 /// that fails; a member in the quiet window gives `Quiet` before the lock. Only `Failed` writes an `errors.log` line.
 pub fn wake(
     store: &Store, ws: &Workspace, mux: &dyn Multiplexer, key: &str, gap: Duration, probe: &dyn Probe,
@@ -168,13 +169,13 @@ pub fn wake(
         Err(Check::Mux(e)) => return fail(&e),
         Err(Check::Line(e)) => return fail(&e),
     };
-    // Written before the text (A4): a wake that then fails still counts for `wake_gap`, so the text is never typed
-    // twice inside the gap.
-    if let Err(e) = write_woken(&md.join(WAKE_FILE), now) {
-        store.log_error(&format!("mail wake {key}: wake.json not written: {e}"));
-    }
     if let Err(e) = mux.send_keys_literal(&pane, WAKE_TEXT).and_then(|()| mux.send_enter(&pane)) {
         return fail(&e);
+    }
+    // Written after the text and the Enter (FX-35 F4, replacing A4): a wake that fails or is killed before this point
+    // leaves no `woken_at`, so the next wake types the text again; a duplicate, never a lost wake.
+    if let Err(e) = write_woken(&md.join(WAKE_FILE), now) {
+        store.log_error(&format!("mail wake {key}: wake.json not written: {e}"));
     }
     Outcome::Woken
 }
@@ -194,11 +195,14 @@ pub struct TmuxDefer {
 }
 
 impl Defer for TmuxDefer {
+    /// The zygo program is checked first (FX-35 F2): an absolute path that [`resolve_program`] finds as an
+    /// executable regular file, else no job is queued and the error names the path. The job's own output goes to
+    /// `/dev/null`, so this check is what makes a program that cannot start visible.
     fn defer(&self, ws: &Workspace, session_dir: &Path, after: Duration, try_no: u8) -> anyhow::Result<()> {
-        if !self.zygo.is_absolute() {
-            anyhow::bail!("the zygo program path is not absolute");
-        }
-        let command = deferred_command(&self.zygo, session_dir, after, try_no)?;
+        let zygo = resolve_program(&self.zygo).filter(|p| p.is_absolute() && executable(p)).ok_or_else(|| {
+            anyhow::anyhow!("the zygo program {} is not an executable file", esc(&self.zygo.to_string_lossy()))
+        })?;
+        let command = deferred_command(&zygo, session_dir, after, try_no)?;
         Tmux::new(self.tmux.clone(), ws.tmux_socket.clone()).run_shell_background(&command)?;
         Ok(())
     }
@@ -219,13 +223,42 @@ pub fn deferred_command(zygo: &Path, session_dir: &Path, after: Duration, try_no
 /// `d` rounded up to whole seconds.
 fn whole_secs(d: Duration) -> u64 { d.as_secs() + u64::from(d.subsec_nanos() > 0) }
 
-/// The end of try `try_no` of a wake of `key` (M§7.3): `Quiet(left)` before try [`MAX_TRIES`] queues try
-/// `try_no + 1` after `left` rounded up plus 1 s and gives `Deferred` with that delay; a deferral that fails gives
-/// `Failed` with one `errors.log` line; a member whose launcher is no longer live gives `NotLive`. `Quiet` at try
-/// [`MAX_TRIES`] and every other outcome are returned as they are.
-pub fn settle(store: &Store, ws: &Workspace, key: &str, out: Outcome, defer: &dyn Defer, try_no: u8) -> Outcome {
-    let Outcome::Quiet(left) = out else { return out };
+/// True for an executable file (unix: an execute bit; other systems: any file).
+fn executable(p: &Path) -> bool {
+    let Ok(m) = std::fs::metadata(p) else { return false };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        m.is_file() && m.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    m.is_file()
+}
+
+/// The end of try `try_no` of a wake of `key` at `now` (M§7.3): a wake of an idle member that met the quiet window
+/// (`Quiet(left)`) or `wake_gap` (`Gap`, FX-35 F1; `wake` gives `Gap` only after the AU26 rule said idle) queues try
+/// `try_no + 1` and gives `Deferred` with its delay: the rest of the window, or of the gap (`woken_at + gap − now`
+/// from `wake.json`; none readable: 0), rounded up to whole seconds, plus 1 s. Before the gap's end the retry's own
+/// checks (unread mail, idle, lock, gap) skip a real duplicate. At try [`MAX_TRIES`] the outcome is returned as it is
+/// with one `errors.log` line. A deferral that fails gives `Failed` with one line; a member whose launcher is no longer
+/// live gives `NotLive`. Every other outcome is returned as it is.
+#[allow(clippy::too_many_arguments)]
+pub fn settle(
+    store: &Store, ws: &Workspace, key: &str, out: Outcome, defer: &dyn Defer, try_no: u8, gap: Duration,
+    now: SystemTime,
+) -> Outcome {
+    let left = match out {
+        Outcome::Quiet(left) => left,
+        Outcome::Gap if valid_pane_key(key) => {
+            let woken = read_woken(&store.dir().join("mail").join(key).join(WAKE_FILE));
+            woken.and_then(|w| w.checked_add(gap)).and_then(|end| end.duration_since(now).ok()).unwrap_or_default()
+        }
+        _ => return out,
+    };
     if try_no >= MAX_TRIES {
+        store.log_error(&format!(
+            "mail wake {key}: try {try_no} of {MAX_TRIES} met the quiet window or wake_gap; no retry left"
+        ));
         return out;
     }
     let Some(dir) = ws.members.get(key).and_then(|m| store.live_session(m)) else {
@@ -305,11 +338,28 @@ fn write_woken(path: &Path, now: SystemTime) -> anyhow::Result<()> {
     write_atomic(path, &serde_json::to_vec(&serde_json::json!({ "woken_at": at }))?)
 }
 
+/// The program at `path` as a regular file (links followed). A long-lived process whose binary was replaced by a
+/// rename sees `<path> (deleted)` as its `current_exe` (Linux `/proc/<pid>/exe`): then `<path>` when it is a regular
+/// file. Else `None`.
+pub fn resolve_program(path: &Path) -> Option<PathBuf> {
+    let regular = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.is_file());
+    if regular(path) {
+        return Some(path.to_path_buf());
+    }
+    let stripped = PathBuf::from(path.to_str()?.strip_suffix(" (deleted)")?);
+    regular(&stripped).then_some(stripped)
+}
+
 /// The zygo program of a sender, for its deferred wakes: every sender is the zygo binary (`zygo mail send`,
-/// `zygo mcp`, the sync child). `current_exe` canonicalized, else as given; none: an empty path, which
-/// [`TmuxDefer`] refuses with one `errors.log` line.
+/// `zygo mcp`, the sync child). `current_exe` through [`resolve_program`] (a binary replaced while the sender runs),
+/// canonicalized; a path that does not resolve is kept as it is, and [`TmuxDefer`] refuses it with one `errors.log`
+/// line, so no retry is queued in silence (FX-35 F2).
 fn sender_zygo() -> PathBuf {
-    std::env::current_exe().map(|p| p.canonicalize().unwrap_or(p)).unwrap_or_default()
+    let exe = std::env::current_exe().unwrap_or_default();
+    match resolve_program(&exe) {
+        Some(p) => p.canonicalize().unwrap_or(p),
+        None => exe,
+    }
 }
 
 /// Wakes each of `keys` after a send (M§7.3), with the tmux program `tmux`, [`RealProbe`] and the system time. See
@@ -320,7 +370,7 @@ pub fn after_send(paths: &Paths, ws: &Workspace, tmux: &Path, keys: &[String], c
 
 /// Wakes each of `keys` after a send at `now` (M§7.3): [`after_send_with`] through the tmux program `tmux` with
 /// [`RealProbe`], then [`settle`] as try 1 with [`TmuxDefer`] for the sender's own zygo program, so a member in the
-/// quiet window gets a retry. Returns each key with its settled outcome.
+/// quiet window or inside `wake_gap` gets a retry. Returns each key with its settled outcome.
 pub fn after_send_at(
     paths: &Paths, ws: &Workspace, tmux: &Path, keys: &[String], cfg: &MailConfig, now: SystemTime,
 ) -> Vec<(String, Outcome)> {
@@ -330,11 +380,15 @@ pub fn after_send_at(
     let mux = Tmux::new(tmux.to_path_buf(), ws.tmux_socket.clone());
     let outs = after_send_with(paths, ws, keys, cfg, &mux, &RealProbe, now);
     let store = Store::open(paths, &ws.id);
+    // `after_send_with` wrote the line of a `wake_gap` that does not parse.
+    let gap = parse_duration(&cfg.wake_gap).unwrap_or(DEFAULT_GAP);
     let defer = TmuxDefer { tmux: tmux.to_path_buf(), zygo: sender_zygo() };
-    outs.into_iter().map(|(k, o)| {
-        let o = settle(&store, ws, &k, o, &defer, 1);
-        (k, o)
-    }).collect()
+    outs.into_iter()
+        .map(|(k, o)| {
+            let o = settle(&store, ws, &k, o, &defer, 1, gap, now);
+            (k, o)
+        })
+        .collect()
 }
 
 /// [`Probe`] with a fixed clock.

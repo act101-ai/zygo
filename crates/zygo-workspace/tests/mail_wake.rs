@@ -18,8 +18,8 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use zygo_proxy::client::SessionStatus;
 use zygo_workspace::mail::wake::{
-    after_send, after_send_with, deferred_command, ready_at, settle, wake, Defer, Outcome, Probe, Ready, RealProbe,
-    TmuxDefer, MAX_TRIES, WAKE_TEXT,
+    after_send, after_send_with, deferred_command, ready_at, resolve_program, settle, wake, Defer, Outcome, Probe,
+    Ready, RealProbe, TmuxDefer, MAX_TRIES, WAKE_TEXT,
 };
 use zygo_workspace::mux::UnsafePath;
 use zygo_workspace::mail::{mail_dir, store as mail_store, Message};
@@ -319,17 +319,20 @@ fn wake_json_is_written_under_the_mail_lock() {
     let x = setup();
     let lock = x.s.dir().join("mail").join(ELENA).join("wake.lock");
     let seen = Arc::new(AtomicBool::new(false));
-    let (l, s2) = (lock.clone(), seen.clone());
+    let (l, s2, wj) = (lock.clone(), seen.clone(), wake_path(&x.s));
     let f = Fake {
         on_send: Some(Box::new(move || {
             let h = fs::OpenOptions::new().read(true).write(true).open(&l).unwrap();
             assert!(matches!(fs4::FileExt::try_lock(&h), Err(fs4::TryLockError::WouldBlock)));
+            // FX-35 F4: `woken_at` is written only after the text and the Enter were sent.
+            assert!(!wj.exists(), "wake.json written before the text");
             s2.store(true, Ordering::SeqCst);
         })),
         ..Fake::good()
     };
     assert_eq!(wake(&x.s, &x.w, &f, ELENA, GAP, &idle_at(T0), Duration::MAX), Outcome::Woken);
     assert!(seen.load(Ordering::SeqCst));
+    assert!(wake_json(&x.s).is_some());
     assert!(errors(&x.s).is_empty());
 }
 
@@ -531,7 +534,8 @@ fn invalid_key_builds_no_path() {
     assert!(errors(&x.s).is_empty());
 }
 
-/// Review fix R6: each tmux error gives `Failed` with one log line; after a failed Enter the text counts for the gap.
+/// Review fix R6: each tmux error gives `Failed` with one log line. FX-35 F4: a failed send writes no `woken_at`, so
+/// the next wake types the text again (a duplicate, never a loss).
 #[test]
 fn each_tmux_error_fails_with_one_line() {
     let boom = || MuxError::Failed { message: "boom".into() };
@@ -547,10 +551,11 @@ fn each_tmux_error_fails_with_one_line() {
         let e = errors(&x.s);
         assert_eq!(e.len(), 1, "case {i}: {e:?}");
         assert!(e[0].ends_with(" mail wake kelena222: boom"), "case {i}: {e:?}");
-        if i == 1 {
+        assert_eq!(wake_json(&x.s), None, "case {i}");
+        if i <= 1 {
             let g = Fake::good();
-            assert_eq!(wake(&x.s, &x.w, &g, ELENA, GAP, &idle_at(T0 + 29), Duration::MAX), Outcome::Gap);
-            assert_eq!(g.sends(), 0);
+            assert_eq!(wake(&x.s, &x.w, &g, ELENA, GAP, &idle_at(T0 + 29), Duration::MAX), Outcome::Woken);
+            assert_eq!(g.sends(), 2);
         }
     }
 }
@@ -706,15 +711,17 @@ fn mail_sent_3s_after_a_turn_end_wakes_the_member() {
     assert_eq!(f.sends(), 0, "{:?}", f.calls());
     // The sender defers the wake: the rest of the window rounded up, plus 1 s, as try 2.
     let d = Defers::default();
-    assert_eq!(settle(&x.s, &x.w, ELENA, out[0].1.clone(), &d, 1), Outcome::Deferred(secs(8)));
+    assert_eq!(settle(&x.s, &x.w, ELENA, out[0].1.clone(), &d, 1, GAP, at(T + 3)), Outcome::Deferred(secs(8)));
     assert_eq!(d.taken(), vec![(dir.clone(), secs(8), 2)]);
     // The retry runs at T + 11: rule 3 holds, the member is woken.
     let retry = wake(&x.s, &x.w, &f, ELENA, GAP, &RealAt(at(T + 11)), Duration::MAX);
-    assert_eq!(settle(&x.s, &x.w, ELENA, retry, &d, 2), Outcome::Woken);
-    // A second retry at T + 12 meets `wake_gap`.
+    assert_eq!(settle(&x.s, &x.w, ELENA, retry, &d, 2, GAP, at(T + 11)), Outcome::Woken);
+    // A second retry at T + 12 meets `wake_gap`: no text; it is deferred to the end of the gap (FX-35 F1), where the
+    // hook checks the unread mail again.
     let again = wake(&x.s, &x.w, &f, ELENA, GAP, &RealAt(at(T + 12)), Duration::MAX);
-    assert_eq!(settle(&x.s, &x.w, ELENA, again, &d, 3), Outcome::Gap);
-    assert!(d.taken().is_empty());
+    assert_eq!(again, Outcome::Gap);
+    assert_eq!(settle(&x.s, &x.w, ELENA, again, &d, 3, GAP, at(T + 12)), Outcome::Deferred(secs(30)));
+    assert_eq!(d.taken(), vec![(dir.clone(), secs(30), 4)]);
     let sent: Vec<String> = f.calls().into_iter().filter(|c| c.starts_with("send_")).collect();
     assert_eq!(sent, [format!("send_keys_literal %3 {WAKE_TEXT}"), "send_enter %3".to_string()]);
     assert!(errors(&x.s).is_empty(), "{:?}", errors(&x.s));
@@ -746,32 +753,114 @@ fn real_probe_applies_the_injected_clock_to_rule_3() {
     assert_eq!(ready_at(&dir, at(T + 3), secs(1)), Ready::Busy);
 }
 
-#[test] // FX-35: M§7.3 quiet window, up to try 3; a refused deferral (M§10)
-fn quiet_retry_stops_after_the_third_try() {
+#[test] // FX-35: M§7.3 quiet window and gap, up to try 4 (F1); a refused deferral (M§10)
+fn quiet_retry_stops_after_the_last_try() {
     let x = setup();
     let dir = x.p.sessions_dir.join("s1");
-    assert_eq!(MAX_TRIES, 3);
+    assert_eq!(MAX_TRIES, 4);
     let d = Defers::default();
-    assert_eq!(settle(&x.s, &x.w, ELENA, Outcome::Quiet(secs(5)), &d, 3), Outcome::Quiet(secs(5)));
+    let settle_at = |o: Outcome, defer: &dyn Defer, try_no: u8| settle(&x.s, &x.w, ELENA, o, defer, try_no, GAP, at(T0));
+    // The last try: no deferral, one `errors.log` line.
+    assert_eq!(settle_at(Outcome::Quiet(secs(5)), &d, 4), Outcome::Quiet(secs(5)));
     assert!(d.taken().is_empty());
-    assert_eq!(settle(&x.s, &x.w, ELENA, Outcome::Quiet(secs(5)), &d, 2), Outcome::Deferred(secs(6)));
-    assert_eq!(d.taken(), vec![(dir.clone(), secs(6), 3)]);
-    // Every other outcome is returned as it is, with no deferral.
-    for o in [Outcome::Woken, Outcome::Busy, Outcome::Gap, Outcome::NoPane, Outcome::NotLive, Outcome::Mismatch] {
-        assert_eq!(settle(&x.s, &x.w, ELENA, o.clone(), &d, 1), o);
-    }
-    assert!(d.taken().is_empty());
-    assert!(errors(&x.s).is_empty());
-    // A deferral that fails: `Failed` and one `errors.log` line.
-    let bad = Defers { fail: true, ..Defers::default() };
-    assert!(matches!(settle(&x.s, &x.w, ELENA, Outcome::Quiet(secs(5)), &bad, 1), Outcome::Failed(_)));
     let e = errors(&x.s);
     assert_eq!(e.len(), 1, "{e:?}");
-    assert!(e[0].contains(" mail wake kelena222: ") && e[0].contains("tmux refused the run-shell"), "{e:?}");
+    assert!(e[0].ends_with(" mail wake kelena222: try 4 of 4 met the quiet window or wake_gap; no retry left"), "{e:?}");
+    assert_eq!(settle_at(Outcome::Quiet(secs(5)), &d, 3), Outcome::Deferred(secs(6)));
+    assert_eq!(d.taken(), vec![(dir.clone(), secs(6), 4)]);
+    // Every other outcome is returned as it is, with no deferral.
+    for o in [Outcome::Woken, Outcome::Busy, Outcome::NoPane, Outcome::NotLive, Outcome::Mismatch] {
+        assert_eq!(settle_at(o.clone(), &d, 1), o);
+    }
+    assert!(d.taken().is_empty());
+    assert_eq!(errors(&x.s).len(), 1);
+    // A deferral that fails: `Failed` and one `errors.log` line.
+    let bad = Defers { fail: true, ..Defers::default() };
+    assert!(matches!(settle_at(Outcome::Quiet(secs(5)), &bad, 1), Outcome::Failed(_)));
+    let e = errors(&x.s);
+    assert_eq!(e.len(), 2, "{e:?}");
+    assert!(e[1].contains(" mail wake kelena222: ") && e[1].contains("tmux refused the run-shell"), "{e:?}");
     // The production deferral with a tmux program that does not run: the same.
-    let tmux = TmuxDefer { tmux: "/nonexistent/tmux".into(), zygo: "/usr/bin/zygo".into() };
-    assert!(matches!(settle(&x.s, &x.w, ELENA, Outcome::Quiet(secs(5)), &tmux, 1), Outcome::Failed(_)));
-    assert_eq!(errors(&x.s).len(), 2);
+    let exe = std::env::current_exe().unwrap();
+    let tmux = TmuxDefer { tmux: "/nonexistent/tmux".into(), zygo: exe };
+    assert!(matches!(settle_at(Outcome::Quiet(secs(5)), &tmux, 1), Outcome::Failed(_)));
+    assert_eq!(errors(&x.s).len(), 3);
+}
+
+#[test] // FX-35 F1: a wake's turn ends inside `wake_gap`, mail comes after it: one wake, at the retry
+fn gap_after_a_wake_turn_defers_to_the_end_of_the_gap() {
+    let x = setup();
+    let dir = x.p.sessions_dir.join("s1");
+    write_activity(&dir, false);
+    let srv = StatusServer::start(&dir, Some(ended_at(T - 100)));
+    let f = Fake::good();
+    let d = Defers::default();
+    // A wakes B at T.
+    assert_eq!(wake(&x.s, &x.w, &f, ELENA, GAP, &RealAt(at(T)), Duration::MAX), Outcome::Woken);
+    // B's turn ends at T + 8; C sends at T + 12: the quiet window, a retry at T + 19.
+    srv.set(Some(ended_at(T + 8)));
+    let out = after_send_with(&x.p, &x.w, &[ELENA.to_string()], &MailConfig::default(), &f, &RealProbe, at(T + 12));
+    assert_eq!(out[0].1, Outcome::Quiet(secs(6)));
+    assert_eq!(settle(&x.s, &x.w, ELENA, out[0].1.clone(), &d, 1, GAP, at(T + 12)), Outcome::Deferred(secs(7)));
+    assert_eq!(d.taken(), vec![(dir.clone(), secs(7), 2)]);
+    // The retry at T + 19 meets the gap of the wake at T: deferred to T + 30 + 1 s.
+    let r = wake(&x.s, &x.w, &f, ELENA, GAP, &RealAt(at(T + 19)), Duration::MAX);
+    assert_eq!(r, Outcome::Gap);
+    assert_eq!(settle(&x.s, &x.w, ELENA, r, &d, 2, GAP, at(T + 19)), Outcome::Deferred(secs(12)));
+    assert_eq!(d.taken(), vec![(dir.clone(), secs(12), 3)]);
+    // The retry at T + 31 wakes B: the text once for this mail.
+    assert_eq!(wake(&x.s, &x.w, &f, ELENA, GAP, &RealAt(at(T + 31)), Duration::MAX), Outcome::Woken);
+    let sent = f.calls().into_iter().filter(|c| c.starts_with("send_")).count();
+    assert_eq!(sent, 4, "{:?}", f.calls()); // T and T + 31
+    assert!(errors(&x.s).is_empty(), "{:?}", errors(&x.s));
+}
+
+#[test] // FX-35 F1: a send inside `wake_gap` to an idle member defers to the end of the gap and wakes once
+fn send_inside_the_gap_to_an_idle_member_defers_and_wakes_once() {
+    let x = setup();
+    let dir = x.p.sessions_dir.join("s1");
+    write_activity(&dir, false);
+    let _srv = StatusServer::start(&dir, Some(ended_at(T - 100)));
+    let f = Fake::good();
+    let d = Defers::default();
+    assert_eq!(wake(&x.s, &x.w, &f, ELENA, GAP, &RealAt(at(T)), Duration::MAX), Outcome::Woken);
+    let out = after_send_with(&x.p, &x.w, &[ELENA.to_string()], &MailConfig::default(), &f, &RealProbe, at(T + 25));
+    assert_eq!(out[0].1, Outcome::Gap);
+    assert_eq!(settle(&x.s, &x.w, ELENA, out[0].1.clone(), &d, 1, GAP, at(T + 25)), Outcome::Deferred(secs(6)));
+    assert_eq!(d.taken(), vec![(dir.clone(), secs(6), 2)]);
+    assert_eq!(wake(&x.s, &x.w, &f, ELENA, GAP, &RealAt(at(T + 31)), Duration::MAX), Outcome::Woken);
+    assert_eq!(f.calls().into_iter().filter(|c| c.starts_with("send_")).count(), 4);
+    // A gap that `wake.json` cannot give (no file): the shortest retry, 1 s.
+    fs::remove_file(wake_path(&x.s)).unwrap();
+    assert_eq!(settle(&x.s, &x.w, ELENA, Outcome::Gap, &d, 1, GAP, at(T + 32)), Outcome::Deferred(secs(1)));
+    assert!(errors(&x.s).is_empty(), "{:?}", errors(&x.s));
+}
+
+#[test] // FX-35 F2: the program of a deferred wake exists, or no retry is queued and one line is written
+fn deferred_program_must_exist() {
+    let t = TempDir::new().unwrap();
+    let real = t.path().join("zygo");
+    fs::write(&real, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&real, fs::Permissions::from_mode(0o755)).unwrap();
+    // A long-lived sender whose binary was replaced by a rename: `/proc/self/exe` names `<path> (deleted)`.
+    let deleted = t.path().join("zygo (deleted)");
+    assert_eq!(resolve_program(&deleted), Some(real.clone()));
+    assert_eq!(resolve_program(&real), Some(real.clone()));
+    assert_eq!(resolve_program(&t.path().join("gone")), None);
+    assert_eq!(resolve_program(&t.path().join("gone (deleted)")), None);
+    let x = setup();
+    let missing = t.path().join("missing").join("zygo");
+    let tmux = TmuxDefer { tmux: "/nonexistent/tmux".into(), zygo: missing };
+    let out = settle(&x.s, &x.w, ELENA, Outcome::Quiet(secs(5)), &tmux, 1, GAP, at(T0));
+    assert!(matches!(out, Outcome::Failed(_)), "{out:?}");
+    let e = errors(&x.s);
+    assert_eq!(e.len(), 1, "{e:?}");
+    assert!(e[0].contains("deferral not queued: the zygo program") && e[0].contains("is not an executable file"), "{e:?}");
+    // A file that is not executable is refused the same way.
+    fs::set_permissions(&real, fs::Permissions::from_mode(0o644)).unwrap();
+    let tmux = TmuxDefer { tmux: "/nonexistent/tmux".into(), zygo: real };
+    assert!(matches!(settle(&x.s, &x.w, ELENA, Outcome::Quiet(secs(5)), &tmux, 1, GAP, at(T0)), Outcome::Failed(_)));
+    assert!(errors(&x.s)[1].contains("is not an executable file"), "{:?}", errors(&x.s));
 }
 
 #[test] // FX-35: M§7.3 deferred command, AU54 path check, AU55 `#`
@@ -796,7 +885,7 @@ fn deferred_command_text() {
     // The rest of the window, 6.2 s, gives `sleep 8`.
     let x = setup();
     let d = Defers::default();
-    let out = settle(&x.s, &x.w, ELENA, Outcome::Quiet(Duration::from_millis(6200)), &d, 1);
+    let out = settle(&x.s, &x.w, ELENA, Outcome::Quiet(Duration::from_millis(6200)), &d, 1, GAP, at(T0));
     assert_eq!(out, Outcome::Deferred(secs(8)));
     let (_, after, try_no) = d.taken().pop().unwrap();
     assert!(deferred_command(zygo, dir, after, try_no).unwrap().starts_with("sleep 8; "));
