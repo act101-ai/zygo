@@ -406,7 +406,8 @@ fn pre_compact_error_line_follows_the_text() {
         .unwrap();
     assert!(o.success(), "{o:?}");
     let both = std::fs::read_to_string(&log).unwrap();
-    assert!(both.contains("child_case ... ok"), "{both:?}");
+    // The child's own output sits between `test child_case ... ` and `ok`.
+    assert!(both.contains("test result: ok. 1 passed"), "{both:?}");
     let text = both.find(KEEP_NO_UNIT).unwrap_or_else(|| panic!("no text: {both:?}"));
     let flag = d.reinject().join(ID);
     let line = both
