@@ -773,3 +773,103 @@ fn mail_item_view_field_defaults_to_off() {
     let raw: Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
     assert_eq!(raw["mail"], true);
 }
+
+/// The OpenCode transform payload of a main-role request (`crates/zygo-launch/assets/opencode-plugin.js`, the
+/// `experimental.chat.system.transform` handler): `{input, output}` with `input.sessionID`
+/// (`fixtures/opencode/live/st-transform.jsonl`: keys `model,sessionID`).
+#[cfg(unix)]
+fn oc(session: &str) -> HookInput {
+    let p = serde_json::json!({"input": {"sessionID": session, "model": {"providerID": "zygo", "id": "lead"}},
+        "output": {"system": []}, "cwd": "/"});
+    HookInput::parse(Agent::OpenCode, p.to_string().as_bytes()).unwrap()
+}
+#[cfg(unix)]
+const ELENA: &str = "you are `elena` in workspace `app`";
+#[cfg(unix)]
+fn joined(x: &Mx) {
+    set_members(x, &[(OWN, Some("elena")), (PEER, Some("kai")), (LATE, Some("lena"))]);
+}
+
+#[cfg(unix)]
+#[test] // FX-9 Acceptance, M§8a item 1: item 8 is built at the main-loop SessionStart, not at each OpenCode request
+fn opencode_item_8_is_fixed_for_the_session_after_a_member_joins() {
+    let x = mx(Agent::OpenCode, true, true, None, &[(OWN, Some("elena")), (PEER, Some("kai"))]);
+    let base = build(&SessionView::load(&x.dir).unwrap());
+    let first = member_text(&x, &oc("ses_A"));
+    assert_eq!(first, format!("{base}\n\n{}", item8(ELENA, "elena, kai")));
+    joined(&x);
+    assert_eq!(member_text(&x, &oc("ses_A")), first);
+    assert_eq!(member_text(&x, &oc("ses_A")), first);
+}
+
+#[cfg(unix)]
+#[test] // FX-9: a new OpenCode session id is a new main-loop SessionStart and gets the current names
+fn opencode_new_session_after_a_join_gets_the_new_member() {
+    let x = mx(Agent::OpenCode, true, true, None, &[(OWN, Some("elena")), (PEER, Some("kai"))]);
+    let base = build(&SessionView::load(&x.dir).unwrap());
+    let first = member_text(&x, &oc("ses_A"));
+    joined(&x);
+    assert_eq!(member_text(&x, &oc("ses_B")), format!("{base}\n\n{}", item8(ELENA, "elena, kai, lena")));
+    assert_eq!(member_text(&x, &oc("ses_A")), first);
+}
+
+#[cfg(unix)]
+#[test] // FX-9, S§10.4: the fixed item 8 holds the "Other machines" clause of its SessionStart
+fn opencode_fixed_item_8_holds_the_other_machines_clause() {
+    use zygo_mail_sync::registry::{write_cache, MemberCache};
+    use zygo_mail_sync::state::SyncPaths;
+    let x = mx(Agent::OpenCode, true, true, None, &[(OWN, Some("elena")), (PEER, Some("kai"))]);
+    std::fs::write(&x.paths.config_file, "[mail]\nhost = \"studio\"\n\n[mail.workspace.app]\nsync = \"zygo/mail\"\n").unwrap();
+    let cache = |names: &[&str]| {
+        let c = MemberCache { hosts: [("b".to_string(), names.iter().map(|n| n.to_string()).collect())].into_iter().collect() };
+        write_cache(&SyncPaths::new(&x.paths, WS_ID).unwrap(), &c).unwrap();
+    };
+    cache(&["bob"]);
+    let base = build(&SessionView::load(&x.dir).unwrap());
+    let item = format!("Workspace mail: {ELENA}. Members: `elena, kai`. Other machines: bob@b; mail them by the full address. {MAIL_TAIL}");
+    assert_eq!(member_text(&x, &oc("ses_A")), format!("{base}\n\n{item}"));
+    cache(&["bob", "eve"]);
+    joined(&x);
+    assert_eq!(member_text(&x, &oc("ses_A")), format!("{base}\n\n{item}"));
+    assert_eq!(std::fs::read_to_string(x.dir.root.join("session-item/ses_A")).unwrap(), item);
+}
+
+#[cfg(unix)]
+#[test] // FX-9 Decision 4: a text stored for the id (another request stored it first) is the item 8 of the output
+fn opencode_stored_item_8_is_used_as_it_is() {
+    let x = mx(Agent::OpenCode, true, true, None, &[(OWN, Some("elena"))]);
+    let base = build(&SessionView::load(&x.dir).unwrap());
+    std::fs::create_dir(x.dir.root.join("session-item")).unwrap();
+    std::fs::write(x.dir.root.join("session-item/ses_A"), "STORED ITEM").unwrap();
+    assert_eq!(member_text(&x, &oc("ses_A")), format!("{base}\n\nSTORED ITEM"));
+}
+
+#[cfg(unix)]
+#[test] // FX-9: Claude Code is not changed; its item 8 is built at each SessionStart and nothing is stored
+fn claude_code_item_8_is_built_at_each_session_start() {
+    let x = mx(Agent::ClaudeCode, true, true, None, &[(OWN, Some("elena")), (PEER, Some("kai"))]);
+    let base = build(&SessionView::load(&x.dir).unwrap());
+    assert_eq!(member_text(&x, &start(Agent::ClaudeCode)), format!("{base}\n\n{}", item8(ELENA, "elena, kai")));
+    joined(&x);
+    assert_eq!(member_text(&x, &start(Agent::ClaudeCode)), format!("{base}\n\n{}", item8(ELENA, "elena, kai, lena")));
+    assert!(!x.dir.root.join("session-item").exists());
+}
+
+#[cfg(unix)]
+#[test] // FX-9 Decision 3: an id that fails the `flag_path` rule, or no id, keeps the per-request build; nothing stored
+fn opencode_session_id_that_fails_the_rule_is_not_stored() {
+    let no_id = || {
+        HookInput::parse(Agent::OpenCode, br#"{"input": {"model": {"providerID": "zygo", "id": "lead"}}, "output": {"system": []}}"#)
+            .unwrap()
+    };
+    let long = "a".repeat(65);
+    for input in [oc("../x"), oc(""), oc(&long), no_id()] {
+        let x = mx(Agent::OpenCode, true, true, None, &[(OWN, Some("elena")), (PEER, Some("kai"))]);
+        let base = build(&SessionView::load(&x.dir).unwrap());
+        assert_eq!(member_text(&x, &input), format!("{base}\n\n{}", item8(ELENA, "elena, kai")));
+        joined(&x);
+        assert_eq!(member_text(&x, &input), format!("{base}\n\n{}", item8(ELENA, "elena, kai, lena")));
+        assert!(!x.dir.root.join("session-item").exists());
+        assert!(!x.dir.root.join("x").exists() && !x.t.path().join("cache/sessions/x").exists());
+    }
+}
