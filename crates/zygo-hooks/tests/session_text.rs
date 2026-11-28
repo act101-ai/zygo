@@ -873,3 +873,66 @@ fn opencode_session_id_that_fails_the_rule_is_not_stored() {
         assert!(!x.dir.root.join("x").exists() && !x.t.path().join("cache/sessions/x").exists());
     }
 }
+
+#[cfg(unix)]
+#[test] // FX-9 Decision 4: the request that loses the race (the name is taken after its read) returns the winner's text
+fn fixed_item_loser_of_a_race_returns_the_winner() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_t, d) = sd();
+    let no_log = |l: &str| panic!("no log line expected: {l}");
+    let mut loser = || {
+        // Another request stores its text while this one builds.
+        let mut winner = || Some("WINNER".to_string());
+        assert_eq!(session_start::fixed_item(&d, "ses_A", &mut winner, &no_log).as_deref(), Some("WINNER"));
+        Some("LOSER".to_string())
+    };
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut loser, &no_log).as_deref(), Some("WINNER"));
+    let mut later = || panic!("a stored item is not built again");
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut later, &no_log).as_deref(), Some("WINNER"));
+    let folder = d.root.join("session-item");
+    assert_eq!(session_start::item_path(&d, "ses_A"), Some(folder.join("ses_A")));
+    assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 1, "the temp files are removed");
+    assert_eq!(std::fs::metadata(&folder).unwrap().permissions().mode() & 0o777, 0o700);
+    assert_eq!(std::fs::metadata(folder.join("ses_A")).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(session_start::item_path(&d, "../x"), None);
+}
+
+#[cfg(unix)]
+#[test] // FX-9 Decision 4: concurrent first requests of one session give one text
+fn fixed_item_from_threads_gives_one_text() {
+    let (_t, d) = sd();
+    let barrier = std::sync::Barrier::new(8);
+    let got: Vec<Option<String>> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                let (d, barrier) = (&d, &barrier);
+                s.spawn(move || {
+                    barrier.wait();
+                    let mut build = || Some(format!("TEXT-{i}"));
+                    session_start::fixed_item(d, "ses_A", &mut build, &|l| panic!("no log line expected: {l}"))
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    let stored = std::fs::read_to_string(d.root.join("session-item/ses_A")).unwrap();
+    assert!(got.iter().all(|g| g.as_deref() == Some(stored.as_str())), "{got:?} vs {stored}");
+    assert_eq!(std::fs::read_dir(d.root.join("session-item")).unwrap().count(), 1);
+}
+
+#[cfg(unix)]
+#[test] // FX-9 Decision 5: `None` stores nothing; a stored entry that is a link is not read, and one line is logged
+fn fixed_item_stores_no_none_and_reads_no_link() {
+    let (t, d) = sd();
+    let lines = std::cell::RefCell::new(Vec::new());
+    let log = |l: &str| lines.borrow_mut().push(l.to_string());
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || None, &log), None);
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || Some("NOW".into()), &log).as_deref(), Some("NOW"));
+    assert!(lines.borrow().is_empty());
+    std::fs::write(t.path().join("outside"), "OUTSIDE").unwrap();
+    std::os::unix::fs::symlink(t.path().join("outside"), d.root.join("session-item/ses_B")).unwrap();
+    assert_eq!(session_start::fixed_item(&d, "ses_B", &mut || Some("BUILT".into()), &log).as_deref(), Some("BUILT"));
+    assert_eq!(lines.borrow().len(), 1, "{:?}", lines.borrow());
+    assert!(lines.borrow()[0].contains("session-item/ses_B"), "{:?}", lines.borrow());
+    assert_eq!(std::fs::read_to_string(t.path().join("outside")).unwrap(), "OUTSIDE");
+}
