@@ -192,6 +192,26 @@ fn take_host_after_a_collision() {
     assert_eq!(new_ids(&x2, ALICE), BTreeSet::from([format!("{u2}.json")]));
 }
 
+#[test] // FX-40 review F1, S§8.3 step 15 (as `ops::write` applies it): two push URLs, the second moved: the first takes
+        // the commit and the second refuses it; --take-host stops with the `push` line and records no own blob as pushed
+fn take_host_taken_by_one_push_url_only_stops() {
+    let r = Remote::new();
+    let x1 = machine(&r, "x", &[(ALICE, "alice")]);
+    sync(&x1);
+    let x2 = machine(&r, "x", &[(ALICE, "alice")]);
+    let r2 = r.mirror();
+    common::push_urls(&x2, &[&r.url, &r2.url]);
+    let moved = common::advance(&r2, BRANCH);
+    let e = take_host(&env(&x2), WS_ID).unwrap_err();
+    assert_eq!(e, SyncError::Stopped { line: "zygo: mail sync stopped (push); the outbox is kept".into(), check: "push" });
+    assert_eq!(e.exit_code(Mode::Cli), 1);
+    let st = state::load(&x2.sp()).unwrap();
+    assert!(st.pushed.is_empty(), "{:?}", st.pushed);
+    assert!(!st.pending.is_empty());
+    assert!(st.push_split);
+    assert_eq!(r2.tip(BRANCH), Some(moved));
+}
+
 #[test] // S§8.3 step 5, S§8.2: --take-host is a sync; a public remote stops it before any fetch or push
 fn take_host_on_a_public_remote_stops_before_any_fetch() {
     let r = Remote::new();

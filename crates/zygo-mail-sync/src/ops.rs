@@ -63,12 +63,17 @@ fn write(c: &Ctx, identity: &str, deadline: Instant,
         match branch::push(wt, &c.s.remote, &c.s.branch, &commit, None, deadline)? {
             Pushed::Accepted => {
                 st.pushed.extend(std::mem::take(&mut st.pending));
+                // FX-40 review: every push URL took this commit, so they hold the same branch again.
+                st.push_split = false;
                 forget_old_hosts(&mut st, &commit_meta, identity, &c.s.host);
                 state::save(&c.sp, &st).map_err(|_| stop("state"))?;
                 branch::set_tracking(wt, &c.s.remote, &c.s.branch, &commit, deadline)?;
                 return Ok(());
             }
             Pushed::Moved => {}
+            // FX-40 review F1: a push that some push URL took and another did not stops as any other error, and sets
+            // the split flag (S§8.3 step 15).
+            Pushed::Split => return Err(sync::split_stop(&c.sp)),
             Pushed::Other(_) => return Err(stop("push")),
         }
     }

@@ -261,6 +261,43 @@ fn t6_two_prunes_from_one_base_the_second_loses_the_lease() {
     assert_eq!(r.tip(BRANCH), Some(root));
 }
 
+#[test] // FX-40 review F2, S§9 Push: with two push URLs, a lease push that one takes and the other refuses is `Split`,
+        // never `LeaseLost`: the first URL's history was rewritten
+fn prune_taken_by_one_push_url_only_is_split() {
+    let (r, a, b) = pair();
+    send(&a, "alice", ("bob", "b"), "zero");
+    sync(&a);
+    sync(&b);
+    let r2 = r.mirror();
+    common::push_urls(&a, &[&r.url, &r2.url]);
+    let moved = advance(&r2, BRANCH);
+    let base = fetched(&a);
+    let meta = read_meta(&a.wt, &base, far(), &mut |_| {}).unwrap();
+    assert_eq!(prune::run(&a.wt, "origin", BRANCH, &base, &meta, far()), Ok(Pruned::Split));
+    assert_eq!(count(&r), 1);
+    assert_eq!(r2.tip(BRANCH), Some(moved));
+}
+
+#[test] // FX-40 review F2, S§9 Push, S§13: a forced prune that one push URL takes and the other refuses stops the pass
+        // with the `push` line (exit 1), and so does the next pass while the URLs disagree
+fn forced_prune_split_across_push_urls_stops_the_pass() {
+    let (r, a, b) = pair();
+    send(&a, "alice", ("bob", "b"), "zero");
+    sync(&a);
+    sync(&b);
+    sync(&a);
+    let r2 = r.mirror();
+    common::push_urls(&a, &[&r.url, &r2.url]);
+    advance(&r2, BRANCH);
+    let stop = SyncError::Stopped { line: "zygo: mail sync stopped (push); the outbox is kept".into(), check: "push" };
+    for _ in 0..2 {
+        let e = run_with(&env_at(&a, Hook::none(), T0), WS_ID, Mode::Cli, &Opts { prune: true }).unwrap_err();
+        assert_eq!(e, stop);
+        assert_eq!(e.exit_code(Mode::Cli), 1);
+    }
+    assert!(a.errors().contains("push"), "{}", a.errors());
+}
+
 #[test] // MS-6 review: a refused ack (`parse_ack` → `Err`) is empty for the prune; S§7.4 Validation
 fn t11_a_refused_ack_is_empty_for_the_prune() {
     let id = "ab".repeat(16);

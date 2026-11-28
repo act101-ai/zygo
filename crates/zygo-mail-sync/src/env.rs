@@ -24,7 +24,15 @@ impl Clock for SystemClock { fn now(&self) -> SystemTime { SystemTime::now() } }
 pub enum Verdict { Public, Private, Local, Unknown(String) }
 
 /// S§8.2, S-C9: the public probe of a remote's `https` URL.
-pub trait Probe: Send + Sync { fn probe(&self, https_url: &str) -> Verdict; }
+pub trait Probe: Send + Sync {
+    fn probe(&self, https_url: &str) -> Verdict;
+    /// The probe, ended by `deadline` at the latest (S§8.3 step 4, FX-40 review F4). A probe that runs no process
+    /// (a test seam) gives [`Probe::probe`]; [`crate::public::LsRemote`] ends its `git ls-remote` at the deadline.
+    fn probe_until(&self, https_url: &str, deadline: std::time::Instant) -> Verdict {
+        let _ = deadline;
+        self.probe(https_url)
+    }
+}
 
 /// S§8.1, S-C9: the spawn of the sync child for a workspace.
 pub trait Spawner: Send + Sync { fn spawn_sync(&self, ws_id: &str) -> std::io::Result<()>; }

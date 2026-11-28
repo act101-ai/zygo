@@ -254,6 +254,10 @@ pub struct State {
     /// state write right after its step 10 wake; an entry whose staged file is still in `incoming/` stays; a state
     /// file written before FX-30 has none.
     pub pending_wake: BTreeMap<String, String>,
+    /// S§8.3 step 15, S§9 Push (FX-40 review): a push or a prune ended `Split` (one push URL took it, another did not),
+    /// so the push URLs may hold different branches. While set, a pass deletes no outbox file as pushed before, runs
+    /// no prune and pushes its tip to every push URL; an accepted push clears it. A file written before it is `false`.
+    pub push_split: bool,
 }
 
 /// The verdicts of the public check (S§8.2 steps 2 and 4).

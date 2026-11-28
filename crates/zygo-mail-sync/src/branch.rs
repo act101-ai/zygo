@@ -51,11 +51,14 @@ pub enum Change {
     Remove { path: String },
 }
 
-/// The class of a push. `Other` holds one fixed text, never server or URL text (S-C2).
+/// The class of a push (S§8.3 step 15). `Other` holds one fixed text, never server or URL text (S-C2). `Split`: with
+/// several push URLs, at least one URL took the commit and at least one did not (FX-40 review F1, F2); a caller
+/// treats it as `Other`, and the prune stops the pass on it, as the branch now differs between the URLs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pushed {
     Accepted,
     Moved,
+    Split,
     Other(String),
 }
 
@@ -371,40 +374,77 @@ pub fn commit(wt: &Path, base: &str, parent: Option<&str>, changes: &[Change], d
     Ok(c)
 }
 
-/// S§8.3 step 15: the class of a `git push --porcelain` (exit success `ok`, stdout `out`) to `refs/heads/<branch>`.
-pub fn classify(ok: bool, out: &[u8], branch: &str) -> Pushed {
+/// S§8.3 step 15: the class of a `git push --porcelain` (exit success `ok`, stdout `out`) to `refs/heads/<branch>`
+/// on a remote with `urls` push URLs, each of which gives one ref line when git reaches it (FX-40 review F1-F3):
+/// - `Accepted`: `ok`, a ref line of the target for every URL, and every line an accept;
+/// - `Split`: at least one line accepts and another line, or a URL with no line, does not;
+/// - `Moved`: a line for every URL and every line a "moved" rejection;
+/// - else `Other`: `push rejected` for the first rejection that is not "moved", `push failed` otherwise (no URL,
+///   a URL with no line, or every line an accept while git failed).
+pub fn classify(ok: bool, out: &[u8], branch: &str, urls: usize) -> Pushed {
     let target = format!("refs/heads/{branch}");
     // A ref line: exactly 3 tab-separated fields, a 1-byte flag, and `<from>:<to>` with `<to>` the target ref.
-    let line = out.split(|&b| b == b'\n').map(|l| l.split(|&b| b == b'\t').collect::<Vec<_>>()).find(|f| {
-        f.len() == 3 && f[0].len() == 1
-            && f[1].iter().position(|&b| b == b':').is_some_and(|i| &f[1][i + 1..] == target.as_bytes())
-    });
-    let Some(f) = line else { return Pushed::Other("push failed".into()) };
-    let (flag, summary) = (f[0][0], f[2]);
-    if ok && matches!(flag, b' ' | b'*' | b'+' | b'=') {
-        return Pushed::Accepted;
-    }
-    if flag != b'!' {
+    let lines: Vec<Vec<&[u8]>> = out.split(|&b| b == b'\n').map(|l| l.split(|&b| b == b'\t').collect::<Vec<_>>())
+        .filter(|f| {
+            f.len() == 3 && f[0].len() == 1
+                && f[1].iter().position(|&b| b == b':').is_some_and(|i| &f[1][i + 1..] == target.as_bytes())
+        })
+        .collect();
+    if urls == 0 {
         return Pushed::Other("push failed".into());
     }
-    // A `[remote rejected]` reason is server text: never "moved" (S§18).
-    let rejected = summary.len() >= 10 && summary[..10].eq_ignore_ascii_case(b"[rejected]");
-    if rejected && git::has_text(summary, MOVED_TEXT) { Pushed::Moved } else { Pushed::Other("push rejected".into()) }
+    let (mut accepted, mut moved, mut other): (usize, usize, Option<&str>) = (0, 0, None);
+    for f in &lines {
+        let (flag, summary) = (f[0][0], f[2]);
+        if matches!(flag, b' ' | b'*' | b'+' | b'=') {
+            accepted += 1;
+        } else if flag != b'!' {
+            other.get_or_insert("push failed");
+        } else {
+            // A `[remote rejected]` reason is server text: never "moved" (S§18).
+            let rejected = summary.len() >= 10 && summary[..10].eq_ignore_ascii_case(b"[rejected]");
+            if rejected && git::has_text(summary, MOVED_TEXT) {
+                moved += 1;
+            } else {
+                other.get_or_insert("push rejected");
+            }
+        }
+    }
+    let every_url = lines.len() == urls;
+    if accepted > 0 && (accepted < lines.len() || !every_url) {
+        return Pushed::Split;
+    }
+    if let Some(text) = other {
+        return Pushed::Other(text.into());
+    }
+    match (every_url, accepted > 0, moved > 0) {
+        (true, true, _) if ok => Pushed::Accepted,
+        (true, false, true) => Pushed::Moved,
+        _ => Pushed::Other("push failed".into()),
+    }
 }
 
 /// S§8.3 step 14, S§9: pushes `commit` to `refs/heads/<branch>` on `remote`, with the lease `lease` when given,
-/// unsigned (`-c push.gpgSign=false`, as `commit.gpgSign` in S§6.5).
+/// unsigned (`-c push.gpgSign=false`, as `commit.gpgSign` in S§6.5). The push URLs of `remote` are counted first
+/// (`git remote get-url --push --all`), so a URL that gives no ref line is seen ([`classify`]); a remote whose push
+/// URLs git cannot give is `Other("push failed")` with no push run.
 pub fn push(wt: &Path, remote: &str, branch: &str, commit: &str, lease: Option<&str>, deadline: Instant)
     -> Result<Pushed, BranchError> {
     oid(commit)?;
     lease.map(oid).transpose()?;
+    let w = git::run(wt, &["remote", "get-url", "--push", "--all", "--", remote], deadline)
+        .map_err(|e| BranchError::Git(e, "push"))?;
+    let urls = if w.ok { String::from_utf8_lossy(&w.out).lines().filter(|l| !l.trim().is_empty()).count() } else { 0 };
+    if urls == 0 {
+        return Ok(Pushed::Other("push failed".into()));
+    }
     let lease = lease.map(|l| format!("--force-with-lease=refs/heads/{branch}:{l}"));
     let spec = format!("{commit}:refs/heads/{branch}");
     let mut args = vec!["-c", "push.gpgSign=false", "push", "--porcelain"];
     args.extend(lease.as_deref());
     args.extend(["--", remote, &spec]);
     let w = git::run(wt, &args, deadline).map_err(|e| BranchError::Git(e, "push"))?;
-    Ok(classify(w.ok, &w.out, branch))
+    Ok(classify(w.ok, &w.out, branch, urls))
 }
 
 /// Moves `refs/remotes/<remote>/<branch>` to `commit` after an accepted push.
