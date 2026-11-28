@@ -373,19 +373,21 @@ try:
               (True, "the added line is not in the file", L1 + b"\n", True, 0o444))
         os.chmod(tgt, 0o644)
 
-    # an append whose write fails at the flush before any byte (RLIMIT_FSIZE at the target's size): not added
-    d, tgt, link, lf, save, state = kh_case("fsize", L1 + b"\n")
-    a = fsize_limited(len(L1) + 1, lambda: w.kh_add(link, lf, save, state))
-    check("kh_add_flush_failure_is_not_added", (a.startswith("failed: the append failed (EFBIG)"), rb(tgt)), (True, L1 + b"\n"))
+    # an append whose write fails at the flush before any byte (RLIMIT_FSIZE at the target's size; the target is
+    # larger than the saved copy's and the run state's files, so only the append meets the limit): not added
+    BIG = (L1 + b"\n") * 64
+    d, tgt, link, lf, save, state = kh_case("fsize", BIG)
+    a = fsize_limited(len(BIG), lambda: w.kh_add(link, lf, save, state))
+    check("kh_add_flush_failure_is_not_added", (a.startswith("failed: the append failed (EFBIG)"), rb(tgt)), (True, BIG))
 
     # a partial append (EFBIG after 10 bytes of the line): not added; the remove cuts the fragment
-    d, tgt, link, lf, save, state = kh_case("partial", L1 + b"\n")
-    a = fsize_limited(len(L1) + 1 + 10, lambda: w.kh_add(link, lf, save, state))
+    d, tgt, link, lf, save, state = kh_case("partial", BIG)
+    a = fsize_limited(len(BIG) + 10, lambda: w.kh_add(link, lf, save, state))
     part = rb(tgt)
     r = w.kh_remove(state, lf)
     check("kh_add_partial_append_is_restored",
           (a.startswith("failed: the append failed (EFBIG)"), part, r, rb(tgt), os.path.islink(link)),
-          (True, L1 + b"\n" + RUNL[:10], "removed a partial append (10 bytes)", L1 + b"\n", True))
+          (True, BIG + RUNL[:10], "removed a partial append (10 bytes)", BIG, True))
 
     # the fsync fails after the line was written: not added; the remove takes the whole line out
     def eio(fd):
@@ -479,21 +481,21 @@ try:
     rc, out = sh('. "$PREMISES_DIR/sp1_kh.sh"; sp1_kh_restore "$1"; printf "%s|%s|%s|%s\\n" "$?" "$KH_R" "$KH_MISS" "$KH_MORE"',
                  d, premises=fake)
     check("sh: sp1_kh_restore with no kh-remove output: the ? fallback", (rc, out),
-          (1, "1|not checked (kh-remove gave no result)|?|?\n"))
+          (0, "1|not checked (kh-remove gave no result)|?|?\n"))
     d, tgt, link, lf, save, state = kh_case("shell-none", L1 + b"\n")
     rc, out = sh('. "$PREMISES_DIR/sp1_kh.sh"; sp1_kh_restore "$1"; printf "%s|%s\\n" "$?" "$KH_R"', d)
     check("sh: sp1_kh_restore without a run state does nothing", (rc, out, rb(tgt)), (0, "0|\n", L1 + b"\n"))
 
     # the signal window: TERM arrives while the command substitution of kh-add runs (the shell runs the trap after
-    # it, before the result is assigned); the trap's restore still takes the line out
+    # it, before the script reaches its own record of the result); the trap's restore needs only the run state
     d, tgt, link, lf, save, state = kh_case("signal", L1 + b"\n")
     rc, out = sh('. "$PREMISES_DIR/sp1_kh.sh"; '
-                 'trap \'sp1_kh_restore "$2"; printf "%s|%s|%s\\n" "$KH_R" "$KH_MISS" "${KHR:-unset}"; exit 143\' TERM; '
+                 'trap \'sp1_kh_restore "$2"; printf "%s|%s\\n" "$KH_R" "$KH_MISS"; exit 143\' TERM; '
                  'KHR=$(python3 -I "$PREMISES_DIR/sp1_watch.py" kh-add --file "$1" --line "$2/kh443" '
                  '--save "$2/known_hosts.start" --state "$2/kh.state"; kill -TERM $$); echo "not reached: $KHR"',
                  link, d)
     check("sh: a signal between kh-add and the shell's record: restored", (rc, out, rb(tgt), os.path.islink(link)),
-          (143, "removed|0|unset\n", L1 + b"\n", True))
+          (143, "removed|0\n", L1 + b"\n", True))
 
     # note 3.4: only this run's workspaces are read
     st = os.path.join(TMP, "state", "workspaces")

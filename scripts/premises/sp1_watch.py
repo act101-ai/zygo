@@ -41,17 +41,21 @@
     offsets from the round's prompt second T, with 3 decimals; no path, URL, user or host name is printed.
   sp1_watch.py side --watch <jsonl> --trace <file> --files <json> --lo <unix s> --hi <unix s>
     One line: <0 | 1> TAB <text>: the side-traffic check (side_traffic) for the rounds' window [lo, hi].
-  sp1_watch.py kh-add --file <known_hosts> --line <file with the run's line> --save <copy>   (node FX-38)
-    One word or reason (kh_add): "added" (exit 0) only after the bytes of the file that <known_hosts> names (through
-    a link) were saved to <copy> and the line was appended, flushed and fsync'd; "present" (exit 0, not changed);
-    "failed: <reason>" (exit 1; an errno name, no path).
-  sp1_watch.py kh-remove --file <known_hosts> --line <file with the run's line> --start <copy>   (node FX-38)
-    One line: <result> TAB <lines missing> TAB <lines added by other processes> (kh_remove, then kh_compare of
-    <copy> against the file that <known_hosts> names). The last exact copy of the line is deleted in place: a link
-    stays a link, its target keeps its inode, mode and every other byte. Exit 0 for "removed" with 0 lines missing.
+  sp1_watch.py kh-add --file <known_hosts> --line <file with the run's line> --save <copy> --state <run state>
+    (node FX-38) One word or reason (kh_add): "added" (exit 0) only after the bytes of the file that <known_hosts>
+    names (through a link) were saved to <copy>, the run state (that resolved path, the copy's size and sha256) was
+    written to <run state>, and the line was appended, flushed and fsync'd; "present" (exit 0, not changed, no run
+    state); "failed: <reason>" (exit 1; an errno name, no path; the run state can exist: the teardown restores).
+  sp1_watch.py kh-remove --state <run state> --line <file with the run's line> --start <copy>   (node FX-38)
+    One line: <result> TAB <lines missing> TAB <lines added by other processes> ("?" when not known) (kh_remove,
+    then kh_compare of <copy> against the recorded target). The run's line, or a partial append of it, after the
+    saved prefix is removed (the prefix rewritten: the last exact copy); the new text is renamed onto the recorded
+    target from a temporary file in its folder with its mode (a link stays a link); redone once when the target
+    changed meanwhile, else a failure with no write. Exit 0 when restored with 0 lines missing.
   sp1_watch.py acc --state <workspaces folder> --out <file> <id>...   (node FX-38)
     The acceptance command of MS-23 for this run's ids only: <state>/<id>/mail/sync/state.json of each id into
-    <file> (acceptance_text); prints note 3.4 (acc_note), one entry per id. No other workspace is read.
+    <file> (acceptance_text); prints note 3.4 (acc_note), one entry per id ("no state.json", "unreadable" for a
+    malformed file, "invalid id" for an id that is not a plain name). No other workspace is read.
 
 Rounds file, one JSON object per round: {"id": "R1", "sub": "1.1", "acc": true, "ws": <id>, "member": "cc",
 "member_label": <the busy label>, "arm": "ssh-agent" | "ssh-key" | "https", "T": <int>, "end": <float>, "state":
@@ -63,9 +67,11 @@ import argparse
 import collections
 import datetime
 import errno
+import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import time
 
@@ -450,6 +456,11 @@ def side_traffic(events, trace_lines, files, lo, hi):
 
 
 # --- known_hosts: the run's one line, added and removed through a link (node FX-38) -----------------------------
+#
+# kh_add records its intent before it changes the file: the run-state file (JSON: "target", the resolved path;
+# "size" and "sha256" of the bytes saved before the append) is written, fsync'd and renamed into place before the
+# append starts. Whatever the add's outcome (added, a partial append, an fsync error, killed by a signal), the
+# teardown runs kh_remove from that file, on that recorded target, never on a path resolved again.
 
 def ename(e):
     """The errno name of an OSError (no path: the text can reach the fixture)."""
@@ -461,18 +472,51 @@ def kh_line(line_file):
         return f.read().rstrip(b"\n")
 
 
-def kh_add(path, line_file, save):
+def fsync_dir(path):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def write_atomic(path, data, mode):
+    """<data> to a temporary file in the folder of <path> with <mode>, fsync'd, renamed onto <path>."""
+    d = os.path.dirname(path) or "."
+    tmp = os.path.join(d, ".%s.sp1-%d.tmp" % (os.path.basename(path), os.getpid()))
+    try:
+        os.unlink(tmp)   # left by an earlier process with this pid
+    except FileNotFoundError:
+        pass
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            os.fchmod(f.fileno(), mode)
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        return tmp
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def kh_add(path, line_file, save, state, fsync=os.fsync):
     """Append the run's line (the one line of <line_file>) to the file that <path> names (through a link).
 
-    "present": the file already holds the line (not changed); "added": the bytes of the file were saved to <save>,
-    then the line was appended, flushed and fsync'd; "failed: <reason>": else (no file, not a regular file, no line
-    end at its end, the copy or the append failed). "added" is returned only after the append succeeded.
+    "present": the file already holds the line (not changed, no run state); "added": the bytes of the file were
+    saved to <save>, the run state written to <state>, then the line appended, flushed and fsync'd; "failed:
+    <reason>": else (no file, not a regular file, no line end at its end, the copy, the run state or the append
+    failed). "added" is returned only after the append succeeded. <fsync> is a seam for the tests.
     """
     try:
         add = kh_line(line_file)
     except OSError as e:
         return "failed: the run's line could not be read (%s)" % ename(e)
-    if not add or b"\n" in add:
+    if not add or b"\n" in add or b"\r" in add:
         return "failed: the run's line file does not hold one line"
     real = os.path.realpath(path)
     if not os.path.isfile(real):
@@ -490,64 +534,128 @@ def kh_add(path, line_file, save):
         fd = os.open(save, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "wb") as f:
             f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
     except OSError as e:
         return "failed: the copy of known_hosts could not be saved (%s)" % ename(e)
+    rs = json.dumps({"target": real, "size": len(text), "sha256": hashlib.sha256(text).hexdigest()}).encode()
+    try:
+        os.replace(write_atomic(state, rs, 0o600), state)
+        fsync_dir(os.path.dirname(state) or ".")
+    except OSError as e:
+        return "failed: the run state could not be written (%s)" % ename(e)
     try:
         with open(real, "ab") as f:
             f.write(add + b"\n")
             f.flush()
-            os.fsync(f.fileno())
+            fsync(f.fileno())
     except OSError as e:
-        try:
-            with open(real, "rb") as f:
-                same = f.read() == text
-        except OSError:
-            same = False
-        return "failed: the append failed (%s)%s" % (
-            ename(e), "" if same else "; known_hosts is not equal to the saved copy")
+        return "failed: the append failed (%s)" % ename(e)
     return "added"
 
 
-def kh_remove(path, line_file):
-    """Delete the last exact copy of the run's line from the file that <path> names, in place, through a link.
+def kh_target(state):
+    """The resolved known_hosts path that kh_add recorded in <state>."""
+    with open(state) as f:
+        t = json.load(f)["target"]
+    if not isinstance(t, str) or not os.path.isabs(t):
+        raise ValueError("no absolute target in the run state")
+    return t
 
-    The link stays a link; the target keeps its inode and mode; every other byte is unchanged. "removed"; "the
-    added line is not in the file" (nothing changed); "failed: <reason>".
+
+def kh_cut(data, add, size, sha):
+    """(new bytes, result) for the run's line in <data>; size and sha describe the bytes saved before the append.
+
+    The saved prefix unchanged: the first copy of the line that starts a line at or after <size> is removed;
+    else a fragment at the end that starts a line at or after <size> and is a prefix of the line is cut (a partial
+    append). The prefix changed (the file was rewritten): the last exact copy of the line anywhere is removed.
     """
+    run = add + b"\n"
+    if len(data) >= size and hashlib.sha256(data[:size]).hexdigest() == sha:
+        k = size
+        while k <= len(data):
+            if k == 0 or data[k - 1:k] == b"\n":
+                if data[k:k + len(run)] == run:
+                    return data[:k] + data[k + len(run):], "removed"
+                rest = data[k:]
+                if rest and run.startswith(rest):
+                    return data[:k], ("removed" if rest == add else "removed a partial append (%d bytes)" % len(rest))
+            nl = data.find(b"\n", k)
+            if nl < 0:
+                break
+            k = nl + 1
+        return None, "the added line is not in the file"
+    lines = data.split(b"\n")
+    idx = [i for i, x in enumerate(lines) if x == add]
+    if not idx:
+        return None, "the added line is not in the file"
+    del lines[idx[-1]]
+    return b"\n".join(lines), "removed"
+
+
+def kh_remove(state, line_file, before_rename=None):
+    """Remove the run's line (or a partial append of it) from the target recorded in <state>.
+
+    The new text is written to a temporary file in the target's folder with the target's mode, fsync'd, and renamed
+    onto the recorded target path (a link that names it stays a link). Before the rename the target's size and
+    mtime are checked against the read: changed, it is read and done again once; changed again: a failure, no
+    write. "removed"; "removed a partial append (<n> bytes)"; "the added line is not in the file" (nothing
+    changed); "failed: <reason>". <before_rename> is a seam for the tests.
+    """
+    try:
+        with open(state) as f:
+            rs = json.load(f)
+        target, size, sha = kh_target(state), int(rs["size"]), str(rs["sha256"])
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        return "failed: no usable run state (%s)" % (ename(e) if isinstance(e, OSError) else type(e).__name__)
     try:
         add = kh_line(line_file)
     except OSError as e:
         return "failed: the run's line could not be read (%s)" % ename(e)
-    real = os.path.realpath(path)
-    if not os.path.isfile(real):
-        return "failed: known_hosts is not a regular file"
-    try:
-        with open(real, "rb") as f:
-            if add not in f.read().split(b"\n"):
-                return "the added line is not in the file"
-        with open(real, "r+b") as f:
-            lines = f.read().split(b"\n")
-            idx = [i for i, x in enumerate(lines) if x == add]
-            if not idx:
-                return "the added line is not in the file"
-            del lines[idx[-1]]
-            f.seek(0)
-            f.write(b"\n".join(lines))
-            f.truncate()
-            f.flush()
-            os.fsync(f.fileno())
-    except OSError as e:
-        return "failed: known_hosts could not be rewritten (%s)" % ename(e)
-    return "removed"
+    if not add:
+        return "failed: the run's line file does not hold one line"
+    for attempt in (1, 2):
+        try:
+            with open(target, "rb") as f:
+                st = os.fstat(f.fileno())
+                data = f.read()
+        except OSError as e:
+            return "failed: known_hosts could not be read (%s)" % ename(e)
+        if not stat.S_ISREG(st.st_mode):
+            return "failed: known_hosts is not a regular file"
+        new, res = kh_cut(data, add, size, sha)
+        if new is None:
+            return res
+        try:
+            tmp = write_atomic(target, new, stat.S_IMODE(st.st_mode))
+        except OSError as e:
+            return "failed: known_hosts could not be rewritten (%s)" % ename(e)
+        try:
+            if before_rename:
+                before_rename()
+            now = os.stat(target)
+            if (now.st_size, now.st_mtime_ns, now.st_ino) != (st.st_size, st.st_mtime_ns, st.st_ino):
+                os.unlink(tmp)
+                continue
+            os.replace(tmp, target)
+            fsync_dir(os.path.dirname(target))
+        except OSError as e:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            return "failed: known_hosts could not be rewritten (%s)" % ename(e)
+        return res
+    return "failed: known_hosts changed while it was rewritten (twice)"
 
 
-def kh_compare(start, path):
-    """(lines missing, lines added by other processes): the saved copy against the file that <path> names."""
+def kh_compare(start, target):
+    """(lines missing, lines added by other processes): the saved copy against <target>."""
     def lines(p):
         with open(p, "rb") as f:
             x = f.read().split(b"\n")
         return collections.Counter(x[:-1] if x and x[-1] == b"" else x)
-    a, b = lines(start), lines(os.path.realpath(path))
+    a, b = lines(start), lines(target)
     return sum((a - b).values()), sum((b - a).values())
 
 
@@ -556,54 +664,51 @@ def kh_compare(start, path):
 WSID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
-def acceptance_text(state, ids):
-    """For each id of this run (sorted): the path of <state>/<id>/mail/sync/state.json, its text, a blank line.
+def acc_path(state, i):
+    return os.path.join(state, i, "mail", "sync", "state.json")
 
-    Only these ids are read; an id that is not a plain name or has no state.json gives no entry.
+
+def acceptance_text(state, ids):
+    """For each valid id of this run (sorted) whose state.json is readable: its path, its text, a blank line.
+
+    Only these ids are read; an id that is not a plain name gives no entry.
     """
     out = []
     for i in sorted(set(ids)):
         if not WSID.match(i):
             continue
-        p = os.path.join(state, i, "mail", "sync", "state.json")
-        t = read(p)
+        t = read(acc_path(state, i), "rb")
         if t is None:
             continue
-        out.append("%s\n%s\n" % (p, t))
+        out.append("%s\n%s\n" % (acc_path(state, i), t.decode("utf-8", "replace")))
     return "\n".join(out)
 
 
-def acc_note(text, mine):
-    """Note 3.4: one entry per id of <mine> (sorted; id shortened; URL hashes and blob ids left out)."""
-    txt, got, i = text.split("\n"), {}, 0
-    while i < len(txt):
-        p = txt[i]
-        if p.endswith("/mail/sync/state.json"):
-            ws = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(p))))
-            j, buf = i + 1, []
-            while j < len(txt) and not txt[j].endswith("/mail/sync/state.json"):
-                buf.append(txt[j])
-                j += 1
-            got[ws] = "\n".join(buf)
-            i = j
-        else:
-            i += 1
-    out = []
-    for ws in sorted(set(mine)):
-        if ws not in got:
-            out.append("%s… (this run): no state.json" % ws[:8])
-            continue
-        try:
-            s = json.loads(got[ws])
-        except ValueError:
-            s = None
+def acc_entry(state, i):
+    """Note 3.4 entry of one id of this run; any malformed file gives "unreadable" for that id only."""
+    if not WSID.match(i):
+        return "invalid id (this run)"
+    p = acc_path(state, i)
+    if not os.path.lexists(p):
+        return "%s… (this run): no state.json" % i[:8]
+    try:
+        with open(p, "rb") as f:
+            s = json.loads(f.read().decode("utf-8"))
         if not isinstance(s, dict):
-            out.append("%s… (this run): unreadable" % ws[:8])
-        else:
-            out.append("%s… (this run): last_ok %s, last_error %s, public %s, pushed %s" % (
-                ws[:8], s.get("last_ok"), "absent" if s.get("last_error") is None else s["last_error"],
-                (s.get("public") or {}).get("verdict"), " ".join(sorted((s.get("pushed") or {}).keys())) or "none"))
-    return "; ".join(out) or "no state.json"
+            raise ValueError("not an object")
+        pub, pushed = s.get("public") or {}, s.get("pushed") or {}
+        if not isinstance(pub, dict) or not isinstance(pushed, dict):
+            raise ValueError("public or pushed is not an object")
+        return "%s… (this run): last_ok %s, last_error %s, public %s, pushed %s" % (
+            i[:8], s.get("last_ok"), "absent" if s.get("last_error") is None else s["last_error"],
+            pub.get("verdict"), " ".join(sorted(str(k) for k in pushed)) or "none")
+    except (OSError, ValueError):
+        return "%s… (this run): unreadable" % i[:8]
+
+
+def acc_note(state, ids):
+    """Note 3.4: one entry per id of this run (sorted; id shortened; URL hashes and blob ids left out)."""
+    return "; ".join(acc_entry(state, i) for i in sorted(set(ids))) or "no state.json"
 
 
 # --- the watcher ------------------------------------------------------------------------------------------------
@@ -962,8 +1067,9 @@ def main():
     ka.add_argument("--file", required=True)
     ka.add_argument("--line", required=True)
     ka.add_argument("--save", required=True)
+    ka.add_argument("--state", required=True)
     kr = sp.add_parser("kh-remove")
-    kr.add_argument("--file", required=True)
+    kr.add_argument("--state", required=True)
     kr.add_argument("--line", required=True)
     kr.add_argument("--start", required=True)
     ac = sp.add_parser("acc")
@@ -972,22 +1078,22 @@ def main():
     ac.add_argument("ids", nargs="*")
     a = p.parse_args()
     if a.cmd == "kh-add":
-        r = kh_add(a.file, a.line, a.save)
+        r = kh_add(a.file, a.line, a.save, a.state)
         sys.stdout.write(r + "\n")
         sys.exit(0 if r in ("added", "present") else 1)
     if a.cmd == "kh-remove":
-        r = kh_remove(a.file, a.line)
+        r = kh_remove(a.state, a.line)
         try:
-            miss, more = kh_compare(a.start, a.file)
-        except OSError:
+            miss, more = kh_compare(a.start, kh_target(a.state))
+        except (OSError, ValueError, KeyError, TypeError):
             miss, more = "?", "?"
         sys.stdout.write("%s\t%s\t%s\n" % (r, miss, more))
-        sys.exit(0 if r == "removed" and miss == 0 else 1)
+        restored = r == "removed" or r.startswith("removed ") or r == "the added line is not in the file"
+        sys.exit(0 if restored and miss == 0 else 1)
     if a.cmd == "acc":
-        text = acceptance_text(a.state, a.ids)
         with open(a.out, "w") as f:
-            f.write(text)
-        sys.stdout.write(acc_note(text, a.ids) + "\n")
+            f.write(acceptance_text(a.state, a.ids))
+        sys.stdout.write(acc_note(a.state, a.ids) + "\n")
         return
     if a.cmd == "watch":
         watch(a)
