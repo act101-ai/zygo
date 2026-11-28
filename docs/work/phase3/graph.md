@@ -216,7 +216,8 @@ Session text (T, SX nodes):
 | FX-30 | A crash-recovered delivery gets no wake and no count | FX-26, FX-28 | DONE | judgment | 1f871269^..c0675e47 · acceptance pass (crash_recovery_wake 11 passed, mail_sync_no_content 5 passed) · PR #240 |
 | FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | DONE | judgment | 3279f092^..4bae96ba · acceptance pass (pin_gone_stops_exactly_the_r11_members 1 passed, workspace_definition 17 passed + 9 ignored passed) · PR #238 |
 | FX-32 | The P and Q arms of `check-premises.sh` refuse a dated note whose text holds `)` | SX-10 | DONE | mechanical | e6d86033^..ae1f7beb · acceptance pass (ver tests: ok (92), check-premises ok) · PR #255 |
-| FX-33 | OpenCode system text: the unread line and a foreign resume note break the prompt cache | FX-9 | TODO | judgment | — |
+| FX-33 | OpenCode system text: the unread line and a foreign resume note break the prompt cache | FX-9, FX-34 | TODO | judgment | — |
+| FX-34 | Keep stub-agent small: the real-hook stub in its own binary | FX-9 | IN-PROGRESS | implementation | wt .worktrees/phase3/FX-34 |
 
 ## Log
 
