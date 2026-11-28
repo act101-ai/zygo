@@ -802,6 +802,82 @@ fn public_remote_stops_before_any_fetch() {
     assert!(!a.wt.exists());
 }
 
+/// The injected public probe that records each URL it is asked and says `Public`.
+struct Asked(Arc<Mutex<Vec<String>>>);
+impl env::Probe for Asked {
+    fn probe(&self, url: &str) -> Verdict {
+        self.0.lock().unwrap().push(url.to_string());
+        Verdict::Public
+    }
+}
+
+#[test] // FX-40 (S-F1), S§8.2 step 1: `git push` sends to every push URL, so a public second push URL stops the pass
+fn second_push_url_that_is_public_refuses_the_pass() {
+    let _g = shared();
+    let (r, a) = one();
+    let fetch = git(&a.root, &["remote", "get-url", "origin"]);
+    git(&a.root, &["remote", "set-url", "--add", "--push", "origin", &fetch]);
+    git(&a.root, &["remote", "set-url", "--add", "--push", "origin", "https://example.invalid/mirror.git"]);
+    let refs0 = git(&r.bare, &["for-each-ref"]);
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let mut e = plain_env(&a);
+    e.probe = Box::new(Asked(asked.clone()));
+    let err = run(&e, WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!(err, SyncError::Stopped { line: "zygo: the remote can be read without a login; mail sync refused".into(), check: "public" });
+    assert_eq!(*asked.lock().unwrap(), vec!["https://example.invalid/mirror.git".to_string()]);
+    assert_eq!(git(&r.bare, &["for-each-ref"]), refs0);
+    assert!(!a.root.join(".git/refs/remotes/origin/zygo").exists());
+    assert!(!a.wt.exists());
+}
+
+/// A valid message file for `bob@b` from `alice@a`, named by `id`.
+fn bob_message(id: Ulid) -> Vec<u8> {
+    format!(r#"{{"version":1,"id":"{id}","from":"alice@a","to":"bob@b","sent_at":"2026-11-25T10:00:00Z","subject":"s","body":"b"}}"#)
+        .into_bytes()
+}
+
+/// `n` messages for `bob@b` put on the tip, with ULID time `secs` and random parts `from..from + n`.
+fn bob_messages_on_tip(r: &Remote, secs: u64, from: u128, n: u128) -> Vec<Ulid> {
+    let ids: Vec<Ulid> = (from..from + n).map(|i| Ulid::from_parts(secs * 1000, i)).collect();
+    let files: Vec<(String, Vec<u8>)> = ids.iter().map(|id| (format!("bob@b/{id}.json"), bob_message(*id))).collect();
+    let adds: Vec<(&str, &[u8])> = files.iter().map(|(p, b)| (p.as_str(), b.as_slice())).collect();
+    edit_tip(r, &adds, &[]);
+    ids
+}
+
+#[test] // FX-40 (S-F2), S§8.5, S§19 #13: the 500 candidates are counted over every push attempt of the pass
+fn one_pass_reads_at_most_500_candidates_across_moved_attempts() {
+    let _g = shared();
+    let (r, _a, b) = pair();
+    b.config(Some("b\"\nmax_unread = 5000\n#"), "");
+    let late = bob_messages_on_tip(&r, T0 + 5000, 0, 600);
+    let counts = Arc::new(Mutex::new(BTreeMap::new()));
+    let r = Arc::new(r);
+    let r2 = r.clone();
+    let early = Arc::new(Mutex::new(Vec::new()));
+    let early2 = early.clone();
+    let h = counting(counts.clone(), move |p, n| {
+        if p == "before_push" && n == 1 {
+            // older ULIDs: they sort before the 500 that the first attempt took
+            *early2.lock().unwrap() = bob_messages_on_tip(&r2, T0 + 1000, 0, 10);
+        }
+    });
+    let rep = run(&hook_env(&b, h), WS_ID, Mode::Cli).unwrap();
+    assert_eq!(counts.lock().unwrap()["before_push"], 2);
+    assert_eq!(rep.delivered, 500);
+    let got: BTreeSet<String> = new_messages(&b, BOB).iter().map(|v| v["id"].as_str().unwrap().to_string()).collect();
+    assert_eq!(got.len(), 500);
+    let first: BTreeSet<String> = late[..500].iter().map(|u| u.to_string()).collect();
+    assert_eq!(got, first);
+    assert_eq!(imported(&r, "ack/b.json"), first);
+    let rep = sync(&b);
+    assert_eq!(rep.delivered, 110);
+    let got: Vec<String> = new_messages(&b, BOB).iter().map(|v| v["id"].as_str().unwrap().to_string()).collect();
+    let all: BTreeSet<String> = late.iter().chain(early.lock().unwrap().iter()).map(|u| u.to_string()).collect();
+    assert_eq!(got.len(), 610);
+    assert_eq!(got.into_iter().collect::<BTreeSet<_>>(), all);
+}
+
 #[test] // S§19 #6 unknown
 fn unknown_public_verdict_is_a_note() {
     let _g = shared();

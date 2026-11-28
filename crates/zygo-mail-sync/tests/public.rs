@@ -189,6 +189,31 @@ mod unix {
         assert_eq!(remote_urls(d, "origin", far()), Ok(vec!["https://u:p@h/p".to_string(), "ssh://git@h/p".to_string()]));
     }
 
+    /// FX-40 (S-F1), S§8.2 step 1: `git push` sends to every push URL, so the check reads each one.
+    #[test]
+    fn remote_urls_gives_every_push_url() {
+        let t = tempfile::TempDir::new().unwrap();
+        let d = t.path();
+        git(d, &["init", "-q"]);
+        git(d, &["remote", "add", "origin", "https://h/p"]);
+        git(d, &["remote", "set-url", "--add", "--push", "origin", "ssh://git@h/a"]);
+        git(d, &["remote", "set-url", "--add", "--push", "origin", "https://m/b"]);
+        assert_eq!(remote_urls(d, "origin", far()),
+            Ok(vec!["https://h/p".to_string(), "ssh://git@h/a".to_string(), "https://m/b".to_string()]));
+    }
+
+    /// FX-40, S§8.2 step 1: a push URL equal to the fetch URL is given once.
+    #[test]
+    fn remote_urls_gives_each_url_once() {
+        let t = tempfile::TempDir::new().unwrap();
+        let d = t.path();
+        git(d, &["init", "-q"]);
+        git(d, &["remote", "add", "origin", "https://h/p"]);
+        git(d, &["remote", "set-url", "--add", "--push", "origin", "https://h/p"]);
+        git(d, &["remote", "set-url", "--add", "--push", "origin", "https://m/b"]);
+        assert_eq!(remote_urls(d, "origin", far()), Ok(vec!["https://h/p".to_string(), "https://m/b".to_string()]));
+    }
+
     #[test]
     fn remote_urls_gives_one_url_when_push_is_fetch() {
         let t = tempfile::TempDir::new().unwrap();

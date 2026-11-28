@@ -210,7 +210,7 @@ fn go(m: &Machine, sp: &SyncPaths, tip: &str, hosts: &[&str], ack: &BTreeSet<Uli
     -> (Result<Imported, Crash>, Vec<String>) {
     let hosts: Vec<String> = hosts.iter().map(|h| h.to_string()).collect();
     let mut lines = Vec::new();
-    let r = run(sp, &Store::open(&m.paths, WS_ID), &m.wt, tip, &hosts, &bob(), ack, max, far(), seam, &mut |l| lines.push(l.to_string()));
+    let r = run(sp, &Store::open(&m.paths, WS_ID), &m.wt, tip, &hosts, &bob(), ack, &mut BTreeSet::new(), max, far(), seam, &mut |l| lines.push(l.to_string()));
     let r = r.map(|mut i| {
         let read = i.read.take();
         assert_eq!(read.is_some(), !i.delivered.is_empty(), "read {read:?}");
@@ -321,6 +321,30 @@ fn the_cap_gives_500_per_run_and_all_once_after_three() { // S§19 #13
     assert_eq!(names(&new_dir(&sp)).len(), 1200);
 }
 
+#[test] // FX-40 (S-F2), S§8.5: the ULIDs taken are one set for the pass; a later call of the same pass reads no ULID of
+        // the set again and a new one only while the set holds fewer than CANDIDATE_CAP
+fn import_cap_is_kept_across_calls_of_one_pass() {
+    let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+    let ids: Vec<Ulid> = (1..=10).map(u).collect();
+    let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &ids))]);
+    let mut taken: BTreeSet<Ulid> = (5001..=5000 + CANDIDATE_CAP as u64 - 2).map(u).collect();
+    let call = |taken: &mut BTreeSet<Ulid>| {
+        let mut lines = Vec::new();
+        let res = run(&sp, &Store::open(&m.paths, WS_ID), &m.wt, &t, &["b".into()], &bob(), &BTreeSet::new(), taken, 5000,
+            far(), &NoSeam, &mut |l| lines.push(l.to_string())).unwrap();
+        assert!(lines.is_empty(), "{lines:?}");
+        res
+    };
+    let res = call(&mut taken);
+    assert_eq!(res.delivered, vec![(KEY.to_string(), u(1)), (KEY.to_string(), u(2))]);
+    assert!(res.left >= 1);
+    assert_eq!(taken.len(), CANDIDATE_CAP);
+    assert!(taken.contains(&u(1)) && taken.contains(&u(2)) && !taken.contains(&u(3)));
+    let res = call(&mut taken);
+    assert_eq!((res.delivered, res.acked), (vec![], vec![]));
+    assert_eq!(names(&new_dir(&sp)), [file(u(1)), file(u(2))]);
+}
+
 #[test]
 fn a_ulid_in_the_imported_log_is_acked_not_delivered() {
     let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
@@ -429,13 +453,13 @@ fn a_passed_deadline_or_a_bad_target_reads_nothing() {
     let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
     let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
     let mut lines = Vec::new();
-    let res = run(&sp, &Store::open(&m.paths, WS_ID), &m.wt, &t, &["b".into()], &bob(), &BTreeSet::new(), 5000, Instant::now(), &NoSeam,
+    let res = run(&sp, &Store::open(&m.paths, WS_ID), &m.wt, &t, &["b".into()], &bob(), &BTreeSet::new(), &mut BTreeSet::new(), 5000, Instant::now(), &NoSeam,
         &mut |l| lines.push(l.to_string()));
     assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![], left: 1 }));
     assert!(lines.is_empty(), "{lines:?}"); // stopping at the deadline is normal: no error line
     for (targets, host) in [(vec![Target { name: "bob".into(), pane_key: "../x".into() }], "b"),
         (vec![Target { name: "cli".into(), pane_key: KEY.into() }], "b"), (bob(), "B!")] {
-        let res = run(&sp, &Store::open(&m.paths, WS_ID), &m.wt, &t, &[host.into()], &targets, &BTreeSet::new(), 5000, far(), &NoSeam, &mut |_| {});
+        let res = run(&sp, &Store::open(&m.paths, WS_ID), &m.wt, &t, &[host.into()], &targets, &BTreeSet::new(), &mut BTreeSet::new(), 5000, far(), &NoSeam, &mut |_| {});
         assert_eq!(res, Ok(Imported::default()));
     }
     assert!(!sp.mail.join(KEY).exists() && !sp.incoming.exists());
@@ -516,7 +540,7 @@ fn a_full_inbox_with_a_backlog_does_not_stop_the_others() {
             fs::write(new_dir(&sp).join(file(u(9000 + n))), b"{}").unwrap();
         }
         let mut lines = Vec::new();
-        let res = run(&sp, &Store::open(&m.paths, WS_ID), &m.wt, &t, &["b".into()], &targets, &BTreeSet::new(), 3, far(), &NoSeam,
+        let res = run(&sp, &Store::open(&m.paths, WS_ID), &m.wt, &t, &["b".into()], &targets, &BTreeSet::new(), &mut BTreeSet::new(), 3, far(), &NoSeam,
             &mut |l| lines.push(l.to_string())).unwrap();
         let mut want: Vec<(String, Ulid)> = (1..=bob_got).map(|n| (KEY.to_string(), u(n))).collect();
         want.extend(carol.iter().map(|id| (CAROL.to_string(), *id)));

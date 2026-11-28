@@ -464,6 +464,26 @@ fn classify_reads_only_the_target_ref_line() {
     assert_eq!(classify(false, b"*\tC:refs/heads/zygo/mail\t[new branch]\n", "zygo/mail"), failed);
 }
 
+/// FX-40 (S-F1), S§8.3 step 15: a push to two URLs gives one ref line per URL; one accept and one reject is never
+/// `Accepted`, whatever the exit and the line order.
+#[test]
+fn classify_one_accept_and_one_reject_is_not_accepted() {
+    let accept = " \tC:refs/heads/zygo/mail\t[new branch]\n";
+    let moved = "!\tC:refs/heads/zygo/mail\t[rejected] (fetch first)\n";
+    let server = "!\tC:refs/heads/zygo/mail\t[remote rejected] (hook declined)\n";
+    for ok in [true, false] {
+        for out in [format!("To one\n{accept}Done\nTo two\n{moved}Done\n"), format!("To two\n{moved}Done\nTo one\n{accept}Done\n")] {
+            assert_eq!(classify(ok, out.as_bytes(), "zygo/mail"), Pushed::Moved, "ok {ok}: {out:?}");
+        }
+        for out in [format!("{accept}{server}"), format!("{server}{accept}"), format!("{moved}{server}")] {
+            assert_eq!(classify(ok, out.as_bytes(), "zygo/mail"), Pushed::Other("push rejected".into()), "ok {ok}: {out:?}");
+        }
+    }
+    let two = format!("{accept}{accept}");
+    assert_eq!(classify(true, two.as_bytes(), "zygo/mail"), Pushed::Accepted);
+    assert_eq!(classify(false, two.as_bytes(), "zygo/mail"), Pushed::Other("push failed".into()));
+}
+
 /// The bootstrap root of `m` plus a commit that adds `registry/<who>.json`: distinct per machine even when two
 /// roots are made in the same second.
 fn first(m: &Machine, who: &str) -> String {
