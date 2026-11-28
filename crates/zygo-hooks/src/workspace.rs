@@ -242,16 +242,79 @@ pub fn mark_busy(paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, bound: D
 /// ML-10 D4). A member with `[features] mail` off (`view.mail`) has no mail tools: 0, and `mail/` is not read (M§7.1,
 /// M§7.2, M§8; ML-10 review R1).
 fn unread_mail(c: &Ctx) -> usize {
+    unread_ids(c).len()
+}
+
+/// The ids of the unread messages of the member, oldest first, by the rules of `unread_mail` (an error or mail off:
+/// none).
+fn unread_ids(c: &Ctx) -> Vec<String> {
     if !c.view.mail {
-        return 0;
+        return Vec::new();
     }
-    match store::unread(&mail_dir(c.paths, &c.ws_id), &c.pane) {
-        Ok(n) => n,
+    match store::unread_ids(&mail_dir(c.paths, &c.ws_id), &c.pane) {
+        Ok(ids) => ids,
         Err(e) => {
             error_line(&format!("workspace hook {}: {e}", c.event));
-            0
+            Vec::new()
         }
     }
+}
+
+/// The file of the session folder that holds the ids of the unread messages that this launch announced to the
+/// OpenCode member: by the `message` line or by a turn-end wake (M§7.2, M§7.3; FX-33 review F1). A JSON array of ids.
+const MAIL_SEEN: &str = "mail-seen.json";
+
+/// The announced ids of `MAIL_SEEN`; a missing file, or one that cannot be read or parsed, holds none (the next turn
+/// end then wakes at most once more, C6).
+fn mail_seen(c: &Ctx) -> Vec<String> {
+    match read_session_file(&c.dir.root.join(MAIL_SEEN)) {
+        Ok(Some(b)) => serde_json::from_slice(&b).unwrap_or_default(),
+        Ok(None) => Vec::new(),
+        Err(e) => {
+            slog(c.dir, c.event, &format!("{e:#}"));
+            Vec::new()
+        }
+    }
+}
+
+/// Writes `ids` as the announced ids (temporary file, then rename; `0600`); a failure writes one session-log line.
+fn set_mail_seen(c: &Ctx, ids: &[String]) {
+    let written = serde_json::to_vec(ids)
+        .map_err(anyhow::Error::from)
+        .and_then(|b| zygo_core::session_dir::write_atomic(&c.dir.root.join(MAIL_SEEN), &b));
+    if let Err(e) = written {
+        slog(c.dir, c.event, &format!("{MAIL_SEEN} not written: {e:#}"));
+    }
+}
+
+/// True when `id` is the OpenCode main session that the plugin's `session` call recorded for the member
+/// (`member.agent_session`, AU104). A child session is never recorded (AU27), so a child's user message gets no line
+/// whatever the order in which the plugin saw its events (FX-33 review). No `workspace.json` or no record: false.
+fn main_session(c: &Ctx, id: Option<&str>) -> bool {
+    let Some(id) = id else { return false };
+    matches!(c.store.read(), Ok(Some(ws)) if ws.members.get(&c.pane).and_then(|m| m.agent_session.as_deref()) == Some(id))
+}
+
+/// M§7.3 at the end of an OpenCode turn (the plugin's `stop` call, AU27; FX-33 review F1): a member that was busy when
+/// mail came was not woken (M§7.3) and OpenCode has no Stop block (ML-10 D1), so when `new/` holds an id that this
+/// launch has not announced, the hook wakes the member's own pane by the M§7.3 steps (idle rule, `wake_gap`, pane
+/// checks) and records the ids as announced, so one arrival gives at most one wake. Not in phase `draining` or
+/// `stopping` (M§9). The wake text is fixed (M-C5); its prompt then gets the `message` line.
+fn wake_after_turn(c: &Ctx, sync: &Env) {
+    if matches!(c.store.phase_unlocked(), Some(Phase::Draining | Phase::Stopping)) {
+        return;
+    }
+    let ids = unread_ids(c);
+    let seen = mail_seen(c);
+    if !ids.iter().any(|i| !seen.contains(i)) {
+        return;
+    }
+    let Ok(Some(ws)) = c.store.read() else { return };
+    let cfg = zygo_config::load(&zygo_config::LoadContext { paths: c.paths.clone(), repo: None, team: None })
+        .map(|m| m.config.mail)
+        .unwrap_or_default();
+    set_mail_seen(c, &ids);
+    sync.wake.wake(c.paths, &ws, std::slice::from_ref(&c.pane), &cfg, sync.clock.now());
 }
 
 /// The main loop: the input object has no `agent_id` key (W§9.1, the test of W§8.3; D5).
@@ -332,7 +395,7 @@ pub fn run_with_sync(
             if main {
                 change(&c, &mut start_turn);
                 // M§7.2, ML-10 D3: a Claude Code prompt adds the delivery line; the OpenCode plugin drops this output
-                // and gets the line from the per-request session text.
+                // and gets the line from its `chat.message` call (the `message` event, FX-33).
                 if matches!(c.view.agent, Agent::ClaudeCode) {
                     let n = unread_mail(&c);
                     if n > 0 {
@@ -360,15 +423,23 @@ pub fn run_with_sync(
             change(&c, &mut |a| {
                 a.busy = false;
                 a.tools_running = 0;
-            })
+            });
+            // M§7.3 (FX-33 review F1): after the clear, so the wake sees an idle member.
+            if matches!(c.view.agent, Agent::OpenCode) {
+                wake_after_turn(&c, sync);
+            }
         }
-        // M§7.2 (FX-33): the OpenCode plugin's `chat.message` call for a user message of the main session. It gives
-        // the delivery line, which the plugin adds to that message, so the per-request session text holds no mail
-        // line; it changes nothing and starts no sync child (the turn's `prompt` does). A mail read error is ML-10 D4.
+        // M§7.2 (FX-33): the OpenCode plugin's `chat.message` call for a user message. Only for the recorded main
+        // session (`main_session`), it gives the delivery line, which the plugin adds to that message, so the
+        // per-request session text holds no mail line, and records the ids as announced (`MAIL_SEEN`). It changes
+        // nothing in `activity.json` and starts no sync child (the turn's `prompt` does). A mail read error is ML-10 D4.
         "message" if main => {
-            let n = unread_mail(&c);
-            if n > 0 {
-                return Ok(Some(crate::mail::delivery_line(n)));
+            if main_session(&c, payload_id(&payload, "sessionID")) {
+                let ids = unread_ids(&c);
+                if !ids.is_empty() {
+                    set_mail_seen(&c, &ids);
+                    return Ok(Some(crate::mail::delivery_line(ids.len())));
+                }
             }
         }
         // W§9.1 names no `busy` change for `SessionEnd`.

@@ -202,15 +202,16 @@ export const ZygoPlugin = async ({ directory }) => {
     },
     // M§7.2 (FX-33): a user message of the main session (the member gate, the main role's `zygo/` model, not a known
     // child) gets the mail line as one synthetic text part, so the line is in the saved user turn and the system text
-    // of each request does not change with the unread count. The call changes no state, so it does not wait for the
-    // queued member calls.
+    // of each request does not change with the unread count. The call goes after the queued member calls, so a queued
+    // `session` call has recorded the main session that the hook checks (a child, whatever the order of its events,
+    // is never that session).
     "chat.message": async (input, output) => {
       const role = process.env.ZYGO_MAIN_ROLE;
       const m = output && output.message && typeof output.message === "object" ? output.message : null;
       const model = m && m.model && typeof m.model === "object" ? m.model : null;
       if (!member || !input || !isId(input.sessionID) || kind.get(input.sessionID) === "child") return;
       if (!model || model.providerID !== "zygo" || !role || model.modelID !== role || !Array.isArray(output.parts)) return;
-      const line = await run("workspace", { sessionID: input.sessionID }, ["--event", "message"]);
+      const line = await ws("message", { sessionID: input.sessionID });
       if (line) {
         output.parts.push({ id: partId(), sessionID: input.sessionID, messageID: m.id, type: "text", text: line, synthetic: true });
       }
