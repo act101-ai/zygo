@@ -357,7 +357,7 @@ impl TurnWake for TmuxTurnWake {
             Duration::from_secs(30)
         });
         let mux = Tmux::new(self.tmux.clone(), ws.tmux_socket.clone());
-        mail_wake::wake(&store, ws, &mux, key, gap, &ProbeAt(now))
+        mail_wake::wake(&store, ws, &mux, key, gap, &ProbeAt(now), mail_wake::HOOK_BOUND)
     }
 }
 

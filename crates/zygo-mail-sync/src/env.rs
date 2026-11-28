@@ -6,8 +6,7 @@ use std::time::SystemTime;
 use zygo_config::MailConfig;
 use zygo_core::paths::Paths;
 use zygo_redact::secret::DeadlinePolicy;
-use zygo_workspace::mail::wake::{after_send_with, RealProbe};
-use zygo_workspace::mux::tmux::Tmux;
+use zygo_workspace::mail::wake::after_send_at;
 use zygo_workspace::state::Workspace;
 
 /// S-C9: the clock, injected so no test depends on wall-clock time.
@@ -47,7 +46,8 @@ pub trait Wake: Send + Sync {
     fn wake(&self, paths: &Paths, ws: &Workspace, keys: &[String], cfg: &MailConfig, now: SystemTime);
 }
 
-/// The production wake: the M§7.3 wake through the tmux program `tmux` and the AU26 idle rule.
+/// The production wake: the M§7.3 wake through the tmux program `tmux` and the AU26 idle rule, with the deferred
+/// retry of a member in the quiet window (`after_send_at`, FX-35).
 #[derive(Debug, Clone)]
 pub struct TmuxWake {
     pub tmux: PathBuf,
@@ -55,7 +55,7 @@ pub struct TmuxWake {
 
 impl Wake for TmuxWake {
     fn wake(&self, paths: &Paths, ws: &Workspace, keys: &[String], cfg: &MailConfig, now: SystemTime) {
-        after_send_with(paths, ws, keys, cfg, &Tmux::new(self.tmux.clone(), ws.tmux_socket.clone()), &RealProbe, now);
+        after_send_at(paths, ws, &self.tmux, keys, cfg, now);
     }
 }
 

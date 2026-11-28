@@ -103,6 +103,25 @@ fn rule3(status: Result<&SessionStatus, &str>, now: SystemTime) -> Rule3 {
     }
 }
 
+/// The rest of the AU26 rule 3 quiet window (M§7.3, FX-35): `Some(end + REQUEST_QUIET − now)` exactly when [`idle`]
+/// gives `Busy` and the only failed rule is the rule 3 time test: `busy` is `false`, no subagent runs, no tool runs,
+/// the proxy reports `requests_in_flight` 0 and an RFC 3339 `last_request_end` less than `REQUEST_QUIET` before `now`
+/// or at most `REQUEST_QUIET` after it. Every other input gives `None`. Like [`idle`], it holds no state and reads no
+/// clock or file.
+pub fn quiet_left(activity: Result<&Activity, &str>, status: Result<&SessionStatus, &str>, now: SystemTime) -> Option<Duration> {
+    let (Ok(a), Ok(s)) = (activity, status) else { return None };
+    if a.busy || !a.running.is_empty() || a.tools_running > 0 || s.requests_in_flight != Some(0) {
+        return None;
+    }
+    let end = SystemTime::from(OffsetDateTime::parse(s.last_request_end.as_deref()?, &Rfc3339).ok()?);
+    match now.duration_since(end) {
+        Ok(since) if since < REQUEST_QUIET => Some(REQUEST_QUIET - since),
+        Ok(_) => None,
+        Err(ahead) if ahead.duration() <= REQUEST_QUIET => Some(REQUEST_QUIET + ahead.duration()),
+        Err(_) => None,
+    }
+}
+
 /// The idle rule of the drain (AU26, W§9.3 step 5) for one member at the poll time `now`. `activity` is the result
 /// of `activity::read` and `status` the result of the proxy status call; each `Err` is the text of the failed read.
 /// It holds no state and reads no clock or file: the same inputs give the same result. OpenCode needs no branch here (AU27): its idle event acts as `Stop`
