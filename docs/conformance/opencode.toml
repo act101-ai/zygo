@@ -215,7 +215,7 @@ evidence = ["test:crates/zygo-launch/tests/opencode.rs::plugin_text_matches_the_
 [[grade]]
 criterion = "A-7.6"
 status = "met"
-evidence = ["test:crates/zygo-hooks/tests/shaping_hook.rs::opencode_shaped_output_gains_no_stderr_key", "test:crates/zygo-hooks/tests/shaping.rs::case_views_meet_floors_and_keep_lines", "test:crates/zygo-hooks/tests/shaping_hook.rs::file_printers_get_the_size_view_of_stdout_only", "test:crates/zygo-hooks/tests/shaping_hook.rs::reuse_text_loses_only_escapes", "test:crates/zygo-results/tests/shape_pipeline.rs::kind_view_runs_over_the_threshold", "test:crates/zygo-results/tests/shape_pipeline.rs::kind_view_not_run_at_the_threshold", "premise:docs/premises.md#PO3"]
+evidence = ["test:crates/zygo-hooks/tests/shaping_hook.rs::opencode_shaped_output_gains_no_stderr_key", "test:crates/zygo-hooks/tests/shaping.rs::case_views_meet_floors_and_keep_lines", "test:crates/zygo-hooks/tests/shaping_hook.rs::file_printers_get_the_size_view_of_stdout_only", "test:crates/zygo-hooks/tests/shaping_hook.rs::reuse_text_loses_only_escapes", "test:crates/zygo-results/tests/shape_pipeline.rs::kind_view_runs_over_the_threshold", "test:crates/zygo-results/tests/shape_pipeline.rs::kind_view_not_run_at_the_threshold", "test:crates/zygo-hooks/tests/shaping_hook.rs::over_4_mib_gets_only_the_size_view", "test:crates/zygo-hooks/tests/shaping_hook.rs::saving_of_255_gives_nothing_and_256_is_used", "test:crates/zygo-hooks/tests/shaping_hook.rs::size_view_use_rule_boundary", "test:crates/zygo-hooks/tests/shaping_hook.rs::shaper_panic_gives_size_view_of_raw_text", "test:crates/zygo-hooks/tests/shaping_off_unchanged.rs::shape_off_output_below_the_threshold_passes_unchanged_on_each_client", "premise:docs/premises.md#PO3"]
 
 [[grade]]
 criterion = "A-7.7"
@@ -266,7 +266,7 @@ reason = "zygo writes no status command for OpenCode: the OpenCode launch has no
 [[grade]]
 criterion = "A-9.7"
 status = "met"
-evidence = ["test:crates/zygo/src/cmd/status.rs::runtime_line_follows_the_session_line", "test:crates/zygo/src/cmd/status.rs::runtime_line_of_a_member_uses_first_started_at"]
+evidence = ["test:crates/zygo/src/cmd/status.rs::runtime_line_follows_the_session_line", "test:crates/zygo/src/cmd/status.rs::runtime_line_of_a_member_uses_first_started_at", "test:crates/zygo/src/cmd/status.rs::runtime_line_absent_outside_a_session_or_with_no_start"]
 
 [[grade]]
 criterion = "A-10.1"
@@ -448,7 +448,7 @@ evidence = ["test:crates/zygo-hooks/tests/workspace.rs::mail_opencode_request_te
 [[grade]]
 criterion = "WA-3.3"
 status = "met"
-evidence = ["test:crates/zygo-workspace/tests/mail_wake.rs::after_send_with_wakes_the_target_once", "test:crates/zygo-workspace/tests/mail_wake.rs::second_wake_inside_the_gap_is_skipped", "test:crates/zygo-hooks/tests/workspace.rs::opencode_turn_signals", "premise:docs/premises.md#PM2"]
+evidence = ["test:crates/zygo-workspace/tests/mail_wake.rs::after_send_with_wakes_the_target_once", "test:crates/zygo-workspace/tests/mail_wake.rs::second_wake_inside_the_gap_is_skipped", "test:crates/zygo-hooks/tests/workspace.rs::opencode_turn_signals", "test:crates/zygo-workspace/tests/mail_wake.rs::pane_whose_zygo_pane_differs_is_refused", "test:crates/zygo-workspace/tests/mail_wake.rs::session_whose_zygo_ws_differs_is_refused", "premise:docs/premises.md#PM2"]
 
 [[grade]]
 criterion = "WA-3.4"

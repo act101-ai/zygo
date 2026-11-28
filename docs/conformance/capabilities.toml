@@ -130,7 +130,7 @@ text = "The view takes the place of the tool's output in the tool's own result, 
 
 [[capability.criterion]]
 id = "A-7.6"
-text = "Bash tool output reaches the model through output shaping as §10.1 Shaping and output shaping design O§7.1 and O§7.3 define it, with their exceptions (size view only, view not used, file printer, unsure parse, reuse text, [results] shape = false), where the §10.1 rules for those cases apply."
+text = "Bash tool output reaches the model through output shaping as §10.1 Shaping and O§7.1, O§7.3 and O§7.10 define it, with their exceptions (size view only, view not used, file printer, unsure parse, reuse text, shape = false, isImage, the panic fallback), where §10.1's rules for those cases apply."
 
 [[capability.criterion]]
 id = "A-7.7"
@@ -182,7 +182,7 @@ text = "Each status command that zygo writes runs in each shell the client uses.
 
 [[capability.criterion]]
 id = "A-9.7"
-text = "The session run time (since the member's first start, or the session's own start outside a workspace) shows on the client's status surface, or in `zygo status` when the client has no surface (session run time design T§2.1, T§2.4, T§2.5; §17 `zygo status`)."
+text = "When T§2.2 gives a start (the member's first start, the pending start, or the session's own start), the session run time shows on the client's status surface, or in `zygo status` when the client has no surface; with no start it is not shown (T§2.1, T§2.2, T§2.4, T§2.5; §17 `zygo status`)."
 
 [[capability]]
 id = "A-10"
@@ -416,7 +416,7 @@ text = "While a member with mail on ([features] mail) has unread mail, the main 
 
 [[capability.criterion]]
 id = "WA-3.3"
-text = "An idle member whose launcher is live is woken with the fixed wake text, at most once in the wake gap (M§7.3)."
+text = "After a send, an idle member whose launcher is live and whose pane and workspace match (M§7.3) is woken with the fixed wake text, at most once in the wake gap."
 
 [[capability.criterion]]
 id = "WA-3.4"
