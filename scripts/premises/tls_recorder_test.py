@@ -99,6 +99,35 @@ check("proc: find_client names this process", ci["pid"] == os.getpid() and ci["w
 cs.close()
 ls.close()
 
+# A real process tree: a parent whose argv is a fake `ws run --ws-id wfake --pane kfake` launcher opens a socket, and its
+# child (another program) opens one too. find_client gives launcher for the parent, under-launcher for the child.
+ls = socket.socket()
+ls.bind(("127.0.0.1", 0))
+ls.listen(4)
+CHILD = ("import socket, sys\ns = socket.create_connection(('127.0.0.1', int(sys.argv[1])))\n"
+         "print('U %d' % s.getsockname()[1], flush=True)\nsys.stdin.read()\n")
+PARENT = ("import socket, subprocess, sys\nport = int(sys.argv[1])\ns = socket.create_connection(('127.0.0.1', port))\n"
+          "print('L %d' % s.getsockname()[1], flush=True)\n"
+          "c = subprocess.Popen([sys.executable, '-I', '-c', " + repr(CHILD) + ", str(port)], stdin=subprocess.PIPE)\n"
+          "sys.stdin.read()\nc.stdin.close()\nc.wait()\n")
+tree = subprocess.Popen([sys.executable, "-I", "-c", PARENT, str(ls.getsockname()[1]), "ws", "run", "--ws-id", "wfake", "--pane", "kfake"],
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+ports = {}
+try:
+    for _ in range(2):
+        kind, port = tree.stdout.readline().split()
+        ports[kind] = int(port)
+    lc = tr.find_client(("127.0.0.1", ports["L"]), ls.getsockname()[:2])
+    uc = tr.find_client(("127.0.0.1", ports["U"]), ls.getsockname()[:2])
+    check("proc: the fake launcher's own socket gives who launcher, its pane and ws id",
+          lc["pid"] == tree.pid and lc["who"] == "launcher" and lc["pane"] == "kfake" and lc["ws"] == "wfake", lc)
+    check("proc: its child's socket gives who under-launcher and the launcher's pane",
+          uc["pid"] not in (None, tree.pid, os.getpid()) and uc["who"] == "under-launcher" and uc["pane"] == "kfake" and uc["ws"] == "wfake", uc)
+finally:
+    tree.stdin.close()
+    tree.wait(10)
+    ls.close()
+
 # --- loopback: CONNECT, TLS, record, forward ------------------------------------------------------
 SEEN = []
 
