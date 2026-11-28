@@ -831,7 +831,7 @@ fn opencode_fixed_item_8_holds_the_other_machines_clause() {
     cache(&["bob", "eve"]);
     joined(&x);
     assert_eq!(member_text(&x, &oc("ses_A")), format!("{base}\n\n{item}"));
-    assert_eq!(std::fs::read_to_string(x.dir.root.join("session-item/ses_A")).unwrap(), item);
+    assert_eq!(std::fs::read_to_string(session_start::item_path(&x.dir, "ses_A").unwrap()).unwrap(), item);
 }
 
 #[cfg(unix)]
@@ -840,7 +840,7 @@ fn opencode_stored_item_8_is_used_as_it_is() {
     let x = mx(Agent::OpenCode, true, true, None, &[(OWN, Some("elena"))]);
     let base = build(&SessionView::load(&x.dir).unwrap());
     std::fs::create_dir(x.dir.root.join("session-item")).unwrap();
-    std::fs::write(x.dir.root.join("session-item/ses_A"), "STORED ITEM").unwrap();
+    std::fs::write(session_start::item_path(&x.dir, "ses_A").unwrap(), "STORED ITEM").unwrap();
     assert_eq!(member_text(&x, &oc("ses_A")), format!("{base}\n\nSTORED ITEM"));
 }
 
@@ -890,10 +890,11 @@ fn fixed_item_loser_of_a_race_returns_the_winner() {
     let mut later = || panic!("a stored item is not built again");
     assert_eq!(session_start::fixed_item(&d, "ses_A", &mut later, &no_log).as_deref(), Some("WINNER"));
     let folder = d.root.join("session-item");
-    assert_eq!(session_start::item_path(&d, "ses_A"), Some(folder.join("ses_A")));
+    let file = session_start::item_path(&d, "ses_A").unwrap();
+    assert_eq!(file.parent(), Some(folder.as_path()));
     assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 1, "the temp files are removed");
     assert_eq!(std::fs::metadata(&folder).unwrap().permissions().mode() & 0o777, 0o700);
-    assert_eq!(std::fs::metadata(folder.join("ses_A")).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
     assert_eq!(session_start::item_path(&d, "../x"), None);
 }
 
@@ -915,24 +916,181 @@ fn fixed_item_from_threads_gives_one_text() {
             .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
-    let stored = std::fs::read_to_string(d.root.join("session-item/ses_A")).unwrap();
+    let stored = std::fs::read_to_string(session_start::item_path(&d, "ses_A").unwrap()).unwrap();
     assert!(got.iter().all(|g| g.as_deref() == Some(stored.as_str())), "{got:?} vs {stored}");
     assert_eq!(std::fs::read_dir(d.root.join("session-item")).unwrap().count(), 1);
 }
 
 #[cfg(unix)]
-#[test] // FX-9 Decision 5: `None` stores nothing; a stored entry that is a link is not read, and one line is logged
+#[test] // FX-9 Decision 5, review F1 (D6): `None` stores nothing; a stored entry that is a link is not read, no line
 fn fixed_item_stores_no_none_and_reads_no_link() {
     let (t, d) = sd();
     let lines = std::cell::RefCell::new(Vec::new());
     let log = |l: &str| lines.borrow_mut().push(l.to_string());
     assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || None, &log), None);
     assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || Some("NOW".into()), &log).as_deref(), Some("NOW"));
-    assert!(lines.borrow().is_empty());
     std::fs::write(t.path().join("outside"), "OUTSIDE").unwrap();
-    std::os::unix::fs::symlink(t.path().join("outside"), d.root.join("session-item/ses_B")).unwrap();
+    std::os::unix::fs::symlink(t.path().join("outside"), session_start::item_path(&d, "ses_B").unwrap()).unwrap();
     assert_eq!(session_start::fixed_item(&d, "ses_B", &mut || Some("BUILT".into()), &log).as_deref(), Some("BUILT"));
-    assert_eq!(lines.borrow().len(), 1, "{:?}", lines.borrow());
-    assert!(lines.borrow()[0].contains("session-item/ses_B"), "{:?}", lines.borrow());
+    assert!(lines.borrow().is_empty(), "{:?}", lines.borrow());
     assert_eq!(std::fs::read_to_string(t.path().join("outside")).unwrap(), "OUTSIDE");
+}
+
+/// The number of lines in the session log of `x`.
+#[cfg(unix)]
+fn log_lines(x: &Mx) -> usize {
+    std::fs::read_to_string(x.dir.log()).unwrap_or_default().lines().count()
+}
+/// The OpenCode member of `mx` with `elena` and `kai`, its session text and its item 8 before and after `lena` joins.
+#[cfg(unix)]
+fn two() -> (Mx, String, String, String) {
+    let x = mx(Agent::OpenCode, true, true, None, &[(OWN, Some("elena")), (PEER, Some("kai"))]);
+    let base = build(&SessionView::load(&x.dir).unwrap());
+    (x, base, item8(ELENA, "elena, kai"), item8(ELENA, "elena, kai, lena"))
+}
+
+#[cfg(unix)]
+#[test] // review F1 (D6: the OpenCode call runs per model request): a bad stored entry writes no line and builds item 8
+fn opencode_bad_stored_entry_writes_no_line() {
+    let (x, base, before, after) = two();
+    std::fs::create_dir_all(session_start::item_path(&x.dir, "ses_A").unwrap()).unwrap();
+    let lines = log_lines(&x);
+    assert_eq!(member_text(&x, &oc("ses_A")), format!("{base}\n\n{before}"));
+    joined(&x);
+    for _ in 0..4 {
+        assert_eq!(member_text(&x, &oc("ses_A")), format!("{base}\n\n{after}"));
+    }
+    assert_eq!(log_lines(&x), lines, "{}", std::fs::read_to_string(x.dir.log()).unwrap_or_default());
+}
+
+#[cfg(unix)]
+#[test] // review F2: a FIFO at the stored name does not make the request wait (O_NONBLOCK); 60 s fail-safe bound
+fn opencode_fifo_at_the_stored_name_does_not_block() {
+    let (x, base, before, _) = two();
+    let path = session_start::item_path(&x.dir, "ses_A").unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+    // SAFETY: `c` is a NUL-terminated path that lives for the call.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let x = std::sync::Arc::new(x);
+    let xc = x.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(member_text(&xc, &oc("ses_A")));
+    });
+    let got = rx.recv_timeout(Duration::from_secs(60)).expect("the request waited on a FIFO");
+    assert_eq!(got, format!("{base}\n\n{before}"));
+}
+
+#[cfg(unix)]
+#[test] // review F2: a stored file over MAX_ITEM (1 MiB) is not used
+fn opencode_stored_file_over_the_limit_is_not_used() {
+    let (x, base, before, _) = two();
+    let path = session_start::item_path(&x.dir, "ses_A").unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "x".repeat((1 << 20) + 1)).unwrap();
+    assert_eq!(member_text(&x, &oc("ses_A")), format!("{base}\n\n{before}"));
+}
+
+#[cfg(unix)]
+#[test] // review F2: a `session-item/` made before at 0755 ends at 0700
+fn opencode_store_folder_ends_at_0700() {
+    use std::os::unix::fs::PermissionsExt;
+    let (x, ..) = two();
+    let folder = x.dir.root.join("session-item");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+    member_text(&x, &oc("ses_A"));
+    assert_eq!(std::fs::metadata(&folder).unwrap().permissions().mode() & 0o777, 0o700);
+    assert!(session_start::item_path(&x.dir, "ses_A").unwrap().is_file());
+}
+
+#[cfg(unix)]
+#[test] // review F2: mail off reads and stores nothing, also with a session id
+fn opencode_mail_off_makes_no_store() {
+    let x = mx(Agent::OpenCode, false, true, None, &[(OWN, Some("elena"))]);
+    assert_eq!(member_text(&x, &oc("ses_A")), build(&SessionView::load(&x.dir).unwrap()));
+    assert!(!x.dir.root.join("session-item").exists());
+}
+
+#[cfg(unix)]
+#[test] // review F2: the `Agent::OpenCode` guard: a Claude Code payload that holds `input.sessionID` stores nothing
+fn claude_code_payload_with_a_session_id_makes_no_store() {
+    let x = mx(Agent::ClaudeCode, true, true, None, &[(OWN, Some("elena")), (PEER, Some("kai"))]);
+    let base = build(&SessionView::load(&x.dir).unwrap());
+    let mut input = start(Agent::ClaudeCode);
+    input.raw["input"] = serde_json::json!({"sessionID": "ses_A"});
+    assert_eq!(member_text(&x, &input), format!("{base}\n\n{}", item8(ELENA, "elena, kai")));
+    joined(&x);
+    assert_eq!(member_text(&x, &input), format!("{base}\n\n{}", item8(ELENA, "elena, kai, lena")));
+    assert!(!x.dir.root.join("session-item").exists());
+}
+
+#[cfg(unix)]
+#[test] // review F5: an empty stored file is not usable: item 8 is built, with no line
+fn opencode_empty_stored_file_is_not_used() {
+    let (x, base, before, after) = two();
+    let path = session_start::item_path(&x.dir, "ses_A").unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "").unwrap();
+    let lines = log_lines(&x);
+    assert_eq!(member_text(&x, &oc("ses_A")), format!("{base}\n\n{before}"));
+    joined(&x);
+    assert_eq!(member_text(&x, &oc("ses_A")), format!("{base}\n\n{after}"));
+    assert_eq!(log_lines(&x), lines);
+}
+
+#[cfg(unix)]
+#[test] // review F6: a `session-item` that is a link to a folder is not used: built, no line, nothing written outside
+fn opencode_store_folder_that_is_a_link_is_not_used() {
+    use std::os::unix::fs::PermissionsExt;
+    let (x, base, before, after) = two();
+    let outside = x.t.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("keep"), "KEEP").unwrap();
+    std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::os::unix::fs::symlink(&outside, x.dir.root.join("session-item")).unwrap();
+    let lines = log_lines(&x);
+    assert_eq!(member_text(&x, &oc("ses_A")), format!("{base}\n\n{before}"));
+    joined(&x);
+    assert_eq!(member_text(&x, &oc("ses_A")), format!("{base}\n\n{after}"));
+    assert_eq!(log_lines(&x), lines);
+    assert_eq!(std::fs::metadata(&outside).unwrap().permissions().mode() & 0o777, 0o755);
+    let names: Vec<_> = std::fs::read_dir(&outside).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(names, [std::ffi::OsString::from("keep")]);
+}
+
+#[cfg(unix)]
+#[test] // review F7: leftover temp files with the old names (pid and counter only) do not stop the store
+fn opencode_leftover_temp_files_do_not_stop_the_store() {
+    let (x, base, before, _) = two();
+    let path = session_start::item_path(&x.dir, "ses_A").unwrap();
+    let folder = path.parent().unwrap();
+    std::fs::create_dir_all(folder).unwrap();
+    let encoded = path.file_name().unwrap().to_str().unwrap().to_string();
+    for name in ["ses_A".to_string(), encoded] {
+        for k in 0..256 {
+            std::fs::write(folder.join(format!(".{name}.{}.{k}.tmp", std::process::id())), "").unwrap();
+        }
+    }
+    let first = member_text(&x, &oc("ses_A"));
+    assert_eq!(first, format!("{base}\n\n{before}"));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+}
+
+#[cfg(unix)]
+#[test] // review F8: ids that differ only in case get names that differ on a case-insensitive file system
+fn ids_that_differ_in_case_get_different_names() {
+    let (_t, d) = sd();
+    let a = session_start::item_path(&d, "ses_a").unwrap();
+    let b = session_start::item_path(&d, "ses_A").unwrap();
+    let low = |p: &std::path::Path| p.file_name().unwrap().to_str().unwrap().to_lowercase();
+    assert_ne!(low(&a), low(&b));
+    let long = session_start::item_path(&d, &"Z".repeat(64)).unwrap();
+    assert!(long.file_name().unwrap().len() <= 255);
+    let no_log = |l: &str| panic!("no log line expected: {l}");
+    assert_eq!(session_start::fixed_item(&d, "ses_a", &mut || Some("LOWER".into()), &no_log).as_deref(), Some("LOWER"));
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || Some("UPPER".into()), &no_log).as_deref(), Some("UPPER"));
+    assert_eq!(std::fs::read_to_string(a).unwrap(), "LOWER");
+    assert_eq!(std::fs::read_to_string(b).unwrap(), "UPPER");
 }
