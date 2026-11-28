@@ -1,9 +1,12 @@
 //! DR-12: the keep check (D§9.4) over the node range, on a fixture repository with a linked node checkout. No test
 //! waits on wall-clock time: real-git tests run with every deadline an hour away, and no developer git config is read.
 
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use zygo_work::decisions::record::Class;
@@ -619,6 +622,132 @@ fn acceptance_7_fixed_after_overturn_passes() {
     assert_eq!(keep(&fx, 2, Some(&h), None, Some(ds.clone())), Vec::<String>::new());
     let p = check_keep(&req(2, Some(&h), Some(&fx.base), Some(ds)), &mut far_git(&fx.n));
     assert_eq!(p, Vec::<String>::new());
+}
+
+// ---- FX-41: the bound of each object read, and the record size read before the body ----
+
+/// What [`Clocked`] saw of the `--batch-command` process.
+#[derive(Default)]
+struct Seen {
+    /// The deadline it got at its spawn.
+    spawn: Option<Instant>,
+    /// The `(test clock, n)` of each `read_exact`.
+    reads: Vec<(Instant, usize)>,
+}
+
+type Reads = Rc<RefCell<Seen>>;
+
+/// [`Iso`] on a test clock that starts an hour ahead (so every real deadline is an hour away and machine load cannot
+/// fail a test) and advances `step` after each whole process. Its `--batch` process is [`Timed`].
+struct Clocked {
+    iso: Iso,
+    clock: Rc<Cell<Instant>>,
+    step: Duration,
+    reads: Reads,
+}
+
+impl GitRunner for Clocked {
+    fn run(&mut self, cmd: Command, deadline: Instant) -> Result<Whole, RunError> {
+        let r = self.iso.run(cmd, deadline);
+        self.clock.set(self.clock.get() + self.step);
+        r
+    }
+    fn batch(&mut self, cmd: Command, deadline: Instant) -> Result<Box<dyn BatchIo>, RunError> {
+        let io = self.iso.batch(cmd, deadline)?;
+        self.reads.borrow_mut().spawn = Some(deadline);
+        Ok(Box::new(Timed { io, clock: self.clock.clone(), deadline, reads: self.reads.clone() }))
+    }
+    fn now(&self) -> Instant { self.clock.get() }
+}
+
+/// The real `--batch-command` process judged on the test clock: a read at or past the deadline of its spawn is
+/// `TimedOut`, as `Piped` gives it at that deadline.
+struct Timed {
+    io: Box<dyn BatchIo>,
+    clock: Rc<Cell<Instant>>,
+    deadline: Instant,
+    reads: Reads,
+}
+
+impl Timed {
+    fn due(&self) -> Result<(), RunError> {
+        if self.clock.get() >= self.deadline { Err(RunError::TimedOut) } else { Ok(()) }
+    }
+}
+
+impl BatchIo for Timed {
+    fn send(&mut self, line: &[u8]) -> Result<(), RunError> { self.io.send(line) }
+    fn read_line(&mut self, max: usize) -> Result<Vec<u8>, RunError> {
+        self.due()?;
+        self.io.read_line(max)
+    }
+    fn read_exact(&mut self, n: usize) -> Result<Vec<u8>, RunError> {
+        self.due()?;
+        self.reads.borrow_mut().reads.push((self.clock.get(), n));
+        self.io.read_exact(n)
+    }
+}
+
+/// A [`ProcessGit`] in `root` on [`Clocked`]: the clock origin `t0` and the read log.
+fn clocked_git(root: &Path, step: Duration) -> (ProcessGit, Instant, Reads) {
+    let t0 = Instant::now() + Duration::from_secs(3600);
+    let reads = Reads::default();
+    let iso = Iso { far: Far(ProcessRunner), home: TempDir::new().unwrap() };
+    let runner = Clocked { iso, clock: Rc::new(Cell::new(t0)), step, reads: reads.clone() };
+    (ProcessGit::with_runner(root, Box::new(runner)), t0, reads)
+}
+
+#[test]
+fn keep_reads_after_merge_base_rev_list_and_log_get_their_own_bound() {
+    let fx = fixture();
+    let c1 = code(&fx);
+    let h = add(&fx, 'R', &[]);
+    let ms = Duration::from_millis;
+    let (mut g, t0, reads) = clocked_git(&fx.w, ms(1_500));
+    let ds = vec![fixed("R3-1", &c1), recorded("R3-2", Class::None, 'R')];
+    assert_eq!(check_keep(&req(3, Some(&h), None, Some(ds)), &mut g), Vec::<String>::new());
+    // D-C6: `merge-base`, `rev-list` and `log` run first (to t0 + 4.5 s); the `--batch-command` process then starts
+    // with its own 2 s, and every read of steps 1 to 9 is within it.
+    let seen = reads.borrow();
+    assert_eq!(seen.spawn, Some(t0 + ms(6_500)));
+    let at: BTreeSet<Duration> = seen.reads.iter().map(|(t, _)| *t - t0).collect();
+    assert_eq!(at, BTreeSet::from([ms(4_500)]));
+}
+
+#[test]
+fn record_blob_over_64_kib_is_malformed_with_no_body_read() {
+    let fx = fixture();
+    let mut big = record('R', &[]);
+    big.push_str(&"x".repeat(6 * 1024 * 1024 - big.len()));
+    // An operator commit (no `Zygo-Session:`): step 9 does not read it, so step 7 gives the one problem.
+    let h = commit(&fx.n, "add a 6 MiB record", &[(&path('R'), Some(&big))]);
+    let (mut g, _, reads) = clocked_git(&fx.w, Duration::ZERO);
+    let p = check_keep(&req(3, Some(&h), None, Some(vec![recorded("R3-1", Class::None, 'R')])), &mut g);
+    assert_eq!(p, vec![format!("R3-1: {} is not a valid record at head", id('R'))]);
+    let most = reads.borrow().reads.iter().map(|r| r.1).max();
+    assert!(most.is_some_and(|n| n <= 64 * 1024), "largest read_exact: {most:?}");
+}
+
+#[test]
+fn record_file_of_64_kib_is_valid_and_one_byte_more_is_malformed() {
+    for (n, want) in [(64 * 1024, vec![]), (64 * 1024 + 1, vec![format!("R3-1: {} is not a valid record at head", id('R'))])] {
+        let fx = fixture();
+        let mut text = record('R', &[]);
+        text.push_str(&"x".repeat(n - text.len()));
+        let h = commit(&fx.n, "add a record", &[(&path('R'), Some(&text))]);
+        assert_eq!(keep(&fx, 3, Some(&h), None, Some(vec![recorded("R3-1", Class::None, 'R')])), want, "{n} bytes");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_at_a_record_path_is_not_a_valid_record_at_head() {
+    let fx = fixture();
+    fs::write(fx.n.join("docs/decisions/elsewhere.md"), record('R', &[])).unwrap();
+    std::os::unix::fs::symlink("elsewhere.md", fx.n.join(path('R'))).unwrap();
+    let h = commit(&fx.n, "add a link", &[]);
+    let p = keep(&fx, 3, Some(&h), None, Some(vec![recorded("R3-1", Class::None, 'R')]));
+    assert_eq!(p, vec![format!("R3-1: {} is not a valid record at head", id('R'))]);
 }
 
 // ---- a stub VerdictGit: the limits and git failures without real git ----

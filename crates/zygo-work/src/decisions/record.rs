@@ -9,7 +9,7 @@ pub const DIR: &str = "docs/decisions";
 pub const FILL_MARKER: &str = "<!-- zygo: fill -->";
 
 /// The largest record file, in bytes (D§6.8).
-const MAX_FILE: usize = 65536;
+pub(crate) const MAX_FILE: usize = 65536;
 /// The closing `+++`, without its line ending, ends at or before this byte (D§6.8).
 const MAX_FRONT: usize = 8192;
 
