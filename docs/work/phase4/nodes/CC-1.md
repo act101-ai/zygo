@@ -1,10 +1,10 @@
 # CC-1 — Client-branch inventory at the P4-6 base commit
 
 **Spec:** docs/specs/2026-11-25-client-model-design.md K§6.9 (last paragraph), K§1 item 2 (the grep), K§6.1.2 (concerns 1-11), K§6.1.4 (the names)
-**Files:** `docs/work/phase4/nodes/CC-1.md` (its `## Observed` section; in review rounds 1 and 2 also its Acceptance, Produces, planning notes and Plan text and its `## Round 1 review` and `## Round 2 review` sections), `docs/work/phase4/cc1_check.py` (new in round 2: the acceptance check), the **Files** lines of `docs/work/phase4/nodes/CC-3.md` to `CC-11.md`, `CC-13.md` and `CC-15.md` (only to add a file that an inventory row assigns to that node), the contract lines of `docs/work/phase4/nodes/CC-7.md` (kept signatures, round 1 F8), `docs/work/phase4/nodes/CC-11.md` (Acceptance: no production variant path, round 2 F8) and `docs/work/phase4/nodes/CC-13.md` (Files, Produces and Acceptance, rounds 1 and 2)
+**Files:** `docs/work/phase4/nodes/CC-1.md` (its `## Observed` section; in review rounds 1 to 3 also its Acceptance, Produces, planning notes and Plan text and its `## Round 1 review`, `## Round 2 review` and `## Round 3 review` sections), `docs/work/phase4/cc1_check.py` (new in round 2: the acceptance check), the **Files** lines of `docs/work/phase4/nodes/CC-3.md` to `CC-11.md`, `CC-13.md` and `CC-15.md` (only to add a file that an inventory row assigns to that node), the contract lines of `docs/work/phase4/nodes/CC-7.md` (kept signatures, round 1 F8), `docs/work/phase4/nodes/CC-11.md` (Acceptance: no production variant path, rounds 2 and 3), `docs/work/phase4/nodes/CC-13.md` (Files, Produces and Acceptance, rounds 1 to 3), the Acceptance lines of `docs/work/phase4/nodes/CC-3.md` to `CC-10.md` (their own production variant-path check, round 3 F3), the CC-9 planning note and the CC-10 Spec line and planning note (round 3 F4), and a CC-15 planning note (round 3 F2)
 **Consumes:** `phase_3_in_phase_4` (CC-0)
 **Produces:** `base` (the line `Base: <40-hex commit>` under `## Observed`: the CC-0 merge commit), `inventory` (the table under `## Observed`, one row per site that the search of `docs/work/phase4/cc1_check.py` finds at the base: `| <file> | <line> | <concern> | <node> |` at column 0, where the node is an owner of the 'Concerns per node' table (CC-3 to CC-11, CC-13, CC-15) with one of its concerns, or the concern is `—` and the node `stays: test`, `stays: comment` or `stays: exception list (CC-15, K§6.1.4)`; no backtick in a row)
-**Acceptance:** `python3 docs/work/phase4/cc1_check.py docs/work/phase4/nodes/CC-1.md` → exit 0 and one `ok:` line. The check is hermetic: it reads every source line at the recorded base with `git grep` and `git show` and fetches nothing; it reads the owners' **Files** lines from `docs/work/phase4/nodes/`. In order, it fails on: a missing base or a base without phase 3 (`b7e9d45d`) (step `base`); a pattern list or a 'Concerns per node' table in this file that differs from the check's (`patterns`, `concern-table`); an empty search (`search`); a line that starts with optional spaces, `|` and a path-like cell but is not a row at column 0 (`row-form`); an owner outside the table or a `stays:` reason other than the three, a concern that is not 1-11 on an owner row or not `—` on a `stays:` row (`node`); two rows for one `file:line` (`duplicate`); a site without a row or a row the search does not find (`rows-vs-search`); a row file that is not on its owner's **Files** line, where a folder entry covers the files under it (`files`); a concern that the owner does not take (`concern`); a `stays: comment` line that is not a `//` comment at the base (`comment`); a listed test range that is not its file's test code at the base, or a test-code site of a `src` file with no listed range (`test-ranges`); a `stays: test` or CC-13 row that is not under `crates/*/tests/` or in a listed test range (`test`). Completeness is bounded by the search patterns (listed under `## Observed`). After a node file is edited, the work-graph validator (`work_graph.py check docs/work/phase4/graph.md`) exits 0
+**Acceptance:** `python3 docs/work/phase4/cc1_check.py docs/work/phase4/nodes/CC-1.md` → exit 0 and one `ok:` line. The check is hermetic: it reads every source line at the recorded base with `git grep` and `git show` and fetches nothing; it reads the owners' node files from the folder of the given file. In order, it fails on: a missing base or a base without phase 3 (`b7e9d45d`) (step `base`); a pattern list, a symbol list or a 'Concerns per node' table in this file that differs from the check's, or a table with two rows for one node (`patterns`, `symbols`, `concern-table`); an empty search (`search`); a line of the inventory table that is not a row, or a row-like line outside it or not at column 0 (`row-form`); an owner outside the table or a `stays:` reason other than the three, a concern that is not 1-11 on an owner row or not `—` on a `stays:` row (`node`); two rows for one `file:line` (`duplicate`); a site without a row or a row the search does not find (`rows-vs-search`); a row file that is not on its owner's **Files** line, where a folder entry covers the files under it (`files`); a concern that the owner does not take (`concern`); a `stays: comment` line that is not a `//` comment at the base (`comment`); a `stays: exception list` row outside `fn claude_attribution` of `crates/zygo-work/src/guards.rs` (its range computed at the base) that is not a call `claude_attribution(` in that file (`exception`); two Test range lines for one file, a listed range that is not its file's test region at the base, or a test-region site of a `src` file with no listed range (`test-ranges`); a `stays: test` or CC-13 row that is not under `crates/*/tests/` or in a listed range (`test`); a test line whose owner is not the node of the first symbol it names (or `stays: test` when it names none), or a `stays: comment` line that names a symbol (`symbol-rule`). An unreadable file is `FAIL read`, `FAIL files` or `FAIL io`. Completeness is bounded by the search patterns (listed under `## Observed`). After a node file is edited, the work-graph validator (`work_graph.py check docs/work/phase4/graph.md`) exits 0
 
 ## Planning notes
 
@@ -92,12 +92,12 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-config/tests/definition_keys.rs | 97 | — | stays: test |
 | crates/zygo-config/tests/definition_keys.rs | 107 | — | stays: test |
 | crates/zygo-config/tests/definition_keys.rs | 108 | — | stays: test |
-| crates/zygo-config/tests/definition_keys.rs | 119 | — | stays: test |
+| crates/zygo-config/tests/definition_keys.rs | 119 | 8 | CC-8 |
 | crates/zygo-config/tests/definition_keys.rs | 121 | — | stays: test |
 | crates/zygo-config/tests/definition_keys.rs | 131 | — | stays: test |
-| crates/zygo-config/tests/definition_keys.rs | 132 | — | stays: test |
+| crates/zygo-config/tests/definition_keys.rs | 132 | 8 | CC-8 |
 | crates/zygo-config/tests/definition_keys.rs | 136 | — | stays: test |
-| crates/zygo-config/tests/definition_keys.rs | 142 | — | stays: test |
+| crates/zygo-config/tests/definition_keys.rs | 142 | 8 | CC-8 |
 | crates/zygo-config/tests/definition_keys.rs | 149 | — | stays: test |
 | crates/zygo-config/tests/definition_keys.rs | 150 | — | stays: test |
 | crates/zygo-config/tests/definition_keys.rs | 153 | — | stays: test |
@@ -784,7 +784,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/src/claude_code.rs | 48 | — | stays: comment |
 | crates/zygo-launch/src/claude_code.rs | 50 | 7 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 53 | 1 | CC-9 |
-| crates/zygo-launch/src/claude_code.rs | 57 | — | stays: comment |
+| crates/zygo-launch/src/claude_code.rs | 57 | 1 | CC-10 |
 | crates/zygo-launch/src/claude_code.rs | 61 | 1 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 63 | 1 | CC-9 |
 | crates/zygo-launch/src/claude_code.rs | 64 | 1 | CC-9 |
@@ -901,7 +901,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-launch/src/opencode.rs | 591 | 1 | CC-9 |
 | crates/zygo-launch/src/opencode.rs | 600 | — | stays: comment |
 | crates/zygo-launch/src/opencode.rs | 606 | — | stays: comment |
-| crates/zygo-launch/tests/claude_code.rs | 17 | 1 | CC-9 |
+| crates/zygo-launch/tests/claude_code.rs | 17 | 7 | CC-9 |
 | crates/zygo-launch/tests/claude_code.rs | 19 | 6 | CC-9 |
 | crates/zygo-launch/tests/claude_code.rs | 90 | 1 | CC-13 |
 | crates/zygo-launch/tests/claude_code.rs | 119 | 1 | CC-13 |
@@ -2022,17 +2022,17 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo-workspace/src/args.rs | 611 | — | stays: comment |
 | crates/zygo-workspace/src/args.rs | 613 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 615 | — | stays: comment |
-| crates/zygo-workspace/src/args.rs | 618 | — | stays: comment |
+| crates/zygo-workspace/src/args.rs | 618 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 620 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 626 | — | stays: comment |
 | crates/zygo-workspace/src/args.rs | 629 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 630 | 7 | CC-7 |
-| crates/zygo-workspace/src/args.rs | 650 | — | stays: comment |
-| crates/zygo-workspace/src/args.rs | 651 | — | stays: comment |
+| crates/zygo-workspace/src/args.rs | 650 | 7 | CC-7 |
+| crates/zygo-workspace/src/args.rs | 651 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 654 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 655 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 659 | — | stays: comment |
-| crates/zygo-workspace/src/args.rs | 662 | — | stays: comment |
+| crates/zygo-workspace/src/args.rs | 662 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 665 | 7 | CC-7 |
 | crates/zygo-workspace/src/args.rs | 676 | 7 | CC-7 |
 | crates/zygo-workspace/src/drain.rs | 108 | — | stays: comment |
@@ -2672,12 +2672,12 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/src/cmd/mod.rs | 12 | 1 | CC-10 |
 | crates/zygo/src/cmd/mod.rs | 29 | 1 | CC-10 |
 | crates/zygo/src/cmd/mod.rs | 205 | 1 | CC-10 |
-| crates/zygo/src/cmd/mod.rs | 238 | — | stays: comment |
+| crates/zygo/src/cmd/mod.rs | 238 | 1 | CC-10 |
 | crates/zygo/src/cmd/mod.rs | 253 | 1 | CC-10 |
 | crates/zygo/src/cmd/mod.rs | 279 | 1 | CC-10 |
-| crates/zygo/src/cmd/mod.rs | 280 | — | stays: comment |
+| crates/zygo/src/cmd/mod.rs | 280 | 1 | CC-10 |
 | crates/zygo/src/cmd/mod.rs | 281 | 1 | CC-10 |
-| crates/zygo/src/cmd/mod.rs | 406 | — | stays: comment |
+| crates/zygo/src/cmd/mod.rs | 406 | 1 | CC-10 |
 | crates/zygo/src/cmd/mod.rs | 609 | 1 | CC-10 |
 | crates/zygo/src/cmd/mod.rs | 610 | 1 | CC-10 |
 | crates/zygo/src/cmd/mod.rs | 705 | 1 | CC-10 |
@@ -2719,8 +2719,8 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/src/cmd/ws.rs | 618 | — | stays: comment |
 | crates/zygo/src/cmd/ws.rs | 635 | 1 | CC-10 |
 | crates/zygo/src/cmd/ws.rs | 637 | 1 | CC-10 |
-| crates/zygo/src/cmd/ws.rs | 648 | — | stays: comment |
-| crates/zygo/src/cmd/ws.rs | 651 | 8 | CC-10 |
+| crates/zygo/src/cmd/ws.rs | 648 | 8 | CC-9 |
+| crates/zygo/src/cmd/ws.rs | 651 | 8 | CC-9 |
 | crates/zygo/src/cmd/ws.rs | 667 | — | stays: comment |
 | crates/zygo/src/cmd/ws.rs | 673 | 8 | CC-10 |
 | crates/zygo/src/cmd/ws.rs | 708 | 1 | CC-13 |
@@ -2874,7 +2874,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/definition_hooks.rs | 852 | — | stays: test |
 | crates/zygo/tests/definition_hooks.rs | 853 | — | stays: test |
 | crates/zygo/tests/definition_hooks.rs | 854 | — | stays: test |
-| crates/zygo/tests/definition_hooks.rs | 863 | — | stays: comment |
+| crates/zygo/tests/definition_hooks.rs | 863 | 6 | CC-9 |
 | crates/zygo/tests/definition_hooks.rs | 1078 | 1 | CC-13 |
 | crates/zygo/tests/definition_hooks.rs | 1103 | — | stays: test |
 | crates/zygo/tests/definition_hooks.rs | 1105 | 1 | CC-13 |
@@ -3525,7 +3525,7 @@ Base: b324e1dc7f00b38d410d577a307c05c80068b353
 | crates/zygo/tests/workspace_session.rs | 340 | — | stays: test |
 | crates/zygo/tests/workspace_session.rs | 343 | — | stays: test |
 
-Counts (review round 2): 3503 sites in 210 files. By node: CC-3 25, CC-4 38, CC-5 11, CC-6 33, CC-7 33, CC-8 76, CC-9 213, CC-10 61, CC-13 1178, stays: test 1560, stays: comment 268, stays: exception list 7. By concern (owner rows): 1 1318, 2 28, 3 22, 4 10, 5 13, 6 61, 7 46, 8 97, 9 43, 10 2, 11 28. By node and concern: CC-3 (1: 18, 2: 7); CC-4 (9: 38); CC-5 (5: 11); CC-6 (2: 8, 3: 21, 4: 4); CC-7 (7: 33); CC-8 (8: 76); CC-9 (1: 77, 2: 13, 3: 1, 4: 6, 5: 2, 6: 61, 7: 10, 8: 10, 9: 5, 11: 28); CC-10 (1: 45, 7: 3, 8: 11, 10: 2); CC-13 (1: 1178). No row goes to CC-15 as a new exception.
+Counts (review round 3): 3503 sites in 210 files. By node: CC-3 25, CC-4 38, CC-5 11, CC-6 33, CC-7 37, CC-8 79, CC-9 216, CC-10 64, CC-13 1178, stays: test 1557, stays: comment 258, stays: exception list 7. By concern (owner rows): 1 1321, 2 28, 3 22, 4 10, 5 13, 6 62, 7 51, 8 101, 9 43, 10 2, 11 28. By node and concern: CC-3 (1: 18, 2: 7); CC-4 (9: 38); CC-5 (5: 11); CC-6 (2: 8, 3: 21, 4: 4); CC-7 (7: 37); CC-8 (8: 79); CC-9 (1: 76, 2: 13, 3: 1, 4: 6, 5: 2, 6: 62, 7: 11, 8: 12, 9: 5, 11: 28); CC-10 (1: 49, 7: 3, 8: 10, 10: 2); CC-13 (1: 1178). No row goes to CC-15 as a new exception.
 
 Concerns per node (each owner of a code row and the concerns its contract takes; `docs/work/phase4/cc1_check.py` holds the same table and fails when this one differs). CC-9 takes every concern its adapters serve (K§6.1.3: the adapters hold each client's behavior, `prepare_resume` and `env_rows`); CC-11 and CC-15 hold no row at this base. CC-12 (registry entries) and CC-14 (opaque kind) own no site.
 
@@ -3574,45 +3574,64 @@ Search: the rows are exactly the lines that `git grep -nE` finds at the base wit
 - Pattern: `(^|[^A-Za-z0-9_.])compact_tool\(|\(compact_tool\)|, compact_tool[,}]|window::compact_tool`
 - Pattern: `(^|[^A-Za-z0-9_])let (mut )?(claude|opencode|claude_code) =`
 
-Not searched (review round 2): a client name inside a longer string or comment that none of the patterns matches, that is `claude`, `opencode`, `Claude` or `OpenCode` as a plain word (`"zygo claude: …"`, `"claude config: …"`, `"also installed in Claude Code as …"`, `"/b/claude"`) and Anthropic model ids (`"claude-…"`); `codex` in any form other than a `CODEX_*` name (no Codex client exists at the base); and the files outside the four pathspecs: the other `crates/zygo-config/data/` tables (`roles.toml` and `catalog.toml` hold model ids only), `crates/zygo-plugins/data/`, `crates/zygo-plugins/embedded/`, `crates/*/examples/`, `crates/*/Cargo.toml`, and everything outside `crates/`.
+Symbols that a CC node changes, deletes or moves (review round 3 F6, F8; `docs/work/phase4/cc1_check.py` holds the same list and fails when this one differs). Each line is `<node> <concern> <scope> <file glob> <regex>`; the first entry that matches decides. Scope `test`: a test-code line with each string literal replaced by its inline format arguments (`"{AGENT_ONLY}"` keeps `AGENT_ONLY`) and its trailing comment cut; `comment`: a `//` line, matched whole; `any`: both. A test line that matches is that node's row, one that matches nothing is `stays: test`; a `stays: comment` line matches nothing.
 
-Test code at the base: each file under `crates/*/tests/`, and in a `src` file the lines from its first column-0 `#[cfg(test)]` or `#[cfg(all(test, …))]` to its end (at the base no production line follows that attribute in any `src` file). The ranges of the `src` files that hold a site:
+- Symbol: CC-13 1 test * `Agent::(ClaudeCode|OpenCode|\{|\*)`
+- Symbol: CC-13 1 test crates/zygo/src/cmd/member.rs `(^|[^A-Za-z0-9_])(ClaudeCode|OpenCode)([^A-Za-z0-9_]|$)`
+- Symbol: CC-8 8 any * `PaneKind::(ClaudeCode|OpenCode)`
+- Symbol: CC-8 8 any * `(^|[^A-Za-z0-9_])(LOADOUT_KINDS|AGENT_ONLY|CLAUDE_ONLY|pool_member)([^A-Za-z0-9_]|$)`
+- Symbol: CC-10 1 any * `Cmd::(Claude|Opencode)|super::super::(claude|opencode)::|(claude|opencode)::launch_opts|cmd/(claude|opencode)\.rs|(^|[^A-Za-z0-9_])(LaunchOpenCode|launch_open_code_of)([^A-Za-z0-9_]|$)`
+- Symbol: CC-9 6 any * `(^|[^A-Za-z0-9_])(Plugins|claude_config_dir)([^A-Za-z0-9_]|$)|opencode-plugin\.js`
+- Symbol: CC-9 7 any * `(^|[^A-Za-z0-9_])simple_mode([^A-Za-z0-9_]|$)`
+- Symbol: CC-9 8 any * `(^|[^A-Za-z0-9_])(saved_config_dir|prepare_resume)([^A-Za-z0-9_]|$)`
+- Symbol: CC-9 1 any * `zygo_launch::(claude_code|opencode)|(^|[^A-Za-z0-9_])(ClaudeCode|for_zygo)([^A-Za-z0-9_]|$)|claude_code\.rs`
+- Symbol: CC-9 1 test * `(^|[^A-Za-z0-9_])OpenCode([^A-Za-z0-9_]|$)`
+- Symbol: CC-9 1 comment * `OpenCode::|`OpenCode``
+- Symbol: CC-4 9 any * `(^|[^A-Za-z0-9_])(CLAUDE_AI|ANTHROPIC_VERSION|skipped_spans)([^A-Za-z0-9_]|$)`
+- Symbol: CC-5 5 any crates/zygo-proxy/* `(^|[^A-Za-z0-9_])compact_tool([^A-Za-z0-9_]|$)`
+- Symbol: CC-7 7 any * `(^|[^A-Za-z0-9_])(opencode_subcommand|opencode_takes_value|OPENCODE_COMMAND_BOOLEANS|OPENCODE_GLOBAL_BOOLEANS|CLAUDE_CODE|OPENCODE)([^A-Za-z0-9_]|$)`
+- Symbol: CC-3 2 any * `hook_opencode`
+- Symbol: CC-3 1 any * `agents\.toml`
 
-- Test range: crates/zygo-hooks/src/prompt.rs 147-469
-- Test range: crates/zygo-mcp/src/tools/work.rs 263-328
-- Test range: crates/zygo/src/cmd/claude.rs 88-239
-- Test range: crates/zygo/src/cmd/compact.rs 128-333
-- Test range: crates/zygo/src/cmd/keys.rs 164-380
-- Test range: crates/zygo/src/cmd/loadout.rs 480-1003
-- Test range: crates/zygo/src/cmd/mail.rs 763-950
-- Test range: crates/zygo/src/cmd/marketplace.rs 186-637
-- Test range: crates/zygo/src/cmd/member.rs 1117-2047
-- Test range: crates/zygo/src/cmd/mod.rs 647-783
-- Test range: crates/zygo/src/cmd/opencode.rs 59-128
-- Test range: crates/zygo/src/cmd/plugins.rs 160-702
-- Test range: crates/zygo/src/cmd/verbs.rs 338-766
-- Test range: crates/zygo/src/cmd/ws.rs 683-1034
+Not searched (review rounds 2 and 3): a client name inside a longer string or comment that none of the patterns matches, that is `claude`, `opencode`, `Claude` or `OpenCode` as a plain word (`"zygo claude: …"`, `"claude config: …"`, `"also installed in Claude Code as …"`, `"/b/claude"`) and Anthropic model ids (`"claude-…"`); `codex` in any form other than a `CODEX_*` name (no Codex client exists at the base); and the files outside the four pathspecs: the other `crates/zygo-config/data/` tables (`roles.toml` and `catalog.toml` hold model ids only), `crates/zygo-plugins/data/`, `crates/zygo-plugins/embedded/`, `crates/*/examples/`, `crates/*/Cargo.toml`, and everything outside `crates/`. Also not searched (round 3 F10): a line inside a client branch that names no client and no listed symbol, such as the bare locals of the OpenCode arm of `attached_value` (`crates/zygo-workspace/src/args.rs:408`, `:411`), and a local variable named for a client outside the forms the patterns hold (`let claude =`, `if claude`, `!claude`, `claude)`, `claude.<method>(`).
+
+Test code at the base: each file under `crates/*/tests/`, and in a `src` file its test region: from the inline `mod <name> {` that directly follows a column-0 `#[cfg(test)]`, `#[cfg(all(test, …))]` or `#[cfg(all(…, test))]` to the end of the file (review round 3 F3; a `#[cfg(test)] mod x;` or `#[cfg(test)] fn` starts no region; at the base no production line follows a region start in any `src` file; CC-3 to CC-11 and CC-13 use the same rule in awk). The ranges of the `src` files that hold a site:
+
+- Test range: crates/zygo-hooks/src/prompt.rs 148-469
+- Test range: crates/zygo-mcp/src/tools/work.rs 264-328
+- Test range: crates/zygo/src/cmd/claude.rs 89-239
+- Test range: crates/zygo/src/cmd/compact.rs 133-333
+- Test range: crates/zygo/src/cmd/keys.rs 165-380
+- Test range: crates/zygo/src/cmd/loadout.rs 481-1003
+- Test range: crates/zygo/src/cmd/mail.rs 764-950
+- Test range: crates/zygo/src/cmd/marketplace.rs 187-637
+- Test range: crates/zygo/src/cmd/member.rs 1118-2047
+- Test range: crates/zygo/src/cmd/mod.rs 648-783
+- Test range: crates/zygo/src/cmd/opencode.rs 60-128
+- Test range: crates/zygo/src/cmd/plugins.rs 161-702
+- Test range: crates/zygo/src/cmd/verbs.rs 339-766
+- Test range: crates/zygo/src/cmd/ws.rs 684-1034
 
 Rules for each row:
 
-- Test sites. A test line that names a product symbol that a CC node changes is that node's row (review round 2 F4): an `Agent` variant path or import, or a bare variant after `use Agent::{ClaudeCode, OpenCode}` (`crates/zygo/src/cmd/member.rs:1796`-`:1803`), is CC-13 (1); `PaneKind::`, `LOADOUT_KINDS`, `AGENT_ONLY`, `CLAUDE_ONLY` are CC-8 (8); `Plugins` and the doctor field `claude_config_dir` are CC-9 (6); the launch adapter type or module (`ClaudeCode`, `OpenCode`, `zygo_launch::claude_code`, `zygo_launch::opencode`) is CC-9 (1); the CLI shim (`Cmd::Claude`, `Cmd::Opencode`, `super::super::claude`, `super::super::opencode`, `LaunchOpenCode`, `launch_open_code_of`) is CC-10 (1); `CLAUDE_AI` is CC-4 (9); `compact_tool` in `crates/zygo-proxy/tests/` is CC-5 (5); `opencode_subcommand` is CC-7 (7); `hook_opencode` is CC-3 (2). Every other test line (literals, environment names, test-local names) is `stays: test`, as is each non-Rust fixture line under `tests/`. A test comment line is `stays: comment` unless it names an item that a node deletes or moves.
-- Comment sites (`//` lines). A comment that names an item that a CC node deletes or moves is that node's row, so the node updates it (review round 2 F9): `data/agents.toml` → CC-3 (`crates/zygo-config/src/builtin.rs:49`, `crates/zygo-core/tests/conformance/model.rs:1281`, `crates/zygo-launch/tests/stub_agent/harness.rs:21`); `LOADOUT_KINDS` → CC-8 (`crates/zygo-config/src/schema.rs:867`); the adapter type `ClaudeCode` → CC-9 (`crates/zygo-launch/src/claude_code.rs:67`, `opencode.rs:31`, `crates/zygo-launch/tests/launcher.rs:703`, `stub_member.rs:228`); `zygo_launch::claude_code::simple_mode` → CC-9 (`crates/zygo/src/cmd/member.rs:235`, `:470`); `claude_code.rs` line references → CC-9 (`crates/zygo/tests/definition_hooks.rs:752`, `:844`); `opencode_subcommand` → CC-7 (`crates/zygo-launch/src/launcher.rs:805`, `crates/zygo-workspace/src/args.rs:593`, `:629`); `launch_open_code_of` and `claude::launch_opts` → CC-10 (`crates/zygo/src/cmd/member.rs:631`, `crates/zygo/src/cmd/ws.rs:608`, `crates/zygo/tests/workspace_definition.rs:1017`). Every other comment is `stays: comment`.
+- Test sites. A test line takes the node of the first symbol entry it names (the list above; review round 2 F4, round 3 F8): for example an `Agent` variant path or import, or a bare variant after `use Agent::{ClaudeCode, OpenCode}` (`crates/zygo/src/cmd/member.rs:1796`-`:1803`), is CC-13; `{AGENT_ONLY}` in a format string is CC-8 (`crates/zygo-config/tests/definition_keys.rs:119`, `:132`, `:142`, round 3 F9). A test line that names no listed symbol (literals, environment names such as `CLAUDE_PLUGIN_ROOT`, test-local names) is `stays: test`, as is each non-Rust fixture line under `tests/`.
+- Comment sites (`//` lines). A comment that names a listed symbol or file is that node's row, so the node updates it (review round 2 F9, round 3 F6); the check fails on a `stays: comment` line that names one. 25 comment rows go to a node this way (18 in round 2, which said 16 in error): CC-3 3, CC-7 7 (with `crates/zygo-workspace/src/args.rs:618`, `:650`, `:651`, `:662`), CC-8 1, CC-9 10 (with `crates/zygo/src/cmd/ws.rs:648` and `crates/zygo/tests/definition_hooks.rs:863`), CC-10 4 (with `crates/zygo-launch/src/claude_code.rs:57`, which names `cmd/claude.rs`). The three clap help lines `crates/zygo/src/cmd/mod.rs:238`, `:280`, `:406` are code (clap prints them), 1, CC-10 (round 3 F5). Every other comment is `stays: comment`.
 - Code sites: one concern each, by K§6.1.2, and the node per concern of the planning notes, with these calls (author):
   - Hook event names and `hookSpecificOutput`: an event-name check on hook input is 2, a rendered `hookSpecificOutput` is 3; both go to CC-6, which owns the hook crates' event handling (`zygo-hooks`, and the guard and work hooks of `zygo-work`). CC-3 owns the conversion in `zygo-core` (`hook.rs`, `hook_opencode.rs`, the `hook_opencode` module and imports). The event registration in the Claude Code adapter is 2 and the plugin's read of `hookSpecificOutput` (`opencode-plugin.js:36`) is 3, both CC-9.
   - Adapters (`crates/zygo-launch/src/claude_code.rs`, `opencode.rs`, `adapter.rs`, `assets/opencode-plugin.js`) go to CC-9; each line takes the concern it serves: program name, client id, adapter type, `agent()`, install hint, config folder names and managed-settings paths 1; event registration 2; the plugin's hook-output read 3; the model variables (`ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_*_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`) 4; the `mcp__zygo__` tool names 5; `Plugins`, `CLAUDE_PLUGIN_ROOT`, `.claude-plugin` and `opencode/plugin.js` 6; the argument walk, `has_session_arg` and the bare mode (`CLAUDE_CODE_SIMPLE`) 7; the proxy variables (`ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, the gateway hint) and the passthrough credential names 9; a set environment row (`DISABLE_LOGIN_COMMAND`, `OPENCODE_CONFIG_DIR`) 11.
   - Plugin form in `zygo-plugins` (`.claude-plugin/…`, `opencode/plugin.js`, `CLAUDE_PLUGIN_ROOT`) is 6, CC-9.
   - Adapter selection outside the adapters (imports and `ClaudeCode::…`/`OpenCode::…` in `cmd/claude.rs`, `cmd/opencode.rs`, `cmd/ws.rs`, `cmd/member.rs`) is 1, CC-9, which adds `adapter_for`.
-  - The resume match (`crates/zygo/src/cmd/ws.rs:405`-`:435`, `crates/zygo/src/cmd/member.rs:644`-`:679`): every site in it is 8 and CC-9, which moves it into `prepare_resume` (K§6.1.3; review round 2 F7).
+  - The resume match (`crates/zygo/src/cmd/ws.rs:405`-`:435`, `crates/zygo/src/cmd/member.rs:644`-`:679`) and `saved_config_dir` (`crates/zygo/src/cmd/ws.rs:648`-`:657`): every site in them is 8 and CC-9, which moves them into `prepare_resume` (K§6.1.3; review round 2 F7, round 3 F4).
   - The doctor's check that a selected plugin is also installed in Claude Code (`crates/zygo/src/cmd/doctor.rs:49`, `:391`, `:459`, `:460`, `:467`: the `claude_config_dir` field and `installed_plugins.json`) is 6, CC-9: the client's own plugin list is a fact of the adapter's plugin delivery (K§6.1.3), not of the K§6.2.7 doctor listing that CC-11 owns.
   - A default `Agent::ClaudeCode` that becomes `Agent::DEFAULT` is 1 everywhere (`session_view.rs:61`, `cmd/hook.rs:106`, `cmd/loadout.rs:330`).
-  - The resume command and the `CLAUDE_CONFIG_DIR` saved for resume (AU61) are 8 everywhere (`cmd/member.rs:95`, `:107`, `:108`, `:573`, `:691`-`:693`; `cmd/ws.rs:471`, `:651`, `:673`); `cmd/member.rs:95` (the pre-assigned session id of a Claude Code member) is 8 (review round 2 F6).
+  - The resume command and the `CLAUDE_CONFIG_DIR` saved for resume (AU61) are 8 everywhere (`cmd/member.rs:95`, `:107`, `:108`, `:573`, `:691`-`:693`; `cmd/ws.rs:471`, `:673`, CC-10; `cmd/ws.rs:651`, CC-9); `cmd/member.rs:95` (the pre-assigned session id of a Claude Code member) is 8 (review round 2 F6).
   - The CLI shim (`cmd/mod.rs` enum, `LaunchOpenCode`, `launch_open_code_of`, the `cmd/claude.rs` and `cmd/opencode.rs` shims, and the dispatch from a member record to a shim at `cmd/ws.rs:612`, `:613`) is 1, CC-10 (review round 2 F5).
   - The `Agent` variant declarations (`crates/zygo-core/src/lib.rs:39`, `:41`) are 1, CC-3, which moves them into `client/mod.rs`. The `PaneKind` variant declarations (`crates/zygo-workspace/src/state.rs:243`, `:245`) are 8, CC-8.
-  - The no-attribution guard: the item `claude_attribution` and its four calls (`crates/zygo-work/src/guards.rs:905`, `:910`, `:928`, `:1020`) are `stays: exception list (CC-15, K§6.1.4)`; they match attribution text and do not branch on a client.
+  - The no-attribution guard: the item `claude_attribution` and its four calls (`crates/zygo-work/src/guards.rs:905`, `:910`, `:928`, `:1020`) are `stays: exception list (CC-15, K§6.1.4)`; they match attribution text and do not branch on a client. CC-15's exception entry stays item-scoped (`item = "claude_attribution"`): the call lines hold no string literal, so the boundary scanner does not flag them, and the entry is not widened (review round 3 F2; recorded in the CC-15 planning notes).
   - `ANTHROPIC_VERSION` (`crates/zygo-proxy/src/forward.rs:47`, `:480`) is the Messages wire header: 9, CC-4, which keys wire format on `Dialect`.
   - `zygo_workspace::args::{occurrences, flags, has_session_arg}` keep their signatures in CC-7 (recorded in the CC-7 contract), so the CC-9 adapter rows that call them need no CC-7 edit. `opencode_subcommand` has no CC-9 caller at the base (its one production caller is `crates/zygo-launch/src/launcher.rs:810`, a CC-7 row), so it is not in that note.
 
-Files added to a node's **Files** line: in the first run, CC-8 `crates/zygo-config/src/repo_def/loadout.rs`, `crates/zygo/src/cmd/workspace_approve.rs`. In review round 1: CC-4 `crates/zygo-proxy/src/forward.rs`, `crates/zygo-proxy/src/redact_stage.rs`; CC-5 `crates/zygo-proxy/src/window.rs`; CC-6 `crates/zygo-hooks/src/role_guard.rs`, `crates/zygo-hooks/src/trim.rs`, `crates/zygo-work/src/guards.rs`, `crates/zygo-work/src/hooks.rs`; CC-9 `crates/zygo-plugins/src/check.rs`, `crates/zygo/src/cmd/claude.rs`, `crates/zygo/src/cmd/opencode.rs`, `crates/zygo/src/cmd/member.rs`, `crates/zygo/src/cmd/ws.rs`; CC-10 `crates/zygo/src/cmd/mcp.rs`; CC-13 the `#[cfg(test)]` items of ten `src` files. In review round 2: CC-3 `crates/zygo-core/tests/conformance/model.rs`, `crates/zygo-launch/tests/opencode.rs`, `crates/zygo-launch/tests/stub_agent/harness.rs`; CC-4 `crates/zygo-proxy/tests/passthrough.rs`; CC-5 `crates/zygo-proxy/tests/window.rs`; CC-7 `crates/zygo-workspace/tests/args.rs`; CC-8 `crates/zygo-config/tests/config_layers.rs`, `crates/zygo-config/tests/definition_keys.rs`; CC-9 `crates/zygo-plugins/src/builtin.rs`, `embedded.rs`, `marketplace.rs`, `store.rs`, `sync.rs`, `crates/zygo/src/cmd/doctor.rs`.
+Files added to a node's **Files** line: in the first run, CC-8 `crates/zygo-config/src/repo_def/loadout.rs`, `crates/zygo/src/cmd/workspace_approve.rs`. In review round 1: CC-4 `crates/zygo-proxy/src/forward.rs`, `crates/zygo-proxy/src/redact_stage.rs`; CC-5 `crates/zygo-proxy/src/window.rs`; CC-6 `crates/zygo-hooks/src/role_guard.rs`, `crates/zygo-hooks/src/trim.rs`, `crates/zygo-work/src/guards.rs`, `crates/zygo-work/src/hooks.rs`; CC-9 `crates/zygo-plugins/src/check.rs`, `crates/zygo/src/cmd/claude.rs`, `crates/zygo/src/cmd/opencode.rs`, `crates/zygo/src/cmd/member.rs`, `crates/zygo/src/cmd/ws.rs`; CC-10 `crates/zygo/src/cmd/mcp.rs`; CC-13 the `#[cfg(test)]` items of ten `src` files. In review round 2: CC-3 `crates/zygo-core/tests/conformance/model.rs`, `crates/zygo-launch/tests/opencode.rs`, `crates/zygo-launch/tests/stub_agent/harness.rs`; CC-4 `crates/zygo-proxy/tests/passthrough.rs`; CC-5 `crates/zygo-proxy/tests/window.rs`; CC-7 `crates/zygo-workspace/tests/args.rs`; CC-8 `crates/zygo-config/tests/config_layers.rs`, `crates/zygo-config/tests/definition_keys.rs`; CC-9 `crates/zygo-plugins/src/builtin.rs`, `embedded.rs`, `marketplace.rs`, `store.rs`, `sync.rs`, `crates/zygo/src/cmd/doctor.rs`. In review round 3: CC-10 `crates/zygo-launch/src/claude_code.rs` (its comment at `:57`).
 
 Phase 3 client features (for CC-12), at the base:
 
@@ -3732,6 +3751,8 @@ Assignment (the planning notes' node-per-concern rule applied to each file at th
 | each site inside a `#[cfg(test)]` or `#[cfg(all(test, …))]` item: `prompt.rs` 173, 449; `tools/work.rs` 322; `cmd/claude.rs` 140, 207, 209, 234; `cmd/opencode.rs` 108, 115, 123; `cmd/compact.rs` 173, 269; `cmd/loadout.rs` 590, 624, 648, 733, 851; `cmd/mail.rs` 893; `cmd/mod.rs` 705, 707, 709; `cmd/verbs.rs` 451; `cmd/member.rs` from 1117 (84 sites); `cmd/ws.rs` from 683 (16 sites) | | — | stays: test |
 
 Expected counts: CC-3 10, CC-4 7, CC-5 3, CC-6 7, CC-7 11, CC-8 17, CC-9 28, CC-10 35, stays: comment 3, stays: exception list 2, stays: test 122; total 245. No row goes to CC-15 as a new exception (every non-branching literal at the base is either the guard or a test or comment site).
+
+Review round 3 (2026-11-27): the symbol rule, the test-region rule and the exception rule are in `docs/work/phase4/cc1_check.py`; the table and counts under `## Observed` are current.
 
 Review round 2 (2026-11-27): the search was widened again and the acceptance moved into `docs/work/phase4/cc1_check.py`; the table and counts under `## Observed` are current.
 
