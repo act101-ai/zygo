@@ -98,9 +98,11 @@ fn target(input: &HookInput) -> Option<(String, String)> {
     Some((tool.to_owned(), text))
 }
 
-/// O§7.8: whether a hook output with `stderr` "" leaves the model no stderr text. True, as the PO2 row of
-/// `docs/premises.md` (verified, Claude Code 2.1.332, where the hook input carries stderr in `stdout`): the hook
-/// shapes both streams, sets `stderr` to "" and counts both; false selects "When PO2 fails".
+/// O§7.8: whether a hook output with `stderr` "" leaves the model no stderr text. True: the hook shapes both
+/// streams, sets `stderr` to "" and counts both; false selects "When PO2 fails". O§17 PO2 and the PO2 row of
+/// `docs/premises.md` (Claude Code 2.1.332): the hook input carried stderr merged into `stdout` with `stderr` "",
+/// and the replaced `stdout` removed the error text; the run did not observe whether `stderr` "" removes a
+/// non-empty `stderr`.
 pub const PO2_STDERR_CLEARED: bool = true;
 
 /// O§7.13: whether a `PostToolUseFailure` hook output replaces the text the model sees after a failed Bash call.

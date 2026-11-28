@@ -15,7 +15,7 @@ pub fn clean(text: &str, reuse: bool) -> Option<(String, Vec<Step>)> {
         steps.push(Step::ColorCodesRemoved);
         out = Some(t);
     }
-    if !reuse && let Some(t) = overwrite_cr(out.as_deref().unwrap_or(text)) {
+    if !reuse && let Some(t) = overwrite_cr(out.as_deref().unwrap_or(text), text) {
         steps.push(Step::ProgressLinesRemoved);
         out = Some(t);
     }
@@ -126,19 +126,61 @@ fn osc_stop(b: &[u8], j: usize) -> usize {
     k
 }
 
-/// O§7.4 bullet 2: `\r\n` becomes `\n`; in each line only the text after the last `\r` stays.
-/// A `\r` with nothing after it on the line overwrites nothing.
-fn overwrite_cr(text: &str) -> Option<String> {
+/// O§7.4 bullet 2: `\r\n` becomes `\n`, then each line goes through `overwrite_line`. `raw` is the text before
+/// escape removal; escapes never take `\n` (`strip_escapes`), so its lines pair one to one with those of `text`.
+fn overwrite_cr(text: &str, raw: &str) -> Option<String> {
     if !text.contains('\r') {
         return None;
     }
     let text = text.replace("\r\n", "\n");
-    let lines: Vec<&str> = text
-        .split('\n')
-        .map(|l| {
-            let l = l.trim_end_matches('\r');
-            l.rsplit('\r').next().unwrap_or(l)
-        })
-        .collect();
-    Some(lines.join("\n"))
+    let mut out = String::with_capacity(text.len());
+    for (k, (line, raw_line)) in text.split('\n').zip(raw.split('\n')).enumerate() {
+        if k > 0 {
+            out.push('\n');
+        }
+        // An `ESC` is always removed; a U+009B may be. Either way the columns are unsure.
+        let escaped = raw_line.contains(['\x1b', '\u{9b}']);
+        overwrite_line(line, escaped, &mut out);
+    }
+    Some(out)
+}
+
+/// One column for sure: printable ASCII, and the closed list of characters that progress bars and spinners
+/// draw with, which their programs count as one column: box drawing U+2500-U+257F (pip, rich), block elements
+/// U+2580-U+259F (tqdm), braille patterns U+2800-U+28FF (spinners).
+fn one_column(c: char) -> bool {
+    matches!(c, ' '..='~' | '\u{2500}'..='\u{259f}' | '\u{2800}'..='\u{28ff}')
+}
+
+/// Appends the kept text of one line. `\r` at the line end overwrites nothing and goes. When the line still
+/// holds a `\r`, its last segment is kept alone only when it surely covers every earlier segment: no escape was
+/// removed from the raw line, every character is `one_column`, and the last segment is at least as wide as each
+/// earlier one. Else the line is unsure: only its `\r` bytes go and all its text stays, in order (O-C9; O§7.3:
+/// a step removes, never reorders). One pass over the line, one copy.
+fn overwrite_line(line: &str, escaped: bool, out: &mut String) {
+    let line = line.trim_end_matches('\r');
+    let Some(last_cr) = line.rfind('\r') else {
+        out.push_str(line);
+        return;
+    };
+    let mut sure = !escaped;
+    let (mut width, mut widest_earlier) = (0usize, 0usize);
+    for c in line.chars() {
+        if !sure {
+            break;
+        }
+        if c == '\r' {
+            widest_earlier = widest_earlier.max(width);
+            width = 0;
+        } else if one_column(c) {
+            width += 1;
+        } else {
+            sure = false;
+        }
+    }
+    if sure && width >= widest_earlier {
+        out.push_str(&line[last_cr + 1..]);
+    } else {
+        out.extend(line.split('\r'));
+    }
 }
