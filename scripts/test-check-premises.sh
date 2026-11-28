@@ -1444,6 +1444,267 @@ printf '%s\n' 'OS Version: Ubuntu is fine' 'OS Version: Windowsill' 'Shell: nush
 run "$D"
 expect_ok
 
+# TF-5 round 1 F1: only the exempt x-api-key occurrence ("<name><separator>[omitted]" followed by a
+# value end or the line end; round 2 F1) is dropped from a hit line; a value left on the line still
+# fails, in any case. One tree, the planted file written again for each line.
+D=$(mk tf5_xk)
+XN="x-api""-key"
+XU="X-Api""-Key"
+for l in \
+    "$XU: [omitted] and $XN: realvalue1" \
+    "$XU: [omitted] $XU: realvalue1" \
+    "{\"h\":{\"$XU\":\"[omitted]\"},\"g\":{\"$XN\":\"realvalue1\"}}" \
+    "$XU: [omitted]x" \
+    "$XN: [omitted] $XN: realvalue1"; do
+    CASE="TF-5 R1 F1: an x-api-key value beside or after an omitted one ($l)"
+    printf '%s\n' "$l" > "$D/fixtures/codex/xk.txt"
+    run "$D"
+    expect_fail "forbidden content (x-api-key value): fixtures/codex/xk.txt:1:$l"
+done
+CASE="TF-5 R1 F1: an omitted x-api-key value in any case passes"
+printf '%s\n' "$XU: [omitted]" "X-API""-KEY: [omitted]" "{\"$XU\":\"[omitted]\"}" > "$D/fixtures/codex/xk.txt"
+run "$D"
+expect_ok
+
+# TF-5 round 2: the value end after "[omitted]" is the one of scrub.py (a blank, ", ', \, "," or the
+# line end; F1); a byte that is not UTF-8 (F2); a value that starts with a backslash and the
+# double-escaped JSON form (older gaps). FF: the byte 0xff. BQ: a backslash-escaped quote of a
+# JSON string inside a JSON string (three backslashes and a quote).
+FF=$(printf '\377')
+BQ='\\\"'
+for l in \
+    "$XN: [omitted].realvalue1" \
+    "$XN: [omitted]+AbCd/123=" \
+    "$XN: [omitted]/abc" \
+    "$XN: [omitted]:abc" \
+    "$XN: [omitted]=abc" \
+    "$XN: realkey$FF" \
+    "$XN: [omitted]$FF" \
+    "$XN: \\abc" \
+    "$BQ$XN$BQ:${BQ}realvalue$BQ"; do
+    CASE="TF-5 R2: an x-api-key value that is not an omitted one ($l)"
+    printf '%s\n' "$l" > "$D/fixtures/codex/xk.txt"
+    run "$D"
+    expect_fail "forbidden content (x-api-key value): fixtures/codex/xk.txt:1:$l"
+done
+CASE="TF-5 R2: an omitted value before a comma and the omitted double-escaped JSON form pass"
+printf '%s\n' "$XN: [omitted],abc" "$BQ$XN$BQ:$BQ[omitted]$BQ" > "$D/fixtures/codex/xk.txt"
+run "$D"
+expect_ok
+# Rejected (round 2): a NUL after "[omitted]" becomes a blank, a value end, so the word after it
+# stands with no header name and passes.
+CASE="TF-5 R2: an omitted value, a NUL and a word pass"
+printf '%s\n' "$XN: [omitted]${SOH}realvalue" > "$D/fixtures/codex/xk.txt"
+soh_to_nul "$D/fixtures/codex/xk.txt"
+run "$D"
+expect_ok
+# F2: sed shims for the drop scripts of scan, cx_scan and env_scan only (each script holds "omitted");
+# every other sed call runs the real sed (SED_REAL). sedfail: the drop sed fails on a planted line
+# (the x-api-key line of xk.txt, or a line that holds the word zzplant), so the line must count as a
+# hit (fail closed). sedbsd: as BSD sed in a UTF-8 locale, the drop sed fails on a byte that is not
+# UTF-8 unless LC_ALL is C, so the drop step must run with LC_ALL=C.
+SED_REAL=$(command -v sed)
+mkdir -p "$T/sedfail" "$T/sedbsd"
+cat > "$T/sedfail/sed" <<'SHIM'
+#!/bin/sh
+case "$*" in *omitted*)
+    in=$(cat)
+    case "$in" in fixtures/codex/xk.txt:* | *zzplant*) exit 1 ;; esac
+    printf '%s\n' "$in" | "$SED_REAL" "$@"
+    exit ;;
+esac
+exec "$SED_REAL" "$@"
+SHIM
+cat > "$T/sedbsd/sed" <<'SHIM'
+#!/bin/sh
+case "$*" in *omitted*)
+    if [ "${LC_ALL:-}" != C ]; then
+        in=$(cat)
+        case "$in" in *"$(printf '\377')"*) echo "sed: RE error: illegal byte sequence" >&2; exit 1 ;; esac
+        printf '%s\n' "$in" | "$SED_REAL" "$@"
+        exit
+    fi ;;
+esac
+exec "$SED_REAL" "$@"
+SHIM
+chmod +x "$T/sedfail/sed" "$T/sedbsd/sed"
+# run_shim <dir> <shim dir>: as run, with the shim dir first on PATH.
+run_shim() {
+    tick other
+    OUT=$(unset N2_FORBIDDEN_NAMES; SED_REAL="$SED_REAL" PATH="$2:$PATH" sh "$1/scripts/check-premises.sh" 2>&1)
+    RC=$?
+    N=$((N + 1))
+    tick check
+}
+CASE="TF-5 R2: an omitted value fails when the drop sed fails"
+printf '%s\n' "$XN: [omitted]" > "$D/fixtures/codex/xk.txt"
+run_shim "$D" "$T/sedfail"
+expect_fail "forbidden content (x-api-key value): fixtures/codex/xk.txt:1:$XN: [omitted]"
+for l in "$XN: realkey$FF" "$XN: [omitted]$FF"; do
+    CASE="TF-5 R2: a value with a byte that is not UTF-8, under a sed that stops on it ($l)"
+    printf '%s\n' "$l" > "$D/fixtures/codex/xk.txt"
+    run_shim "$D" "$T/sedbsd"
+    expect_fail "forbidden content (x-api-key value): fixtures/codex/xk.txt:1:$l"
+done
+rm -f "$D/fixtures/codex/xk.txt"
+# The same for the drop steps of cx_scan (fixtures/codex) and env_scan (fixtures/claude-code). Each
+# zzplant line passes with the real sed: its placeholder is dropped. Each line with 0xff holds a host
+# value that the drop leaves, so it fails.
+CASE="TF-5 R2: cx_scan, an OS placeholder fails when the drop sed fails"
+printf '%s\n' '"platformOs":"(os omitted)" zzplant' > "$D/fixtures/codex/cx.txt"
+run_shim "$D" "$T/sedfail"
+expect_fail "forbidden content (OS name): fixtures/codex/cx.txt:1:\"platformOs\":\"(os omitted)\" zzplant"
+CASE="TF-5 R2: cx_scan, an OS name with a byte that is not UTF-8, under a sed that stops on it"
+printf '%s\n' "\"platformOs\":\"linux$FF\"" > "$D/fixtures/codex/cx.txt"
+run_shim "$D" "$T/sedbsd"
+expect_fail "forbidden content (OS name): fixtures/codex/cx.txt:1:\"platformOs\":\"linux$FF\""
+rm -f "$D/fixtures/codex/cx.txt"
+CASE="TF-5 R2: env_scan, a shell placeholder fails when the drop sed fails"
+printf '%s\n' 'zzplant\n- Shell: (omitted)' > "$D/fixtures/claude-code/env.txt"
+run_shim "$D" "$T/sedfail"
+expect_fail 'forbidden content (shell name): fixtures/claude-code/env.txt:1:zzplant\n- Shell: (omitted)'
+CASE="TF-5 R2: env_scan, a shell name with a byte that is not UTF-8, under a sed that stops on it"
+printf '%s\n' "- Shell: zsh$FF" > "$D/fixtures/claude-code/env.txt"
+run_shim "$D" "$T/sedbsd"
+expect_fail "forbidden content (shell name): fixtures/claude-code/env.txt:1:- Shell: zsh$FF"
+CASE="TF-5 R2: cx_scan and env_scan, the zzplant lines pass with the real sed"
+printf '%s\n' '"platformOs":"(os omitted)" zzplant' > "$D/fixtures/codex/cx.txt"
+printf '%s\n' 'zzplant\n- Shell: (omitted)' > "$D/fixtures/claude-code/env.txt"
+run "$D"
+expect_ok
+rm -f "$D/fixtures/codex/cx.txt" "$D/fixtures/claude-code/env.txt"
+
+# TF-5 round 3. F1: under sedbsd, lines that must pass (their placeholder is dropped, a byte that is
+# not UTF-8 is left), so a drop sed with no LC_ALL=C fails them (fail closed).
+for c in \
+    "codex/xk.txt|$XN: [omitted] $FF" \
+    "codex/cx.txt|\"platformOs\":\"(os omitted)\" $FF" \
+    "claude-code/env.txt|$FF\\n- Shell: (omitted)"; do
+    CASE="TF-5 R3 F1: a dropped placeholder beside a byte that is not UTF-8 passes under a sed that stops on it (${c%%|*})"
+    printf '%s\n' "${c#*|}" > "$D/fixtures/${c%%|*}"
+    run_shim "$D" "$T/sedbsd"
+    expect_ok
+    rm -f "$D/fixtures/${c%%|*}"
+done
+# F2: the scan grep matches a byte that is not UTF-8 (LC_ALL=C), in scan and in cx_scan.
+for c in \
+    "x-api-key value|codex/xk.txt|$XN: ${FF}abc" \
+    "macOS temporary path|codex/cx.txt|cwd /private/tmp$FF"; do
+    l=${c#*|}; f=${l%%|*}; l=${l#*|}
+    CASE="TF-5 R3 F2: a value right after a byte that is not UTF-8 fails ($f)"
+    printf '%s\n' "$l" > "$D/fixtures/$f"
+    run "$D"
+    expect_fail "forbidden content (${c%%|*}): fixtures/$f:1:$l"
+    rm -f "$D/fixtures/$f"
+done
+# F3: a grep error fails the check. The grepfail shim exits 2 for a grep call whose arguments hold
+# both fixed strings GF_A and GF_B; every other call runs the real grep (GREP_REAL).
+GREP_REAL=$(command -v grep)
+mkdir -p "$T/grepfail"
+cat > "$T/grepfail/grep" <<'SHIM'
+#!/bin/sh
+a=$*
+if printf '%s' "$a" | "$GREP_REAL" -qF -- "$GF_A" && printf '%s' "$a" | "$GREP_REAL" -qF -- "$GF_B"; then
+    echo "grep: shim error" >&2
+    exit 2
+fi
+exec "$GREP_REAL" "$@"
+SHIM
+chmod +x "$T/grepfail/grep"
+# run_grepfail <dir> <GF_A> <GF_B> [<names>]: as run_names, with the grepfail shim first on PATH.
+run_grepfail() {
+    tick other
+    OUT=$(N2_FORBIDDEN_NAMES="${4:-}" GREP_REAL="$GREP_REAL" GF_A="$2" GF_B="$3" PATH="$T/grepfail:$PATH" sh "$1/scripts/check-premises.sh" 2>&1)
+    RC=$?
+    N=$((N + 1))
+    tick check
+}
+# expect_line <text>: exit 1 and a line of the output that starts "check-premises: <text>".
+expect_line() {
+    [ "$RC" -eq 1 ] || fail "exit $RC, expected 1"
+    case "
+$OUT" in *"
+check-premises: $1"*) ;; *) fail "no line starts with 'check-premises: $1'" ;; esac
+}
+for c in \
+    "x-api-key value|-q -aiE -- |[xX]-[aA][pP][iI]|codex/xk.txt|$XN: [omitted]" \
+    "OS name|-q -aE -- |platform(Os|codex/cx.txt|\"platformOs\":\"(os omitted)\"" \
+    "shell name|-qaE -- |[Ss][Hh][Ee][Ll][Ll]:|claude-code/env.txt|- Shell: (omitted)"; do
+    lb=${c%%|*}; r=${c#*|}; ga=${r%%|*}; r=${r#*|}; gb=${r%%|*}; r=${r#*|}; f=${r%%|*}; l=${r#*|}
+    CASE="TF-5 R3 F3: the re-check grep of a dropped line fails with an error ($lb)"
+    printf '%s\n' "$l" > "$D/fixtures/$f"
+    run_grepfail "$D" "$ga" "$gb"
+    expect_line "forbidden content ($lb): "
+    rm -f "$D/fixtures/$f"
+done
+CASE="TF-5 R3 F3: the name grep fails with an error"
+run_grepfail "$D" "-rnaiE -- " "zzforbidq" zzforbidq
+expect_line "grep error (forbidden name from N2_FORBIDDEN_NAMES"
+CASE="TF-5 R3 F3: an unreadable fixture"
+printf '%s\n' "nothing here" > "$D/fixtures/codex/unread.txt"
+chmod 000 "$D/fixtures/codex/unread.txt"
+run "$D"
+chmod 644 "$D/fixtures/codex/unread.txt"
+rm -f "$D/fixtures/codex/unread.txt"
+expect_line "grep error ("
+case "$OUT" in *unread.txt*) ;; *) fail "the message does not name the file" ;; esac
+# F4: a forbidden name beside a byte that is not UTF-8 fails; a name with a letter outside ASCII,
+# planted in upper case, fails in a UTF-8 locale (UL).
+for l in "a ${FF}zzforbidq b" "a zzforbidq$FF b"; do
+    CASE="TF-5 R3 F4: a forbidden name beside a byte that is not UTF-8 ($l)"
+    printf '%s\n' "$l" > "$D/fixtures/codex/nm.txt"
+    run_names "$D" zzforbidq
+    expect_fail "forbidden name from N2_FORBIDDEN_NAMES: fixtures/codex/nm.txt:1"
+done
+UL=$(locale -a 2>/dev/null | LC_ALL=C "$GREP_REAL" -i -x -E 'c\.utf-?8|en_US\.utf-?8' | sed -n 1p)
+CASE="TF-5 R3 F4: a forbidden name with a letter outside ASCII, in upper case (locale ${UL:-none})"
+[ -n "$UL" ] || fail "no UTF-8 locale (C.UTF-8 or en_US.UTF-8) in locale -a"
+printf '%s\n' "a ZZCHLO$(printf '\303\213') b" > "$D/fixtures/codex/nm.txt"
+OUT=$(LC_ALL="$UL" N2_FORBIDDEN_NAMES="zzchlo$(printf '\303\253')" sh "$D/scripts/check-premises.sh" 2>&1)
+RC=$?
+N=$((N + 1))
+expect_fail "forbidden name from N2_FORBIDDEN_NAMES: fixtures/codex/nm.txt:1"
+rm -f "$D/fixtures/codex/nm.txt"
+# macOS CI run 46133671018: BSD tr in a UTF-8 locale stops on 0xff and the line is lost. trbsd: a tr
+# that fails on input with 0xff unless LC_ALL is C (TR_REAL: the real tr).
+TR_REAL=$(command -v tr)
+mkdir -p "$T/trbsd"
+cat > "$T/trbsd/tr" <<'SHIM'
+#!/bin/sh
+if [ "${LC_ALL:-}" != C ]; then
+    f=$(mktemp "${TMPDIR:-/tmp}/trbsd.XXXXXX") || exit 1
+    cat > "$f"
+    if LC_ALL=C "$GREP_REAL" -q "$(printf '\377')" "$f"; then
+        rm -f "$f"
+        echo "tr: Illegal byte sequence" >&2
+        exit 1
+    fi
+    "$TR_REAL" "$@" < "$f"
+    s=$?
+    rm -f "$f"
+    exit "$s"
+fi
+exec "$TR_REAL" "$@"
+SHIM
+chmod +x "$T/trbsd/tr"
+for c in \
+    "x-api-key value|codex/xk.txt|$XN: realkey$FF|" \
+    "forbidden name from N2_FORBIDDEN_NAMES|codex/nm.txt|a zzforbidq$FF b|zzforbidq"; do
+    lb=${c%%|*}; r=${c#*|}; f=${r%%|*}; r=${r#*|}; l=${r%%|*}; nm=${r#*|}
+    CASE="TF-5 R3: a line with a byte that is not UTF-8, under a tr that stops on it ($lb)"
+    printf '%s\n' "$l" > "$D/fixtures/$f"
+    tick other
+    OUT=$(N2_FORBIDDEN_NAMES="$nm" GREP_REAL="$GREP_REAL" TR_REAL="$TR_REAL" PATH="$T/trbsd:$PATH" sh "$D/scripts/check-premises.sh" 2>&1)
+    RC=$?
+    N=$((N + 1))
+    tick check
+    case $lb in
+        forbidden*) expect_line "$lb: fixtures/$f:1" ;;
+        *) expect_line "forbidden content ($lb): fixtures/$f:1:$l" ;;
+    esac
+    rm -f "$D/fixtures/$f"
+done
+
 # PC-13 review round 1 F4: the rescrub_codex.py tests (same(), the folders and verbatim lists, ENV_LEAKS).
 CASE="PC-13 R1: rescrub_test.py"
 OUT=$(python3 -I "$ROOT/scripts/premises/rescrub_test.py" 2>&1)
