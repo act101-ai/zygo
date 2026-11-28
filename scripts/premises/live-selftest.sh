@@ -236,6 +236,7 @@ expect "T3 the run's own token file fails" fail "$rc" "$T/scan.out" "sessions/cu
 kill "$LPID" 2>/dev/null; LPID=""
 
 # --- T4, T5, T8: check-premises.sh scans ---------------------------------------------------------
+FN="zzforbid""q" HN="zzhost""q" LN="zzlocal""q" CN="Zz Comp""uter Q"   # planted names, built at run time
 C="$T/ctree"
 mkdir -p "$C/scripts" "$C/docs/specs" "$T/shim"
 cp "$REPO/scripts/check-premises.sh" "$C/scripts/"
@@ -267,22 +268,26 @@ for c in \
   cp_run "${c#*|}"; expect "T4/T5/T8 scan: ${c%%|*} ($(printf '%s' "${c#*|}" | sed "s/$A/<A>/; s/${A%?????}/<A>/" | cut -c1-28)...)" fail "$rc" "$T/cp.out" "(${c%%|*})"
 done
 cp_run "$(printf '%s: [omitted]' "X-Api""-Key")"; expect "T5 scan: an omitted x-api-key value passes" 0 "$rc" "$T/cp.out" "check-premises: ok"
-cp_run "a\\nzzforbidq b" N2_FORBIDDEN_NAMES=zzforbidq
-expect "T4 scan: a forbidden name after an escape" fail "$rc" "$T/cp.out" "forbidden name from N2_FORBIDDEN_NAMES"
+cp_run "nothing here" N2_FORBIDDEN_NAMES="$FN"
+expect "T4 copied tree with the forbidden name set passes" 0 "$rc" "$T/cp.out" "check-premises: ok"
+cp_run "a\\n$FN b" N2_FORBIDDEN_NAMES="$FN"
+expect "T4 scan: a forbidden name after an escape" fail "$rc" "$T/cp.out" "check-premises: forbidden name from N2_FORBIDDEN_NAMES: fixtures/zz-selftest.txt:1"
 # Host names from shims: hostname and scutil (LocalHostName, ComputerName with spaces).
 shims() { # <hostname output> <LocalHostName> <ComputerName>
   printf '#!/bin/sh\necho "%s"\n' "$1" >"$T/shim/hostname"
   printf '#!/bin/sh\ncase "$2" in LocalHostName) echo "%s" ;; ComputerName) echo "%s" ;; esac\n' "$2" "$3" >"$T/shim/scutil"
   chmod +x "$T/shim/hostname" "$T/shim/scutil"
 }
-shims zzhostq.example.net zzlocalq "Zz Computer Q"
-for c in "on ZZHOSTQ." "zzhostq.example.net" "a zzlocalq b" "a\\nZz Computer Q b"; do
+shims "$HN.example.net" "$LN" "$CN"
+cp_run "nothing here" PATH="$T/shim:$PATH"
+expect "T8 copied tree with the host shims passes" 0 "$rc" "$T/cp.out" "check-premises: ok"
+for c in "on $(printf '%s' "$HN" | tr a-z A-Z)." "$HN.example.net" "a $LN b" "a\\n$CN b"; do
   cp_run "$c" PATH="$T/shim:$PATH"
-  expect "T8 scan: host name ($c)" fail "$rc" "$T/cp.out" "check-premises: host name:"
-  if grep -qiE 'zzhostq|zzlocalq|computer q' "$T/cp.out"; then no "T8 scan: the message names the host"; fi
+  expect "T8 scan: host name ($c)" fail "$rc" "$T/cp.out" "check-premises: host name: fixtures/zz-selftest.txt:1"
+  if grep -qiF -e "$HN" -e "$LN" -e "$CN" "$T/cp.out"; then no "T8 scan: the message names the host"; fi
 done
 # U5: "-" and "_" are part of a host name (the same edges as scrub.py).
-cp_run "zzhostq_x and x-zzhostq and zzlocalq-1" PATH="$T/shim:$PATH"
+cp_run "${HN}_x and x-$HN and $LN-1" PATH="$T/shim:$PATH"
 expect "U5 scan: a host name inside a longer name with - or _ passes" 0 "$rc" "$T/cp.out" "check-premises: ok"
 shims abc "" ""
 cp_run "abc here" PATH="$T/shim:$PATH"

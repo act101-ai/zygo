@@ -321,8 +321,9 @@ scan() {
 # L: the left edge of a key or id: line start, a non-word character, or a JSON backslash escape
 # (\n, \t, \r, \b, \f, \uXXXX) right before it in nested JSON text.
 L='(^|[^A-Za-z0-9_]|\\[nrtbf]|\\u[0-9A-Fa-f]{4})'
-# XK: an x-api-key name and its separator, quoted, backslash-quoted or bare.
-XK='x-api-key(\\?["'"'"'])?[[:space:]]*[:=][[:space:]]*(\\?["'"'"'])?'
+# XK: an x-api-key name and its separator, quoted, backslash-quoted or bare. The name is spelled in any
+# case with bracket classes, because the exempt filter of scan is case-exact (PC-8 H2).
+XK='[xX]-[aA][pP][iI]-[kK][eE][yY](\\?["'"'"'])?[[:space:]]*[:=][[:space:]]*(\\?["'"'"'])?'
 scan 'sk-ant-' '' 'API key'
 scan 'Bearer [A-Za-z0-9]' "$VX" 'bearer token'
 scan "$XK"'[^"'"'"'\\[:space:]]' "$XK"'\[omitted\]' 'x-api-key value' i
