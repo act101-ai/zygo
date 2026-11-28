@@ -225,7 +225,7 @@ Session text (T, SX nodes):
 | FX-28 | A remote send during `ws forget` is lost uncounted | FX-24, FX-26 | TODO | judgment | — |
 | FX-29 | config check rejects default_loadout = "repository" that zygo up accepts | WD-20 | DONE | implementation | cf92636c^..2f28c271 · acceptance pass (config_check_default_loadout_repository_follows_zygo_up 1 passed, zygo-config all pass) · PR #237 |
 | FX-30 | A crash-recovered delivery gets no wake and no count | FX-26, FX-28 | TODO | judgment | — |
-| FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | PLANNED | judgment | wt .worktrees/phase3/FX-31 · PR #238 |
+| FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | IN-PROGRESS | judgment | wt .worktrees/phase3/FX-31 · PR #238 |
 
 ## Log
 
@@ -470,3 +470,4 @@ Session text (T, SX nodes):
 | 2026-11-27 | FX-29 PLANNED: config check reads as up does; check_with(cfg, RepositoryLoadout); approved files with workspace.toml accept, other read states keep the error; author's call: no read (outside, unread) is a warning, not an error; R§10, W§11, workspace-files.md rewritten |
 | 2026-11-27 | FX-29 DONE: config check decides default_loadout = "repository" from the read, as up does; review F1-F4 fixed; author's calls: no read (outside, unread) is a warning, not an error; zygo serve reads no files and checks with NotRead at start and reload; FX-20 row archived · PR #237 |
 | 2026-11-27 | FX-31 PLANNED: author's call: R§11 names the R§7.4 conditions; a gone, withdrawn or unread pin stops only a launch that makes the pinned read; no profile, user or team profile, passthrough start; launcher unchanged; R§11, R§7.4, R§18 item 16, workspace-files.md rewritten |
+| 2026-11-27 | FX-31 IN-PROGRESS: plan steps 1-4 done; pin_gone_stops_exactly_the_r11_members 1 passed; mutations Gone→NotFound and passthrough pinned read each fail it; floor green; waits for review · PR #238 |
