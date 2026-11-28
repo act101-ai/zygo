@@ -45,7 +45,7 @@ fn map_args(args: &Map<String, Value>) -> Value {
 
 /// The OpenCode plugin payload `{ input, output }` (plus top-level keys) as a Claude-shaped hook input (spec §8.7).
 /// Anything that is not a tool hook payload is returned unchanged.
-pub fn normalize(v: Value) -> Value {
+pub(super) fn normalize(v: Value) -> Value {
     let Some(tool) = v.pointer("/input/tool").and_then(Value::as_str) else { return v };
     let out = v.get("output");
     let mut o: Map<String, Value> = v.as_object().into_iter().flatten().filter(|(k, _)| *k != "input" && *k != "output").map(|(k, v)| (k.clone(), v.clone())).collect();

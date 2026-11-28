@@ -48,6 +48,18 @@ fn unknown_client_id_is_refused_with_the_same_text() {
     assert_eq!("codex".parse::<Agent>().unwrap_err().to_string(), "unknown agent `codex` (claude-code or opencode)");
 }
 
+/// The serde form is built from the descriptor ids: an unknown id, or an id in another case, is refused with the
+/// unknown-variant text that names every known id; a value that is not a string is refused.
+#[test]
+fn unknown_client_id_is_refused_by_serde() {
+    for bad in ["codex", "Claude-Code", ""] {
+        let e = serde_json::from_value::<Agent>(json!(bad)).unwrap_err().to_string();
+        assert_eq!(e, format!("unknown variant `{bad}`, expected `claude-code` or `opencode`"));
+    }
+    assert!(serde_json::from_value::<Agent>(json!(1)).is_err());
+    assert!(serde_json::from_value::<Agent>(json!(null)).is_err());
+}
+
 #[test]
 fn default_client_is_claude_code() {
     assert_eq!(Agent::DEFAULT.spec().id, "claude-code");
@@ -61,7 +73,6 @@ fn hook_input_reads_the_descriptor() {
     let oc = "opencode".parse::<Agent>().unwrap();
     let want = json!({"tool_name": "Bash", "hook_event_name": "PreToolUse", "tool_input": {"command": "ls"}});
     assert_eq!((oc.spec().hook_input)(v.clone()), want);
-    assert_eq!(zygo_core::client::opencode::normalize(v.clone()), want);
     let bytes = v.to_string();
     let h = HookInput::parse(oc, bytes.as_bytes()).unwrap();
     assert_eq!(h.event.as_deref(), Some("PreToolUse"));

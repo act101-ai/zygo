@@ -22,7 +22,8 @@
 ## Test logic edits
 
 - literals crates/zygo-config/tests/builtin.rs: +"{a}" x1, +"{}: " x1, -"Claude Code: " x1, -"OpenCode: " x1 — K§6.2.5 item 7, K§9: minimum_agent_versions_match_premises reads Agent::ALL and finds each client's docs/premises.md header by its descriptor name
-- literals crates/zygo-core/tests/conformance.rs: +"1.18.16" x1, +"2.1.328" x1, -"9.1.0" x1, -"9.2.0" x1 — K§6.2.5 items 7 and 8, K§9: check_clients_from_agent_all asserts the clients read from the descriptor (the pinned minimums), not from a fixture agents.toml
+- literals crates/zygo-launch/tests/stub_agent/harness.rs: -"1.18.16" x1, -"2.1.328" x1 — K§6.1.2 concern 1, round 1 F5: CLAUDE_VERSION and OPENCODE_VERSION are read from Agent::spec().min_version, so the harness launches the stub at the descriptor's minimum and its doc line is true
+- literals crates/zygo-core/tests/conformance.rs: +"1.18.16" x1, +"2.1.328" x1, -"9.1.0" x1, -"9.2.0" x1 — K§6.2.5 items 7 and 8, K§9: check_clients_from_agent_all asserts the clients read from the descriptor (the pinned minimums), not from a fixture agents.toml; round 1 F1: its assert `clients(<empty folder>).is_err()` is removed (no literal), because clients() reads no file and has no error to return
 - literals crates/zygo-core/tests/conformance/model.rs: -"Claude Code" x1, -"OpenCode" x1, -"crates/zygo-config/data/agents.toml" x1, -"min_version" x1, -"{}: no `[{id}] min_version`" x1, -"{}: {e}" x2 — K§6.2.5 items 7 and 8, K§9: clients() reads id, name, min_version and supported from Agent::spec(); agents.toml is deleted
 - fixture crates/zygo-core/tests/conformance/fixtures/repo/crates/zygo-config/data/agents.toml — K§9: agents.toml is deleted, and clients() reads no copy of it
 

@@ -12,15 +12,16 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 use tempfile::TempDir;
 use zygo_core::paths::Paths;
+use zygo_core::Agent;
 use zygo_launch::claude_code::ClaudeCode;
 use zygo_launch::env::Env;
 use zygo_launch::launcher::LaunchOutcome;
 use zygo_launch::opencode::OpenCode;
 use zygo_launch::{AgentAdapter, LaunchOpts, Launcher};
 
-/// The minimum versions in each client's descriptor (`Agent::spec().min_version`) and the `docs/premises.md` header.
-pub const CLAUDE_VERSION: &str = "2.1.328";
-pub const OPENCODE_VERSION: &str = "1.18.16";
+/// The minimum versions in each client's descriptor (`Agent::spec().min_version`), equal to the `docs/premises.md` header.
+pub const CLAUDE_VERSION: &str = Agent::ClaudeCode.spec().min_version;
+pub const OPENCODE_VERSION: &str = Agent::OpenCode.spec().min_version;
 
 pub struct Rig {
     pub _t: TempDir,
