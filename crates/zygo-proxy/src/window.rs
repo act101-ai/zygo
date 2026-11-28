@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::Value;
 use zygo_config::{Dialect, Facts, ModelRow};
+use zygo_core::ClientSpec;
 
 use crate::errors::ZygoError;
 use crate::pipeline::{Adjustment, ModelRoute, RequestCtx, ResponseCtx, Stage};
@@ -90,12 +91,40 @@ pub fn prompt(u: Usage) -> u64 {
     u.input.saturating_add(u.cache_read).saturating_add(u.cache_write)
 }
 
-/// The `zygo` MCP server's `compact` tool: `mcp__<server>__compact` with `<server>` ending in `zygo` (§10.2.3 trigger 2).
-pub fn compact_tool(name: &str) -> bool {
-    name.strip_suffix("compact")
-        .and_then(|s| s.strip_prefix("mcp__"))
-        .and_then(|s| s.strip_suffix("__"))
-        .is_some_and(|s| s.ends_with("zygo"))
+/// The `zygo` MCP server's `compact` tool in the client's MCP tool-name form (`ClientSpec::mcp_server`), its server
+/// ending in `zygo` (§10.2.3 trigger 2); never for a client that zygo does not list `compact` to
+/// (`ClientSpec::lists_compact_tool`).
+pub fn compact_tool(client: &ClientSpec, name: &str) -> bool {
+    client.lists_compact_tool && (client.mcp_server)(name, "compact").is_some_and(|s| s.ends_with("zygo"))
+}
+
+/// The compact tool on the Responses route (K§6.4.5): the `name`, joined to its `namespace` by `flat_name` when it has
+/// one, is matched with one fixed §10.2.3 parse, `mcp__<server>__compact` with `<server>` ending in `zygo`, the same
+/// for every client, not with `ClientSpec::mcp_server`. The parse is correct for a namespaced tool, joined as
+/// `<namespace>__<name>` (K§6.4.3 obligation 6). A plain `function` tool keeps the name the client sent and gets the
+/// same parse, so a Responses client whose own form is not Claude Code's would need a per-tool namespace flag to be
+/// matched in its own form (known limit; no such client exists). Never for a client that zygo does not list
+/// `compact` to (`ClientSpec::lists_compact_tool`).
+pub fn responses_compact_tool(client: &ClientSpec, namespace: Option<&str>, name: &str) -> bool {
+    if !client.lists_compact_tool {
+        return false;
+    }
+    let name = match namespace {
+        Some(ns) => Cow::Owned(flat_name(ns, name)),
+        None => Cow::Borrowed(name),
+    };
+    name.strip_suffix("__compact").and_then(|ns| ns.strip_prefix("mcp__")).is_some_and(|s| s.ends_with("zygo"))
+}
+
+/// The compact tool in a tool name of the model's answer to a request on `route`, read as Messages lines: on the
+/// Responses route (also when an Anthropic or chat upstream answers it) the name is matched as
+/// `responses_compact_tool` matches it, with the fixed §10.2.3 parse; on the Messages route, in the client's own form
+/// (`compact_tool`).
+pub fn route_compact_tool(client: &ClientSpec, route: ModelRoute, name: &str) -> bool {
+    match route {
+        ModelRoute::Responses => responses_compact_tool(client, None, name),
+        ModelRoute::Messages | ModelRoute::CountTokens => compact_tool(client, name),
+    }
 }
 
 /// Trigger 1's threshold: the override, else `soft`; none when `off`; then at most `safety` (§10.2.1).
@@ -160,7 +189,7 @@ fn messages_line(ctx: &mut ResponseCtx, line: &mut SseLine) {
     match v.get("type").and_then(Value::as_str) {
         Some("content_block_start") => {
             let b = &v["content_block"];
-            if b["type"] == "tool_use" && b["name"].as_str().is_some_and(compact_tool) {
+            if b["type"] == "tool_use" && b["name"].as_str().is_some_and(|n| route_compact_tool(ctx.session.agent.spec(), ctx.route, n)) {
                 ctx.compact_call = true;
             }
         }
@@ -199,11 +228,7 @@ fn responses_line(ctx: &mut ResponseCtx, line: &mut SseLine) {
                 return;
             }
             let Some(name) = item["name"].as_str().filter(|_| item["type"] == "function_call") else { return };
-            let name = match item["namespace"].as_str() {
-                Some(ns) => Cow::Owned(flat_name(ns, name)),
-                None => Cow::Borrowed(name),
-            };
-            if compact_tool(&name) {
+            if responses_compact_tool(ctx.session.agent.spec(), item["namespace"].as_str(), name) {
                 ctx.compact_call = true;
             }
         }

@@ -364,15 +364,9 @@ pub(crate) fn normalize(p: &Path) -> PathBuf {
     out
 }
 
+/// `name` is one of act-lite's navigation tools in the client's MCP tool-name form (`ClientSpec::mcp_server`, §10.5).
 fn nav_tool(name: &str, agent: Agent) -> bool {
-    NAV_TOOLS.iter().any(|t| {
-        let Some(server) = name.strip_suffix(t) else { return false };
-        let server = match agent {
-            Agent::ClaudeCode => server.strip_prefix("mcp__").and_then(|s| s.strip_suffix("__")),
-            Agent::OpenCode => server.strip_suffix('_'),
-        };
-        server.is_some_and(|s| s.ends_with("act-lite"))
-    })
+    NAV_TOOLS.iter().any(|t| (agent.spec().mcp_server)(name, t).is_some_and(|s| s.ends_with("act-lite")))
 }
 
 fn nav_paths(input: &Value, cwd: &Path) -> Vec<String> {

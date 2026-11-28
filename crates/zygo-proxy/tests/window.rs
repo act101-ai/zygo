@@ -449,10 +449,11 @@ fn unit_windows() {
     assert_eq!(agent_window(&row("gpt-t-1")), 1_000_000);
     assert_eq!(context_window(&row("n-t-1")), None);
     assert_eq!(context_window(&row("gpt-t-1")), Some(400_000));
-    assert!(compact_tool("mcp__zygo__compact"));
-    assert!(compact_tool("mcp__plugin_x_zygo__compact"));
+    let cc = "claude-code".parse::<Agent>().unwrap().spec();
+    assert!(compact_tool(cc, "mcp__zygo__compact"));
+    assert!(compact_tool(cc, "mcp__plugin_x_zygo__compact"));
     for n in ["mcp__zygo__compactx", "mcp__zygox__compact", "mcp__other__compact", "mcp____compact", "zygo__compact", "compact"] {
-        assert!(!compact_tool(n), "{n}");
+        assert!(!compact_tool(cc, n), "{n}");
     }
 }
 

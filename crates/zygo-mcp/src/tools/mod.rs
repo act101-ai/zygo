@@ -4,8 +4,6 @@ pub mod results;
 pub mod work;
 pub mod workspace_down;
 
-use zygo_core::Agent;
-
 use crate::tool::{McpCtx, Tool};
 
 pub fn build(ctx: &McpCtx) -> anyhow::Result<Vec<Box<dyn Tool>>> {
@@ -19,7 +17,7 @@ pub fn build_with(
     work: impl FnOnce(&McpCtx) -> Vec<Box<dyn Tool>>,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
     let mut v: Vec<Box<dyn Tool>> = Vec::new();
-    if ctx.agent == Agent::ClaudeCode && ctx.features.compact_tool {
+    if ctx.agent.spec().lists_compact_tool && ctx.features.compact_tool {
         v.push(Box::new(compact::Compact));
     }
     if ctx.features.results {

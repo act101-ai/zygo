@@ -89,6 +89,9 @@ pub struct ResponseCtx {
     pub status: StatusCode,
     pub resolved: Resolved,
     pub provider: String,
+    /// The client's route: on `Responses` the compact tool name is matched with the fixed §10.2.3 parse (K§6.4.5),
+    /// else in the client's own form (`window::route_compact_tool`).
+    pub route: ModelRoute,
     /// The upstream dialect.
     pub dialect: Dialect,
     /// The form of the body the tee and the response stages read: Openai only for a Responses upstream answering a
@@ -110,6 +113,7 @@ impl fmt::Debug for ResponseCtx {
             .field("status", &self.status)
             .field("resolved", &self.resolved)
             .field("provider", &self.provider)
+            .field("route", &self.route)
             .field("dialect", &self.dialect)
             .field("lines", &self.lines)
             .field("adjustments", &self.adjustments)
