@@ -126,7 +126,7 @@ fn fixed_in(folder: &Path, path: &Path, build: &mut dyn FnMut() -> Option<String
         Err(()) => return build(),
     };
     if let Some(h) = &handle {
-        match read_at(h, name) {
+        match read_item_in(h, name) {
             Ok(Some(t)) => return Some(t),
             Ok(None) => {}
             Err(()) => return build(),
@@ -140,9 +140,9 @@ fn fixed_in(folder: &Path, path: &Path, build: &mut dyn FnMut() -> Option<String
             _ => return Some(text),
         },
     };
-    match store_at(&h, name, &text) {
+    match store_item_in(&h, name, &text) {
         // Another request stored its text after this one read: that text is the session's item 8.
-        Ok(false) => match read_at(&h, name) {
+        Ok(false) => match read_item_in(&h, name) {
             Ok(Some(t)) => Some(t),
             _ => Some(text),
         },
@@ -202,7 +202,7 @@ fn open_item_folder(folder: &Path) -> Result<Option<std::fs::File>, ()> {
 /// The stored text `name` in the opened folder `folder`, read as `read_item` reads, through the handle (`openat` with
 /// `O_NOFOLLOW | O_NONBLOCK`); only a regular file with one link is used (FX-44 review 2, the rule of the FX-37 flag).
 #[cfg(unix)]
-fn read_at(folder: &std::fs::File, name: &str) -> Result<Option<String>, ()> {
+fn read_item_in(folder: &std::fs::File, name: &str) -> Result<Option<String>, ()> {
     use std::os::unix::fs::MetadataExt;
     let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY;
     let f = match crate::pre_compact::at::open(folder, name, flags, 0) {
@@ -290,7 +290,7 @@ fn make_folder(folder: &Path) -> Result<(), ()> {
 /// `unlinkat` of the temp name. A temp name that exists is tried again with a new name, at most `TEMP_TRIES` times
 /// (review F7).
 #[cfg(unix)]
-fn store_at(dir: &std::fs::File, name: &str, text: &str) -> Result<bool, ()> {
+fn store_item_in(dir: &std::fs::File, name: &str, text: &str) -> Result<bool, ()> {
     use crate::pre_compact::at;
     use std::os::unix::fs::PermissionsExt;
     dir.set_permissions(std::fs::Permissions::from_mode(0o700)).map_err(|_| ())?;
@@ -322,7 +322,7 @@ fn store_at(dir: &std::fs::File, name: &str, text: &str) -> Result<bool, ()> {
     linked.map_err(|_| ())
 }
 
-/// Stores `text` at `path` in `folder` unless the name is taken, as the unix `store_at` but by path: `folder` is made
+/// Stores `text` at `path` in `folder` unless the name is taken, as the unix `store_item_in` but by path: `folder` is made
 /// when missing and must then be a real folder, not a link (review F6); `text` goes to a new temp file in `folder`,
 /// which is hard-linked to `path` and then removed.
 #[cfg(not(unix))]
