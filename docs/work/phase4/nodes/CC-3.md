@@ -28,7 +28,7 @@
 
 ## Plan
 
-Parent: 7689cb08ae908661c8eae0ea26cc1a6c19f67003
+Parent: 84484e35dd402008e45ee16e0c6bfe81574c8ca4
 
 Base (author's call, 2026-11-28): CC-12's layer is open but not merged, and CC-3 shares no file with it, so the layer branches from `origin/phase-4` at `7689cb08` (the stack below is empty for this layer); `Parent:` = `git merge-base HEAD origin/phase-4`.
 
