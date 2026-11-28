@@ -243,9 +243,11 @@ cp -R "$REPO/fixtures" "$C/"
 cp -R "$HERE" "$C/scripts/premises"
 cp "$REPO/docs/premises.md" "$REPO/docs/live-checks.md" "$REPO/docs/conformance.md" "$C/docs/"
 cp "$REPO"/docs/specs/2026-11-18-zygo-design.md "$REPO"/docs/specs/2026-11-24-mail-sync-design.md "$C/docs/specs/"
-cp -R "$REPO/docs/work" "$C/docs/"   # node records and tests that the SP rows cite (node MS-25)
-mkdir -p "$C/crates/zygo-mail-sync"
-cp -R "$REPO/crates/zygo-mail-sync/src" "$REPO/crates/zygo-mail-sync/tests" "$C/crates/zygo-mail-sync/"
+# Node MS-25: the node files that the rows of docs/premises.md cite as evidence paths.
+for f in $(grep '^| ' "$REPO/docs/premises.md" | grep -oE '`docs/work/[^` ]+`' | tr -d '`' | sort -u); do
+  mkdir -p "$C/${f%/*}"
+  cp "$REPO/$f" "$C/$f"
+done
 PLANT="$C/fixtures/zz-selftest.txt"
 cp_run() { # <line> [<env words>] -> rc, output in $T/cp.out
   printf '%s\n' "$1" >"$PLANT"; shift

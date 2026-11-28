@@ -29,9 +29,10 @@ nontrivial() {
 
 [ -s "$P" ] || fail "$P is missing or empty"
 [ -s "$SPEC" ] || fail "$SPEC is missing"
-[ -s "$MSPEC" ] || fail "$MSPEC is missing"
+[ -s "$MSPEC" ] || fail "$MSPEC is missing"   # node MS-25 Produces: SP rows are checked against it
 
-header() { sed -n "s/^$1: *\(.*[^ ]\) *\$/\1/p" "$P" | head -n 1; }
+# A CR before the line end (a file saved with CRLF) is not part of a header value (MS-25 review F9).
+header() { tr -d '\r' <"$P" | sed -n "s/^$1: *\(.*[^ ]\) *\$/\1/p" | head -n 1; }
 V_CC=$(header 'Claude Code')
 V_OC=$(header 'OpenCode')
 V_AL=$(header 'act-lite')
@@ -62,6 +63,32 @@ S19A=$(awk '/^## 19a\. /{f=1;next} /^## 20\. /{f=0} f' "$SPEC")
 S105=$(awk '/^### 10\.5 /{f=1;next} /^### 10\.6 /{f=0} f' "$SPEC")
 # Mail-sync spec S§20: from "## 20." to the next "## " heading.
 S20M=$(awk '/^## 20\. /{f=1;next} /^## /{f=0} f' "$MSPEC")
+# Mail-sync change log: one entry per line ("- <date> · <sections> · <who> · <text>", continuation lines joined).
+MLOG=$(awk '/^## Change log/{f=1;next} /^## /{f=0} f' "$MSPEC" |
+  awk '/^- /{if(e!="")print e; e=$0; next} /^  /{sub(/^ +/," "); e=e $0; next} END{if(e!="")print e}')
+
+# sp_answered <id> <evidence>: 0 when the evidence names, as a whole id, a work node that has a node file
+# docs/work/<phase>/nodes/<node>.md, or an S§ section that a change-log entry of the mail-sync spec lists in its
+# sections field and whose text names <id> (node MS-25 Acceptance).
+sp_answered() {
+  for t in $(printf '%s\n' "$2" | tr -c 'A-Za-z0-9-' '\n' | grep -E '^[A-Z]+-[0-9]+$' | sort -u); do
+    [ -z "$(find docs/work -type f -path "docs/work/*/nodes/$t.md" 2>/dev/null)" ] || return 0
+  done
+  for s in $(printf '%s\n' "$2" | grep -oE 'S§[0-9]+[0-9a-z.]*' | sed 's/\.*$//' | sort -u); do
+    printf '%s\n' "$MLOG" | awk -F' · ' -v s="$s" -v id="$1" '
+      function whole(str, tok,   i, b, c) {
+        while ((i = index(str, tok)) > 0) {
+          b = (i > 1) ? substr(str, i - 1, 1) : ""; c = substr(str, i + length(tok), 1)
+          if (b !~ /[A-Za-z0-9]/ && c !~ /[0-9.a-z]/) return 1
+          str = substr(str, i + length(tok))
+        }
+        return 0
+      }
+      whole($2, s) && $0 ~ ("(^|[^A-Za-z0-9])" id "([^0-9]|$)") { ok = 1 }
+      END { exit !ok }' && return 0
+  done
+  return 1
+}
 
 for id in $IDS $WIDS $MIDS; do
   n=$(grep -c "^| $id |" "$P")
@@ -89,7 +116,8 @@ for id in $IDS $WIDS $MIDS; do
     case "$a" in
       'Claude Code' | 'OpenCode') ver_ge "$v" "$want" || fail "$id: version '$v' is below the header's '$want' for $a, or not a dotted number" ;;
       'tmux') ver_ge "${v%[a-z]}" "$want" || fail "$id: version '$v' is below the header's '$want' for tmux, or not a dotted number with at most one letter after it" ;;
-      # The git header is the version that the build pins (mail-sync S§18), a minimum (node MS-25).
+      # The git header is the version that the build pins, a minimum (mail-sync S§18 and its change-log line
+      # 2026-11-27 · S§18; node MS-25 Produces: SP rows checked against the git: header).
       'git') ver_ge "$v" "$want" || fail "$id: version '$v' is below the header's '$want' for git, or not a dotted number" ;;
       *) [ "$v" = "$want" ] || fail "$id: version '$v' differs from the header's '$want' for $a" ;;
     esac
@@ -101,22 +129,15 @@ for id in $IDS $WIDS $MIDS; do
     *) fail "$id: result '$result' is not verified or failed" ;;
   esac
 
-  # A path is a file, or `crates/<file>.rs::<test name>`: a test that the file defines (node MS-25).
-  paths=$(echo "$evidence" | grep -oE '`(fixtures|docs|scripts|crates)/[^` ]+`' | tr -d '`')
+  paths=$(echo "$evidence" | grep -oE '`(fixtures|docs|scripts)/[^` ]+`' | tr -d '`')
   [ -n "$paths" ] || fail "$id: evidence names no path"
   while IFS= read -r f; do
-    case "$f" in
-      crates/*.rs::*)
-        tf=${f%%::*} tn=${f#*::}
-        case "$tn" in '' | *[!A-Za-z0-9_]*) fail "$id: evidence test $f does not name one test" ;; esac
-        nontrivial "$tf" || fail "$id: evidence path $tf is missing, not a regular file, or trivial"
-        grep -Eq "fn $tn\(" "$tf" || fail "$id: evidence test $tn is not defined in $tf" ;;
-      *) nontrivial "$f" || fail "$id: evidence path $f is missing, not a regular file, or trivial" ;;
-    esac
+    nontrivial "$f" || fail "$id: evidence path $f is missing, not a regular file, or trivial"
   done <<EOF_PATHS
 $paths
 EOF_PATHS
 
+  # Node MS-25 Produces: SP1-SP6 are checked against the mail-sync spec (its S§20 items).
   case "$id" in SP*)
     echo "$S20M" | grep -q "^- \*\*$id\*\* " || fail "$id: the mail-sync spec S§20 has no item **$id**" ;;
   esac
@@ -125,12 +146,9 @@ EOF_PATHS
     pat="\*\(Note [0-9]{4}-[0-9]{2}-[0-9]{2}, N2, $id: [^)]*\)\*"
     case "$id" in
       PW*) ;;
-      # A failed SP row names the spec change or node that answers it: a dated note in the mail-sync
-      # spec *(Note YYYY-MM-DD, <node>, SPn: …)*, and that node in the row's evidence.
-      SP*)
-        node=$(sed -n "s/.*\*(Note [0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}, \([A-Z0-9-]*\), $id: [^)]*)\*.*/\1/p" "$MSPEC" | head -n 1)
-        [ -n "$node" ] || fail "$id: failed, but the mail-sync spec has no dated note *(Note YYYY-MM-DD, <node>, $id: …)*"
-        case "$evidence" in *"$node"*) ;; *) fail "$id: failed, but the evidence does not name $node, the node of the spec note" ;; esac ;;
+      # Node MS-25 Acceptance: "a failed SP row names the spec change or work node that answers it".
+      SP*) sp_answered "$id" "$evidence" ||
+        fail "$id: failed, but the evidence names no work node (docs/work/<phase>/nodes/<id>.md) and no spec change (an S§ section whose mail-sync change-log line names $id)" ;;
       P*) echo "$S19" | grep -Eq "$pat" || fail "$id: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
       Q*) echo "$S19A" | grep -Eq "$pat" || fail "$id: failed, but spec §19a has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
     esac

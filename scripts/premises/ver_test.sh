@@ -179,22 +179,26 @@ K=$T/k
 kmiss=""
 MS=docs/specs/2026-11-24-mail-sync-design.md
 for f in scripts/check-premises.sh scripts/premises/ver.sh docs/specs/2026-11-18-zygo-design.md docs/conformance.md \
-  "$MS" docs/live-checks.md; do
+  "$MS"; do
   [ -f "$REPO/$f" ] || { kmiss=$f; break; }
 done
-for d in fixtures docs/work crates/zygo-mail-sync; do
-  [ -n "$kmiss" ] || [ -d "$REPO/$d" ] || kmiss=$d
+[ -n "$kmiss" ] || [ -d "$REPO/fixtures" ] || kmiss=fixtures
+# Node MS-25: the mail-sync spec (S§20 items, change log) and the node files that the rows cite as evidence paths.
+KNODES=$(grep '^| ' "$REPO/docs/premises.md" | grep -oE '`docs/work/[^` ]+`' | tr -d '`' | sort -u)
+for f in $KNODES; do
+  [ -n "$kmiss" ] || [ -f "$REPO/$f" ] || kmiss=$f
 done
 if [ -z "$kmiss" ]; then
-  mkdir -p "$K/scripts/premises" "$K/docs/specs" "$K/crates"
+  mkdir -p "$K/scripts/premises" "$K/docs/specs"
   cp "$REPO/scripts/check-premises.sh" "$K/scripts/"
-  cp -R "$HERE/." "$K/scripts/premises/"   # ver.sh, and the live scripts that rows cite (SP1)
+  cp "$REPO/scripts/premises/ver.sh" "$K/scripts/premises/"
   cp "$REPO/docs/specs/2026-11-18-zygo-design.md" "$REPO/$MS" "$K/docs/specs/"
-  cp "$REPO/docs/conformance.md" "$REPO/docs/live-checks.md" "$K/docs/"
+  cp "$REPO/docs/conformance.md" "$K/docs/"
   cp -R "$REPO/fixtures" "$K/"
-  cp -R "$REPO/docs/work" "$K/docs/"   # node records that SP rows cite (node MS-25)
-  mkdir -p "$K/crates/zygo-mail-sync"
-  cp -R "$REPO/crates/zygo-mail-sync/src" "$REPO/crates/zygo-mail-sync/tests" "$K/crates/zygo-mail-sync/"
+  for f in $KNODES; do
+    mkdir -p "$K/${f%/*}"
+    cp "$REPO/$f" "$K/$f"
+  done
 fi
 # kcase <case> <id> <agent> <old regex> <V> <want rc> <fixed text>
 kcase() {
@@ -214,11 +218,11 @@ kcase K2 P1 'Claude Code' '2\.1\.328' 2.1.327 1 "P1: version '2.1.327' is below 
 kcase K3 P1 'Claude Code' '2\.1\.328' 2.1.33a 1 "P1: version '2.1.33a' is below the header's '2.1.328'"
 kcase K4 P4 OpenCode '1\.18\.16' 1.18.20 0 "check-premises: ok"
 kcase K5 P6b act-lite '1\.2\.3' 1.2.4 1 "P6b: version '1.2.4' differs from the header's '1.2.3' for act-lite"
-# Node MS-25: git rows at or above the `git:` header (the pinned version, a minimum).
+# Node MS-25 (mail-sync S§18): git rows at or above the `git:` header, the pinned version, a minimum.
 kcase K6 SP2 git '2\.50\.1' 2.50.0 1 "SP2: version '2.50.0' is below the header's '2.50.1' for git"
-kcase K7 SP3 git '2\.56\.1' 2.60.0 0 "check-premises: ok"
+kcase K7 SP3 git '2\.50\.1' 2.60.0 0 "check-premises: ok"
 
-# --- K (node MS-25): SP rows, the git header, cited tests, S§20 items, failed-row notes ------------
+# --- K (node MS-25): the git header, SP rows, S§20 items, the failed-SP-row rule ------------------
 # kplant <case> <premises.md sed> <mail-sync spec sed, or ''> <want rc> <fixed text>
 kplant() {
   name="$1 -> exit $4"
@@ -237,22 +241,24 @@ kplant() {
   grep -qF -- "$5" "$T/k.out" || { no "$name" "output lacks: $5; has: $(head -n 3 "$T/k.out" | tr '\n' '|')"; return; }
   ok "$name"
 }
-SP6F='s/^\(| SP6 | .*| 2026-11-27 | \)verified |/\1failed |/'
-NOTE='s/^\(- \*\*SP6\*\* .*\)$/\1 *(Note 2026-11-27, MS-99, SP6: planted note)*/'
+# sp6failed <evidence text>: a sed that makes the SP6 row failed, with one evidence path and the text.
+sp6failed() { printf 's/^| SP6 | .*$/| SP6 | planted | git | 2.50.1 | 2026-11-27 | failed | `fixtures\\/mail-sync\\/sp1.txt`: %s |/' "$1"; }
+NOANS="check-premises: SP6: failed, but the evidence names no work node"
 kplant "K8 git header missing" '/^git: /d' '' 1 "check-premises: header line 'git: <version>' missing"
 kplant "K9 SP1 row missing" '/^| SP1 |/d' '' 1 "check-premises: SP1: expected exactly one row, found 0"
 kplant "K10 SP4 result pending" 's/^\(| SP4 | .*| 2026-11-27 | \)verified |/\1pending |/' '' 1 \
   "check-premises: SP4: result 'pending' is not verified or failed"
-kplant "K11 SP5 cites a test that the file does not define" \
-  's/prune\.rs::sp5_plain_fetch_after_a_prune/prune.rs::sp5_no_such_test/' '' 1 \
-  "check-premises: SP5: evidence test sp5_no_such_test is not defined in crates/zygo-mail-sync/tests/prune.rs"
-kplant "K12 SP3 without its S§20 item" 's/^\(| SP3 | .*\) |$/\1 Planted. |/' 's/^- \*\*SP3\*\* /- SP3 /' 1 \
+kplant "K11 SP3 without its S§20 item" 's/^\(| SP3 | .*\) |$/\1 Planted. |/' 's/^- \*\*SP3\*\* /- SP3 /' 1 \
   "check-premises: SP3: the mail-sync spec S§20 has no item **SP3**"
-kplant "K13 SP6 failed, no spec note" "$SP6F" '' 1 \
-  "check-premises: SP6: failed, but the mail-sync spec has no dated note *(Note YYYY-MM-DD, <node>, SP6: …)*"
-kplant "K14 SP6 failed, the row does not name the note's node" "$SP6F" "$NOTE" 1 \
-  "check-premises: SP6: failed, but the evidence does not name MS-99, the node of the spec note"
-kplant "K15 SP6 failed, the row names the note's node" "$SP6F;"'s/^\(| SP6 | .*\) |$/\1 Answered by MS-99. |/' "$NOTE" 0 \
+kplant "K12 failed SP6 names a real work node" "$(sp6failed 'answered by node MS-13.')" '' 0 "check-premises: ok"
+kplant "K13 failed SP6 names node ids only as substrings" "$(sp6failed 'see XMS-13, MS-130 and MS-13x.')" '' 1 "$NOANS"
+kplant "K14 failed SP6 names no node and no spec change" "$(sp6failed 'no answer yet.')" '' 1 "$NOANS"
+kplant "K15 failed SP6 names a spec change whose change-log line names SP6" "$(sp6failed 'answered by S§18.')" '' 0 \
+  "check-premises: ok"
+kplant "K16 failed SP6 names a spec section whose change-log lines do not name SP6" \
+  "$(sp6failed 'see S§8.3 and S§1.')" '' 1 "$NOANS"
+# CR line ends (a file saved with CRLF) do not change the header values.
+kplant "K17 header lines with CRLF ends" 's/^\(Claude Code\|OpenCode\|act-lite\|tmux\|git\): \(.*\)$/\1: \2\r/' '' 0 \
   "check-premises: ok"
 
 # --- L (node PRB-1): a LIVE line names the agent version that pinned_agents found, never the pin ----
