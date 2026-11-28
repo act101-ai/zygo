@@ -673,7 +673,7 @@ fn plugin_text_matches_the_fixtures() {
     assert!(cm["output"]["message"]["model"]["providerID"].is_string());
     assert!(cm["output"]["message"]["model"]["modelID"].is_string());
     assert!(cm["output"]["parts"].is_array());
-    for t in ["\"message\"", "synthetic: true", "output.message.model", "output.parts.push", "randomBytes"] {
+    for t in ["\"message\"", "synthetic: true", "model.modelID !== role", "output.parts.push", "randomBytes"] {
         assert!(TEMPLATE.contains(t), "{t}");
     }
     for t in [

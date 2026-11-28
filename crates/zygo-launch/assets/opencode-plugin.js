@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 
 const ZYGO = __ZYGO_PATH__;
 
@@ -72,6 +73,15 @@ export const ZygoPlugin = async ({ directory }) => {
   const counted = new Set();
   const callKey = (sessionID, callID) => `${sessionID}\u0000${callID}`;
   const isId = (s) => typeof s === "string" && s !== "";
+  // A part id of the OpenCode 1.19.6 form: `prt_`, the low 48 bits of `ms * 4096 + counter` as 12 hex digits (here
+  // the highest counter of the millisecond, so it sorts after the parts OpenCode made before the hook), 14 base62.
+  const B62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  const partId = () => {
+    const t = (BigInt(Date.now()) * 4096n + 4095n).toString(16).padStart(12, "0").slice(-12);
+    let r = "";
+    for (const b of randomBytes(14)) r += B62[b % 62];
+    return `prt_${t}${r}`;
+  };
   const leave = (id) => {
     if (inTurn.delete(id) && inTurn.size === 0) {
       ws("stop", { sessionID: id });
@@ -189,6 +199,21 @@ export const ZygoPlugin = async ({ directory }) => {
       const extra = role && input.model.id === role ? [] : ["--event", "subagent"];
       const text = await run("session-start", { input, output }, extra);
       if (text) output.system.push(text);
+    },
+    // M§7.2 (FX-33): a user message of the main session (the member gate, the main role's `zygo/` model, not a known
+    // child) gets the mail line as one synthetic text part, so the line is in the saved user turn and the system text
+    // of each request does not change with the unread count. The call changes no state, so it does not wait for the
+    // queued member calls.
+    "chat.message": async (input, output) => {
+      const role = process.env.ZYGO_MAIN_ROLE;
+      const m = output && output.message && typeof output.message === "object" ? output.message : null;
+      const model = m && m.model && typeof m.model === "object" ? m.model : null;
+      if (!member || !input || !isId(input.sessionID) || kind.get(input.sessionID) === "child") return;
+      if (!model || model.providerID !== "zygo" || !role || model.modelID !== role || !Array.isArray(output.parts)) return;
+      const line = await run("workspace", { sessionID: input.sessionID }, ["--event", "message"]);
+      if (line) {
+        output.parts.push({ id: partId(), sessionID: input.sessionID, messageID: m.id, type: "text", text: line, synthetic: true });
+      }
     },
     "experimental.session.compacting": async (input, output) => {
       const text = await run("pre-compact", { input, output });

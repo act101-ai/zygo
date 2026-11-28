@@ -38,8 +38,8 @@ use zygo_workspace::snapshot;
 use zygo_workspace::state::{MemberRecord, MemberState, Phase, StateError, Store};
 
 /// The `--event` values of `zygo hook workspace`.
-pub const EVENTS: [&str; 8] =
-    ["session", "prompt", "stop", "pre-tool", "tool-end", "session-end", "subagent-start", "subagent-stop"];
+pub const EVENTS: [&str; 9] =
+    ["session", "prompt", "stop", "pre-tool", "tool-end", "session-end", "subagent-start", "subagent-stop", "message"];
 
 /// The deny reason of an `Agent` call while `down` drains (W§9.2).
 pub const DRAINING: &str = "zygo: workspace is draining for down; finish your turn";
@@ -262,8 +262,9 @@ fn main_loop(p: &Value) -> bool {
 /// `zygo hook workspace --event <event>` (W§9.1, D4, D5). It checks the event, then reads `ZYGO_SESSION_DIR`
 /// through `env` (none or empty: nothing), then parses the input; a prompt line that `zygo hook prompt` consumes ends
 /// here (D4, R1); then the session folder, the view and the marker. `pre-tool` can give the deny JSON of W§9.2, a
-/// Claude Code `prompt` the block JSON of AU86 or the mail delivery line (M§7.2), and a Claude Code `stop` the mail
-/// block JSON of M§7.1; every other call gives `None`. `session` (main loop), `prompt`, `stop` and `tool-end` start the
+/// Claude Code `prompt` the block JSON of AU86 or the mail delivery line (M§7.2), a Claude Code `stop` the mail
+/// block JSON of M§7.1, and a main-loop `message` (the OpenCode plugin's `chat.message` call, M§7.2; FX-33) the
+/// delivery line as plain text while `new/` holds mail; every other call gives `None`. `session` (main loop), `prompt`, `stop` and `tool-end` start the
 /// mail sync child when sync is on and the gap has passed; a child that does not start changes no output (S§8.1,
 /// S§8.4, S-C1). The dispatcher is the one that the `zygo` binary registers (`slash_dispatch`).
 pub fn run(
@@ -360,6 +361,15 @@ pub fn run_with_sync(
                 a.busy = false;
                 a.tools_running = 0;
             })
+        }
+        // M§7.2 (FX-33): the OpenCode plugin's `chat.message` call for a user message of the main session. It gives
+        // the delivery line, which the plugin adds to that message, so the per-request session text holds no mail
+        // line; it changes nothing and starts no sync child (the turn's `prompt` does). A mail read error is ML-10 D4.
+        "message" if main => {
+            let n = unread_mail(&c);
+            if n > 0 {
+                return Ok(Some(crate::mail::delivery_line(n)));
+            }
         }
         // W§9.1 names no `busy` change for `SessionEnd`.
         "session-end" if main => change(&c, &mut |a| a.tools_running = 0),
@@ -725,8 +735,13 @@ fn bind_note(c: &Ctx, id: &str) {
 /// The member part of `SessionStart` (W§9.1, W§9.4, AU60, AU92, AU104; D11) for the main loop of a member view;
 /// `text` is the session text. The output is the session text, an empty line, item 8 when `view.mail` is on (with the
 /// S§10.4 clause when sync is on and the member cache is not empty), the
-/// state reads and holds a record for the pane, then the note, then the mail delivery line when `view.mail` is on and
-/// `new/` holds mail (M§7.2); empty parts are left out. Claude Code: the whole hook
+/// state reads and holds a record for the pane, then the note, then, for Claude Code only, the mail delivery line
+/// when `view.mail` is on and `new/` holds mail (M§7.2); empty parts are left out. OpenCode gets the delivery line in
+/// the user turn through the `message` event, so its per-request text does not change with the unread count and
+/// stays in the cached prefix (base design §10.4, session text design T§11; FX-33). The OpenCode note is shown only
+/// while its inputs are not bound to an agent session or are bound to the payload `input.sessionID` (W§9.4, AU72,
+/// AU104; FX-33): until the plugin's `session` call removes inputs of another session (D10), they are not shown to
+/// this one, and a payload with no id shows bound inputs to no session. Claude Code: the whole hook
 /// output is written to `out` and flushed first (a write error returns `Err` with nothing written to any file), then
 /// the member record is written (D8, D9), then the note inputs are removed from the view when it held them; the result
 /// is `None`; for the main loop the mail sync child then starts by the gap, and a child that does not start changes no
@@ -763,12 +778,24 @@ pub fn session_start_with_sync(
         (true, Agent::OpenCode, Some(id)) => crate::session_start::fixed_item(dir, id, &mut built),
         (true, ..) => built(),
     };
-    // M§7.2, ML-10 D5: the mail delivery line comes after the resume note while `new/` holds mail.
-    let line = match unread_mail(&c) {
-        0 => None,
-        n => Some(crate::mail::delivery_line(n)),
+    // M§7.2, ML-10 D5: the Claude Code mail delivery line comes after the resume note while `new/` holds mail. OpenCode
+    // gets it from the `message` event and does not read `mail/` here (FX-33).
+    let line = match view.agent {
+        Agent::ClaudeCode => match unread_mail(&c) {
+            0 => None,
+            n => Some(crate::mail::delivery_line(n)),
+        },
+        Agent::OpenCode => None,
     };
-    let output = [Some(text.to_string()), item, inputs.and_then(note), line]
+    // W§9.4, AU104 (FX-33): OpenCode shows the note only to the agent session its inputs are bound to.
+    let shown = inputs.filter(|n| match view.agent {
+        Agent::ClaudeCode => true,
+        Agent::OpenCode => match n.agent_session.as_deref() {
+            None => true,
+            Some(owner) => payload.pointer("/input/sessionID").and_then(Value::as_str) == Some(owner),
+        },
+    });
+    let output = [Some(text.to_string()), item, shown.and_then(note), line]
         .into_iter()
         .flatten()
         .filter(|s| !s.is_empty())
