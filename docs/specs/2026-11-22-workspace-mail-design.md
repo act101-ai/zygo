@@ -85,7 +85,12 @@ A send to an address whose name is reserved (`cli@<host>`, `zygo@<host>`) is ref
 
 ### 7.2 New turn: UserPromptSubmit and SessionStart
 
-**(author)** For a member with `[features] mail` on, when `new/` is not empty, the member's `UserPromptSubmit` hook adds one line of context, `zygo: <n> new messages; read them with mail_read`, and the main-loop `SessionStart` adds the same line after the resume note (W§9.4). Neither hook puts mail text into the context. A member with `[features] mail` off gets no line, and its hooks do not read `mail/`.
+**(author)** For a member with `[features] mail` on, when `new/` is not empty, the member gets one line, `zygo: <n> new messages; read them with mail_read`, at each prompt and at the start of its main loop:
+
+- Claude Code: the `UserPromptSubmit` hook adds the line as context, and the main-loop `SessionStart` adds the same line after the resume note (W§9.4).
+- OpenCode: the plugin's `chat.message` hook, for each user message of the main session (the main role's `zygo/` model, not a known child session), calls `zygo hook workspace --event message`; when it prints the line, the plugin adds it to that message as one text part with `synthetic: true`. The line is then part of the saved user turn, and the first message of a session is its main-loop start. The session text that the plugin adds to each model request (AU104) holds no mail line, so its `system` blocks stay the same while the unread count changes and stay in the cached prefix (§10.4 of the base design; session text design T§11).
+
+No hook puts mail text into the context. A member with `[features] mail` off gets no line, and its hooks do not read `mail/`.
 
 ### 7.3 Idle member: the wake
 
@@ -246,3 +251,4 @@ Mail sync between machines adds `[mail] host`, `[mail] sync_gap` and the per-wor
 | 2026-11-26 | M§5 | author's call (FX-24 plan) | zygo ws forget renamed the state folder with no mail/lock, so a delivery between its record read and its link made <id>/mail/<key>/ again (FX-13 P2, d4); forget now holds mail/lock exclusive across the rename, after the S§7.6 steps so no question or git call runs under it. The mail sync deliveries are M§5 deliveries (S§8.5, S§8.6). |
 | 2026-11-26 | M§5 | author's call | FX-24 review R2 F3: a taker of mail/lock that waited for a forget got the lock of the file that the rename moved into the tombstone, and could then read and write a new workspace of the same id with no exclusion against its removals; every taker now checks that its locked file is still the file at mail/lock (device and inode, no link followed) and else finds no workspace. |
 | 2026-11-27 | M§5 | author's call (FX-28) | A remote send linked its file into mail/outbox/ with no lock, so a send after the count of zygo ws forget and before its rename was deleted with the state folder, in no count the operator saw (mail sync design S§7.6 step 4). The remote send (outbox::send_remote_with) is now a taker of mail/lock, shared, from before its first outbox folder until after its link, and checks that its locked file is still mail/lock as every taker does. |
+| 2026-11-28 | M§7.2 | author's call (FX-33) | The OpenCode line was in the session text that the plugin adds to the system blocks of each request, so each change of the unread count changed the cached system text (§10.4 marker on the last system block; T§11); OpenCode now gets the line in the user turn through the plugin's `chat.message` hook (live check FX-33, OpenCode 1.19.6). |
