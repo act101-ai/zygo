@@ -781,6 +781,19 @@ fn claude_code_reads_its_headers() {
     assert_eq!(r.redactions, vec![]);
 }
 
+#[test] // CC-4 round 3 L1, §10.2 A-9: a main-loop request (class absent or `main`) sets the session's used context;
+        // OpenCode names no class header, so its request is main loop; Claude Code's `subagent` request is not
+fn used_context_per_client() {
+    let t = setup("", generous());
+    let b = body(json!([{"role":"user","content":"hi"}]));
+    for (n, (id, want)) in [("opencode", Some(1)), ("claude-code", None)].into_iter().enumerate() {
+        let g = grant_with(&t, id.parse().unwrap(), vec![]);
+        assert_eq!(post(&t, &g, M, &b, &CC_HEADERS).0, 200);
+        let r = row(&t, &g, n as u64 + 1);                       // the used context is set before the row is written
+        assert_eq!((r.input_tokens, t.h.session(&g.session).unwrap().status().used_context), (1, want), "{id}");
+    }
+}
+
 #[test] // CC-4 round 1 F1: a non-UTF-8 class header is a class only for a client that names the header
 fn stage_non_utf8_class_header_per_client() {
     let t = setup("", generous()); let stage = RedactStage::with_limits(generous());
