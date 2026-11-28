@@ -98,7 +98,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | CC-9 | Launch layer: `adapter_for` registry, adapters under `client/`, plugin delivery and env rows (concerns 6, 11), `Plugins` removed | CC-8 | TODO | judgment | — |
 | CC-10 | CLI shims under `cmd/client/`; binary-crate client sites read the registry (concern 10) | CC-9 | TODO | implementation | — |
 | CC-11 | Preview gate at launch for every entry point, loadout check, hidden help and doctor (K§6.2.7) | CC-10 | TODO | judgment | — |
-| CC-12 | Phase 3 client features in the registry: output shaping, mail wake and delivery, run-time status line (K-D51; PR stops for the operator) | CC-1, CF-4 | TODO | judgment | — |
+| CC-12 | Phase 3 client features in the registry: output shaping, mail wake and delivery, run-time status line (K-D51; PR stops for the operator) | CC-1, CC-2, CF-4 | PLANNED | judgment | — |
 | CC-13 | Sweep the `Agent::` variant paths left in tests | CC-11 | TODO | mechanical | — |
 | CC-14 | Opaque client kind `pub struct Agent(Kind)` and the `trybuild` compile-fail cases | CC-13 | TODO | judgment | — |
 | CC-15 | Boundary check `client_boundary` (K§6.1.4) with its exception list | CC-14 | TODO | judgment | — |
@@ -222,3 +222,4 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-27 | Author's call: clippy is not a gate for phase-4 nodes. It is not in the Verification floor and CI has no clippy step; clippy -D warnings fails on phase-4 in code no open node changes. |
 | 2026-11-27 | CC-1 DONE: PR #251 merged (c03190bd). Inventory at b324e1dc: 3503 client sites in 210 files, each with a concern and an owner; checked by docs/work/phase4/cc1_check.py. 3 review rounds; all findings fixed. |
 | 2026-11-27 | Author's call: CC-1 widened the scope of CC-3..CC-13 (Files lines, per-node variant-path checks, CC-11 global check, CC-13 test-only check, CC-15 item-scoped exception). See nodes/CC-1.md Round 1-3 review. |
+| 2026-11-28 | CC-12 planned: A-7.6, A-7.7 (output shaping), A-9.7 (run time), WA-3 Mail wake and delivery (standard, 4 criteria) for the K§6.2.1 stop; Claude Code A-7.7 and OpenCode WA-3.1 not-met; edge CC-2 → CC-12 (K-C7 check script); K§6.2.2 rows in Files. |
