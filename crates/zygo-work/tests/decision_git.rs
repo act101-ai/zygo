@@ -120,12 +120,12 @@ struct Calls {
     sent: Vec<Vec<u8>>,
     /// The `--batch` processes dropped.
     drops: usize,
-    /// Each deadline set on the `--batch` process after its spawn.
-    deadlines: Vec<Instant>,
 }
 
 struct Stub {
     clock: Rc<Cell<Instant>>,
+    /// How far the clock moves at each `read_line` of the `--batch` process.
+    tick: Rc<Cell<Duration>>,
     log: Rc<RefCell<Calls>>,
     whole: VecDeque<Result<Whole, RunError>>,
     canned: Vec<u8>,
@@ -149,16 +149,27 @@ impl GitRunner for Stub {
     }
     fn batch(&mut self, cmd: Command, deadline: Instant) -> Result<Box<dyn BatchIo>, RunError> {
         self.log.borrow_mut().runs.push((step_of(&cmd), deadline));
-        Ok(Box::new(Canned { log: self.log.clone(), data: std::mem::take(&mut self.canned), at: 0 }))
+        let (clock, tick, data) = (self.clock.clone(), self.tick.clone(), std::mem::take(&mut self.canned));
+        Ok(Box::new(Canned { log: self.log.clone(), clock, tick, deadline, data, at: 0 }))
     }
     fn now(&self) -> Instant { self.clock.get() }
 }
 
-/// A `--batch` process that gives canned stdout and `Failed` at its end.
+/// A `--batch` process that gives canned stdout and `Failed` at its end. As `Piped` does at its spawn deadline, a read
+/// at or past `deadline` on the stub clock is `TimedOut`; each `read_line` moves the clock by `tick`.
 struct Canned {
     log: Rc<RefCell<Calls>>,
+    clock: Rc<Cell<Instant>>,
+    tick: Rc<Cell<Duration>>,
+    deadline: Instant,
     data: Vec<u8>,
     at: usize,
+}
+
+impl Canned {
+    fn due(&self) -> Result<(), RunError> {
+        if self.clock.get() >= self.deadline { Err(RunError::TimedOut) } else { Ok(()) }
+    }
 }
 
 impl Drop for Canned {
@@ -171,12 +182,15 @@ impl BatchIo for Canned {
         Ok(())
     }
     fn read_line(&mut self, max: usize) -> Result<Vec<u8>, RunError> {
+        self.due()?;
+        self.clock.set(self.clock.get() + self.tick.get());
         let rest = &self.data[self.at..];
         let i = rest[..rest.len().min(max + 1)].iter().position(|&b| b == b'\n').ok_or(RunError::Failed)?;
         self.at += i + 1;
         Ok(rest[..i].to_vec())
     }
     fn read_exact(&mut self, n: usize) -> Result<Vec<u8>, RunError> {
+        self.due()?;
         let rest = &self.data[self.at..];
         if rest.len() < n {
             return Err(RunError::Failed);
@@ -184,13 +198,13 @@ impl BatchIo for Canned {
         self.at += n;
         Ok(rest[..n].to_vec())
     }
-    fn set_deadline(&mut self, deadline: Instant) { self.log.borrow_mut().deadlines.push(deadline); }
 }
 
 struct Rig {
     g: ProcessGit,
     t0: Instant,
     clock: Rc<Cell<Instant>>,
+    tick: Rc<Cell<Duration>>,
     log: Rc<RefCell<Calls>>,
 }
 
@@ -199,8 +213,9 @@ fn rig(whole: Vec<Result<Whole, RunError>>, canned: Vec<u8>) -> Rig {
     let t0 = Instant::now();
     let clock = Rc::new(Cell::new(t0));
     let log = Rc::new(RefCell::new(Calls::default()));
-    let stub = Stub { clock: clock.clone(), log: log.clone(), whole: whole.into(), canned };
-    Rig { g: ProcessGit::with_runner(Path::new("/zygo-dr11-no-such-dir"), Box::new(stub)), t0, clock, log }
+    let tick = Rc::new(Cell::new(Duration::ZERO));
+    let stub = Stub { clock: clock.clone(), tick: tick.clone(), log: log.clone(), whole: whole.into(), canned };
+    Rig { g: ProcessGit::with_runner(Path::new("/zygo-dr11-no-such-dir"), Box::new(stub)), t0, clock, tick, log }
 }
 
 fn ok(out: &str) -> Result<Whole, RunError> { Ok(Whole { ok: true, out: out.as_bytes().to_vec(), err: Vec::new() }) }
@@ -218,7 +233,7 @@ fn constants_hold_spec_values() {
 
 #[test]
 fn each_call_gets_min_of_step_and_total_deadline() {
-    let Rig { mut g, t0, clock, log } = rig(vec![ok(&format!("{}\n", hex('a'))), ok(""), ok("")], Vec::new());
+    let Rig { mut g, t0, clock, log, .. } = rig(vec![ok(&format!("{}\n", hex('a'))), ok(""), ok("")], Vec::new());
     assert_eq!(g.merge_base("a", "b"), Ok(Some(hex('a'))));
     clock.set(t0 + S(3));
     assert_eq!(g.rev_list("a", "b", 10), Ok(Some(vec![])));
@@ -228,22 +243,6 @@ fn each_call_gets_min_of_step_and_total_deadline() {
     clock.set(t0 + S(10));
     assert_eq!(g.commit("a"), Err(failed("git cat-file", "over 10 s in all")));
     assert_eq!(log.borrow().runs.len(), 3);
-}
-
-#[test]
-fn each_object_read_gets_its_own_step_bound() {
-    let canned = format!("{} commit 0\n\n", hex('a')).repeat(3).into_bytes();
-    let Rig { mut g, t0, clock, log } = rig(Vec::new(), canned);
-    assert_eq!(g.commit("a"), Ok(Some(hex('a'))));
-    clock.set(t0 + S(3));
-    assert_eq!(g.commit("a"), Ok(Some(hex('a'))));
-    clock.set(t0 + S(9));
-    assert_eq!(g.commit("a"), Ok(Some(hex('a'))));
-    assert_eq!(log.borrow().runs, vec![("cat-file", t0 + S(2))]);
-    assert_eq!(log.borrow().deadlines, vec![t0 + S(2), t0 + S(5), t0 + S(10)]);
-    clock.set(t0 + S(10));
-    assert_eq!(g.commit("a"), Err(failed("git cat-file", "over 10 s in all")));
-    assert_eq!(log.borrow().sent.len(), 3);
 }
 
 #[test]
@@ -272,7 +271,7 @@ fn second_merge_base_is_refused_with_no_run() {
 #[test]
 fn over_10_s_in_all_refuses_merge_base_rev_list_and_log() {
     let canned = format!("{} commit 0\n\n", hex('a')).into_bytes();
-    let Rig { mut g, t0, clock, log } = rig(Vec::new(), canned);
+    let Rig { mut g, t0, clock, log, .. } = rig(Vec::new(), canned);
     assert_eq!(g.commit("a"), Ok(Some(hex('a'))));
     clock.set(t0 + S(10));
     assert_eq!(g.merge_base("a", "b"), Err(failed("git merge-base", "over 10 s in all")));
@@ -402,52 +401,133 @@ fn reply(id: char, kind: &str, body: &[u8]) -> Vec<u8> {
 /// The `info` reply of one object: its header only.
 fn info(id: char, kind: &str, size: usize) -> Vec<u8> { format!("{} {kind} {size}\n", hex(id)).into_bytes() }
 
+/// The replies to `info` and `contents` of the tree `<rev>:docs/decisions`.
+fn tree(id: char, body: &[u8]) -> Vec<u8> {
+    let mut r = info(id, "tree", body.len());
+    r.extend(reply(id, "tree", body));
+    r
+}
+
 /// The lines `sent` as bytes.
 fn lines(sent: &[String]) -> Vec<Vec<u8>> { sent.iter().map(|l| format!("{l}\n").into_bytes()).collect() }
 
 #[test]
 fn record_blob_reads_and_counts_each_tree_once() {
-    let tree = tree_ab();
+    let t = tree_ab();
     let (a, b) = (vec![b'x'; 64 * 1024], b"y".to_vec());
-    let mut canned = reply('c', "tree", &tree);
+    let mut canned = tree('c', &t);
     canned.extend(info('a', "blob", a.len()));
     canned.extend(reply('a', "blob", &a));
     canned.extend(info('b', "blob", b.len()));
     canned.extend(reply('b', "blob", &b));
     // tree + A + B + this commit = exactly 16 MiB; a second count of the tree goes past it.
-    canned.extend(reply('d', "commit", &vec![b'z'; 16 * 1024 * 1024 - tree.len() - a.len() - b.len()]));
+    canned.extend(reply('d', "commit", &vec![b'z'; 16 * 1024 * 1024 - t.len() - a.len() - b.len()]));
     canned.extend(info('d', "commit", 1));
     let Rig { mut g, log, .. } = rig(Vec::new(), canned);
     assert_eq!(g.record_blob("r", "A.md"), Ok(Blob::Data(a)));
     assert_eq!(g.record_blob("r", "B.md"), Ok(Blob::Data(b)));
     let (ha, hb) = (hex('a'), hex('b'));
-    let sent = lines(&["contents r:docs/decisions".into(), format!("info {ha}"), format!("contents {ha}"), format!("info {hb}"),
-        format!("contents {hb}")]);
+    let sent = lines(&["info r:docs/decisions".into(), "contents r:docs/decisions".into(), format!("info {ha}"),
+        format!("contents {ha}"), format!("info {hb}"), format!("contents {hb}")]);
     assert_eq!(log.borrow().sent, sent);
     assert_eq!(g.commit("d"), Ok(Some(hex('d'))));
     assert_eq!(g.commit("d"), Err(GitFail::TooMuch));
 }
 
 #[test]
-fn info_and_contents_requests_each_count_toward_2048() {
-    let mut canned = reply('c', "tree", &tree_ab());
+fn only_contents_reads_count_toward_2048() {
+    let mut canned = tree('c', &tree_ab());
     canned.extend(info('a', "blob", 1));
     canned.extend(reply('a', "blob", b"x"));
-    // 3 requests sent; 2,045 more fit in 2,048, and the next is too much.
-    canned.extend(format!("{} commit 0\n\n", hex('d')).repeat(2_045).into_bytes());
+    // 2 objects read with `contents` (the tree and A; 2 `info` requests do not count); 2,046 more fit in 2,048, and the
+    // next is too much.
+    canned.extend(format!("{} commit 0\n\n", hex('d')).repeat(2_046).into_bytes());
     let Rig { mut g, log, .. } = rig(Vec::new(), canned);
     assert_eq!(g.record_blob("r", "A.md"), Ok(Blob::Data(b"x".to_vec())));
-    for _ in 0..2_045 {
+    for _ in 0..2_046 {
         assert_eq!(g.commit("d"), Ok(Some(hex('d'))));
     }
     assert_eq!(g.commit("d"), Err(GitFail::TooMuch));
-    assert_eq!(log.borrow().sent.len(), 2_048);
+    assert_eq!(log.borrow().sent.len(), 2_050); // 2,048 `contents` and 2 `info`; the 2,049th `contents` is not sent
+}
+
+/// Tree `<i>`: one regular entry `<i>.md` whose blob id is `blob_id(i)`.
+fn one_entry_tree(i: usize) -> Vec<u8> {
+    let mut t = format!("100644 {i}.md\0").into_bytes();
+    t.extend_from_slice(&blob_id(i));
+    t
+}
+
+/// A raw 20-byte blob id for record `i`.
+fn blob_id(i: usize) -> [u8; 20] {
+    let mut id = [0xee; 20];
+    id[16..].copy_from_slice(&(i as u32).to_be_bytes());
+    id
+}
+
+#[test]
+fn a_range_of_1000_new_records_fits_the_2048_object_cap() {
+    // D§9.4 steps 8 and 9 for 1,000 commits that each add one record: per record, one tree and one blob are read with
+    // `contents` (2,000 objects) and each also gets an `info` (2,000 requests that do not count).
+    let mut canned = Vec::new();
+    for i in 0..1_000 {
+        let t = one_entry_tree(i);
+        canned.extend(format!("{} tree {}\n", hex('c'), t.len()).into_bytes());
+        canned.extend(format!("{} tree {}\n", hex('c'), t.len()).into_bytes());
+        canned.extend(&t);
+        canned.push(b'\n');
+        let id: String = blob_id(i).iter().map(|b| format!("{b:02x}")).collect();
+        canned.extend(format!("{id} blob 1\n{id} blob 1\nx\n").into_bytes());
+    }
+    canned.extend(format!("{} commit 0\n\n", hex('d')).repeat(48).into_bytes());
+    let Rig { mut g, log, .. } = rig(Vec::new(), canned);
+    for i in 0..1_000 {
+        assert_eq!(g.record_blob(&format!("r{i}"), &format!("{i}.md")), Ok(Blob::Data(b"x".to_vec())), "record {i}");
+    }
+    // 48 more objects fit (head, base and the rest of the range); the 2,049th is too much.
+    for _ in 0..48 {
+        assert_eq!(g.commit("d"), Ok(Some(hex('d'))));
+    }
+    assert_eq!(g.commit("d"), Err(GitFail::TooMuch));
+    assert_eq!(log.borrow().sent.len(), 4_048);
+}
+
+#[test]
+fn docs_decisions_that_is_not_a_tree_is_missing_with_no_contents_read() {
+    // A 17 MiB regular file at `docs/decisions`: its contents would pass 16 MiB, but only its type is asked.
+    let mut canned = info('c', "blob", 17 * 1024 * 1024);
+    canned.extend(format!("{} commit 0\n\n", hex('d')).into_bytes());
+    let Rig { mut g, log, .. } = rig(Vec::new(), canned);
+    assert_eq!(g.record_blob("r", "A.md"), Ok(Blob::Missing));
+    assert_eq!(g.record_blob("r", "B.md"), Ok(Blob::Missing)); // the answer is kept: no second request
+    assert_eq!(g.commit("d"), Ok(Some(hex('d'))));
+    assert_eq!(log.borrow().sent, lines(&["info r:docs/decisions".into(), "contents d^{commit}".into()]));
+}
+
+#[test]
+fn the_10_s_total_ending_between_a_blob_info_and_its_contents_times_out() {
+    let mut canned = tree('c', &tree_ab());
+    canned.extend(info('a', "blob", 1));
+    canned.extend(reply('a', "blob", b"x"));
+    let Rig { mut g, t0, clock, tick, log } = rig(vec![ok(&format!("{}\n", hex('a')))], canned);
+    assert_eq!(g.merge_base("a", "b"), Ok(Some(hex('a')))); // the first process starts at t0
+    // The `--batch-command` process starts at t0 + 9.25 s: its deadline is the 10 s total, not 2 s on. Each reply
+    // line takes 0.25 s: the tree `info` and `contents` end at t0 + 9.75 s, the blob `info` at t0 + 10 s, so its
+    // `contents` reply is past the deadline.
+    clock.set(t0 + Duration::from_millis(9_250));
+    tick.set(Duration::from_millis(250));
+    assert_eq!(g.record_blob("r", "A.md"), Err(failed("git cat-file", "timed out")));
+    assert_eq!(log.borrow().runs[1], ("cat-file", t0 + S(10)));
+    let ha = hex('a');
+    let sent = lines(&["info r:docs/decisions".into(), "contents r:docs/decisions".into(), format!("info {ha}"),
+        format!("contents {ha}")]);
+    assert_eq!(log.borrow().sent, sent);
 }
 
 #[test]
 fn record_blob_over_64_kib_is_too_large_with_no_contents_request() {
     let b = vec![b'y'; 64 * 1024];
-    let mut canned = reply('c', "tree", &tree_ab());
+    let mut canned = tree('c', &tree_ab());
     canned.extend(info('a', "blob", 64 * 1024 + 1));
     canned.extend(info('b', "blob", b.len()));
     canned.extend(reply('b', "blob", &b));
@@ -455,33 +535,33 @@ fn record_blob_over_64_kib_is_too_large_with_no_contents_request() {
     assert_eq!(g.record_blob("r", "A.md"), Ok(Blob::TooLarge));
     assert_eq!(g.record_blob("r", "B.md"), Ok(Blob::Data(b)));
     let (ha, hb) = (hex('a'), hex('b'));
-    let sent = lines(&["contents r:docs/decisions".into(), format!("info {ha}"), format!("info {hb}"), format!("contents {hb}")]);
+    let sent = lines(&["info r:docs/decisions".into(), "contents r:docs/decisions".into(), format!("info {ha}"),
+        format!("info {hb}"), format!("contents {hb}")]);
     assert_eq!(log.borrow().sent, sent);
 }
 
 #[test]
 fn record_blob_reads_each_blob_once() {
-    let mut canned = reply('c', "tree", &tree_ab());
+    let mut canned = tree('c', &tree_ab());
     canned.extend(info('a', "blob", 1));
     canned.extend(reply('a', "blob", b"x"));
-    canned.extend(reply('d', "tree", &tree_ab()));
+    canned.extend(tree('d', &tree_ab()));
     let Rig { mut g, log, .. } = rig(Vec::new(), canned);
     assert_eq!(g.record_blob("r", "A.md"), Ok(Blob::Data(b"x".to_vec())));
     assert_eq!(g.record_blob("s", "A.md"), Ok(Blob::Data(b"x".to_vec())));
     // The second rev's tree names the same blob: only the tree is asked.
-    assert_eq!(log.borrow().sent.len(), 4);
-    assert_eq!(log.borrow().sent[3], b"contents s:docs/decisions\n".to_vec());
+    assert_eq!(log.borrow().sent[4..], lines(&["info s:docs/decisions".into(), "contents s:docs/decisions".into()]));
 }
 
 #[test]
 fn record_blob_malformed_tree_is_bad_output() {
-    let Rig { mut g, .. } = rig(Vec::new(), reply('c', "tree", b"100644 A.md"));
+    let Rig { mut g, .. } = rig(Vec::new(), tree('c', b"100644 A.md"));
     assert_eq!(g.record_blob("r", "A.md"), Err(failed("git cat-file", "bad output")));
 }
 
 #[test]
 fn record_blob_id_that_is_not_a_blob_is_bad_output() {
-    let mut canned = reply('c', "tree", &tree_ab());
+    let mut canned = tree('c', &tree_ab());
     canned.extend(reply('a', "tree", b""));
     let Rig { mut g, .. } = rig(Vec::new(), canned);
     assert_eq!(g.record_blob("r", "A.md"), Err(failed("git cat-file", "bad output")));
@@ -489,10 +569,10 @@ fn record_blob_id_that_is_not_a_blob_is_bad_output() {
 
 #[test]
 fn record_blob_tree_bytes_count_toward_16_mib() {
-    let tree = tree_ab();
+    let t = tree_ab();
     // A commit, the tree and a 64 KiB blob: one byte past 16 MiB, so the blob's contents are too much.
-    let mut canned = reply('d', "commit", &vec![b'z'; 16 * 1024 * 1024 - tree.len() - 64 * 1024 + 1]);
-    canned.extend(reply('c', "tree", &tree));
+    let mut canned = reply('d', "commit", &vec![b'z'; 16 * 1024 * 1024 - t.len() - 64 * 1024 + 1]);
+    canned.extend(tree('c', &t));
     canned.extend(info('a', "blob", 64 * 1024));
     canned.extend(info('a', "blob", 64 * 1024));
     let Rig { mut g, log, .. } = rig(Vec::new(), canned);
@@ -545,15 +625,6 @@ fn piped_send_then_read_fails_with_a_foreign_reader() {
     assert_eq!(p.read_line(16).unwrap(), b"closed");
     let r = p.send(b"x\n").and_then(|()| p.read_line(16).map(drop));
     assert!(matches!(r, Err(RunError::Failed)));
-}
-
-#[cfg(unix)]
-#[test]
-fn piped_set_deadline_bounds_the_next_read() {
-    // Spawned with a deadline an hour away; the deadline set later is already past, so the read ends at once.
-    let mut p = sh("exec sleep 1000000");
-    p.set_deadline(Instant::now());
-    assert!(matches!(p.read_line(16), Err(RunError::TimedOut)));
 }
 
 // ---- real git: PD1 and the tree entry modes (D§6.8) ----

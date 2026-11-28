@@ -22,7 +22,7 @@ const CAT_FILE: &str = "git cat-file";
 const MERGE_BASE: &str = "git merge-base";
 const REV_LIST: &str = "git rev-list";
 const LOG: &str = "git log";
-/// The requests (`info` or `contents`) of one `--batch-command` process (D§9.4).
+/// The objects one `--batch-command` process reads with `contents` (D§9.4); `info` requests do not count.
 const BATCH_OBJECTS: usize = 2_048;
 /// The object contents bytes read by one `--batch-command` process, in all (D§9.4).
 const BATCH_BYTES: u64 = 16 * 1024 * 1024;
@@ -103,8 +103,6 @@ pub trait BatchIo {
     fn send(&mut self, line: &[u8]) -> Result<(), RunError>;
     fn read_line(&mut self, max: usize) -> Result<Vec<u8>, RunError>;
     fn read_exact(&mut self, n: usize) -> Result<Vec<u8>, RunError>;
-    /// The deadline of every later wait for stdout (D§9.4: each object read has its own bound).
-    fn set_deadline(&mut self, deadline: Instant);
 }
 
 impl BatchIo for crate::repo::Piped {
@@ -116,9 +114,6 @@ impl BatchIo for crate::repo::Piped {
     }
     fn read_exact(&mut self, n: usize) -> Result<Vec<u8>, RunError> {
         crate::repo::Piped::read_exact(self, n)
-    }
-    fn set_deadline(&mut self, deadline: Instant) {
-        crate::repo::Piped::set_deadline(self, deadline)
     }
 }
 
@@ -194,17 +189,6 @@ impl ProcessGit {
         Ok((now + GIT_STEP).min(end))
     }
 
-    /// The deadline of the next object read of the running `--batch-command` process: `min(now + GIT_STEP, first start +
-    /// GIT_TOTAL)`, from the read's own request (D§9.4: each read has its own bound); refused at or past the total.
-    fn read_deadline(&mut self) -> Result<Instant, GitFail> {
-        let now = self.runner.now();
-        let end = *self.first.get_or_insert(now) + GIT_TOTAL;
-        if now >= end {
-            return Err(fail(CAT_FILE, "over 10 s in all"));
-        }
-        Ok((now + GIT_STEP).min(end))
-    }
-
     /// `git <args>` in `root`, with no promisor fetch.
     fn cmd(&self, args: &[&str]) -> Command {
         let mut c = crate::repo::git_cmd(OsStr::new("git"), &self.root, args);
@@ -212,8 +196,9 @@ impl ProcessGit {
         c
     }
 
-    /// The one `--batch-command` process, spawned at the first object read. Each read sets its own deadline
-    /// ([`ProcessGit::read_deadline`]). Its first failure is kept, and every later read gives it with no new process.
+    /// The one `--batch-command` process: spawned at the first object read, with the deadline it got then (D-C6: 2 s
+    /// for the process; `check_keep` runs the other three processes before it). Its first failure is kept, and every
+    /// later read gives it with no new process.
     fn batch_io(&mut self) -> Result<&mut Box<dyn BatchIo>, GitFail> {
         if self.batch.is_none() {
             let spawned = self.deadline(CAT_FILE).and_then(|deadline| {
@@ -239,18 +224,18 @@ impl ProcessGit {
         reply
     }
 
-    /// The request and byte caps are checked before any stdout of the object is read: the 2,049th request is not sent,
-    /// and a `contents` header whose size takes the total past 16 MiB gives `TooMuch` with no body read. An `info`
-    /// reply is its header only.
+    /// The object and byte caps are checked before any stdout of the object is read: the 2,049th `contents` request is
+    /// not sent, and a `contents` header whose size takes the total past 16 MiB gives `TooMuch` with no body read. An
+    /// `info` reply is its header only, and counts toward neither cap.
     fn read_object(&mut self, what: Ask, object: &str) -> Result<Reply, GitFail> {
         self.batch_io()?;
-        if self.objects == BATCH_OBJECTS {
-            return Err(GitFail::TooMuch);
+        if what == Ask::Contents {
+            if self.objects == BATCH_OBJECTS {
+                return Err(GitFail::TooMuch);
+            }
+            self.objects += 1;
         }
-        let deadline = self.read_deadline()?;
-        self.objects += 1;
         let Some(Ok(io)) = self.batch.as_mut() else { unreachable!("batch_io gave a process") };
-        io.set_deadline(deadline);
         let run = |e: RunError| fail(CAT_FILE, e.reason());
         let bad = || fail(CAT_FILE, "bad output");
         let verb = match what {
@@ -413,9 +398,14 @@ impl VerdictGit for ProcessGit {
             return Ok(Blob::Missing);
         }
         // The tree is read and its entry mode decides: a link or submodule is never read as a blob (D§6.8). Each
-        // rev's tree is read, and counted toward the caps, once.
+        // rev's tree is read, and counted toward the caps, once. Its type comes first (`info`): a `docs/decisions`
+        // that is not a tree is missing, and its contents are never read (D§14).
         if !self.trees.contains_key(rev) {
-            let r = self.ask(Ask::Contents, &format!("{rev}:docs/decisions"))?;
+            let path = format!("{rev}:docs/decisions");
+            let r = match self.ask(Ask::Info, &path)? {
+                Reply::Object { kind, .. } if kind == "tree" => self.ask(Ask::Contents, &path)?,
+                _ => Reply::Missing,
+            };
             self.trees.insert(rev.to_string(), r);
         }
         let Some(Reply::Object { id, kind, body, .. }) = self.trees.get(rev) else { return Ok(Blob::Missing) };
