@@ -287,6 +287,15 @@ ksplant "K24 failed ST4 with its P3-15 note in T§12.1" "$ST4F" "$(stnote '*(Not
   "check-premises: ok"
 ksplant "K25 failed ST4 with a note for ST3 only" "$ST4F" "$(stnote '*(Note 2026-11-25, P3-15, ST3: failed)*')" 1 "$NONOTE"
 ksplant "K26 failed ST4 with an N2 note" "$ST4F" "$(stnote '*(Note 2026-11-25, N2, ST4: failed)*')" 1 "$NONOTE"
+# SX-10 review F5: the note counts only in T§12.1 (T§12.1 item 3), with a real date; its text may hold ")".
+ksplant "K27 failed ST4 with its note only in the change log" "$ST4F" \
+  '/^## Change log$/a *(Note 2026-11-25, P3-15, ST4: failed)*' 1 "$NONOTE"
+ksplant "K28 failed ST4 with its note only in a T§12.2 code block" "$ST4F" \
+  '/^### 12\.2 /,/^```sh$/{/^```sh$/a # *(Note 2026-11-25, P3-15, ST4: failed)*
+}' 1 "$NONOTE"
+ksplant "K29 failed ST4 with a note dated 0000-99-99" "$ST4F" "$(stnote '*(Note 0000-99-99, P3-15, ST4: failed)*')" 1 "$NONOTE"
+ksplant "K30 failed ST4 with a T§12.1 note whose text holds )" "$ST4F" \
+  "$(stnote '*(Note 2026-11-25, P3-15, ST4: failed (see SX-9))*')" 0 "check-premises: ok"
 
 # --- L (node PRB-1): a LIVE line names the agent version that pinned_agents found, never the pin ----
 # The fallback of each LIVE_VER site in the live scripts is LIVE_CC_VER or LIVE_OC_VER (both set by
