@@ -259,7 +259,7 @@ impl Cx<'_> {
             }
             Ctx::Plain => None,
         };
-        let ranges = outside(s.len(), &harness::skipped_spans(s, agent == Agent::OpenCode));
+        let ranges = outside(s.len(), &harness::skipped_spans(s, agent.spec().redact_skip_tags));
         let (mut out, mut last, mut counts, mut changed) = (String::with_capacity(s.len()), 0, [0u32; 3], false);
         for r in ranges {
             out.push_str(&s[last..r.start]);

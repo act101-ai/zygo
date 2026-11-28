@@ -40,16 +40,15 @@ fn merge(spans: Vec<Range<usize>>) -> Vec<Range<usize>> {
 }
 
 /// Spans skipped inside user text, sorted and disjoint: each `<command-name>…</command-name>`
-/// element of a `<command-message>` block, and for OpenCode each `<file …>…</file>` and
-/// `<shell …>…</shell>` span.
-pub fn skipped_spans(s: &str, opencode: bool) -> Vec<Range<usize>> {
+/// element of a `<command-message>` block, and each `<tag …>…</tag>` span of the client's skip
+/// tags (`ClientSpec::redact_skip_tags`).
+pub fn skipped_spans(s: &str, tags: &[&str]) -> Vec<Range<usize>> {
     let mut spans = Vec::new();
     if s.starts_with("<command-message>") {
         tag_spans(s, "command-name", &mut spans);
     }
-    if opencode {
-        tag_spans(s, "file", &mut spans);
-        tag_spans(s, "shell", &mut spans);
+    for tag in tags {
+        tag_spans(s, tag, &mut spans);
     }
     spans.sort_by_key(|r| r.start);
     merge(spans)
