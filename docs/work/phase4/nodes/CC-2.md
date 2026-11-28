@@ -25,9 +25,9 @@
 
 ## Plan
 
-Parent: c7e76e6b07abc64898f8e4caaa9a01abc57b72a1
+Parent: aeaff173e356d168605b5eb5744a0420482372c9
 
-The node started on `036b92a2b32899abd50e3c608ae83fa1804f309f`; round 1 merged `origin/phase-4` at `9b030436` (TF-4 done, CC-1 in progress) and then at `c7e76e6b` (TF-6 done) into the layer, so `c7e76e6b` is now the top of the stack below it.
+The node started on `036b92a2b32899abd50e3c608ae83fa1804f309f`; round 1 merged `origin/phase-4` at `9b030436` (TF-4 done, CC-1 in progress) and then at `c7e76e6b` (TF-6 done), and round 2 at `aeaff173` (CC-1 done, CC-12 plan), into the layer; `aeaff173` is `git merge-base HEAD origin/phase-4` (round 2 D5).
 
 Interfaces:
 
@@ -165,3 +165,5 @@ Also found in round 2:
 2. D11 fails closed on the prose now in the `## Test logic edits` sections of CC-0 and CC-4 to CC-15 ("None planned. Any edit that the K-C7 check reports is listed here …"), and on CC-3's placeholder bullets: each node must write `None.` or entries there before its check runs. Those files are not CC-2's; recorded for the controller.
 
 Probes that still differ from the probe's own expectation, with the reason: `f7-include-str` and `f7-indented-block` exit 0 (recorded limits, D9); `f4-stale-parent-after-merge` exits 1 (a stale parent is wrong, D5).
+
+Timing and performance (round 2). The first timed runs, with a debug build of the parent's checker (parent `e8573c86`, node file `CC-12.md`, which lists nothing, so the diff holds no listed change), gave `ok (273 units)`: 24.0 s on a cold cache, then 18.2 s warm from the root and 18.8 s warm from `crates/zygo/src`. Measured cause: the debug helper took 16.8 s and a release helper took 3.1 s on the same tree; one `git show` process per file was a smaller part. Commit `perf(scripts): CC-2 round 2 release build of the parent checker, one git cat-file per revision` builds the parent's checker with `--release` and reads each revision through one `git cat-file --batch`. Again with parent `f6102e34` and `CC-12.md`: `ok (273 units)`, 13.6 s on a fresh cache (a release build of the checker and `syn`), then 3.4 s warm from the root and 3.5 s warm from `crates/zygo/src`. The in-tree bootstrap stays a debug `cargo run`; it serves CC-2's tests on small repositories.
