@@ -229,3 +229,21 @@ Results (code head `c38cf5de`; the later commit changes only this file):
 - `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh`: exit 0, `check-premises: ok (P1 … PO4)`.
 - `sh scripts/test-install.sh`: `test-install: all passed`.
 - `git status --porcelain`: empty.
+
+## Round 2 review
+
+Findings (coordinator, round 2), each with its disposition:
+
+- F-B (low), fixed first, by a graph edge (author's call): CC-5 and CC-12 both change `docs/specs/2026-11-25-client-model-design.md`. On `phase-4`, `d950769f` (`docs(work): CC-12 depends on CC-5`) adds CC-5 to CC-12's Depends, with a Log line; the validator prints `ok`. Merge commit `83ff68de` takes `origin/phase-4` into this branch (no rebase). `Parent:` is now `d950769fd774948c6dee2a270e3f2823acad8e02` (= `git merge-base HEAD origin/phase-4`), and the spec is on the Files line; the validator prints `ok`. This supersedes the round 1 F3 note that the spec could not be listed.
+- F-A (medium-low, latent), fixed in `70663f71`: a Responses-route request answered by an Anthropic or chat upstream is read as Messages lines (`forward.rs`, `form`), and its tool names are the `flat_name` join (K§6.4.3), but `messages_line` read them with the client's `mcp_server`. `ResponseCtx` gets `pub route: ModelRoute` (set from the request's route at its one build site, `forward.rs`); new `pub fn route_compact_tool(client: &ClientSpec, route: ModelRoute, name: &str) -> bool` in `window.rs` uses the fixed flat-form parse (`responses_compact_tool`) on `Responses` and the client's form (`compact_tool`) on `Messages`/`CountTokens`; `messages_line` calls it with `ctx.route`. A session holds an `Agent`, not a `ClientSpec`, so the test (`adba46e1`, `compact_name_follows_the_request_route`) is at `route_compact_tool`, the lowest function that takes the route and the descriptor: a cloned descriptor with OpenCode's `mcp_server` and `lists_compact_tool = true` matches `mcp__zygo__compact` on the Responses route, equal to `responses_compact_tool(.., Some("mcp__zygo"), "compact")`; Claude Code gives the same results on both routes. `tests/responses_window.rs` is unchanged and passes. Spec (`57868a42`): K§6.1.2 row 5 and K§6.3.2 state the rule (names from a Responses-route request: fixed flat form, one fixed parse; names in the client's own form: concern 5 function), with one `## Change log` line (CC-5 R2 F-A).
+- F-C (low), fixed in `adba46e1`: `compact_tool_needs_the_compact_listing` no longer sets `window_rewrite` (`compact_tool` does not read it), and its comment says what it checks. A stage-level armed-but-not-listed case is not reachable with a cloned descriptor (a session holds an `Agent`). Added OpenCode-form negatives with the listing on: `zygox_compact`, `zygo_compactx`, `zygo__compact`, `zygocompact`, `_compact`, `compact`, `zygo_Compact`, `zygo_compac`, `zyg_compact`, `Zygo_compact`, `zygo-compact`, `mcp__zygo__compact`; and positives `zygo_compact`, `xzygo_compact`, `foo_zygo_compact`, `plugin-zygo_compact`.
+
+Results (code head `57868a42`; the later commit changes only this file):
+
+- Acceptance line, run alone: exit 0; variant-path check prints nothing; `zygo-work`, `zygo-mcp`, `zygo-core` 686 passed, 0 failed, 35 ignored (34 result lines); K-C7 gate with the new parent: `check-test-edits: parent d950769fd774948c6dee2a270e3f2823acad8e02`, `check-test-edits: ok (281 units)`. `## Test logic edits` is unchanged: the gate reports no other delta.
+- Scoped: `cargo test -p zygo-proxy --locked --no-fail-fast` 670 passed, 0 failed, 16 ignored (23 result lines, no warning).
+- `cargo test --workspace --locked --no-fail-fast`: exit 0, 4603 passed, 0 failed, 862 ignored (229 result lines).
+- Conformance: `ZYGO_WRITE_CONFORMANCE=1 cargo test -p zygo-core --test conformance --locked` 121 passed, 0 failed; `git diff --exit-code docs/conformance.md docs/conformance.json` exit 0.
+- `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh`: exit 0, `check-premises: ok (P1 … PO4)`.
+- `sh scripts/test-install.sh`: `test-install: all passed`.
+- `git status --porcelain`: empty.
