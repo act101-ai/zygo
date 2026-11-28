@@ -617,8 +617,8 @@ pub(crate) fn workspace_of(
     }
 }
 
-/// `ls` (D3, D4): per member in key order `<key> <name or -> <unread>`, or with `name` each new message of its
-/// targets as `<id> <from> <subject>`; nothing is moved.
+/// `ls` (D3, D4; M§8): per member in key order `<key> <name or -> <unread>`, or with `name` each new message of the
+/// one member it names (`one_member`) as `<id> <from> <subject>`; nothing is moved.
 fn ls_text(paths: &Paths, ws: &Workspace, name: Option<&str>) -> anyhow::Result<String> {
     let dir = mail_dir(paths, &ws.id);
     let mut lines = Vec::new();
@@ -634,10 +634,8 @@ fn ls_text(paths: &Paths, ws: &Workspace, name: Option<&str>) -> anyhow::Result<
             lines.extend(sync_line(paths, ws));
         }
         Some(n) => {
-            for t in names::resolve(ws, &member_arg(paths, ws, n)?, None)? {
-                for s in store::list(&dir, &t.key)? {
-                    lines.push(format!("{} {} {}", esc(&s.id), esc(&s.from), esc(&s.subject)));
-                }
+            for s in store::list(&dir, &one_member(paths, ws, n, "ls")?)? {
+                lines.push(format!("{} {} {}", esc(&s.id), esc(&s.from), esc(&s.subject)));
             }
             if lines.is_empty() {
                 return Ok("no new messages".into());
@@ -711,7 +709,7 @@ fn member(ws: &Workspace, key: &str) -> String {
     }
 }
 
-/// The one member `n` names for `zygo mail read` and `zygo mail watch` (M§8: "`<n>` is a member of this machine";
+/// The one member `n` names for `zygo mail read`, `ls` and `watch` (M§8: "`<n>` is a member of this machine";
 /// M§6 reserves `all`): its pane key. A `n` that resolves to other than one member (`all`, a name two members hold)
 /// is the usage error `zygo mail <verb>: <n> is not one member` (exit 2); an unknown name is the resolve error.
 fn one_member(paths: &Paths, ws: &Workspace, n: &str, verb: &str) -> anyhow::Result<String> {
