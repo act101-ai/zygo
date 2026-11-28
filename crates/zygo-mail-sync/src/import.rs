@@ -16,7 +16,7 @@ use zygo_workspace::state::{Store, Workspace};
 use crate::address::{self, ulid_file};
 use crate::branch::{self, BranchError, Entry};
 use crate::env::{Crash, Seam};
-use crate::state::{imported_append, imported_load, SyncPaths};
+use crate::state::{imported_append, imported_load, pending_wake_add, SyncPaths};
 
 /// S§8.5: the most candidates one import pass reads.
 pub const CANDIDATE_CAP: usize = 500;
@@ -95,21 +95,22 @@ pub fn check_message(folder: &str, file: &str, mode: &str, kind: &str, size: u64
 /// imported log when it is not there, then the file moves into `new/` (the inbox check passed before it was
 /// staged). A file whose ULID is not in the log may be torn by a crash during its write: unless its bytes parse as
 /// a message whose `id` is the file's ULID, it is deleted and not logged, and the next pass imports the branch copy
-/// again. A file whose ULID is in the log was synced before the append. Returns the count of files moved into `new/`.
+/// again. A file whose ULID is in the log was synced before the append. Returns the pane key and ULID of each file
+/// moved into `new/`, so that S§8.3 step 10 counts and wakes it (FX-30).
 /// Other names and links are left alone; a file whose finish fails stays for the next pass. Each file is one M§5 P1
 /// delivery under `mail/lock` of `store`'s workspace held shared. A file whose key has no record in the read under
 /// that lock stays while `mail/<key>/` exists (the record can come back, as at the undo write of `up`), and is
 /// deleted with the log unchanged when `mail/<key>/` is missing (M§5 removed the member's mail; the branch copy
 /// stays). A lock not taken in [`MAIL_LOCK_WAIT`] ends the finish for this pass, and the file stays. `Err` only when
 /// `incoming/` or the imported log cannot be read.
-pub fn finish_incoming(sp: &SyncPaths, store: &Store) -> std::io::Result<usize> {
+pub fn finish_incoming(sp: &SyncPaths, store: &Store) -> std::io::Result<Vec<(String, Ulid)>> {
     let entries = match std::fs::read_dir(&sp.incoming) {
         Ok(r) => r,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e),
     };
     let mut seen = imported_load(sp)?;
-    let mut moved = 0;
+    let mut moved = Vec::new();
     for e in entries {
         let e = e?;
         let name = e.file_name();
@@ -143,7 +144,7 @@ pub fn finish_incoming(sp: &SyncPaths, store: &Store) -> std::io::Result<usize> 
             seen.insert(id);
         }
         if let Ok(true) = d.deliver_staged(key, &id.to_string(), &e.path(), u32::MAX) {
-            moved += 1;
+            moved.push((key.to_string(), id));
         }
     }
     Ok(moved)
@@ -270,7 +271,9 @@ fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], ow
 /// the names and each folder's inbox room only); a name with no record in that read is left on the branch (not
 /// staged, logged or acknowledged; no line), and [`Imported::read`] keeps the read of the last delivery. A delivery
 /// that cannot begin (a lock not taken in [`MAIL_LOCK_WAIT`], no workspace, an invalid state, an I/O error) writes
-/// `mail sync: import <ULID>: <kind>` ([`begin_error`]) and stops the run. Step 1 makes the target's maildir before it writes the staged file. A candidate whose ULID is in the
+/// `mail sync: import <ULID>: <kind>` ([`begin_error`]) and stops the run. Before step 1 the delivery is recorded in
+/// `pending_wake` ([`pending_wake_add`], FX-30); a record that cannot be written logs `mail sync: import <ULID>:
+/// state` and leaves the candidate for a later pass. Step 1 makes the target's maildir before it writes the staged file. A candidate whose ULID is in the
 /// imported log is acknowledged, unless its staged file is still in `incoming/`: then it is left until step 5 of a
 /// later pass moves that file (S§8.5). `incoming/` that cannot be read writes `mail sync: import: incoming` and
 /// imports nothing. `Err` only when a seam stops the run.
@@ -356,6 +359,13 @@ pub fn run(sp: &SyncPaths, store: &Store, wt: &Path, tip: &str, own_hosts: &[Str
             continue;
         };
         if !unread(mail_dir, &key).is_ok_and(|n| n < max_unread as usize) {
+            out.left += 1;
+            continue;
+        }
+        // FX-30: the pending wake is recorded before the first write of this delivery, so a crash at any later point
+        // leaves a record by which the next pass counts and wakes the message it finds in `new/` (S§8.3 step 10).
+        if pending_wake_add(sp, &key, id).is_err() {
+            log(&format!("mail sync: import {id}: state"));
             out.left += 1;
             continue;
         }

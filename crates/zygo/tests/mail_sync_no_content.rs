@@ -2254,7 +2254,13 @@ fn no_mail_content_after_the_import_and_prune_scenarios() {
     assert_eq!(sync_in(&b).delivered, 0);
     assert_eq!((new_ids(&b, BOB), imported_times(&b, &u)), (vec![u.clone()], 1));
     assert!(acked(&r, HOST_B).contains(&u)); // acked again
-    for (n, point) in (31..).zip(["after_incoming", "after_log", "after_new", "after_ack"]) {
+    // FX-30: bob is idle with a live launcher for the crash points, so each recovery pass can wake it (S§10.1).
+    b.store(WS_ID).update(Duration::from_secs(5), &mut |w| {
+        w.members.get_mut(BOB).unwrap().zygo_session = Some("sbob".into());
+        Ok(())
+    }).unwrap();
+    let held = live(&b.paths, "sbob");
+    for ((n, k), point) in (31..).zip(1u64..).zip(["after_incoming", "after_log", "after_new", "after_ack"]) {
         let v = send_ok(&a, ALICE, &to_b, n);
         assert_eq!(sync_in(&a).pushed, 1);
         let acks0 = local_acks(&b, HOST_B);
@@ -2279,10 +2285,16 @@ fn no_mail_content_after_the_import_and_prune_scenarios() {
         assert_eq!(acks, acks0, "{point}");
         assert!(!acks.0.contains(&v) && !acks.1.contains(&v), "{point}: {acks:?}");
         // FX-26 review round 2 F-2: the recovery runs through the pass, as in production (S§8.3 step 5, then step 9).
-        // Its `delivered` and its wake are not asserted here: the pass drops the count of `import::finish_incoming`,
-        // and a message that reached `new/` in the crashed run is only acknowledged, so the recovered message gets no
-        // count and no wake. That is the defect FX-30 (`docs/work/phase3/nodes/FX-30.md`), which asserts both.
-        sync_in(&b);
+        // FX-30 (re-plan 2 review round 3 F3): it counts the recovered message once and wakes bob once (S§8.3 step 10,
+        // S§10.1), through step 5's result (`after_incoming`, `after_log`) or the pending-wake record (`after_new`,
+        // `after_ack`). Each point's recovery runs at its own time, `wake_gap` (30 s) or more after the last, so the
+        // gap does not decide the wake.
+        let typed = Typed::default();
+        let wake = StubWake { idle: true, typed: Arc::clone(&typed) };
+        let recovery = env_now(b.paths.clone(), Box::new(NoSeam), Box::new(NoProbe), Box::new(NoSpawn), Box::new(wake),
+            t0() + secs(1000 * k));
+        assert_eq!(run_with_deadline(&recovery, WS_ID, Mode::Cli, &Opts::default(), FAR_PASS).unwrap().delivered, 1, "{point}");
+        assert_eq!(*typed.lock().unwrap(), vec![("%3".to_string(), WAKE_TEXT.to_string())], "{point}");
         assert_eq!(new_ids(&b, BOB).iter().filter(|i| **i == v).count(), 1, "{point}");
         assert_eq!(imported_times(&b, &v), 1, "{point}");
         assert_eq!(std::fs::read_dir(sp(&b).incoming).map_or(0, Iterator::count), 0, "{point}");
@@ -2292,6 +2304,11 @@ fn no_mail_content_after_the_import_and_prune_scenarios() {
         assert!(acked(&r, HOST_B).contains(&v) && acks.0.contains(&v) && acks.1.contains(&v), "{point}: {acks:?}");
         assert_eq!(sync_in(&b).delivered, 0, "{point}");
     }
+    drop(held);
+    b.store(WS_ID).update(Duration::from_secs(5), &mut |w| {
+        w.members.get_mut(BOB).unwrap().zygo_session = None;
+        Ok(())
+    }).unwrap();
 
     // 3.3 #17 (prune after push): 999 commits; the pass whose push makes 1000 prunes, and the new root holds the
     // pushed message; then a push of another machine between the push and the prune push loses the lease.

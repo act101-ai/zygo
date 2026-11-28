@@ -150,6 +150,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | OS-45 | Bound the usage-store wait in elapsed time | — | DONE | judgment | fb717aba · aecf74d2 · a0378951 · acceptance pass (busy_wait 7, zygo-usage, zygo-hooks, readbacks) · PR #203 |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | DONE | implementation | 0167648d..826c59f6 · acceptance pass (mail_sync_cli 14 passed, cli_surface 21 passed) · PR #210 |
 | OS-46 | Bound the hook's usage-store wait per Bash call | — | DONE | judgment | 75339a21 · d6be5653 · c727ff0e · 68f8e48c · acceptance pass (busy_wait_total/open_bounded_total 7, rollback_journal 1, zygo-usage, zygo-hooks, readbacks) · PR #205 |
+| OS-47 | Runner view cost on large inputs, output unchanged | — | DONE | judgment | f1d69ae0 · d56988df · c37c66d4 · acceptance pass (runner_fast_path 5, zygo-results, shaping 36, shaping_fixtures 22, shaping_hook 29) · PR #206 |
 
 ## Log
 

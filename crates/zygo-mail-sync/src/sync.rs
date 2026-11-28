@@ -436,7 +436,11 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: 
     // The same deadline on the injected clock (S-C9), checked before each secret check of the outbox step.
     let pass_end = env.clock.now() + pass_deadline;
     let mut log = |l: &str| c.log(l);
-    import::finish_incoming(sp, &c.store).map_err(|_| stop("incoming"))?;
+    // FX-30: step 5's deliveries join the step 10 count and wake of the first round.
+    let mut finished = import::finish_incoming(sp, &c.store).map_err(|_| stop("incoming"))?;
+    // FX-30: each ULID that this pass counted, once across the rounds of the push loop.
+    let mut counted = BTreeSet::<Ulid>::new();
+    let mut carried: Option<BTreeMap<String, String>> = None;
     if first {
         public_check(c, report, deadline)?;
     }
@@ -456,6 +460,9 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: 
         }
         let meta = read_meta(wt, &tip, deadline, &mut log)?;
         let mut st = state::load(sp).map_err(|_| stop("state"))?;
+        // FX-30: the entries of an earlier run, read before this pass's first import records any.
+        let first_round = carried.is_none();
+        let carried = carried.get_or_insert_with(|| st.pending_wake.clone());
         identity::check(&meta, host, &identity, &st, &env.paths, c.ws_id)
             .map_err(|s| Fail::Stop { line: s.line(), check: s.check_name() })?;
         if promote(&mut st, &meta, &identity) {
@@ -478,11 +485,24 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: 
             .collect();
         let imp = import::run(sp, &c.store, wt, &tip, &own, &targets, &own_ack, c.cfg.mail.max_unread, deadline,
             &*env.seam, &mut log)?;
-        report.delivered += imp.delivered.len();
-        let mut keys: Vec<String> = imp.delivered.iter().map(|(k, _)| k.clone()).collect();
+        // The import wrote its `pending_wake` entries to `state.json`; this round's later saves of `st` keep them.
+        st.pending_wake = state::load(sp).map_err(|_| stop("state"))?.pending_wake;
+        // S§8.3 step 10 (FX-30): the delivered set is step 5's result, the import's deliveries and, in the first round,
+        // the carried entries whose message is in the member's maildir, each ULID once in the pass.
+        let mut got = std::mem::take(&mut finished);
+        got.extend(imp.delivered.iter().cloned());
+        if first_round {
+            got.extend(arrived(sp, carried));
+        }
+        got.retain(|(_, id)| counted.insert(*id));
+        report.delivered += got.len();
+        // S§10.1: the wake is for unread mail, so only a counted message whose file is in `new/` wakes its member.
+        let mut keys: Vec<String> = got.into_iter().filter(|(k, id)| in_new(sp, k, *id)).map(|(k, _)| k).collect();
         keys.sort();
         keys.dedup();
-        wake(c, imp.read.as_ref(), &keys);
+        let lock_read = if imp.read.is_none() && !keys.is_empty() { wake_read(c) } else { None };
+        wake(c, imp.read.as_ref().or(lock_read.as_ref()), &keys);
+        clear_pending(sp, &mut st, &counted)?;
         let mut notified = Notified::default();
         let (mut changes, sent) = outbox(c, &tip, fetched.then_some(&meta), (deadline, pass_end), &mut notified)?;
         notified.keys.sort();
@@ -524,6 +544,7 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool, pass_deadline: 
     prune_step(c, report, &base, &base_meta, &identity, forced, deadline)?;
     let mut st = state::load(sp).map_err(|_| stop("state"))?;
     forget_old_hosts(&mut st, &base_meta, &identity, host);
+    // FX-30: `pending_wake` is as the step 10 writes of this pass left it (`clear_pending`); this write keeps it.
     st.last_ok = Some(env.clock.now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()));
     st.last_error = None;
     state::save(sp, &st).map_err(|_| stop("state"))
@@ -818,6 +839,67 @@ fn wake(c: &Ctx, read: Option<&Workspace>, keys: &[String]) {
         && !keys.is_empty()
     {
         c.env.wake.wake(&c.env.paths, ws, keys, &c.cfg.mail, c.env.clock.now());
+    }
+}
+
+/// S§8.3 step 10 (FX-30): the `(pane key, ULID)` of each `pending_wake` entry of an earlier run whose message is in
+/// the member's maildir, `mail/<key>/new/<ULID>.json` or `cur/<ULID>.json` (a regular file; the rule by which
+/// `deliver_staged` takes a message as delivered). An entry whose message is in neither never arrived: it is not
+/// counted. A message in `cur/` is counted once but wakes no one (FX-30 review F2, [`in_new`]). `check_state` made
+/// each key a pane key and each ULID canonical.
+fn arrived(sp: &SyncPaths, pending: &BTreeMap<String, String>) -> Vec<(String, Ulid)> {
+    pending.iter().filter_map(|(id, key)| {
+        let u = Ulid::from_string(id).ok()?;
+        let md = sp.mail.join(key);
+        let name = format!("{id}.json");
+        ["new", "cur"].into_iter()
+            .any(|d| std::fs::symlink_metadata(md.join(d).join(&name)).is_ok_and(|m| m.is_file()))
+            .then(|| (key.clone(), u))
+    }).collect()
+}
+
+/// S§10.1 (FX-30 review F2): the message `id` is unread mail of `key`: `mail/<key>/new/<ULID>.json` is a regular file.
+fn in_new(sp: &SyncPaths, key: &str, id: Ulid) -> bool {
+    std::fs::symlink_metadata(sp.mail.join(key).join("new").join(format!("{id}.json"))).is_ok_and(|m| m.is_file())
+}
+
+/// S§8.3 step 10 (FX-30 review F1, F3): right after the wake, one state write removes from `pending_wake` each entry
+/// whose ULID this pass counted, and each entry whose message neither arrived nor is staged; an entry whose staged
+/// file `incoming/<key>.<ULID>.json` is still there is kept, so the pass whose step 5 delivers it counts it. The write
+/// loads `state.json`, changes only `pending_wake` and saves it, under the sync lock that the pass holds (S§15); the
+/// pass's own copy `st` takes the result, so its later saves do not put the entries back. No entry to remove: no
+/// write. A stop before the wake never gets here and keeps every entry. The recorded limit: a crash between the wake
+/// and this write counts and wakes the message again in the next pass.
+fn clear_pending(sp: &SyncPaths, st: &mut State, counted: &BTreeSet<Ulid>) -> Result<(), Fail> {
+    let keep = |id: &String, key: &String| {
+        if Ulid::from_string(id).is_ok_and(|u| counted.contains(&u)) {
+            return false;
+        }
+        if std::fs::symlink_metadata(sp.incoming.join(format!("{key}.{id}.json"))).is_ok_and(|m| m.is_file()) {
+            return true; // still staged
+        }
+        false
+    };
+    if st.pending_wake.iter().all(|(id, key)| keep(id, key)) {
+        return Ok(());
+    }
+    let mut disk = state::load(sp).map_err(|_| stop("state"))?;
+    disk.pending_wake.retain(|id, key| keep(id, key));
+    state::save(sp, &disk).map_err(|_| stop("state"))?;
+    st.pending_wake = disk.pending_wake;
+    Ok(())
+}
+
+/// S§10.1 (FX-30): the member records read under `mail/lock` held shared (M§5; FX-24 review F2: not the gate's read)
+/// for the wake of a recovered message when this round's import delivered nothing and so has no read. A read that
+/// cannot begin writes the line `mail sync: wake: read` and wakes no one; the message stays counted.
+fn wake_read(c: &Ctx) -> Option<Workspace> {
+    match Delivery::begin(&c.store, MAIL_LOCK_WAIT) {
+        Ok(d) => Some(d.into_workspace()),
+        Err(_) => {
+            c.log("mail sync: wake: read");
+            None
+        }
     }
 }
 
