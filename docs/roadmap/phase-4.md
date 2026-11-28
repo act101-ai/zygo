@@ -26,7 +26,7 @@ Numbered in causal order (operator, 2026-11-25).
 | P4-3 | Codex premises and fixtures (PC1 to PC16) against the mock upstream, no login; the premise check driven by data | P4-1 | K§6.3.7, K§6.2.5 |
 | P4-4 | Proxy: the OpenAI Responses API as a client dialect (`/openai/v1/responses` with SSE, `/openai/v1/models`) to Anthropic, Responses and chat upstreams; routes by dialect, tested with an existing client's session | P4-1, P4-3 (captured Codex requests) | K§6.4 |
 | P4-5 | Plan the client contract | spec approval | K§6.1 |
-| P4-6 | Build the client contract: opaque client kind, descriptor and adapter registries, Claude Code and OpenCode moved onto it with no behavior change, the boundary check, the `supported` flag and the launch gate; capabilities or criteria for the client-facing features of phase 3 | phase 3 merged into `main` and taken by `phase-4`; P4-2, P4-5 | K§6.1, K§6.2.7 |
+| P4-6 | Build the client contract: opaque client kind, descriptor and adapter registries, Claude Code and OpenCode moved onto it with no behavior change, the boundary check, the `supported` flag and the launch gate; capabilities or criteria for the client-facing features of phase 3 | phase 3 (`origin/phase-3`) taken by `phase-4`; `main` taken again when phase 3 reaches `main`; P4-2, P4-5 | K§6.1, K§6.2.7 |
 | P4-7 | Codex client design document, designed against the built contract; K§6.3 and the Codex parts of K§6.4 are its requirements | P4-3, P4-4, P4-6 | K§6.3 (requirements) |
 | P4-8 | Plan the Codex client | P4-7 | the P4-7 design |
 | P4-9 | Build the Codex client: `zygo codex`, its grade file in the same commit as its client entry, Codex client policy in the proxy, the bar decision, release listing when it meets the bar | P4-8 | the P4-7 design |
@@ -39,9 +39,9 @@ Numbered in causal order (operator, 2026-11-25).
 2. **Planning rows.** P4-1 plans P4-2 to P4-4; P4-5 plans P4-6; P4-8 plans P4-9. A spec does not plan nodes.
 3. **A review gate per node.** Each work node gets its own review gate of up to 3 rounds, as in phase 3. The P3-8 disposition rule applies at each gate: after round 3, a node passes only when each finding has exactly one disposition (fixed with a commit, rejected with a reason, or recorded with a DDR id), and no finding is of a class that stops for the operator.
 4. **A pull request after every row.** Each row, planning included, is delivered in its own pull request into the rendezvous branch `phase-4`. The lead merges a row after its gate and green CI. `phase-4` reaches `main` only on the operator's word.
-5. **Order against phase 3.** Phase 3 still runs on `origin/phase-3` and changes many client-branch sites (session start, status line, OpenCode plugin, member launch, workspace hooks, Claude Code launch, trim hook). It does not change the proxy sources, the conformance scripts or `docs/conformance.md`.
+5. **Order against phase 3.** Phase 3 still runs on `origin/phase-3` and changes many client-branch sites (session start, status line, OpenCode plugin, member launch, workspace hooks, Claude Code launch, trim hook). Outside them it changes one proxy source (`serve.rs`, FX-29) and adds rows to `docs/premises.md` (two of its ids, PO1 and PO2, are also OC-1 ids; CC-0 renames the OC-1 rows); it does not change the premise check or the conformance files (K§6.9, checked 2026-11-27).
    - Now, in parallel with phase 3, based on `phase-4`: P4-1, then P4-2, P4-3, P4-4; and P4-5.
-   - After phase 3 merges into `main` and `phase-4` takes it: P4-6, then P4-7, P4-8, P4-9, and P4-11.
+   - After `phase-4` takes phase 3 from `origin/phase-3` at a pinned commit, in a merge commit (node CC-0): P4-6, then P4-7, P4-8, P4-9, and P4-11. When phase 3 reaches `main`, `phase-4` takes `main` in a normal merge before `phase-4` goes to `main` (K§6.9; author's call, 2026-11-27).
    - Opportunistic: P4-10 is dispatched in parallel as soon as phase 3 is complete (operator).
    - P4-6 starts by taking the client-branch inventory again at its base commit (K§6.9). The inventory in the spec, at `bf3726bd`, shows the pattern; it is not the work list.
 
