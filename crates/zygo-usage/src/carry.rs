@@ -33,7 +33,8 @@ fn prompt(r: &CtxRequest) -> u64 {
 }
 
 /// O§6.3 steps 2-4 for one event: the sum of the carrying requests' rates in USD per token (`T_e` not applied).
-/// `q` is `Q_C` in `ts`, `rowid` order; `first_only` is the OpenCode rule.
+/// `q` is `Q_C` in `ts`, `rowid` order; `first_only` is the whole-session rule: the session has a request of a client
+/// whose requests carry no per-agent id (`ClientSpec::agent_id_header` is `None`).
 pub fn carry(event_ts: i64, q: &[CtxRequest], first_only: bool, rates: &dyn Fn(&str, &str, u64) -> Option<Rates>)
     -> Carry {
     let mut c = Carry::default();

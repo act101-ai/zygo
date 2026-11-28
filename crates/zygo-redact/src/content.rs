@@ -31,7 +31,8 @@ pub enum Layout {
     Input,
 }
 
-/// Body layout, and the agent (OpenCode `<file>`/`<shell>` spans are skipped for OpenCode only).
+/// Body layout, and the agent: its descriptor sets the harness rule (`ClientSpec::redact_skip_tags`,
+/// `redact_harness_prefixes`, `redact_harness_spans`), for example the `<file>`/`<shell>` spans that it skips.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shape {
     pub layout: Layout,
