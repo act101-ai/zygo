@@ -1174,6 +1174,8 @@ fn opencode_mail_line_reaches_the_user_turn_not_the_system_end_to_end() {
                 .iter()
                 .map(|(k, n)| (k.to_string(), MemberRecord { name: Some(n.to_string()), ..MemberRecord::new(Agent::OpenCode) }))
                 .collect();
+            // AU104: the plugin's `session` call recorded `ses_E2E` as the member's main session.
+            ws.members.get_mut("kaaaaaaaa").unwrap().agent_session = Some("ses_E2E".into());
             Ok(())
         })
         .unwrap();
@@ -1184,6 +1186,10 @@ fn opencode_mail_line_reaches_the_user_turn_not_the_system_end_to_end() {
     for i in 0..2 {
         std::fs::write(new.join(format!("01J{i:023}.json")), "{}").unwrap();
     }
+    // FX-33 review: a child session's user message on the main role's model, before the plugin has seen the child's
+    // `session.created` (no kind known): the hook gives no line, since the session is not the recorded main session.
+    let child = real_request(&fx, &dir, &sd, "ses_CHILD");
+    assert_eq!(child["parts"].as_array().unwrap().len(), 1, "{child}");
     let after = real_request(&fx, &dir, &sd, "ses_E2E");
     assert_eq!(after["system"], before["system"]);
     let system = after["system"].as_array().unwrap();

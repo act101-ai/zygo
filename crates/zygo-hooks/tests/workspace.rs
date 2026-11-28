@@ -2113,21 +2113,148 @@ fn opencode_system_text_is_byte_equal_while_the_unread_count_changes() {
     assert!(three.starts_with(&base(&f)), "{three}");
 }
 
-#[test] // M§7.2, M§8; FX-33 acceptance 2 (the hook part of the OpenCode `chat.message` path)
+/// An OpenCode member record whose recorded main session is `id` (AU104: the plugin's `session` call writes it).
+fn rec_main(id: &str) -> MemberRecord {
+    MemberRecord { agent_session: Some(id.into()), ..MemberRecord::new(Agent::OpenCode) }
+}
+
+/// The member keys of each wake that a hook asked for (M§7.3; FX-33 review F1).
+#[derive(Clone, Default)]
+struct Wakes(std::sync::Arc<Mutex<Vec<Vec<String>>>>);
+
+impl zygo_mail_sync::env::Wake for Wakes {
+    fn wake(&self, _: &Paths, _: &zygo_workspace::state::Workspace, keys: &[String], _: &zygo_config::MailConfig, _: std::time::SystemTime) {
+        self.0.lock().unwrap().push(keys.to_vec());
+    }
+}
+
+impl Wakes {
+    fn taken(&self) -> Vec<Vec<String>> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
+
+/// `ws` with the mail sync seams of `w`: the system clock, a spawner and a probe that the hook does not use here (no
+/// `[mail.workspace.*]` table), and the recording wake `w`.
+fn ws_wake(f: &Fx, w: &Wakes, event: &str, payload: Value) -> anyhow::Result<Option<String>> {
+    let env = zygo_mail_sync::env::Env {
+        paths: f.paths.clone(),
+        clock: Box::new(zygo_mail_sync::env::SystemClock),
+        probe: Box::new(zygo_mail_sync::public::LsRemote),
+        seam: Box::new(zygo_mail_sync::env::NoSeam),
+        spawner: Box::new(zygo_mail_sync::spawn::ChildSpawner { zygo: f.zygo.clone() }),
+        wake: Box::new(w.clone()),
+        secret_policy: Default::default(),
+    };
+    let sd = f.dir.root.clone().into_os_string();
+    workspace::run_with_sync(
+        event,
+        &serde_json::to_vec(&payload).unwrap(),
+        &f.paths,
+        &|k| if k == "ZYGO_SESSION_DIR" { Some(sd.clone()) } else { None },
+        &f.zygo,
+        None,
+        &env,
+    )
+}
+
+#[test] // M§7.2, M§8; FX-33 acceptance 2 (the hook part of the OpenCode `chat.message` path); FX-33 review (child order)
 fn mail_opencode_message_event_gives_the_line() {
     let _s = serial();
     let o = fx(Agent::OpenCode);
     mail_on(&o);
+    ws_state(&o, Phase::Up, rec_main("ses_A"));
     assert_eq!(ws(&o, "message", oc("ses_A")).unwrap(), None); // no mail
     put_new(&o, 2);
     set_act(&o, false, 0);
+    // Another session id (a child whose `session.created` the plugin has not seen yet): no line.
+    assert_eq!(ws(&o, "message", oc("ses_CHILD")).unwrap(), None);
     assert_eq!(ws(&o, "message", oc("ses_A")).unwrap(), Some(L2.to_string()));
     assert_eq!(bt(&o), (false, 0)); // no turn change
     assert_eq!(ws(&o, "message", with(oc("ses_A"), "agent_id", json!("a1"))).unwrap(), None); // not the main loop
+    // No recorded main session, or no `workspace.json`: no line.
+    let n = fx(Agent::OpenCode);
+    mail_on(&n);
+    put_new(&n, 2);
+    assert_eq!(ws(&n, "message", oc("ses_A")).unwrap(), None);
+    ws_state(&n, Phase::Up, MemberRecord::new(Agent::OpenCode));
+    assert_eq!(ws(&n, "message", oc("ses_A")).unwrap(), None);
     // `[features] mail` off: no line.
     let g = fx(Agent::OpenCode);
+    ws_state(&g, Phase::Up, rec_main("ses_A"));
     put_new(&g, 2);
     assert_eq!(ws(&g, "message", oc("ses_A")).unwrap(), None);
+}
+
+#[test] // M§7.3 (OpenCode turn end), M§7.2; FX-33 review F1
+fn opencode_turn_end_wakes_once_for_mail_that_came_during_the_turn() {
+    let _s = serial();
+    let w = Wakes::default();
+    let o = fx(Agent::OpenCode);
+    mail_on(&o);
+    ws_state(&o, Phase::Up, rec_main("ses_A"));
+    // The turn starts with no mail; the message call announces nothing.
+    assert_eq!(ws_wake(&o, &w, "message", oc("ses_A")).unwrap(), None);
+    ws_wake(&o, &w, "prompt", oc("ses_A")).unwrap();
+    put_new(&o, 2); // mail comes while the member is busy
+    assert_eq!(ws_wake(&o, &w, "stop", oc("ses_A")).unwrap(), None);
+    assert_eq!(bt(&o), (false, 0)); // the stop clears first, so the wake sees an idle member
+    assert_eq!(w.taken(), vec![vec![KEY.to_string()]]);
+    // Exactly once: the next turn end with the same mail does not wake again.
+    ws_wake(&o, &w, "prompt", oc("ses_A")).unwrap();
+    ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+    assert!(w.taken().is_empty());
+    // One more message during a later turn: one more wake.
+    ws_wake(&o, &w, "prompt", oc("ses_A")).unwrap();
+    let new = put_new(&o, 3);
+    ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+    assert_eq!(w.taken(), vec![vec![KEY.to_string()]]);
+    // All mail read during the turn (moved out of `new/`): no wake.
+    for e in entries(&new) {
+        fs::remove_file(new.join(e)).unwrap();
+    }
+    ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+    assert!(w.taken().is_empty());
+}
+
+#[test] // M§7.3, M§7.2, M§9; FX-33 review F1
+fn opencode_turn_end_does_not_wake_without_new_mail() {
+    let _s = serial();
+    let w = Wakes::default();
+    // No mail at all.
+    let o = fx(Agent::OpenCode);
+    mail_on(&o);
+    ws_state(&o, Phase::Up, rec_main("ses_A"));
+    ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+    assert!(w.taken().is_empty());
+    // Mail that the turn's message already announced.
+    put_new(&o, 2);
+    assert_eq!(ws_wake(&o, &w, "message", oc("ses_A")).unwrap(), Some(L2.to_string()));
+    ws_wake(&o, &w, "stop", oc("ses_A")).unwrap();
+    assert!(w.taken().is_empty());
+    // `draining` or `stopping`: no wake, so `down` does not wait for mail (M§9).
+    for phase in [Phase::Draining, Phase::Stopping] {
+        let d = fx(Agent::OpenCode);
+        mail_on(&d);
+        ws_state(&d, phase, rec_main("ses_A"));
+        put_new(&d, 2);
+        ws_wake(&d, &w, "stop", oc("ses_A")).unwrap();
+        assert!(w.taken().is_empty(), "{phase:?}");
+        assert_eq!(bt(&d), (false, 0), "{phase:?}");
+    }
+    // `[features] mail` off.
+    let g = fx(Agent::OpenCode);
+    ws_state(&g, Phase::Up, rec_main("ses_A"));
+    put_new(&g, 2);
+    ws_wake(&g, &w, "stop", oc("ses_A")).unwrap();
+    assert!(w.taken().is_empty());
+    // Claude Code: M§7.1 delivers at its Stop; a stop that does not block does not wake.
+    let c = fx(Agent::ClaudeCode);
+    mail_on(&c);
+    ws_state(&c, Phase::Up, MemberRecord::new(Agent::ClaudeCode));
+    put_new(&c, 2);
+    ws_wake(&c, &w, "stop", with(fixture("Stop-main"), "stop_hook_active", json!(true))).unwrap();
+    assert!(w.taken().is_empty());
 }
 
 #[test] // W§9.4, AU72, AU104; FX-33 acceptance 3
@@ -2244,11 +2371,13 @@ fn mail_unreadable_folder_changes_no_decision() {
     // OpenCode: the request text does not read `mail/` (M§7.2); the `message` call does.
     let o = fx(Agent::OpenCode);
     mail_on(&o);
+    ws_state(&o, Phase::Up, rec_main("ses_A"));
     let m = lock_mail(&o);
     let start = child(&o, "session-start");
     let message = child(&o, "message");
     fs::set_permissions(&m, fs::Permissions::from_mode(0o700)).unwrap();
-    assert_eq!((start.0, start.1.len()), (base(&o), 0), "{:?}", start.1);
+    assert_eq!(start.1.len(), 0, "{:?}", start.1);
+    assert!(start.0.starts_with(&base(&o)) && !start.0.contains("new messages"), "{}", start.0);
     assert_eq!((message.0.as_str(), message.1.len()), ("", 1), "{message:?}");
 }
 
