@@ -1,7 +1,8 @@
 #!/bin/sh
 # Tests of ver_ge (scripts/premises/ver.sh), the agent version rule of pinned_agents
 # (scripts/premises/live.sh) and the agent row rule of scripts/check-premises.sh (node PRB-2:
-# a pinned agent version is a minimum; act-lite stays exact).
+# a pinned agent version is a minimum; act-lite stays exact), and its SP rows and `git:` header
+# (node MS-25).
 # Usage: sh scripts/premises/ver_test.sh   ->  "ver tests: ok (<n>)", exit 0
 # No agent, no network; not run by CI. Stub claude and opencode programs print fixed text.
 set -u
@@ -176,17 +177,28 @@ pcheck "P15 empty prerelease" 1 "live: opencode is 1.19.0-; the minimum is 1.18.
 # --- K: check-premises.sh agent rows at or above the header; act-lite exact ---------------------
 K=$T/k
 kmiss=""
-for f in scripts/check-premises.sh scripts/premises/ver.sh docs/specs/2026-11-18-zygo-design.md docs/conformance.md; do
+MS=docs/specs/2026-11-24-mail-sync-design.md
+for f in scripts/check-premises.sh scripts/premises/ver.sh docs/specs/2026-11-18-zygo-design.md docs/conformance.md \
+  "$MS"; do
   [ -f "$REPO/$f" ] || { kmiss=$f; break; }
 done
 [ -n "$kmiss" ] || [ -d "$REPO/fixtures" ] || kmiss=fixtures
+# Node MS-25: the mail-sync spec (S§20 items, change log) and the node files that the rows cite as evidence paths.
+KNODES=$(grep '^| ' "$REPO/docs/premises.md" | grep -oE '`docs/work/[^` ]+`' | tr -d '`' | sort -u)
+for f in $KNODES; do
+  [ -n "$kmiss" ] || [ -f "$REPO/$f" ] || kmiss=$f
+done
 if [ -z "$kmiss" ]; then
   mkdir -p "$K/scripts/premises" "$K/docs/specs"
   cp "$REPO/scripts/check-premises.sh" "$K/scripts/"
   cp "$REPO/scripts/premises/ver.sh" "$K/scripts/premises/"
-  cp "$REPO/docs/specs/2026-11-18-zygo-design.md" "$K/docs/specs/"
+  cp "$REPO/docs/specs/2026-11-18-zygo-design.md" "$REPO/$MS" "$K/docs/specs/"
   cp "$REPO/docs/conformance.md" "$K/docs/"
   cp -R "$REPO/fixtures" "$K/"
+  for f in $KNODES; do
+    mkdir -p "$K/${f%/*}"
+    cp "$REPO/$f" "$K/$f"
+  done
 fi
 # kcase <case> <id> <agent> <old regex> <V> <want rc> <fixed text>
 kcase() {
@@ -206,6 +218,48 @@ kcase K2 P1 'Claude Code' '2\.1\.328' 2.1.327 1 "P1: version '2.1.327' is below 
 kcase K3 P1 'Claude Code' '2\.1\.328' 2.1.33a 1 "P1: version '2.1.33a' is below the header's '2.1.328'"
 kcase K4 P4 OpenCode '1\.18\.16' 1.18.20 0 "check-premises: ok"
 kcase K5 P6b act-lite '1\.2\.3' 1.2.4 1 "P6b: version '1.2.4' differs from the header's '1.2.3' for act-lite"
+# Node MS-25 (mail-sync S§18): git rows at or above the `git:` header, the pinned version, a minimum.
+kcase K6 SP2 git '2\.50\.1' 2.50.0 1 "SP2: version '2.50.0' is below the header's '2.50.1' for git"
+kcase K7 SP3 git '2\.50\.1' 2.60.0 0 "check-premises: ok"
+
+# --- K (node MS-25): the git header, SP rows, S§20 items, the failed-SP-row rule ------------------
+# kplant <case> <premises.md sed> <mail-sync spec sed, or ''> <want rc> <fixed text>
+kplant() {
+  name="$1 -> exit $4"
+  if [ -n "$kmiss" ]; then no "$name" "$kmiss missing"; return; fi
+  sed "$2" "$REPO/docs/premises.md" >"$K/docs/premises.md"
+  if cmp -s "$K/docs/premises.md" "$REPO/docs/premises.md"; then no "$name" "the premises plant changed nothing"; return; fi
+  cp "$REPO/$MS" "$K/$MS"
+  if [ -n "$3" ]; then
+    sed "$3" "$REPO/$MS" >"$K/$MS"
+    if cmp -s "$K/$MS" "$REPO/$MS"; then no "$name" "the spec plant changed nothing"; return; fi
+  fi
+  sh "$K/scripts/check-premises.sh" >"$T/k.out" 2>&1
+  rc=$?
+  cp "$REPO/$MS" "$K/$MS"
+  if [ "$rc" -ne "$4" ]; then no "$name" "exit $rc: $(head -n 3 "$T/k.out" | tr '\n' '|')"; return; fi
+  grep -qF -- "$5" "$T/k.out" || { no "$name" "output lacks: $5; has: $(head -n 3 "$T/k.out" | tr '\n' '|')"; return; }
+  ok "$name"
+}
+# sp6failed <evidence text>: a sed that makes the SP6 row failed, with one evidence path and the text.
+sp6failed() { printf 's/^| SP6 | .*$/| SP6 | planted | git | 2.50.1 | 2026-11-27 | failed | `fixtures\\/mail-sync\\/sp1.txt`: %s |/' "$1"; }
+NOANS="check-premises: SP6: failed, but the evidence names no work node"
+kplant "K8 git header missing" '/^git: /d' '' 1 "check-premises: header line 'git: <version>' missing"
+kplant "K9 SP1 row missing" '/^| SP1 |/d' '' 1 "check-premises: SP1: expected exactly one row, found 0"
+kplant "K10 SP4 result pending" 's/^\(| SP4 | .*| 2026-11-27 | \)verified |/\1pending |/' '' 1 \
+  "check-premises: SP4: result 'pending' is not verified or failed"
+kplant "K11 SP3 without its S§20 item" 's/^\(| SP3 | .*\) |$/\1 Planted. |/' 's/^- \*\*SP3\*\* /- SP3 /' 1 \
+  "check-premises: SP3: the mail-sync spec S§20 has no item **SP3**"
+kplant "K12 failed SP6 names a real work node" "$(sp6failed 'answered by node MS-13.')" '' 0 "check-premises: ok"
+kplant "K13 failed SP6 names node ids only as substrings" "$(sp6failed 'see XMS-13, MS-130 and MS-13x.')" '' 1 "$NOANS"
+kplant "K14 failed SP6 names no node and no spec change" "$(sp6failed 'no answer yet.')" '' 1 "$NOANS"
+kplant "K15 failed SP6 names a spec change whose change-log line names SP6" "$(sp6failed 'answered by S§18.')" '' 0 \
+  "check-premises: ok"
+kplant "K16 failed SP6 names a spec section whose change-log lines do not name SP6" \
+  "$(sp6failed 'see S§8.3 and S§1.')" '' 1 "$NOANS"
+# CR line ends (a file saved with CRLF) do not change the header values.
+kplant "K17 header lines with CRLF ends" 's/^\(Claude Code\|OpenCode\|act-lite\|tmux\|git\): \(.*\)$/\1: \2\r/' '' 0 \
+  "check-premises: ok"
 
 # --- L (node PRB-1): a LIVE line names the agent version that pinned_agents found, never the pin ----
 # The fallback of each LIVE_VER site in the live scripts is LIVE_CC_VER or LIVE_OC_VER (both set by

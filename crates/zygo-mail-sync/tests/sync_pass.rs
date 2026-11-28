@@ -407,12 +407,40 @@ fn snap(root: &Path) -> Snap {
     }
 }
 
+/// The count of `.pack` files of the repository at `root`.
+fn pack_count(root: &Path) -> usize {
+    fs::read_dir(root.join(".git/objects/pack")).unwrap()
+        .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".pack")).count()
+}
+
+/// SP6 setup (MS-25 review F1): a user commit packed into a second pack beside the clone's one, then `gc.auto = 1`,
+/// `gc.autoPackLimit = 1` and a foreground gc and maintenance, so git's own estimate (more packs than the limit)
+/// starts an automatic gc at the next command that runs one, such as `fetch`.
+fn gc_due(root: &Path) {
+    fs::write(root.join("work.txt"), "w\n").unwrap();
+    git(root, &["add", "work.txt"]);
+    git(root, &["-c", "gc.auto=0", "commit", "-q", "-m", "work"]);
+    git(root, &["-c", "gc.auto=0", "repack", "-q", "-d"]);
+    for (k, v) in [("gc.auto", "1"), ("gc.autoPackLimit", "1"), ("gc.autoDetach", "false"),
+        ("maintenance.autoDetach", "false")] {
+        git(root, &["config", k, v]);
+    }
+    assert_eq!(pack_count(root), 2);
+}
+
 #[test] // S§19 #2, S-G2, SP6
 fn user_repository_is_untouched() {
     let _g = shared();
     let (r, a, b) = machines();
+    // Control: in the same setup, a plain `git fetch` (no overrides) starts the automatic gc, which repacks the two
+    // packs into one.
+    let c = Machine::new(&r);
+    gc_due(&c.root);
+    let o = plain(&c.root).args(["fetch", "-q"]).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(pack_count(&c.root), 1, "the control's plain fetch started no automatic gc");
     for m in [&a, &b] {
-        git(&m.root, &["config", "gc.auto", "1"]);
+        gc_due(&m.root);
     }
     let before = [snap(&a.root), snap(&b.root)];
     sync(&b);
@@ -428,6 +456,7 @@ fn user_repository_is_untouched() {
         assert_eq!(s.index, s0.index);
         assert_eq!(s.fetch_head, s0.fetch_head);
         assert_eq!(s.packs, s0.packs);
+        assert_eq!(pack_count(&m.root), 2, "an automatic gc ran in the user repository");
         assert!(!m.root.join(".git/gc.log").exists());
         let added = s.worktrees.strip_prefix(&s0.worktrees).unwrap();
         let blocks: Vec<&str> = added.split("\n\n").map(str::trim).filter(|b| !b.is_empty()).collect();
