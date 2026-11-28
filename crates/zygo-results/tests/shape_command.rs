@@ -504,6 +504,41 @@ fn xargs_max_chars_and_bare_eof_find_the_printer() {
     }
 }
 
+// FX-42 review F3: a short-option cluster whose value-taking letter is last takes the next word.
+#[test]
+fn xargs_short_option_clusters_take_their_value() {
+    all_fp(&[
+        "ls | xargs -0n 1 cat",
+        "ls | xargs -rn 1 cat",
+        "ls | xargs -0I {} cat {}",
+        "ls | xargs -tL 1 cat",
+        "ls | xargs -0n1 cat",
+        "ls | xargs -rtP 4 -n1 cat",
+    ]);
+    assert!(!fp("ls | xargs -0n 1 echo"));
+}
+
+// FX-42 review F5: an option whose value is optional is read both ways; a printer in either reading counts (O-C9).
+#[test]
+fn xargs_optional_value_either_reading_finds_the_printer() {
+    all_fp(&[
+        "ls | xargs --max-lines 1 cat",
+        "ls | xargs --max-lines cat",
+        "ls | xargs --eof x cat",
+        "ls | xargs --eof cat",
+        "ls | xargs --replace {} cat {}",
+        "ls | xargs -l 1 cat",
+        "ls | xargs -e x cat",
+        "ls | xargs -i cat {}",
+        "ls | xargs -0e x cat",
+        // An abbreviated long option (`--max-c` for `--max-chars`) is unsure: read both ways.
+        "ls | xargs --max-c 100 cat",
+        "ls | xargs --eof x --max-lines 1 -e y cat",
+    ]);
+    assert!(!fp("ls | xargs --eof x echo"));
+    assert!(!fp("ls | xargs -ex echo cat"));
+}
+
 // FX-42 O-F3: `doas`, `busybox`, `setsid` and `flock <file>` are skipped wrappers (O§7.2).
 #[test]
 fn doas_busybox_setsid_flock_are_skipped_wrappers() {
