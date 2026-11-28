@@ -17,6 +17,7 @@ use zygo_proxy::session::SessionRequest;
 use zygo_proxy::{Proxy, ProxyHandle};
 
 mod common;
+mod dead_port;
 #[cfg(unix)]
 mod member_fixture;
 #[cfg(unix)]
@@ -77,15 +78,8 @@ fn dead_session(home: &Path, id: &str) -> PathBuf {
     let sd = SessionDir::new(dir.clone());
     sd.create().unwrap();
     sd.write_token("t").unwrap();
-    std::fs::write(sd.url(), closed_url()).unwrap();
+    std::fs::write(sd.url(), dead_port::closed_url()).unwrap();
     dir
-}
-
-fn closed_url() -> String {
-    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = l.local_addr().unwrap().port();
-    drop(l);
-    format!("http://127.0.0.1:{port}/")
 }
 
 /// Session environment of one child: `ZYGO_SESSION`, `ZYGO_SESSION_DIR`, `ZYGO_AGENT`; `None` removes the name.
@@ -106,6 +100,14 @@ struct Env<'a> {
 }
 
 fn zygo(home: &Path, args: &[&str], env: &Env, stdin: &[u8]) -> (i32, String, String) {
+    let mut child = spawn_zygo(home, args, env);
+    common::feed_stdin(child.stdin.take().unwrap(), stdin);
+    let out = child.wait_with_output().unwrap();
+    (out.status.code().unwrap(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
+}
+
+/// `zygo <args>` in `home` with `env`, all three streams piped; the caller feeds stdin.
+fn spawn_zygo(home: &Path, args: &[&str], env: &Env) -> std::process::Child {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
     cmd.args(args)
         .current_dir(home)
@@ -149,10 +151,7 @@ fn zygo(home: &Path, args: &[&str], env: &Env, stdin: &[u8]) -> (i32, String, St
     }
     cmd.env_remove("ZYGO_WORKSPACE");
     cmd.envs(env.vars.iter().copied());
-    let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    common::write_stdin(child.stdin.take().unwrap(), stdin);
-    let out = child.wait_with_output().unwrap();
-    (out.status.code().unwrap(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap()
 }
 
 /// `zygo hook prompt` with `line` as the prompt; asserts exit 0 and returns stdout.
@@ -388,6 +387,7 @@ fn slash_failure_blocks_with_compact_failed() {
 
 const HUD_LOGO: &str = "\u{1d607}\u{1d606}\u{1d5f4}\u{1d5fc}";
 const HUD_MODEL: &str = "\u{f4bc}";
+const HUD_CLOCK: &str = "\u{f0150}";
 
 /// The status line HUD of a live session (H§6, H§7): the served model, `ctx -/<window>` before the first request,
 /// the threshold mark, tokens and spend from the proxy. The cache is version 2 and holds data, not a line.
@@ -443,6 +443,20 @@ fn statusline_without_a_session_dir_prints_nothing() {
     assert_eq!(zygo(d.path(), &["hook", "statusline"], &env, b"{}"), (0, String::new(), String::new()));
 }
 
+/// Without `ZYGO_SESSION_DIR` the hook may exit before it reads stdin (H§6.8, AU24, PH11), so a write after its exit
+/// gets a broken pipe. The order is fixed with no clock: stdin stays open until the child has exited.
+#[test]
+fn statusline_without_a_session_dir_exits_before_it_reads_stdin() {
+    let d = home();
+    let env = Env { hud: true, ..Default::default() };
+    let mut child = spawn_zygo(d.path(), &["hook", "statusline"], &env);
+    let si = child.stdin.take().unwrap(); // taken first: `wait` closes a stdin it still holds
+    assert_eq!(child.wait().unwrap().code(), Some(0));
+    common::feed_stdin(si, b"{}");
+    let out = child.wait_with_output().unwrap();
+    assert_eq!((String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap()), (String::new(), String::new()));
+}
+
 /// AU1: the style of a session is `statusline` of `overrides.json`, else `statusline_style` of `view.json`. A value
 /// other than `compact` or `verbose` in `overrides.json` is ignored.
 #[test]
@@ -460,9 +474,10 @@ fn statusline_style_from_the_overrides_then_the_view() {
     rows(1);
     SessionView { session: id.clone(), statusline_style: "verbose".into(), ..Default::default() }.save(&sd).unwrap();
     let verbose = rows(2);
+    // Row 1 ends with the run time (session run time design T§2.4): the session started in this test, so `0m`.
     assert_eq!(
         verbose,
-        format!("{HUD_LOGO}  ENG-42   {HUD_MODEL} opus-5-5   local\nz\u{28e}\u{183}o  ctx -/1m ⇣800k   ↑ 0 in  ↓ 0 out   $0.00")
+        format!("{HUD_LOGO}  ENG-42   {HUD_MODEL} opus-5-5   local   {HUD_CLOCK} 0m\nz\u{28e}\u{183}o  ctx -/1m ⇣800k   ↑ 0 in  ↓ 0 out   $0.00")
     );
     std::fs::write(sd.overrides_json(), r#"{"statusline":"wide"}"#).unwrap();
     assert_eq!(rows(2), verbose);

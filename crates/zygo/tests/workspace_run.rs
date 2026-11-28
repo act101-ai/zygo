@@ -1131,7 +1131,7 @@ fn w18_27_an_exit_after_the_callback_removes_only_pending() { // exit 12: the --
     let (out, mut env) = h.stub(Agent::ClaudeCode, "a");
     env.extend([("ZYGO_TEST_MEMBER_GATE", gate.clone().into()), ("ZYGO_TEAM_TOKEN", token.into())]);
     // Serve mode takes the team token from `[server] token` of the user config (`serve_client.rs:309-313`).
-    std::fs::write(h.root().join("config.toml"), "[server]\ntoken = \"env:ZYGO_TEAM_TOKEN\"\n").unwrap();
+    h.config("[server]\ntoken = \"env:ZYGO_TEAM_TOKEN\"\n");
     let child = spawn_ws_run(&h, &pairs(&env));
     assert!(until(Duration::from_secs(20), || gate.join("callback").exists()));
     assert!(member(&h).pending.is_some());
@@ -1447,7 +1447,8 @@ impl Drop for LockIsAFolder {
 
 /// Review round 2 finding 8, round 3 finding 7: an exit write that fails with an I/O error prints the D5 line and no
 /// line that needs the record; the shell of step 8 still runs. The fault is a folder at the state `lock`: the lock
-/// open fails for every user, root included (`open_regular`, `state.rs:689-693`), unlike a folder mode.
+/// open fails for every user, root included (`open_regular`), unlike a folder mode. The cause names the lock path as
+/// the binary sees it (FX-28).
 #[test]
 #[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn d5_an_exit_write_that_fails_with_an_io_error_prints_one_line() {
@@ -1465,7 +1466,8 @@ fn d5_an_exit_write_that_fails_with_an_io_error_prints_one_line() {
     drop(lock);
     let err = text(&o.stderr);
     let head = format!("zygo: could not save the exit record of pane {KEY}: ");
-    assert!(err.contains(&format!("{head}{}\n", std::io::Error::from_raw_os_error(libc::EISDIR))), "{err}");
+    let shown = h.root().join(".local/state/zygo/workspaces").join(WS_ID).join("lock");
+    assert!(err.contains(&format!("{head}{}: is not a regular file\n", shown.display())), "{err}");
     assert!(!err.contains("exited 3"), "{err}"); // D7: no record, so no resume line
     assert!(member(&h).pending.is_some()); // nothing written
     assert_eq!(o.status.code(), Some(0)); // the shell of step 8

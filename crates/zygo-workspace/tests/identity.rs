@@ -89,6 +89,8 @@ fn repo(parent: &Path, name: &str) -> PathBuf {
     git(&parent.join(name), &["commit", "-q", "--allow-empty", "-m", "a"]);
     parent.join(name)
 }
+/// A cache folder that holds no worktree of these tests.
+fn no_cache() -> PathBuf { PathBuf::from("/nonexistent/zygo-cache/workspaces") }
 fn co(dir: &Path) -> Checkout { checkout(dir, Instant::now() + GIT).unwrap() }
 /// Beside `w`: worktree `a` on branch `feat` and worktree `b` detached.
 fn two_linked(w: &Path) -> (PathBuf, PathBuf) {
@@ -110,7 +112,7 @@ fn one_repository_has_one_id_and_two_apps_get_two_names() {
     assert_ne!(workspace_id(&co(&app2).common_dir), id);
     let name = |dir: &Path| {
         let list = worktrees(&co(dir)).unwrap();
-        slug(main_worktree(&list).unwrap().path.file_name().unwrap().to_str().unwrap())
+        slug(main_worktree(&list, &no_cache()).unwrap().path.file_name().unwrap().to_str().unwrap())
     };
     let first = unique_name(&name(&a), &|_| false); // from a linked worktree: the main worktree gives the name
     assert_eq!(first, "app");
@@ -123,12 +125,12 @@ fn worktrees_lists_the_main_worktree_first() {
     let w = repo(t.path(), "w");
     let (a, b) = two_linked(&w);
     let mut list = worktrees(&co(&a)).unwrap();
-    assert_eq!(list[0], Worktree { path: canon(&w), branch: Some("main".into()), bare: false });
-    assert_eq!(main_worktree(&list), Some(&list[0]));
+    assert_eq!(list[0], Worktree { path: canon(&w), branch: Some("main".into()), bare: false, prunable: false });
+    assert_eq!(main_worktree(&list, &no_cache()), Some(&list[0]));
     list[1..].sort_by(|x, y| x.path.cmp(&y.path));
     assert_eq!(list[1..], [
-        Worktree { path: canon(&a), branch: Some("feat".into()), bare: false },
-        Worktree { path: canon(&b), branch: None, bare: false },
+        Worktree { path: canon(&a), branch: Some("feat".into()), bare: false, prunable: false },
+        Worktree { path: canon(&b), branch: None, bare: false, prunable: false },
     ]);
 }
 
@@ -140,23 +142,109 @@ fn bare_repository_main_worktree_is_the_first_non_bare_entry() {
     let bare = canon(&t.path().join("repo.git"));
     let only = Checkout { top: bare.clone(), common_dir: bare.clone(), main_root: bare.clone(), deadline: Instant::now() + GIT };
     let list = worktrees(&only).unwrap();
-    assert_eq!(list, [Worktree { path: bare.clone(), branch: None, bare: true }]);
-    assert_eq!(main_worktree(&list), None);
+    assert_eq!(list, [Worktree { path: bare.clone(), branch: None, bare: true, prunable: false }]);
+    assert_eq!(main_worktree(&list, &no_cache()), None);
     git(&t.path().join("repo.git"), &["worktree", "add", "-q", "../main", "main"]);
     let c = co(&t.path().join("main"));
     assert_eq!(c.main_root, bare); // the AU77 premise: `Checkout.main_root` is the bare directory
     let list = worktrees(&c).unwrap();
     assert!(list[0].bare);
-    let main = Worktree { path: canon(&t.path().join("main")), branch: Some("main".into()), bare: false };
-    assert_eq!(main_worktree(&list), Some(&main));
+    let main = Worktree { path: canon(&t.path().join("main")), branch: Some("main".into()), bare: false, prunable: false };
+    assert_eq!(main_worktree(&list, &no_cache()), Some(&main));
+}
+
+#[test] // FX-25 review R2 D1, AU77: the main worktree is the first entry that is not bare, not prunable and not inside
+        // zygo's workspaces cache folder; whether its folder exists is not looked at
+fn main_worktree_is_the_first_valid_entry() {
+    let t = TempDir::new().unwrap();
+    let here = canon(t.path());
+    let cache = here.join("cache").join("workspaces");
+    let entry = |path: PathBuf, bare: bool, prunable: bool| Worktree { path, branch: None, bare, prunable };
+    let sync = entry(cache.join("0123456789abcdef").join("mail-sync"), false, false);
+    let pruned = entry(here.join("one"), false, true);
+    // An entry that git does not mark is valid also when no folder is there: git's mark is the signal.
+    let unmarked = entry(here.join("not-made"), false, false);
+    let list = [entry(here.join("repo.git"), true, false), sync.clone(), pruned.clone(), unmarked.clone()];
+    assert_eq!(main_worktree(&list, &cache), Some(&unmarked));
+    assert!(list.iter().map(|w| valid_worktree(w, &cache)).eq([false, false, false, true]));
+    assert_eq!(main_worktree(&[sync.clone(), pruned.clone()], &cache), None);
+    assert_eq!(first_user_worktree(&[sync.clone(), pruned.clone()], &cache), Some(&pruned));
+    assert_eq!(first_user_worktree(&[sync], &cache), None);
+    // A cache folder given by a path that is not canonical (a link to it) still holds the sync worktree.
+    #[cfg(unix)]
+    {
+        std::fs::create_dir_all(&cache).unwrap();
+        let link = here.join("cache-link");
+        std::os::unix::fs::symlink(&cache, &link).unwrap();
+        let synced = entry(cache.join("0123456789abcdef").join("mail-sync"), false, false);
+        assert!(!valid_worktree(&synced, &link));
+    }
+}
+
+#[test] // FX-25 review R2 D1: `worktrees` keeps git's `prunable` line, here for an empty folder at a deleted worktree
+fn worktrees_keeps_the_prunable_mark() {
+    let t = TempDir::new().unwrap();
+    let w = repo(t.path(), "w");
+    let (a, b) = two_linked(&w);
+    std::fs::remove_dir_all(&a).unwrap();
+    std::fs::create_dir(&a).unwrap();
+    let list = worktrees(&co(&w)).unwrap();
+    let marks: Vec<(PathBuf, bool)> = list.iter().map(|e| (e.path.clone(), e.prunable)).collect();
+    assert!(marks.contains(&(canon(&a), true)), "{marks:?}");
+    assert!(marks.contains(&(canon(&b), false)), "{marks:?}");
+    assert!(marks.contains(&(canon(&w), false)), "{marks:?}");
 }
 
 #[test] // the git call is bounded by `Checkout.deadline`; a git failure is an error
 fn worktrees_fails_after_the_deadline_and_when_git_fails() {
     let t = TempDir::new().unwrap();
     let w = repo(t.path(), "w");
-    assert!(worktrees(&Checkout { deadline: Instant::now(), ..co(&w) }).is_err());
-    let gone = t.path().join("gone"); // no such directory: `git -C` exits non-zero
+    assert_eq!(worktrees(&Checkout { deadline: Instant::now(), ..co(&w) }), Err(ListError::TimedOut));
+    let gone = t.path().join("gone"); // no such directory: `git -C` exits non-zero with "cannot change to"
     let c = Checkout { top: gone.clone(), common_dir: gone.clone(), main_root: gone, deadline: Instant::now() + GIT };
-    assert!(worktrees(&c).is_err());
+    assert!(matches!(worktrees(&c), Err(ListError::Failed(why)) if why.contains("cannot change to")));
+}
+
+#[test] // FX-25 f6, review F5d: git's "not a git repository" is told from a failure
+fn worktrees_tells_not_a_repository_from_a_failure() {
+    let t = TempDir::new().unwrap();
+    let plain = t.path().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let c = Checkout { top: plain.clone(), common_dir: plain.clone(), main_root: plain, deadline: Instant::now() + GIT };
+    // On the git child only: no repository above the temporary folder (a TMPDIR inside a repository) is found.
+    let mut git = zygo_config::repo_file::git_command();
+    git.env("GIT_CEILING_DIRECTORIES", t.path().parent().unwrap());
+    let got = worktrees_by(git, &c);
+    assert!(matches!(&got, Err(ListError::NotARepository(text)) if text.contains("not a git repository")), "{got:?}");
+    assert_eq!(
+        [
+            ListError::NotARepository("fatal: not a git repository".into()),
+            ListError::NotFound,
+            ListError::Failed(String::new()),
+            ListError::Failed("fatal: x".into()),
+            ListError::TimedOut,
+        ]
+        .map(|e| e.to_string()),
+        [
+            "not a git repository",
+            "git not found",
+            "git worktree list failed",
+            "git worktree list failed: fatal: x",
+            "git worktree list timed out",
+        ]
+    );
+}
+
+#[cfg(unix)] // a file with no execute bit
+#[test] // FX-25 review F5c: only a missing program is "git not found"; any other start error is a failure with its text
+fn worktrees_maps_only_a_missing_program_to_not_found() {
+    let t = TempDir::new().unwrap();
+    let w = repo(t.path(), "w");
+    let missing = t.path().join("none").join("git");
+    assert_eq!(worktrees_with(missing.as_os_str(), &co(&w)), Err(ListError::NotFound));
+    // A file that is not executable: the start fails with "permission denied", not "not found".
+    let plain_file = t.path().join("git");
+    std::fs::write(&plain_file, "not a program").unwrap();
+    let got = worktrees_with(plain_file.as_os_str(), &co(&w));
+    assert!(matches!(&got, Err(ListError::Failed(why)) if why.starts_with("cannot start git: ")), "{got:?}");
 }

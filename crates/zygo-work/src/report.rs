@@ -6,12 +6,58 @@ use std::path::Path;
 
 use zygo_usage::{Filter, Store, WorkUnitRow};
 
+use crate::decisions::graph::deepest_chain;
+use crate::decisions::record::{name_kind, NameKind, Record, Status};
+use crate::decisions::set::{read_dir, DirError, RecordSet};
 use crate::join::{join, Joined};
 
 const NONE: &str = "no work units";
 
 /// The report of the units (and their `:<part>` units) begun at or after `since`; creates no database.
-pub fn report(db: &Path, unit: Option<&str>, since: Option<i64>) -> anyhow::Result<String> {
+/// `records_in` is the repository top whose `docs/decisions/` gives the record lines (D§9.5); `None` gives none.
+pub fn report(db: &Path, records_in: Option<&Path>, unit: Option<&str>, since: Option<i64>) -> anyhow::Result<String> {
+    let read = records_in.map(read_dir);
+    let valid: &[Record] = match &read {
+        Some(Ok(s)) => &s.valid,
+        _ => &[],
+    };
+    let body = blocks(db, valid, unit, since)?;
+    Ok(match read.as_ref().and_then(records_line) {
+        Some(l) => format!("{body}\n\n{l}"),
+        None => body,
+    })
+}
+
+/// `u` is `unit` or `unit:<part>`.
+fn under(u: &str, unit: &str) -> bool {
+    u == unit || u.strip_prefix(unit).is_some_and(|r| r.starts_with(':'))
+}
+
+/// The `decision records:` line (D§9.5, D§6.8); `None` when the directory holds no record name.
+fn records_line(read: &Result<RecordSet, DirError>) -> Option<String> {
+    let set = match read {
+        Err(DirError::NotDirectory) => return Some("decision records: docs/decisions is not a directory".into()),
+        Err(DirError::Unreadable) => return Some("decision records: cannot read docs/decisions".into()),
+        Err(DirError::TooMany) => return Some("decision records: over 10,000 files".into()),
+        Ok(set) => set,
+    };
+    let named = set.malformed.iter().any(|(n, _)| matches!(name_kind(n), NameKind::Record(_)));
+    if set.valid.is_empty() && !named {
+        return None;
+    }
+    let open = set.valid.iter().filter(|r| r.status == Status::Open).count();
+    let mut l = format!(
+        "decision records: {open} open, {} total, deepest chain {}",
+        set.valid.len(),
+        deepest_chain(&set.valid)
+    );
+    if !set.malformed.is_empty() {
+        let _ = write!(l, ", {} malformed", set.malformed.len());
+    }
+    Some(l)
+}
+
+fn blocks(db: &Path, records: &[Record], unit: Option<&str>, since: Option<i64>) -> anyhow::Result<String> {
     if !db.exists() {
         return Ok(NONE.into());
     }
@@ -23,8 +69,8 @@ pub fn report(db: &Path, unit: Option<&str>, since: Option<i64>) -> anyhow::Resu
         let units: Vec<WorkUnitRow> = rows.iter().filter(|r| r.session == s).cloned().collect();
         joined.extend(join(&units, &store.requests_for_session(s)?));
     }
-    joined.retain(|j| unit.is_none_or(|u| j.row.unit == u || j.row.unit.strip_prefix(u).is_some_and(|r| r.starts_with(':'))));
-    Ok(if joined.is_empty() { NONE.into() } else { render(&joined) })
+    joined.retain(|j| unit.is_none_or(|u| under(&j.row.unit, u)));
+    Ok(if joined.is_empty() { NONE.into() } else { render(&joined, records) })
 }
 
 #[derive(Default)]
@@ -37,8 +83,9 @@ struct Tokens {
     usd: f64,
 }
 
-/// One block per unit, by earliest `began_at`, then unit; blocks joined by one blank line.
-pub fn render(joined: &[Joined]) -> String {
+/// One block per unit, by earliest `began_at`, then unit; blocks joined by one blank line. A block with records of
+/// its unit (or its `:<part>` units) gains the `decisions:` line (D§9.5).
+pub fn render(joined: &[Joined], records: &[Record]) -> String {
     let mut by_unit: BTreeMap<&str, Vec<&Joined>> = BTreeMap::new();
     for j in joined {
         by_unit.entry(j.row.unit.as_str()).or_default().push(j);
@@ -80,6 +127,11 @@ pub fn render(joined: &[Joined]) -> String {
         let events: Vec<String> =
             guards.iter().flat_map(|(g, ls)| ls.iter().map(move |(l, n)| format!("{g} {l} {n}"))).collect();
         let _ = writeln!(out, "  guard events: {}", if events.is_empty() { "none".into() } else { events.join(", ") });
+        let mine: Vec<&Record> = records.iter().filter(|r| under(&r.unit, unit)).collect();
+        if !mine.is_empty() {
+            let open = mine.iter().filter(|r| r.status == Status::Open).count();
+            let _ = writeln!(out, "  decisions: {open} open, {} total", mine.len());
+        }
         for ((role, model), t) in &tokens {
             let _ = writeln!(
                 out,

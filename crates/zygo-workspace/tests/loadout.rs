@@ -1,4 +1,6 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+use zygo_config::repo_def::{repository_loadout, Definition, MemberDef, Pin, WorkspaceFile, REPOSITORY_LOADOUT};
 use zygo_config::{Config, Loadout, LoadoutPane, LoadoutWindow, WorkspaceConfig, BUILTIN_LOADOUT, LOADOUT_KINDS};
 use zygo_core::Agent;
 use zygo_workspace::identity::Worktree;
@@ -16,12 +18,12 @@ fn cfg(default: &str, loadouts: Vec<(&str, Vec<LoadoutWindow>)>) -> Config {
     }
 }
 fn plain(kind: PaneKind) -> PlanPane { // the defaults of `zygo claude` and `zygo opencode` (AU45)
-    PlanPane { kind, cwd: root(), profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None }
+    PlanPane { kind, name: None, cwd: root(), profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None, job: None, pool: false, definition: None }
 }
 fn trees() -> Vec<Worktree> {
     vec![
-        Worktree { path: root(), branch: Some("main".into()), bare: false },
-        Worktree { path: root().join("wt-x"), branch: Some("feature-x".into()), bare: false },
+        Worktree { path: root(), branch: Some("main".into()), bare: false, prunable: false },
+        Worktree { path: root().join("wt-x"), branch: Some("feature-x".into()), bare: false, prunable: false },
     ]
 }
 
@@ -44,9 +46,9 @@ fn builtin_solo_is_one_claude_code_pane_in_the_main_worktree() {
 #[test]
 fn unset_pane_fields_take_the_launch_defaults_and_set_fields_are_kept() {
     let set = LoadoutPane {
-        kind: "claude-code".into(), profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()], yolo: true,
+        kind: "claude-code".into(), name: None, job: None, profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()], yolo: true,
         passthrough: true, server: Some("https://zygo.example".into()), compact: Some("600k".into()),
-        config_dir: Some("~/.claude-work".into()), cwd: None,
+        config_dir: Some("~/.claude-work".into()), pool: false, cwd: None,
     };
     let w = LoadoutWindow { name: Some("agents".into()), layout: Some("main-vertical".into()), pane: vec![pane("claude-code"), pane("opencode"), pane("shell"), set] };
     let p = resolve(&cfg("pair", vec![("pair", vec![w])]), None, &root(), &[]).unwrap();
@@ -54,12 +56,43 @@ fn unset_pane_fields_take_the_launch_defaults_and_set_fields_are_kept() {
     assert_eq!((p.windows[0].name.as_deref(), p.windows[0].layout.as_deref()), (Some("agents"), Some("main-vertical")));
     assert_eq!(p.windows[0].panes[..3], [plain(PaneKind::Agent(Agent::ClaudeCode)), plain(PaneKind::Agent(Agent::OpenCode)), plain(PaneKind::Shell)]);
     assert_eq!(p.windows[0].panes[3], PlanPane {
-        kind: PaneKind::Agent(Agent::ClaudeCode), cwd: root(), profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()],
+        kind: PaneKind::Agent(Agent::ClaudeCode), name: None, cwd: root(), profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()],
         yolo: true, passthrough: true, server: Some("https://zygo.example".into()), compact: Some("600k".into()), config_dir: Some("~/.claude-work".into()),
+        job: None, pool: false, definition: None,
     });
     for k in LOADOUT_KINDS {
         assert!(resolve(&cfg("x", vec![("x", vec![window(vec![pane(k)])])]), None, &root(), &[]).is_ok(), "{k}");
     }
+}
+
+#[test] // M§6, AU84: resolve copies a valid pane name; a name that fails the grammar is not copied
+fn member_name_resolve_copies_the_pane_name() {
+    let named = |kind: &str, n: &str| LoadoutPane { name: Some(n.into()), ..pane(kind) };
+    let w = window(vec![named("claude-code", "lead"), pane("opencode"), named("opencode", "Bad"), named("claude-code", "all"), named("claude-code", "kabcdefgh")]);
+    let p = resolve(&cfg("team", vec![("team", vec![w])]), None, &root(), &[]).unwrap();
+    let names: Vec<Option<&str>> = p.windows[0].panes.iter().map(|pp| pp.name.as_deref()).collect();
+    assert_eq!(names, [Some("lead"), None, None, None, None]);
+    assert_eq!(p.windows[0].panes[0], PlanPane { name: Some("lead".into()), ..plain(PaneKind::Agent(Agent::ClaudeCode)) });
+}
+
+#[test] // M§6, ML-3 review round 1: a name that an earlier pane of the same plan took reads as no name (the first wins)
+fn member_name_resolve_first_pane_wins_a_repeated_name() {
+    let named = |kind: &str, n: &str| LoadoutPane { name: Some(n.into()), ..pane(kind) };
+    let w1 = window(vec![named("claude-code", "lead"), named("opencode", "lead"), named("opencode", "dev")]);
+    let w2 = window(vec![named("claude-code", "dev"), named("claude-code", "ops")]);
+    let p = resolve(&cfg("team", vec![("team", vec![w1, w2])]), None, &root(), &[]).unwrap();
+    let names: Vec<Vec<Option<&str>>> =
+        p.windows.iter().map(|w| w.panes.iter().map(|pp| pp.name.as_deref()).collect()).collect();
+    assert_eq!(names, [vec![Some("lead"), None, Some("dev")], vec![None, Some("ops")]]);
+}
+
+#[test] // M§6, AU53, ML-3 review round 1: a shell pane has no name, and its name does not take one from a later agent pane
+fn member_name_shell_pane_name_is_dropped_and_does_not_block() {
+    let named = |kind: &str, n: &str| LoadoutPane { name: Some(n.into()), ..pane(kind) };
+    let w = window(vec![named("shell", "lead"), named("claude-code", "lead")]);
+    let p = resolve(&cfg("team", vec![("team", vec![w])]), None, &root(), &[]).unwrap();
+    let names: Vec<Option<&str>> = p.windows[0].panes.iter().map(|pp| pp.name.as_deref()).collect();
+    assert_eq!(names, [None, Some("lead")]);
 }
 
 #[test]
@@ -110,11 +143,11 @@ fn errors_name_the_loadout_and_the_place() {
 #[test]
 fn list_gives_each_name_with_its_source_in_name_order() {
     let s = |n: &str, src| (n.to_string(), src);
-    assert_eq!(list(&Config::default()), [s("solo", Source::Builtin)]);
+    assert_eq!(list(&Config::default(), false), [s("solo", Source::Builtin)]);
     let w = || vec![window(vec![pane("shell")])];
-    assert_eq!(list(&cfg("solo", vec![("pair", w()), ("alpha", w()), ("zed", w())])),
+    assert_eq!(list(&cfg("solo", vec![("pair", w()), ("alpha", w()), ("zed", w())]), false),
         [s("alpha", Source::User), s("pair", Source::User), s("solo", Source::Builtin), s("zed", Source::User)]);
-    assert_eq!(list(&cfg("solo", vec![("solo", w())])), [s("solo", Source::User)]);
+    assert_eq!(list(&cfg("solo", vec![("solo", w())]), false), [s("solo", Source::User)]);
 }
 
 #[test] // FIX-27 D6; kills: a `pane_cwd` that differs from `resolve`
@@ -128,4 +161,59 @@ fn pane_cwd_is_the_folder_rule_of_resolve() {
     let tmp = std::env::temp_dir();
     assert_eq!(pane_cwd(Some(tmp.to_str().unwrap()), &root(), &trees()), (tmp.clone(), None));
     assert_eq!(pane_cwd(Some("sub/dir"), &root(), &trees()), (root().join("sub/dir"), None));
+}
+
+fn pin() -> Pin { Pin::new("c".repeat(40), "d".repeat(64)) }
+fn def(members: BTreeMap<String, MemberDef>) -> Definition {
+    Definition { workspace: Some(WorkspaceFile { version: 1, layout: None, members }), profiles: BTreeMap::new() }
+}
+
+#[test] // R§9.2, R§7.4, R§9.3 effect 2: each pane of the default set has its job, pool and the pin, in the main worktree
+fn repository_default_set_panes_carry_job_pool_and_the_pin() {
+    let member = |n: &str, job: &str| PlanPane {
+        name: Some(n.into()), job: Some(job.into()), pool: true, definition: Some(pin()), ..plain(PaneKind::Agent(Agent::ClaudeCode))
+    };
+    let l = repository_loadout(&def(BTreeMap::new())).unwrap();
+    assert_eq!(resolve_repository(&l, &pin(), &root(), &trees()), Ok(Plan {
+        loadout: "repository".into(),
+        windows: vec![PlanWindow { name: None, layout: Some("main-vertical".into()), panes: vec![
+            member("orchestrator", "orchestrator"), member("worker-1", "worker"), member("worker-2", "worker"),
+            member("worker-3", "worker"), member("worker-4", "worker"),
+        ] }],
+        warnings: vec![],
+    }));
+}
+
+#[test] // R§9.1: `cwd` resolves as W§11; a branch with no worktree gives the main worktree and the existing warning
+fn repository_branch_cwd_without_a_worktree_gives_the_main_worktree_and_the_warning() {
+    let m = MemberDef { kind: None, job: None, profile: None, pool: false, cwd: Some("branch:x".into()) };
+    let l = repository_loadout(&def(BTreeMap::from([("a".to_string(), m)]))).unwrap();
+    let p = resolve_repository(&l, &pin(), &root(), &trees()).unwrap();
+    assert_eq!((&p.windows[0].panes[0].cwd, &p.windows[0].panes[0].definition), (&root(), &Some(pin())));
+    assert_eq!(p.warnings, ["loadout repository: no worktree has branch `x` checked out; using the main worktree"]);
+}
+
+#[test] // R§9.1, R§9.3: a user loadout pane carries `job` and `pool`; only resolve_repository gives a pin
+fn repository_user_loadout_pane_carries_job_and_pool_and_no_pin() {
+    let set = LoadoutPane { job: Some("orchestrator".into()), pool: true, ..pane("claude-code") };
+    let want = vec![PlanPane { job: Some("orchestrator".into()), pool: true, ..plain(PaneKind::Agent(Agent::ClaudeCode)) }, plain(PaneKind::Shell)];
+    for name in ["team", REPOSITORY_LOADOUT] {
+        let p = resolve(&cfg(name, vec![(name, vec![window(vec![set.clone(), pane("shell")])])]), None, &root(), &[]).unwrap();
+        assert_eq!(p.windows[0].panes, want, "{name}");
+    }
+}
+
+#[test] // R§10 `loadout list`: the loadout that apply_to_config (WD-7) adds is listed with Source::Repository
+fn repository_list_reports_the_added_loadout_as_repository() {
+    let s = |n: &str, src| (n.to_string(), src);
+    let mut c = cfg("solo", vec![("pair", vec![window(vec![pane("shell")])])]);
+    // what WD-7's apply_to_config adds: config.loadout["repository"] = repository_loadout(def)
+    c.loadout.insert(REPOSITORY_LOADOUT.to_string(), repository_loadout(&def(BTreeMap::new())).unwrap());
+    assert_eq!(list(&c, true), [s("pair", Source::User), s("repository", Source::Repository), s("solo", Source::Builtin)]);
+}
+
+#[test] // R§10, WD-10 review F1: a `[loadout.repository]` that the user wrote is listed as User
+fn repository_user_written_key_lists_as_user() {
+    let c = cfg("solo", vec![(REPOSITORY_LOADOUT, vec![window(vec![pane("shell")])])]);
+    assert_eq!(list(&c, false), [(REPOSITORY_LOADOUT.to_string(), Source::User), ("solo".to_string(), Source::Builtin)]);
 }

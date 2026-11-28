@@ -3,10 +3,11 @@ use std::time::{Duration, SystemTime};
 use zygo_config::ResultsConfig;
 use zygo_results::kind::{sniff, tree, Kind};
 use zygo_results::{is_id, sweep, view, Store, Stored};
+use zygo_results::shape::Step;
 
 fn put(tool: &str, text: &str) -> (tempfile::TempDir, Stored) {
     let t = tempfile::tempdir().unwrap();
-    let s = Store::put(&t.path().join("results"), tool, text.as_bytes()).unwrap();
+    let s = Store::put(&t.path().join("results"), tool, None, text.as_bytes()).unwrap();
     (t, s)
 }
 fn rows(n: usize) -> String { (1..=n).map(|i| format!("row {i} payload\n")).collect() }
@@ -56,7 +57,7 @@ fn store_put_writes_raw_bytes_and_the_meta_file() {
     let t = tempfile::tempdir().unwrap();
     let dir = t.path().join("results");                                  // does not exist yet
     let data = b"one\ntwo\nthree";
-    let s = Store::put(&dir, "Bash", data).unwrap();
+    let s = Store::put(&dir, "Bash", None, data).unwrap();
     assert!(is_id(&s.id) && s.id.len() == 26);
     assert_eq!(std::fs::read(dir.join(&s.id)).unwrap(), data);
     let meta: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join(format!("{}.json", s.id))).unwrap()).unwrap();
@@ -83,20 +84,20 @@ fn store_put_writes_raw_bytes_and_the_meta_file() {
 fn store_put_ids_differ_and_lines_are_counted_like_str_lines() {
     let t = tempfile::tempdir().unwrap();
     let dir = t.path().join("results");
-    let a = Store::put(&dir, "Bash", b"x").unwrap();
-    let b = Store::put(&dir, "Bash", b"x").unwrap();
+    let a = Store::put(&dir, "Bash", None, b"x").unwrap();
+    let b = Store::put(&dir, "Bash", None, b"x").unwrap();
     assert_ne!(a.id, b.id);
     for (data, n) in [(&b""[..], 0), (b"a\n", 1), (b"a\nb", 2), (b"a\r\nb\r\n", 2), (b"\n\n", 2)] {
-        assert_eq!(Store::put(&dir, "Bash", data).unwrap().lines, n, "{data:?}");
+        assert_eq!(Store::put(&dir, "Bash", None, data).unwrap().lines, n, "{data:?}");
     }
-    assert_eq!(Store::put(&dir, "Bash", br#"{"a":1}"#).unwrap().kind, Kind::Json);
+    assert_eq!(Store::put(&dir, "Bash", None, br#"{"a":1}"#).unwrap().kind, Kind::Json);
 }
 
 #[test]
 fn store_get_refuses_a_malformed_id_and_names_an_unknown_one() {
     let t = tempfile::tempdir().unwrap();
     let dir = t.path().join("results");
-    Store::put(&dir, "Bash", b"x").unwrap();
+    Store::put(&dir, "Bash", None, b"x").unwrap();
     let other = ulid::Ulid::generate().to_string();
     assert!(is_id(&other));
     for bad in ["", "abc", "../x", "01ARZ3NDEKTSV4RRFFQ69G5FAV/../x", "01ARZ3NDEKTSV4RRFFQ69G5FAV.json", &other.to_lowercase(), &format!(" {other}")] {
@@ -111,7 +112,7 @@ fn store_get_refuses_a_malformed_id_and_names_an_unknown_one() {
 fn store_get_without_a_meta_file_is_no_result() {
     let t = tempfile::tempdir().unwrap();
     let dir = t.path().join("results");
-    let s = Store::put(&dir, "Bash", b"x").unwrap();
+    let s = Store::put(&dir, "Bash", None, b"x").unwrap();
     std::fs::remove_file(dir.join(format!("{}.json", s.id))).unwrap();   // the bytes file alone is an unfinished entry
     let e = Store::get(&dir, &s.id).unwrap_err().to_string();
     assert!(e.contains("no result") && e.contains(&s.id), "{e}");
@@ -186,8 +187,50 @@ fn view_never_exceeds_8_kib_and_keeps_the_marker() {
 #[test]
 fn view_of_bytes_that_are_not_utf8_does_not_panic() {
     let t = tempfile::tempdir().unwrap();
-    let s = Store::put(&t.path().join("results"), "Bash", b"ok\xff\xfe\nrest\n").unwrap();
+    let s = Store::put(&t.path().join("results"), "Bash", None, b"ok\xff\xfe\nrest\n").unwrap();
     assert!(view(&s, &ResultsConfig::default()).contains('\u{fffd}'));
+}
+
+#[test]
+fn shaped_view_is_the_marker_line_then_the_text() {
+    let (_t, s) = put("Bash", &rows(200));                               // 200 lines, 3092 bytes
+    let v = view::shaped_view(&[Step::ColorCodesRemoved, Step::RepeatedLinesCounted], "x", &s);
+    assert_eq!(v, format!("[zygo shaped this output: color codes removed, repeated lines counted. The full output (200 lines, 3092 bytes) is saved as result {}; read it with result_view, result_search or result_tree.]\nx", s.id));
+}
+
+#[test]
+fn shaped_view_lists_steps_in_order_and_keeps_the_raw_numbers() {
+    let (_t, s) = put("Bash", &rows(200));
+    let all = [Step::ColorCodesRemoved, Step::ProgressLinesRemoved, Step::RepeatedLinesCounted, Step::PassedTestsHidden,
+        Step::BuildProgressHidden, Step::DiffFilesListed, Step::JsonOutlined, Step::LogErrorsKept];
+    let shaped = "row 1 payload\nrow 200 payload\n";                    // shorter than the raw text
+    let v = view::shaped_view(&all, shaped, &s);
+    let (first, rest) = v.split_once('\n').unwrap();
+    assert_eq!(first, format!("[zygo shaped this output: color codes removed, progress lines removed, repeated lines counted, passed tests hidden, build progress hidden, diff files listed, json outlined, log errors kept. The full output (200 lines, 3092 bytes) is saved as result {}; read it with result_view, result_search or result_tree.]", s.id));
+    assert_eq!(rest, shaped);                                           // the text follows unchanged
+}
+
+#[test]
+fn size_view_of_a_shorter_text_keeps_the_raw_numbers_within_the_cap() {
+    let raw: String = (0..300).map(|_| format!("{}\n", "x".repeat(399))).collect();     // 300 lines, 120000 bytes
+    let (_t, s) = put("Bash", &raw);
+    let shaped: String = (0..260).map(|_| format!("{}\n", "y".repeat(399))).collect();  // 104000 bytes
+    let v = view::size_view(&shaped, &s, &ResultsConfig::default());
+    assert!(v.len() <= view::VIEW_CAP_BYTES, "{}", v.len());
+    assert!(v.starts_with(&"y".repeat(399)) && !v.contains(&"x".repeat(399)));
+    assert!(v.ends_with(&marker(&s)) && marker(&s).contains("300 lines, 120000 bytes"));
+    let cfg = ResultsConfig { head_lines: 2, tail_lines: 1, ..ResultsConfig::default() };
+    let (_t, s) = put("Bash", &rows(10));
+    assert_eq!(view::size_view("a\nb\nc\nd\n", &s, &cfg), format!("a\nb\n{}\nd", marker(&s)));
+}
+
+#[test]
+fn view_equals_size_view_of_the_stored_text() {
+    for tool in ["Bash", "Read"] {
+        let (_t, s) = put(tool, &rows(200));
+        let cfg = ResultsConfig::default();
+        assert_eq!(view(&s, &cfg), view::size_view(&s.text(), &s, &cfg), "{tool}");
+    }
 }
 
 #[test]
@@ -686,7 +729,7 @@ fn w18_61_the_sweep_deletes_no_workspace_result() {
 fn store_get_with_a_raw_file_of_another_length_is_no_result() {
     let t = tempfile::tempdir().unwrap();
     let dir = t.path().join("results");
-    let s = Store::put(&dir, "Bash", b"abc").unwrap();
+    let s = Store::put(&dir, "Bash", None, b"abc").unwrap();
     std::fs::write(dir.join(&s.id), b"abcd").unwrap();
     let e = Store::get(&dir, &s.id).unwrap_err().to_string();
     assert!(e.contains("no result") && e.contains(&s.id), "{e}");
@@ -698,8 +741,85 @@ fn store_put_creates_the_results_directory_with_mode_0700() {
     use std::os::unix::fs::PermissionsExt;
     let t = tempfile::tempdir().unwrap();
     let dir = t.path().join("s").join("results");
-    Store::put(&dir, "Bash", b"x").unwrap();
+    Store::put(&dir, "Bash", None, b"x").unwrap();
     assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+}
+
+#[test]
+fn session_put_with_some_is_in_the_meta_and_read_back_by_get() {     // O§6.5 item 1, O§6.4 Key
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("results");
+    let s = Store::put(&dir, "Bash", Some("S1"), b"x").unwrap();
+    assert_eq!(s.session.as_deref(), Some("S1"));
+    let meta: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join(format!("{}.json", s.id))).unwrap()).unwrap();
+    assert_eq!(meta["session"], "S1");
+    assert_eq!(meta.as_object().unwrap().len(), 6);
+    assert_eq!(Store::get(&dir, &s.id).unwrap().session.as_deref(), Some("S1"));
+    assert_eq!(Store::get(&dir, &s.id).unwrap(), s);
+}
+
+#[test]
+fn session_absent_from_an_old_meta_file_reads_as_none() {           // the 97d8767 meta form
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("results");
+    std::fs::create_dir_all(&dir).unwrap();
+    let id = ulid::Ulid::generate().to_string();
+    std::fs::write(dir.join(&id), b"x").unwrap();
+    std::fs::write(dir.join(format!("{id}.json")), br#"{"tool":"Bash","bytes":1,"lines":1,"kind":"text","created_at":1700000000}"#).unwrap();
+    let s = Store::get(&dir, &id).unwrap();
+    assert_eq!(s.session, None);
+    assert_eq!((s.tool.as_str(), s.bytes, s.lines, s.kind, s.created_at, s.data.as_slice()), ("Bash", 1, 1, Kind::Text, 1700000000, &b"x"[..]));
+}
+
+#[test]
+fn session_none_writes_no_session_key() {                           // a None put keeps the 97d8767 meta shape
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("results");
+    let s = Store::put(&dir, "Bash", None, b"x").unwrap();
+    assert_eq!(s.session, None);
+    let meta: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join(format!("{}.json", s.id))).unwrap()).unwrap();
+    assert!(meta.get("session").is_none(), "{meta}");
+    assert_eq!(meta.as_object().unwrap().len(), 5);
+    assert_eq!(Store::get(&dir, &s.id).unwrap().session, None);
+}
+
+#[test]
+fn session_empty_is_no_session() {                                  // O§6.4: an empty id must not be a key
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("results");
+    let s = Store::put(&dir, "Bash", Some(""), b"x").unwrap();
+    assert_eq!(s.session, None);
+    let meta: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join(format!("{}.json", s.id))).unwrap()).unwrap();
+    assert!(meta.get("session").is_none(), "{meta}");
+    assert_eq!(meta.as_object().unwrap().len(), 5);
+    assert_eq!(Store::get(&dir, &s.id).unwrap().session, None);
+}
+
+/// Writes the raw result `x` and the meta text `meta` under a new id in `dir`, and reads them back through `get`.
+fn get_with_meta(dir: &Path, meta: &[u8]) -> Stored {
+    std::fs::create_dir_all(dir).unwrap();
+    let id = ulid::Ulid::generate().to_string();
+    std::fs::write(dir.join(&id), b"x").unwrap();
+    std::fs::write(dir.join(format!("{id}.json")), meta).unwrap();
+    Store::get(dir, &id).unwrap()
+}
+
+#[test]
+fn session_null_reads_as_none() {
+    let t = tempfile::tempdir().unwrap();
+    let s = get_with_meta(&t.path().join("results"),
+        br#"{"tool":"Bash","bytes":1,"lines":1,"kind":"text","created_at":1700000000,"session":null}"#);
+    assert_eq!(s.session, None);
+    assert_eq!((s.tool.as_str(), s.bytes, s.lines, s.kind, s.created_at, s.data.as_slice()), ("Bash", 1, 1, Kind::Text, 1700000000, &b"x"[..]));
+}
+
+#[test]
+fn session_meta_with_an_unknown_extra_key_still_loads() {           // O-C8: an older binary reads a newer meta
+    let t = tempfile::tempdir().unwrap();
+    let s = get_with_meta(&t.path().join("results"),
+        br#"{"tool":"Bash","bytes":1,"lines":1,"kind":"text","created_at":1700000000,"session":"S1","future_field":1}"#);
+    assert_eq!(s.session.as_deref(), Some("S1"));
+    assert_eq!((s.tool.as_str(), s.bytes, s.lines, s.kind, s.created_at, s.data.as_slice()), ("Bash", 1, 1, Kind::Text, 1700000000, &b"x"[..]));
 }
 
 use zygo_config::Features;
@@ -739,18 +859,18 @@ fn tools_acceptance_100_kib_bash_output_is_trimmed_and_the_three_tools_read_the_
     let sd = SessionDir::new(t.path().to_path_buf());
     let text: String = (1..).map(|i| format!("row {i} payload\n")).scan(0usize, |n, l| { if *n >= 100 * 1024 { None } else { *n += l.len(); Some(l) } }).collect();
     assert!(text.len() >= 100 * 1024);
-    let s = Store::put(&sd.results(), "Bash", text.as_bytes()).unwrap();
+    let s = Store::put(&sd.results(), "Bash", None, text.as_bytes()).unwrap();
     let v = view(&s, &ResultsConfig::default());
     assert!(v.len() <= 8192);
     assert!(v.contains(&format!("[zygo trimmed this output: {} lines, {} bytes; only part of it is shown. The full output is saved as result {id}. To read the rest, call result_search, result_view or result_tree with id \"{id}\".]", s.lines, text.len(), id = s.id)));
-    let tools = zygo_mcp::tools::results::tools(&ctx(Some(t.path())));
+    let tools = zygo_mcp::tools::results::tools_with(sd.results(), None);
     let first_400: Vec<String> = (1..=400).map(|i| format!("row {i} payload")).collect();
     assert_eq!(call(by_name(&tools, "result_view"), serde_json::json!({"id": s.id})).unwrap(), first_400.join("\n"));
     let want: Vec<String> = (61..=120).map(|i| format!("row {i} payload")).collect();
     assert_eq!(call(by_name(&tools, "result_view"), serde_json::json!({"id": s.id, "lines": "61-120"})).unwrap(), want.join("\n"));
     let found = call(by_name(&tools, "result_search"), serde_json::json!({"id": s.id, "pattern": "row 500 "})).unwrap();
     assert_eq!(found, "499- row 499 payload\n500: row 500 payload\n501- row 501 payload");
-    let j = Store::put(&sd.results(), "Bash", br#"{"b":{"a":[1,2]}}"#).unwrap();
+    let j = Store::put(&sd.results(), "Bash", None, br#"{"b":{"a":[1,2]}}"#).unwrap();
     assert_eq!(call(by_name(&tools, "result_tree"), serde_json::json!({"id": j.id})).unwrap(), "b: object\n  a: array[2]");
 }
 
@@ -758,7 +878,7 @@ fn tools_acceptance_100_kib_bash_output_is_trimmed_and_the_three_tools_read_the_
 fn tools_bad_arguments_are_invalid_params_and_an_unknown_id_is_a_failure() {
     let t = tempfile::tempdir().unwrap();
     let sd = SessionDir::new(t.path().to_path_buf());
-    let s = Store::put(&sd.results(), "Bash", b"a\nb\n").unwrap();
+    let s = Store::put(&sd.results(), "Bash", None, b"a\nb\n").unwrap();
     let tools = zygo_mcp::tools::results::tools(&ctx(Some(t.path())));
     let (view_t, search_t, tree_t) = (by_name(&tools, "result_view"), by_name(&tools, "result_search"), by_name(&tools, "result_tree"));
     for args in [serde_json::json!({}), serde_json::json!({"id": 5}), serde_json::json!({"id": "../x"}), serde_json::json!({"id": s.id, "lines": "abc"}),

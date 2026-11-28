@@ -31,6 +31,7 @@ pub struct Config {
     pub usage: UsageConfig,
     pub statusline: StatuslineConfig,
     pub update: UpdateConfig,
+    pub mail: MailConfig,
     pub workspace: WorkspaceConfig,
     pub loadout: BTreeMap<String, Loadout>,
     #[serde(rename = "marketplace")]
@@ -61,6 +62,7 @@ impl Default for Config {
             usage: UsageConfig::default(),
             statusline: StatuslineConfig::default(),
             update: UpdateConfig::default(),
+            mail: MailConfig::default(),
             workspace: WorkspaceConfig::default(),
             loadout: BTreeMap::new(),
             marketplaces: Vec::new(),
@@ -476,11 +478,13 @@ pub struct ResultsConfig {
     pub trim_threshold_bytes: u64,
     pub head_lines: u32,
     pub tail_lines: u32,
+    /// O§9: the shaping pipeline for Bash (O§7); `false` gives the behavior at `97d8767`.
+    pub shape: bool,
 }
 
 impl Default for ResultsConfig {
     fn default() -> Self {
-        ResultsConfig { trim_threshold_bytes: 16384, head_lines: 60, tail_lines: 20 }
+        ResultsConfig { trim_threshold_bytes: 16384, head_lines: 60, tail_lines: 20, shape: true }
     }
 }
 
@@ -523,7 +527,7 @@ impl FromStr for Level {
     }
 }
 
-pub const GUARDS: [&str; 6] = ["claims", "scope", "navigation", "output", "trailers", "repeat"];
+pub const GUARDS: [&str; 7] = ["claims", "scope", "navigation", "output", "trailers", "repeat", "dispositions"];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -535,6 +539,7 @@ pub struct GuardsConfig {
     pub output: Level,
     pub repeat: Level,
     pub trailers: Level,
+    pub dispositions: Level,
 }
 
 impl Default for GuardsConfig {
@@ -547,6 +552,7 @@ impl Default for GuardsConfig {
             output: Level::Monitor,
             repeat: Level::Monitor,
             trailers: Level::Notify,
+            dispositions: Level::Enforce,
         }
     }
 }
@@ -560,6 +566,7 @@ impl GuardsConfig {
             "output" => &mut self.output,
             "trailers" => &mut self.trailers,
             "repeat" => &mut self.repeat,
+            "dispositions" => &mut self.dispositions,
             _ => return None,
         })
     }
@@ -572,6 +579,7 @@ impl GuardsConfig {
             "output" => self.output,
             "trailers" => self.trailers,
             "repeat" => self.repeat,
+            "dispositions" => self.dispositions,
             _ => return None,
         })
     }
@@ -594,11 +602,19 @@ impl Default for NavigationConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LimitsConfig {
     /// 0 = no cap.
     pub subagent_max_turns: u32,
+    /// The most agent panes a repository loadout may start, 1-32 (R§9.4); built-in, team and user layers only.
+    pub max_members: u32,
+}
+
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        LimitsConfig { subagent_max_turns: 0, max_members: MAX_MEMBERS_DEFAULT }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -656,7 +672,48 @@ impl Default for UpdateConfig {
     }
 }
 
-/// A duration written as `<n>s`, `<n>m` or `<n>h` (workspaces design W§11 `drain_timeout`, W§19): ASCII digits and
+/// `[mail.workspace.<name>]` (mail sync design S§11): the per-workspace mail sync keys. `sync` turns sync on for that
+/// workspace; `remote` defaults to `origin`; `host` overrides `[mail] host`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MailSyncWorkspace {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sync: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+}
+
+/// `[mail]` (workspace mail design M§11). User config only; `keep` and `wake_gap` in the form [`parse_duration`] reads.
+/// `host`, `sync_gap` and `workspace` are mail sync design S§11; `sync_gap` takes `<n>s`, `<n>m` or `<n>h`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MailConfig {
+    pub keep: String,
+    pub max_unread: u32,
+    pub wake_gap: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub sync_gap: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub workspace: BTreeMap<String, MailSyncWorkspace>,
+}
+
+impl Default for MailConfig {
+    fn default() -> Self {
+        MailConfig {
+            keep: "30d".into(),
+            max_unread: 500,
+            wake_gap: "30s".into(),
+            host: None,
+            sync_gap: "60s".into(),
+            workspace: BTreeMap::new(),
+        }
+    }
+}
+
+/// A duration written as `<n>s`, `<n>m`, `<n>h` or `<n>d` (W§11 drain_timeout, M§11 keep and wake_gap; W§19): ASCII digits and
 /// one unit letter. `None` for any other text and for a value that does not fit in `u64` seconds.
 pub fn parse_duration(s: &str) -> Option<Duration> {
     let (unit, digits) = s.as_bytes().split_last()?;
@@ -664,6 +721,7 @@ pub fn parse_duration(s: &str) -> Option<Duration> {
         b's' => 1,
         b'm' => 60,
         b'h' => 3600,
+        b'd' => 86400,
         _ => return None,
     };
     if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
@@ -673,11 +731,89 @@ pub fn parse_duration(s: &str) -> Option<Duration> {
     n.checked_mul(scale).map(Duration::from_secs)
 }
 
+/// The mail host form (mail sync design S§5, S§11): `^[a-z0-9][a-z0-9-]{0,31}$`.
+pub fn valid_mail_host(s: &str) -> bool {
+    let b = s.as_bytes();
+    let lower_digit = |c: &u8| c.is_ascii_lowercase() || c.is_ascii_digit();
+    matches!(b.first(), Some(c) if lower_digit(c))
+        && b.len() <= 32
+        && b[1..].iter().all(|c| lower_digit(c) || *c == b'-')
+}
+
+/// The mail sync branch form (mail sync design S§11): `^zygo/[a-z0-9][a-z0-9-]{0,31}$`.
+pub fn valid_sync_branch(s: &str) -> bool {
+    s.strip_prefix("zygo/").is_some_and(valid_mail_host)
+}
+
+/// `[mail] sync_gap` (mail sync design S§11, S§8.4): [`parse_duration`] without the `d` unit.
+pub(crate) fn parse_sync_gap(s: &str) -> Option<Duration> {
+    if s.ends_with('d') {
+        return None;
+    }
+    parse_duration(s)
+}
+
+/// The mail sync settings of one workspace, resolved by [`sync_for`] (mail sync design S§11, S§7.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncSettings {
+    pub branch: String,
+    pub remote: String,
+    pub host: String,
+    pub sync_gap: Duration,
+}
+
+/// Why [`sync_for`] gives no mail sync for a workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncOff {
+    /// No `[mail.workspace.<name>] sync` key (S-G6).
+    NotOn,
+    /// Neither the workspace `host` nor `[mail] host` is set (S§7.1).
+    NoHost,
+    /// The host in force fails [`valid_mail_host`].
+    BadHost,
+    /// `sync` fails [`valid_sync_branch`].
+    BadBranch,
+    /// `[mail] sync_gap` is not `<n>s`, `<n>m` or `<n>h`.
+    BadGap,
+}
+
+/// The mail sync settings of workspace `ws_name` (mail sync design S§11, S§7.1). Checks in order: not on, branch form,
+/// host present (workspace `host`, else `[mail] host`), host form, `sync_gap` form. `remote` defaults to `origin`.
+pub fn sync_for(cfg: &Config, ws_name: &str) -> Result<SyncSettings, SyncOff> {
+    let ws = cfg.mail.workspace.get(ws_name).ok_or(SyncOff::NotOn)?;
+    let branch = ws.sync.as_ref().ok_or(SyncOff::NotOn)?;
+    if !valid_sync_branch(branch) {
+        return Err(SyncOff::BadBranch);
+    }
+    let host = ws.host.as_ref().or(cfg.mail.host.as_ref()).ok_or(SyncOff::NoHost)?;
+    if !valid_mail_host(host) {
+        return Err(SyncOff::BadHost);
+    }
+    let sync_gap = parse_sync_gap(&cfg.mail.sync_gap).ok_or(SyncOff::BadGap)?;
+    Ok(SyncSettings {
+        branch: branch.clone(),
+        remote: ws.remote.clone().unwrap_or_else(|| "origin".into()),
+        host: host.clone(),
+        sync_gap,
+    })
+}
+
 /// The loadout that needs no config (workspaces design W§11, AU45): one `claude-code` pane in the main worktree.
 pub const BUILTIN_LOADOUT: &str = "solo";
 
+/// The name of the loadout that the workspace definition gives (R§9.1). `config check` decides
+/// `default_loadout = "repository"` by this name (R§10, FX-29) and does not depend on the definition read.
+pub const REPOSITORY_LOADOUT: &str = "repository";
+
 /// The values of `loadout.<name>.window.pane.kind` (W§11); `config check` refuses any other value.
 pub const LOADOUT_KINDS: [&str; 3] = ["claude-code", "opencode", "shell"];
+
+/// The values of `loadout.<name>.window.pane.job` (workspace definition design R§9.3); `config check` refuses any other
+/// value.
+pub const JOBS: [&str; 2] = ["orchestrator", "worker"];
+
+/// `[limits] max_members` when no layer sets it (R§9.4).
+pub const MAX_MEMBERS_DEFAULT: u32 = 8;
 
 /// `[workspace]` (workspaces design W§11, AU10). User config only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -689,11 +825,19 @@ pub struct WorkspaceConfig {
     pub drain_block_dispatch: bool,
     /// How long a drain waits (AU4), in the form [`parse_duration`] reads.
     pub drain_timeout: String,
+    /// The config-directory pool (R§9.5); `~` expanded as `--config-dir` does; absolute after that.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pool: Option<String>,
 }
 
 impl Default for WorkspaceConfig {
     fn default() -> Self {
-        WorkspaceConfig { default_loadout: BUILTIN_LOADOUT.into(), drain_block_dispatch: true, drain_timeout: "10m".into() }
+        WorkspaceConfig {
+            default_loadout: BUILTIN_LOADOUT.into(),
+            drain_block_dispatch: true,
+            drain_timeout: "10m".into(),
+            pool: None,
+        }
     }
 }
 
@@ -722,6 +866,12 @@ pub struct LoadoutWindow {
 pub struct LoadoutPane {
     /// One of [`LOADOUT_KINDS`]; `config check` refuses any other value.
     pub kind: String,
+    /// The member name (M§6); config check applies zygo_core::ids::valid_member_name and uniqueness in the loadout.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// One of [`JOBS`] (R§9.3); absent: no job.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
     pub args: Vec<String>,
@@ -735,6 +885,8 @@ pub struct LoadoutPane {
     /// Only with `kind = "claude-code"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_dir: Option<String>,
+    /// The config directory from `[workspace] pool` (R§9.5). Only with `kind = "claude-code"`; not with `config_dir`.
+    pub pool: bool,
     /// Absolute, relative to the main worktree, or `branch:<name>` for the worktree that has that branch checked out.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,

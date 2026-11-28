@@ -1,0 +1,38 @@
+[zygo shaped this output: json outlined. The full output (1 lines, 25772 bytes) is saved as result 00000000000000000000000000; read it with result_view, result_search or result_tree.]
+packages: array[24]
+  []: object
+    name: string
+    version: string
+    id: string
+    license: null
+    license_file: null
+    description: null
+    source: null
+    dependencies: array[0]
+    targets: array[1]
+    features: object
+    manifest_path: string
+    metadata: null
+    publish: null
+    authors: array[0]
+    categories: array[0]
+    keywords: array[0]
+    readme: null
+    repository: null
+    homepage: null
+    documentation: null
+    edition: string
+    links: null
+    default_run: null
+    rust_version: null
+workspace_members: array[24]
+workspace_default_members: array[24]
+resolve: object
+  nodes: array[24]
+    []: object
+  root: null
+target_directory: string
+build_directory: string
+version: number
+workspace_root: string
+metadata: null

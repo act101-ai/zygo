@@ -1,0 +1,5 @@
+Claude Code 2.1.332, zygo zygo 0.2.1, tmux 3.8
+12.1 ok zygo up exit 0; workspace.json has the claude-code panes alpha and beta; both members have an agent session within 120 s
+12.2 ok alpha's task turn found in its transcript: true; mail_send recipients: beta; beta among them: yes
+12.3 ok alpha busy within 60 s: yes; idle again within 300 s: yes; task turn found: true; mail_read, mail_list or zygo mail watch calls after the last mail_send of the turn: 0
+12.4 note tool calls of the task turn, in order: ToolSearch, mcp__zygo__mail_send

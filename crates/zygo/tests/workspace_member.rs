@@ -1,6 +1,7 @@
 //! M3: hand-started members (W§8.4, AU9, AU34, AU58, AU59, AU79, AU94, AU98, AU102, W-C9; W§18 #19, #32, #54, #55, #56). Every case runs a workspace path, so the file is cfg(unix) (OP5).
 #![cfg(unix)]
 mod common;
+mod dead_port;
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -286,11 +287,6 @@ fn record(kind: Agent, state: MemberState, agent: Option<&str>, zs: Option<&str>
     r.agent_session = agent.map(String::from);
     r.zygo_session = zs.map(String::from);
     r
-}
-
-/// A port with no listener: the port of a dropped `127.0.0.1:0` listener.
-fn closed_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
 
 /// The pane of the session `session` whose `@zygo-pane` is `key`.
@@ -586,12 +582,10 @@ fn a_hand_start_with_claude_code_simple_is_saved_with_events_off() {
 #[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_provider_key_named_claude_code_simple_does_not_make_a_member_events_off() {
     let Some(h) = Harness::new() else { return };
-    std::fs::write(
-        &h.paths.config_file,
+    h.config(
         "[[model]]\nid = \"test-env\"\n[[model.provider]]\nname = \"p-env\"\nbase_url = \"https://example.invalid\"\n\
          dialects = [\"anthropic\"]\nupstream_model = \"up-env\"\nkey = \"env:CLAUDE_CODE_SIMPLE\"\n",
-    )
-    .unwrap();
+    );
     workspace_session(&h, Some(KEY2), Some(WS_ID));
     up_state(&h, &[], &mut |_| {});
     let pane = split(&h, "=zygo-app:", "cat");
@@ -827,6 +821,44 @@ fn a_spawn_failure_after_the_callback_puts_the_previous_record_back() { // revie
     }
     assert_eq!(raw_member(&h, KEY), before);
     assert_eq!(member(&h, &pane_key(&h, &pane)), None);
+}
+
+#[test] // FX-13 b5 (M§5 P1): the undo of a hand start that never started removes the maildir of the record it drops
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn lifecycle_hand_start_undo_removes_the_maildir() {
+    let Some(h) = Harness::new() else { return };
+    workspace_session(&h, Some(KEY), Some(WS_ID));
+    up_state(&h, &[(KEY, record(Agent::ClaudeCode, MemberState::Ended, Some("old"), Some(OLD_ZS)))], &mut |_| {});
+    let pane = split(&h, "=zygo-app:", "cat");
+    let (_out, mut env) = h.stub(Agent::ClaudeCode, "a");
+    let g = h.root().join("gate");
+    let returned = Hold::new(&g, "returned");
+    env.push(("ZYGO_TEST_MEMBER_GATE", g.clone().into_os_string()));
+    // `--agents []` is refused by the adapter after the callback (exit 2): the agent never starts.
+    let child = Guarded::spawn(hand(&h, &pane, &["claude", "--", "--agents", "[]"], &pairs(&env)));
+    assert!(until(Duration::from_secs(20), || g.join("returned").exists()));
+    let key = pane_key(&h, &pane);
+    let ws = h.store(WS_ID).read().unwrap().unwrap();
+    assert!(ws.members.contains_key(&key), "the callback wrote the record of {key}");
+    let r = zygo_workspace::mail::send(
+        &h.paths,
+        &ws,
+        None,
+        &key,
+        "s",
+        "b",
+        &zygo_config::MailConfig::default(),
+        std::time::SystemTime::now(),
+    )
+    .unwrap();
+    assert_eq!(r.sent.len(), 1, "{r:?}");
+    let maildir = zygo_workspace::mail::mail_dir(&h.paths, WS_ID).join(&key);
+    assert!(maildir.is_dir());
+    drop(returned);
+    let o = child.output("hand start");
+    assert_eq!(o.status.code(), Some(2), "{}", text(&o.stderr));
+    assert_eq!(member(&h, &key), None);
+    assert!(std::fs::symlink_metadata(&maildir).is_err(), "{}", text(&o.stderr));
 }
 
 // ---- The not-saved line (decision 6) and the callback re-check (AU34 `NotMember`) ----
@@ -1186,7 +1218,7 @@ fn au94_a_resume_of_another_agent_kind_refuses() { // finding 2
 #[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_resume_command_names_the_saved_launch_and_a_hand_resume_keeps_it() { // finding 6
     let Some(h) = Harness::new() else { return };
-    std::fs::write(h.root().join("config.toml"), "[profile.p1]\nprompt = \"P\"\n").unwrap();
+    h.config("[profile.p1]\nprompt = \"P\"\n");
     let first = workspace_session(&h, Some(KEY), Some(WS_ID));
     let mut r = record(Agent::ClaudeCode, MemberState::Resumable, Some("abc"), Some(OLD_ZS));
     r.launch.profile = Some("p1".into());
@@ -1239,7 +1271,7 @@ fn au98_a_hand_launch_with_user_info_is_v1_for_both_agents() {
     let Some(h) = Harness::new() else { return };
     workspace_session(&h, Some(KEY2), Some(WS_ID));
     up_state(&h, &[], &mut |_| {});
-    let url = format!("https://u:p@127.0.0.1:{}", closed_port());
+    let url = format!("https://u:p@127.0.0.1:{}", dead_port::closed_port());
     let before = state_bytes(&h);
     for agent in ["claude", "opencode"] {
         let pane = split(&h, "=zygo-app:", "cat");
@@ -1261,8 +1293,7 @@ fn w18_56_a_settings_argument_keeps_a_hand_start_a_member_through_down_and_up() 
     for (case, line) in [("readable", MERGE), ("missing", NO_FILE)] {
         let Some(h) = Harness::new() else { return };
         git_repo(&h);
-        std::fs::write(h.root().join("config.toml"), "[loadout.hold]\n[[loadout.hold.window]]\n[[loadout.hold.window.pane]]\nkind = \"shell\"\n")
-            .unwrap();
+        h.config("[loadout.hold]\n[[loadout.hold.window]]\n[[loadout.hold.window.pane]]\nkind = \"shell\"\n");
         let o = cli(&h, &["up", "--loadout", "hold", "--no-attach"], &[]);
         assert_eq!(o.status.code(), Some(0), "{case}: {}", text(&o.stderr));
         let (id, ws) = only_state(&h);
@@ -1321,14 +1352,14 @@ fn w18_19_loadout_values_reach_the_launch_and_the_resume() { // decision 2; #19 
     git_repo(&h);
     let dir = h.root().join("cc");
     std::fs::create_dir(&dir).unwrap();
-    let port = closed_port();
+    let port = dead_port::closed_port();
     let config = format!(
         "{TEAM_SERVER}[loadout.l19]\n[[loadout.l19.window]]\n[[loadout.l19.window.pane]]\nkind = \"shell\"\n\
          [[loadout.l19.window.pane]]\nkind = \"claude-code\"\ncompact = \"600k\"\nconfig_dir = \"{}\"\n\
          [[loadout.l19.window.pane]]\nkind = \"claude-code\"\nserver = \"https://127.0.0.1:{port}\"\n",
         dir.display()
     );
-    std::fs::write(h.root().join("config.toml"), config).unwrap();
+    h.config(&config);
     let token = OsString::from(zygo_proxy::team::new_token().0);
     let (out, mut env) = h.stub(Agent::ClaudeCode, "a");
     let c = ctl(&h, "a");
@@ -1387,7 +1418,7 @@ const L19U: &str = "[loadout.hold]\n[[loadout.hold.window]]\n[[loadout.hold.wind
 fn w18_19_config_check_and_a_hand_launch_report_user_info() { // #19 sentence 3; FIX-27 D9
     let Some(h) = Harness::new() else { return };
     git_repo(&h);
-    std::fs::write(h.root().join("config.toml"), L19U).unwrap();
+    h.config(L19U);
     let o = Guarded::spawn(h.zygo(&["config", "check"], &[no_check()])).output("config check");
     assert_eq!(o.status.code(), Some(11), "{}", text(&o.stderr));
     let out = text(&o.stdout);
@@ -1398,7 +1429,7 @@ fn w18_19_config_check_and_a_hand_launch_report_user_info() { // #19 sentence 3;
     assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
     let (id, ws) = only_state(&h);
     let pane = split(&h, &format!("={}:", ws.tmux_session), "cat");
-    let url = format!("https://u:p@127.0.0.1:{}", closed_port());
+    let url = format!("https://u:p@127.0.0.1:{}", dead_port::closed_port());
     let (_, env) = h.stub(Agent::ClaudeCode, "a");
     let mut extra = pairs(&env);
     extra.push(("ZYGO_WORKSPACE", OsStr::new(&id)));
@@ -1418,7 +1449,7 @@ fn w18_19_config_check_and_a_hand_launch_report_user_info() { // #19 sentence 3;
 fn w18_19_up_starts_a_user_info_pane_as_a_shell() { // AU98 in a loadout, through the CLI
     let Some(h) = Harness::new() else { return };
     git_repo(&h);
-    std::fs::write(h.root().join("config.toml"), L19U).unwrap();
+    h.config(L19U);
     let o = cli(&h, &["up", "--loadout", "l19u", "--no-attach"], &[]);
     assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
     assert_eq!(text(&o.stderr).matches(&format!("{AU98}\n")).count(), 1, "{}", text(&o.stderr));
@@ -1539,7 +1570,7 @@ fn the_printed_resume_command_starts_the_agent_as_ws_run_does() { // diff review
         let Some(h) = Harness::new() else { return };
         let (_d, srv, token) = team_server();
         let config = if serve { TEAM_SERVER } else { "" };
-        std::fs::write(h.root().join("config.toml"), format!("{config}[profile.p1]\nprompt = \"P\"\n")).unwrap();
+        h.config(&format!("{config}[profile.p1]\nprompt = \"P\"\n"));
         let first = workspace_session(&h, Some(KEY), Some(WS_ID));
         let mut r = record(Agent::ClaudeCode, MemberState::Resumable, Some("abc"), Some(OLD_ZS));
         r.launch.profile = Some("p1".into());
@@ -1645,7 +1676,7 @@ fn a_typed_id_that_does_not_exist_is_not_saved() { // diff review round 3, findi
 #[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_hand_start_exit_line_names_the_saved_launch() { // diff review round 3, finding 7
     let Some(h) = Harness::new() else { return };
-    std::fs::write(h.root().join("config.toml"), "[profile.p1]\nprompt = \"P\"\n[profile.p2]\nprompt = \"Q\"\n").unwrap();
+    h.config("[profile.p1]\nprompt = \"P\"\n[profile.p2]\nprompt = \"Q\"\n");
     let first = workspace_session(&h, Some(KEY), Some(WS_ID));
     let mut r = record(Agent::ClaudeCode, MemberState::Resumable, Some("abc"), Some(OLD_ZS));
     r.launch.profile = Some("p1".into());
@@ -1739,6 +1770,190 @@ fn errors_log(h: &Harness) -> Vec<String> {
     std::fs::read_to_string(h.store(WS_ID).dir().join("errors.log"))
         .map(|s| s.lines().map(str::to_string).collect())
         .unwrap_or_default()
+}
+
+// ---- The member name of a hand start and of `ws run` (M§6, M§9a; ML-7) ----
+
+const NAME_NEEDS_PANE: &str = "zygo: --name needs a pane of a workspace; nothing started\n";
+
+fn taken(n: &str, key: &str) -> String {
+    format!("zygo: name {n} belongs to pane {key}; nothing started\n")
+}
+
+fn named(kind: Agent, state: MemberState, agent: Option<&str>, zs: Option<&str>, n: &str) -> MemberRecord {
+    let mut r = record(kind, state, agent, zs);
+    r.name = Some(n.into());
+    r
+}
+
+#[test] // M§9a, AU84: `ws run` writes the record's member name into the marker; a bad stored name gives none
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
+fn ws_run_writes_the_record_member_name_into_the_view() {
+    let h = Harness::no_tmux();
+    up_state(
+        &h,
+        &[
+            (KEY, named(Agent::ClaudeCode, MemberState::Ended, None, None, "elena")),
+            ("kcccccccc", named(Agent::ClaudeCode, MemberState::Ended, None, None, "Elena")),
+        ],
+        &mut |_| {},
+    );
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let o = Guarded::spawn(h.zygo(&["ws", "run", "--ws-id", WS_ID, "--pane", KEY], &pairs(&env))).output("ws run");
+    assert!(o.status.success(), "{}", text(&o.stderr));
+    assert_eq!(view(&out)["workspace"]["member"], json!({"ws_id": WS_ID, "pane": KEY, "name": "elena"}));
+    let (out_b, env_b) = h.stub(Agent::ClaudeCode, "b");
+    let o = Guarded::spawn(h.zygo(&["ws", "run", "--ws-id", WS_ID, "--pane", "kcccccccc"], &pairs(&env_b))).output("ws run");
+    assert!(o.status.success(), "{}", text(&o.stderr));
+    assert_eq!(view(&out_b)["workspace"]["member"], json!({"ws_id": WS_ID, "pane": "kcccccccc"}));
+}
+
+#[test] // M§6, M§9a: `--name` reaches the record and the view, for both agents
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn a_hand_start_with_name_writes_the_member_name_to_the_record_and_the_view() {
+    let Some(h) = Harness::new() else { return };
+    let pane = split_in_workspace(&h, &mut |_| {});
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let o = Guarded::spawn(hand(&h, &pane, &["claude", "--name", "elena"], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let key = pane_key(&h, &pane);
+    assert_eq!(view(&out)["workspace"]["member"], json!({"ws_id": WS_ID, "pane": key, "name": "elena"}));
+    assert_eq!(member(&h, &key).unwrap().name, Some("elena".into()));
+    let pane = split(&h, "=zygo-app:", "cat");
+    let (out, env) = h.stub(Agent::OpenCode, "o");
+    let o = Guarded::spawn(hand(&h, &pane, &["opencode", "--name", "ops"], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let key = pane_key(&h, &pane);
+    assert_eq!(view(&out)["workspace"]["member"], json!({"ws_id": WS_ID, "pane": key, "name": "ops"}));
+    assert_eq!(member(&h, &key).unwrap().name, Some("ops".into()));
+}
+
+#[test] // M§6: a name that fails the grammar or is reserved exits 1 with one line and starts nothing
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn a_bad_or_reserved_member_name_exits_1_and_starts_nothing() {
+    let Some(h) = Harness::new() else { return };
+    let pane = split_in_workspace(&h, &mut |_| {});
+    let before = state_bytes(&h);
+    let long = "a".repeat(33);
+    for (i, n) in ["Elena", "1x", "a_b", "-a", long.as_str(), "all", "cli", "zygo", "kabcdefgh"].into_iter().enumerate() {
+        let (out, env) = h.stub(Agent::ClaudeCode, &format!("a{i}"));
+        let arg = format!("--name={n}");
+        let o = Guarded::spawn(hand(&h, &pane, &["claude", &arg], &pairs(&env))).output("hand start");
+        assert_eq!(o.status.code(), Some(1), "{n}: {}", text(&o.stderr));
+        assert_eq!(
+            text(&o.stderr),
+            format!("zygo: bad --name value `{n}`: use ^[a-z][a-z0-9-]{{0,31}}$, not all, cli, zygo or a pane key\n")
+        );
+        assert!(!out.join("argv.json").exists(), "{n}");
+        assert_eq!(pane_key(&h, &pane), "", "{n}");
+        assert_eq!(state_bytes(&h), before, "{n}");
+    }
+    let n = "a".repeat(32);
+    let (_, env) = h.stub(Agent::ClaudeCode, "ok");
+    let arg = format!("--name={n}");
+    let o = Guarded::spawn(hand(&h, &pane, &["claude", &arg], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert_eq!(member(&h, &pane_key(&h, &pane)).unwrap().name, Some(n));
+}
+
+#[test] // M§6: a name another member of the workspace holds exits 1 with one line and starts nothing
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn a_member_name_another_member_holds_exits_1_and_starts_nothing() {
+    let Some(h) = Harness::new() else { return };
+    workspace_session(&h, Some(KEY2), Some(WS_ID));
+    up_state(&h, &[(KEY, named(Agent::ClaudeCode, MemberState::Ended, None, None, "elena"))], &mut |_| {});
+    let before = raw_member(&h, KEY);
+    let pane = split(&h, "=zygo-app:", "cat");
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let o = Guarded::spawn(hand(&h, &pane, &["claude", "--name", "elena"], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o.stderr));
+    assert_eq!(text(&o.stderr), taken("elena", KEY));
+    assert!(!out.join("argv.json").exists());
+    assert_eq!(raw_member(&h, KEY), before);
+    assert!(member(&h, &pane_key(&h, &pane)).is_none());
+}
+
+#[test] // M§6: the callback checks the name again under the lock; a holder there stops the launch (no v1 launch)
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn the_callback_refuses_a_member_name_taken_since_the_check() {
+    let Some(h) = Harness::new() else { return };
+    let (o, out, key) = refused_in_callback(&h, &["claude", "--name", "elena"], &mut |h, _| {
+        h.store(WS_ID)
+            .update_existing(Duration::from_secs(5), &mut |w| {
+                w.members.insert(KEY.into(), named(Agent::ClaudeCode, MemberState::Ended, None, None, "elena"));
+                Ok(())
+            })
+            .unwrap();
+    });
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o.stderr));
+    assert_eq!(text(&o.stderr).matches(&taken("elena", KEY)).count(), 1, "{}", text(&o.stderr));
+    assert!(!text(&o.stderr).contains(NOT_SAVED), "{}", text(&o.stderr));
+    assert!(!out.join("argv.json").exists());
+    assert!(member(&h, &key).is_none());
+}
+
+#[test] // ML-7 review round 1, F1: with `--name`, a callback refusal stops the launch; no v1 launch
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn a_callback_refusal_with_member_name_exits_1_and_starts_nothing() {
+    let Some(h) = Harness::new() else { return };
+    let mut before = Vec::new();
+    let (o, out, key) = refused_in_callback(&h, &["claude", "--name", "elena"], &mut |h, _| {
+        h.store(WS_ID)
+            .update_existing(Duration::from_secs(5), &mut |w| {
+                w.phase = Phase::Stopping;
+                Ok(())
+            })
+            .unwrap();
+        before = state_bytes(h);
+    });
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o.stderr));
+    let want = format!("{NOT_SAVED}a member starts only in phase up or draining, not stopping\n");
+    assert_eq!(text(&o.stderr).matches(&want).count(), 1, "{}", text(&o.stderr));
+    assert!(!out.join("argv.json").exists());
+    assert_eq!(state_bytes(&h), before);
+    assert!(member(&h, &key).is_none());
+}
+
+#[test] // ML-7 review round 1, F3: with `--name`, a not-saved line of the hand start is the one line
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn member_name_after_a_not_saved_line_prints_only_that_line() {
+    let Some(h) = Harness::new() else { return };
+    workspace_session(&h, Some(KEY2), Some(WS_ID));
+    let pane = split(&h, "=zygo-app:", "cat");
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let o = Guarded::spawn(hand(&h, &pane, &["claude", "--name", "elena"], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o.stderr));
+    assert_eq!(text(&o.stderr), format!("{NOT_SAVED}no workspace state for {WS_ID}\n"));
+    assert!(!out.join("argv.json").exists());
+    assert!(!h.store(WS_ID).dir().exists());
+}
+
+#[test] // M§6: `--name` outside a pane of a workspace exits 1 with one line and starts nothing
+fn member_name_outside_a_workspace_pane_exits_1_and_starts_nothing() {
+    let h = Harness::no_tmux();
+    for (kind, verb, stub) in [(Agent::ClaudeCode, "claude", "a"), (Agent::OpenCode, "opencode", "o")] {
+        let (out, env) = h.stub(kind, stub);
+        let mut extra = pairs(&env);
+        extra.push(no_check());
+        let o = Guarded::spawn(h.zygo(&[verb, "--name", "elena"], &extra)).output(verb);
+        assert_eq!(o.status.code(), Some(1), "{verb}: {}", text(&o.stderr));
+        assert_eq!(text(&o.stderr), NAME_NEEDS_PANE, "{verb}");
+        assert!(!out.join("argv.json").exists(), "{verb}");
+        assert!(!h.store(WS_ID).dir().exists(), "{verb}");
+    }
+}
+
+#[test] // M§6: the accepted resume keeps its saved member name when `--name` is not given
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn an_accepted_hand_resume_keeps_the_member_name_without_name() {
+    let Some(h) = Harness::new() else { return };
+    let first = workspace_session(&h, Some(KEY), Some(WS_ID));
+    up_state(&h, &[(KEY, named(Agent::ClaudeCode, MemberState::Resumable, Some("abc"), Some(OLD_ZS), "elena"))], &mut |_| {});
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let o = Guarded::spawn(hand(&h, &first, &["claude", "--", "--resume", "abc"], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert_eq!(view(&out)["workspace"]["member"]["name"], "elena");
+    assert_eq!(member(&h, KEY).unwrap().name, Some("elena".into()));
 }
 
 #[test] // FIX-30, AU54, C6: the member wrapper's snapshots log the AU54 text and make no tmux call; the agent runs

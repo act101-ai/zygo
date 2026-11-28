@@ -1,0 +1,9 @@
+{
+   "agent" : "opencode",
+   "captured_on" : "2026-11-25",
+   "command" : "cargo test",
+   "event" : "PostToolUse",
+   "exit" : 101,
+   "source" : "scratch lib crate `scratch` (cargo new --lib --vcs none); src/lib.rs holds `pub fn add(a: u64, b: u64) -> u64 { a + b }` and, in `mod tests` with `use super::add;`, 120 unit tests tests::adds_001 to tests::adds_120, each one `assert_eq!` with literal numbers, from `assert_eq!(add(1, 1), 2);` to `assert_eq!(add(120, 120), 240);`; plus tests::parses_a_count with `let n: u32 = \"7\";` then `assert_eq!(n, 7);` (E0308); cargo test run by capture-shaping.sh in /repo",
+   "tool" : "cargo 1.98.0"
+}

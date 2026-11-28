@@ -12,6 +12,8 @@ pub struct Features {
     /// `workspace_tool` in a profile (`not a feature key`), and the MCP server applies no profile: it reads this value
     /// from the merged config only. `Merged::apply_profile` itself does not refuse the key.
     pub workspace_tool: bool,
+    /// The mail tools and the session mail item (M§8, M§8a). Default true; the consumer applies them only in a workspace member.
+    pub mail: bool,
     pub redaction: RedactionFeatures,
 }
 
@@ -22,6 +24,7 @@ impl Default for Features {
             work_units: true,
             compact_tool: true,
             workspace_tool: false,
+            mail: true,
             redaction: RedactionFeatures::default(),
         }
     }

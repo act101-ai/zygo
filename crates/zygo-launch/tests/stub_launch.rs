@@ -451,6 +451,7 @@ fn claude_code_flags_settings_agents_and_mcp_match_the_spec() {
             "PostToolUse": [h(Some("Bash|Read|Grep|Glob|WebFetch"), "trim"), h(Some("*"), "work")],
             "PostToolUseFailure": [h(Some("*"), "work")],
             "SubagentStop": [h(None, "work")],
+            "SubagentStart": [h(None, "session-start")],
             "SessionStart": [h(None, "session-start")], "UserPromptSubmit": [h(None, "prompt")], "PreCompact": [h(None, "pre-compact")]})
     );
     // env mirror: settings.env is exactly the eleven rows and equals the process environment rows

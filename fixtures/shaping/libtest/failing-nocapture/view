@@ -1,0 +1,31 @@
+[zygo shaped this output: passed tests hidden, build progress hidden. The full output (149 lines, 4247 bytes) is saved as result 00000000000000000000000000; read it with result_view, result_search or result_tree.]
+
+running 122 tests
+[zygo: 120 passed and 0 ignored test lines hidden]
+test tests::add_exceeds_its_inputs ... FAILED
+ledger row 0: 3
+ledger row 1: 4
+ledger row 2: 5
+test tests::sums_a_ledger ... FAILED
+
+failures:
+
+failures:
+    tests::add_exceeds_its_inputs
+    tests::sums_a_ledger
+
+test result: FAILED. 120 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[zygo: 1 build progress lines hidden]
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.36s
+     Running unittests src/lib.rs (target/debug/deps/scratch-b66679a8c20ae5f6)
+
+thread 'tests::add_exceeds_its_inputs' (16884622) panicked at src/lib.rs:498:9:
+add(1, 1) must exceed 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'tests::sums_a_ledger' (16884743) panicked at src/lib.rs:494:9:
+assertion `left == right` failed: ledger total
+  left: 12
+ right: 13
+error: test failed, to rerun pass `--lib`

@@ -1,0 +1,39 @@
+[package]
+name = "zygo-mail-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# `sync::run_with_deadline`, the pass deadline seam (S-C9). Test builds turn it on (this crate's own tests through the
+# self dev-dependency below, `zygo`'s tests through its `test-hooks` feature), and so does the operator's live-premise
+# build (`cargo build -p zygo --features test-hooks` for `scripts/premises/live-hud.sh`). A normal or release build
+# never does.
+test-hooks = []
+
+[dependencies]
+zygo-core.workspace = true
+zygo-config.workspace = true
+zygo-work.workspace = true
+zygo-plugins.workspace = true
+zygo-workspace.workspace = true
+zygo-redact.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ulid.workspace = true
+rand.workspace = true
+sha2.workspace = true
+hex.workspace = true
+fs4.workspace = true
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+zygo-mail-sync = { path = ".", features = ["test-hooks"] }
+# The test hooks of zygo-workspace (`up::testing::hook`, fired through `mail::fire_point`) for the tests of this crate
+# only: the outbox tests drive the `remote_send_*` points of `outbox::send_remote_with` and the
+# `mail_delivery_after_lock` point of `Delivery::begin` (FX-28). Production builds do not get them.
+zygo-workspace = { workspace = true, features = ["test-hooks"] }

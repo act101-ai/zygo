@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
+use std::{collections::BTreeMap, path::{Path, PathBuf}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 use rusqlite::Connection;
 use zygo_usage::*;
 
@@ -27,10 +27,113 @@ fn req(session: &str, ts: i64) -> RequestRow {
         model: "m1".into(), provider: "p1".into(), status: 200, ..Default::default() }
 }
 fn trim(session: &str, ts: i64, stored: u64, view: u64) -> TrimRow {
-    TrimRow { ts, session: session.into(), agent_id: None, tool: "Bash".into(), kind: "head".into(), stored_bytes: stored, view_bytes: view }
+    TrimRow { ts, session: session.into(), agent_id: None, tool: "Bash".into(), kind: "head".into(), stored_bytes: stored, view_bytes: view, result_id: None, command: None, shaper: None }
 }
 fn unit(session: &str, name: &str, began_at: i64) -> WorkUnitRow {
     WorkUnitRow { unit: name.into(), round: 1, session: session.into(), agent_id: "main".into(), began_at, ..Default::default() }
+}
+/// The `SCHEMA` text of commit `97d8767`: lines 6-77 of `git show 97d8767:crates/zygo-usage/src/schema.rs`, copied
+/// byte for byte (from `CREATE TABLE IF NOT EXISTS requests (` to `… upstream_errors_ts ON upstream_errors(ts);`).
+const SCHEMA_97D8767: &str = "
+CREATE TABLE IF NOT EXISTS requests (
+    ts INTEGER NOT NULL,
+    session TEXT NOT NULL,
+    token_label TEXT,
+    agent TEXT NOT NULL,
+    agent_version TEXT,
+    agent_id TEXT,
+    agent_type TEXT,
+    request_class TEXT,
+    compaction INTEGER NOT NULL,
+    route TEXT NOT NULL,
+    role_requested TEXT,
+    role_served TEXT,
+    model TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    profile TEXT,
+    passthrough INTEGER NOT NULL,
+    status INTEGER NOT NULL,
+    latency_ms INTEGER NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    cache_read_tokens INTEGER NOT NULL,
+    cache_write_tokens INTEGER NOT NULL,
+    estimated_usd REAL NOT NULL,
+    adjustments TEXT NOT NULL,
+    redactions TEXT NOT NULL,
+    repo TEXT,
+    work_item TEXT
+);
+CREATE TABLE IF NOT EXISTS trims (
+    ts INTEGER NOT NULL,
+    session TEXT NOT NULL,
+    agent_id TEXT,
+    tool TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    stored_bytes INTEGER NOT NULL,
+    view_bytes INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS work_units (
+    unit TEXT NOT NULL,
+    round INTEGER NOT NULL,
+    session TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    agent_type TEXT,
+    began_at INTEGER NOT NULL,
+    ended_at INTEGER,
+    tool_calls INTEGER NOT NULL,
+    failed_calls INTEGER NOT NULL,
+    check_ran INTEGER NOT NULL,
+    check_passed INTEGER NOT NULL,
+    guard_events TEXT NOT NULL,
+    levels TEXT NOT NULL,
+    verdict TEXT,
+    PRIMARY KEY (session, agent_id, unit, round, began_at)
+);
+CREATE INDEX IF NOT EXISTS requests_session_ts ON requests(session, ts);
+CREATE INDEX IF NOT EXISTS requests_ts ON requests(ts);
+CREATE INDEX IF NOT EXISTS trims_session ON trims(session);
+CREATE INDEX IF NOT EXISTS trims_ts ON trims(ts);
+CREATE INDEX IF NOT EXISTS work_units_session ON work_units(session);
+CREATE TABLE IF NOT EXISTS sync_pending (session TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS upstream_errors (
+    ts INTEGER NOT NULL,
+    session TEXT NOT NULL,
+    request_class TEXT,
+    model TEXT NOT NULL,
+    status INTEGER NOT NULL,
+    error_type TEXT NOT NULL,
+    error_message TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS upstream_errors_session_ts ON upstream_errors(session, ts);
+CREATE INDEX IF NOT EXISTS upstream_errors_ts ON upstream_errors(ts);
+";
+const TRIM_SEVEN: [&str; 7] = ["ts", "session", "agent_id", "tool", "kind", "stored_bytes", "view_bytes"];
+const TRIM_TEN: [&str; 10] = ["ts", "session", "agent_id", "tool", "kind", "stored_bytes", "view_bytes", "result_id", "command", "shaper"];
+const RID: &str = "01J00000000000000000000000";
+/// A database as the code at `97d8767` leaves it: its schema text, `user_version` 1, one seven-column `trims` row.
+fn old_db(db: &Path) {
+    let c = Connection::open(db).unwrap();
+    c.execute_batch(SCHEMA_97D8767).unwrap();
+    c.execute_batch("PRAGMA user_version = 1").unwrap();
+    c.execute("INSERT INTO trims (ts, session, agent_id, tool, kind, stored_bytes, view_bytes) VALUES (5, 'S1', NULL, 'Bash', 'head', 1000, 100)", []).unwrap();
+}
+fn pragma(db: &Path, name: &str) -> i64 {
+    Connection::open(db).unwrap().query_row(&format!("PRAGMA {name}"), [], |r| r.get(0)).unwrap()
+}
+/// Makes `trims` a seven-column table again under an open `Store` (SQLite 3.35+ `DROP COLUMN`).
+fn drop_new_trim_columns(db: &Path) {
+    let c = Connection::open(db).unwrap();
+    for col in ["result_id", "command", "shaper"] { c.execute_batch(&format!("ALTER TABLE trims DROP COLUMN {col}")).unwrap(); }
+}
+fn readback(session: &str, ts: i64) -> ReadbackRow {
+    ReadbackRow { ts, session: session.into(), read_in: session.into(), result_id: RID.into(), tool: "result_view".into(), bytes: 10 }
+}
+type TenCols = (i64, String, Option<String>, String, String, i64, i64, Option<String>, Option<String>, Option<String>);
+fn ten_cols(db: &Path, session: &str) -> TenCols {
+    Connection::open(db).unwrap().query_row(
+        "SELECT ts, session, agent_id, tool, kind, stored_bytes, view_bytes, result_id, command, shaper FROM trims WHERE session = ?1",
+        [session], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?))).unwrap()
 }
 
 #[test]
@@ -41,7 +144,7 @@ fn schema_creates_three_tables_in_wal_mode() {
     let mut names: Vec<String> = c.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").unwrap()
         .query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
     names.sort();
-    assert_eq!(names, ["requests", "sync_pending", "trims", "upstream_errors", "work_units"]); // N37 S4: sync_pending; FIX-10: upstream_errors
+    assert_eq!(names, ["readbacks", "requests", "sync_pending", "trims", "upstream_errors", "work_units"]); // N37 S4: sync_pending; FIX-10: upstream_errors; O§6.5: readbacks
     let mode: String = c.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
     assert_eq!(mode, "wal");
 }
@@ -51,7 +154,7 @@ fn never_list_columns_are_exact() {
     let t = Tmp::new();
     let _s = Store::open(&t.db()).unwrap();
     assert_eq!(cols(&t.db(), "requests"), ["ts","session","token_label","agent","agent_version","agent_id","agent_type","request_class","compaction","route","role_requested","role_served","model","provider","profile","passthrough","status","latency_ms","input_tokens","output_tokens","cache_read_tokens","cache_write_tokens","estimated_usd","adjustments","redactions","repo","work_item"]);
-    assert_eq!(cols(&t.db(), "trims"), ["ts","session","agent_id","tool","kind","stored_bytes","view_bytes"]);
+    assert_eq!(cols(&t.db(), "trims"), TRIM_TEN);
     assert_eq!(cols(&t.db(), "work_units"), ["unit","round","session","agent_id","agent_type","began_at","ended_at","tool_calls","failed_calls","check_ran","check_passed","guard_events","levels","verdict"]);
     assert_eq!(cols(&t.db(), "upstream_errors"), ["ts","session","request_class","model","status","error_type","error_message"]);
 }
@@ -522,7 +625,7 @@ fn upstream_errors_table_is_created_on_an_existing_database() {
     let t = Tmp::new();
     Store::open(&t.db()).unwrap().insert_request(&req("S1", 1)).unwrap();
     Connection::open(t.db()).unwrap().execute_batch("DROP TABLE upstream_errors").unwrap();
-    assert_eq!(tables(&t.db()), ["requests", "sync_pending", "trims", "work_units"]);
+    assert_eq!(tables(&t.db()), ["readbacks", "requests", "sync_pending", "trims", "work_units"]);
     let s = Store::open(&t.db()).unwrap();
     s.insert_upstream_error(&uerr("S1", 2)).unwrap();
     assert_eq!(s.upstream_errors("S1").unwrap(), vec![uerr("S1", 2)]);
@@ -566,4 +669,438 @@ fn replace_requests_deletes_the_sessions_upstream_errors() {
     assert_eq!(s.replace_requests("S1", &[req("S1", 2)]).unwrap(), 1);
     assert!(s.upstream_errors("S1").unwrap().is_empty());
     assert_eq!(s.upstream_errors("S2").unwrap(), vec![uerr("S2", 1)]);
+}
+
+// ---- OS-2: readbacks and the additive trims columns (O§6.5) ----
+
+#[test] // O§6.5 item 2: the table, its NOT NULL columns, its two indexes
+fn readbacks_schema_table_and_indexes_exist_after_open() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    assert_eq!(cols(&t.db(), "readbacks"), ["ts", "session", "read_in", "result_id", "tool", "bytes"]);
+    let c = Connection::open(t.db()).unwrap();
+    let notnull: Vec<i64> = c.prepare("PRAGMA table_info(readbacks)").unwrap().query_map([], |r| r.get(3)).unwrap().map(|r| r.unwrap()).collect();
+    assert_eq!(notnull, [1, 1, 1, 1, 1, 1]);
+    let idx: Vec<String> = c.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'readbacks' ORDER BY name").unwrap()
+        .query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+    assert_eq!(idx, ["readbacks_session", "readbacks_ts"]);
+    let on = |i: &str| -> Vec<String> { c.prepare(&format!("PRAGMA index_info({i})")).unwrap().query_map([], |r| r.get(2)).unwrap().map(|r| r.unwrap()).collect() };
+    assert_eq!(on("readbacks_session"), ["session"]);
+    assert_eq!(on("readbacks_ts"), ["ts"]);
+}
+
+#[test] // O-C8, O§6.5 preamble: no schema version change, on a fresh and on a 97d8767 database
+fn readbacks_schema_user_version_stays_1() {
+    assert_eq!(store::SCHEMA_VERSION, 1);
+    let (fresh, old) = (Tmp::new(), Tmp::new());
+    drop(Store::open(&fresh.db()).unwrap());
+    old_db(&old.db());
+    drop(Store::open(&old.db()).unwrap());
+    assert_eq!(pragma(&fresh.db(), "user_version"), 1);
+    assert_eq!(pragma(&old.db(), "user_version"), 1);
+}
+
+#[test] // O§6.5 item 4: ten columns written; item 4 `#[serde(default)]`: a row without the new keys reads them as None
+fn readbacks_schema_insert_trim_writes_ten_columns() {
+    let t = Tmp::new();
+    let s = Store::open(&t.db()).unwrap();
+    let tr = TrimRow { agent_id: Some("a1".into()), result_id: Some(RID.into()), command: Some("git diff".into()), shaper: Some("diff".into()), ..trim("S1", 5, 1000, 100) };
+    s.insert_trim(&tr).unwrap();
+    assert_eq!(ten_cols(&t.db(), "S1"), (5, "S1".into(), Some("a1".into()), "Bash".into(), "head".into(), 1000, 100, Some(RID.into()), Some("git diff".into()), Some("diff".into())));
+    let old: TrimRow = serde_json::from_str(r#"{"ts":5,"session":"S1","agent_id":null,"tool":"Bash","kind":"head","stored_bytes":1000,"view_bytes":100}"#).unwrap();
+    assert_eq!(old, trim("S1", 5, 1000, 100));
+}
+
+#[test] // O§6.4, O§6.5 item 2: one row, every column
+fn readbacks_schema_insert_readback_round_trip() {
+    let t = Tmp::new();
+    let s = Store::open(&t.db()).unwrap();
+    s.insert_readback(&ReadbackRow { ts: 7, session: "S1".into(), read_in: "S2".into(), result_id: RID.into(), tool: "result_view".into(), bytes: 4096 }).unwrap();
+    let row: (i64, String, String, String, String, i64) = Connection::open(t.db()).unwrap()
+        .query_row("SELECT ts, session, read_in, result_id, tool, bytes FROM readbacks", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))).unwrap();
+    assert_eq!(row, (7, "S1".into(), "S2".into(), RID.into(), "result_view".into(), 4096));
+}
+
+#[test] // O§6.5 item 6; fixed ts values far from any cutoff, so no clock margin is involved
+fn readbacks_schema_prune_deletes_old_readbacks_and_keeps_new() {
+    const OLD_TS: i64 = 1; // 1970-01-01: older than every cutoff
+    const NEW_TS: i64 = 4_102_444_800; // 2100-01-01T00:00:00Z: newer than every cutoff before 2100
+    let t = Tmp::new();
+    let s = Store::open(&t.db()).unwrap();
+    s.insert_readback(&readback("old", OLD_TS)).unwrap();
+    s.insert_readback(&readback("new", NEW_TS)).unwrap();
+    s.prune(90).unwrap();
+    assert_eq!(survivors(&t.db(), "readbacks"), ["new"]);
+    s.prune(0).unwrap(); // 0 keeps everything
+    assert_eq!(survivors(&t.db(), "readbacks"), ["new"]);
+}
+
+#[test] // O§6.5 item 3; O§16 item 15 "a full open then adds the three columns"; old rows read the new columns as null
+fn readbacks_schema_old_database_gets_three_columns_and_old_rows_read_null() {
+    let t = Tmp::new();
+    old_db(&t.db());
+    assert_eq!(cols(&t.db(), "trims"), TRIM_SEVEN);
+    assert!(!tables(&t.db()).iter().any(|n| n == "readbacks"));
+    drop(Store::open(&t.db()).unwrap());
+    assert_eq!(cols(&t.db(), "trims"), TRIM_TEN);
+    assert!(tables(&t.db()).iter().any(|n| n == "readbacks"));
+    assert_eq!(ten_cols(&t.db(), "S1"), (5, "S1".into(), None, "Bash".into(), "head".into(), 1000, 100, None, None, None));
+}
+
+#[test] // O§10 "Two full opens add a column at once"; O§16 item 15: an injected missing column gets "duplicate column name" and succeeds
+fn readbacks_schema_injected_missing_column_is_success() {
+    let t = Tmp::new();
+    old_db(&t.db());
+    drop(Store::open(&t.db()).unwrap()); // adds the three columns
+    let s = Store::open_with_column_check(&t.db(), &["shaper"]).unwrap();
+    assert_eq!(cols(&t.db(), "trims"), TRIM_TEN);
+    s.insert_trim(&TrimRow { shaper: Some("size".into()), ..trim("S2", 6, 10, 1) }).unwrap();
+    assert_eq!(ten_cols(&t.db(), "S2").9.as_deref(), Some("size"));
+}
+
+#[test] // O§6.5 item 4, O§10 "Database without the new columns (hook insert)"; item 3 "one time per process"
+fn readbacks_schema_insert_trim_on_seven_column_database_writes_seven_columns() {
+    let t = Tmp::new();
+    old_db(&t.db());
+    drop(Store::open(&t.db()).unwrap());
+    drop_new_trim_columns(&t.db());
+    let s = Store::open(&t.db()).unwrap(); // this process checked this path already: no second check
+    assert_eq!(cols(&t.db(), "trims"), TRIM_SEVEN);
+    s.insert_trim(&TrimRow { result_id: Some(RID.into()), command: Some("cargo test".into()), shaper: Some("libtest".into()), ..trim("S2", 6, 2000, 200) }).unwrap();
+    assert_eq!(count(&t.db(), "trims"), 2);
+    let row: (i64, String, Option<String>, String, String, i64, i64) = Connection::open(t.db()).unwrap()
+        .query_row("SELECT ts, session, agent_id, tool, kind, stored_bytes, view_bytes FROM trims WHERE session = 'S2'", [], |r|
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))).unwrap();
+    assert_eq!(row, (6, "S2".into(), None, "Bash".into(), "head".into(), 2000, 200));
+}
+
+#[test] // review focus 21: no ALTER (no schema write) when the columns exist; the seam always checks
+fn readbacks_schema_column_check_writes_no_schema_when_columns_exist() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    let v = pragma(&t.db(), "schema_version");
+    drop(Store::open_with_column_check(&t.db(), &[]).unwrap()); // the check runs; nothing is missing
+    assert_eq!(pragma(&t.db(), "schema_version"), v);
+    drop_new_trim_columns(&t.db());
+    drop(Store::open_with_column_check(&t.db(), &[]).unwrap()); // the seam checks a path already checked
+    assert_eq!(cols(&t.db(), "trims"), TRIM_TEN);
+}
+
+#[test] // review focus 21: the fallback hides no error other than a missing column
+fn readbacks_schema_insert_trim_fallback_keeps_other_errors() {
+    let t = Tmp::new();
+    let s = Store::open(&t.db()).unwrap();
+    Connection::open(t.db()).unwrap().execute_batch("DROP TABLE trims").unwrap();
+    let e = s.insert_trim(&trim("S1", 1, 10, 1)).expect_err("a missing table is not a missing column").to_string();
+    assert!(e.contains("no such table: trims"), "{e}");
+    // A prepare error that a seven-column insert would not meet (the `Store` opens after the table exists, so the
+    // error comes from prepare, not from a re-prepare at execute): the fallback must not write the row.
+    let g = Tmp::new();
+    Connection::open(g.db()).unwrap().execute_batch("CREATE TABLE trims (ts INTEGER NOT NULL, session TEXT NOT NULL, agent_id TEXT, tool TEXT NOT NULL, kind TEXT NOT NULL, stored_bytes INTEGER NOT NULL, view_bytes INTEGER NOT NULL, result_id TEXT GENERATED ALWAYS AS ('x') VIRTUAL, command TEXT, shaper TEXT)").unwrap();
+    let e = Store::open(&g.db()).unwrap().insert_trim(&trim("S1", 1, 10, 1)).expect_err("a generated column is not a missing column").to_string();
+    assert!(e.contains("cannot INSERT into generated column"), "{e}");
+    assert_eq!(count(&g.db(), "trims"), 0);
+}
+
+#[test] // O§6.5 preamble, O-C8: the read-only open of each binary still opens the database, before and after the full open
+fn readbacks_schema_open_read_only_opens_old_and_migrated_database() {
+    let t = Tmp::new();
+    old_db(&t.db());
+    assert_eq!(Store::open_read_only(&t.db()).unwrap().bytes_trimmed("S1").unwrap(), 900);
+    drop(Store::open(&t.db()).unwrap());
+    assert_eq!(Store::open_read_only(&t.db()).unwrap().bytes_trimmed("S1").unwrap(), 900);
+}
+
+#[test] // review round 1 F3: a generated (hidden) `shaper` column is present; `open` runs no ALTER for it
+fn readbacks_schema_generated_column_counts_as_present() {
+    let t = Tmp::new();
+    Connection::open(t.db()).unwrap().execute_batch("CREATE TABLE trims (ts INTEGER NOT NULL, session TEXT NOT NULL, agent_id TEXT, tool TEXT NOT NULL, kind TEXT NOT NULL, stored_bytes INTEGER NOT NULL, view_bytes INTEGER NOT NULL, result_id TEXT, command TEXT, shaper TEXT GENERATED ALWAYS AS ('x') VIRTUAL)").unwrap();
+    drop(Store::open(&t.db()).unwrap()); // creates the other tables
+    let v = pragma(&t.db(), "schema_version");
+    drop(Store::open_with_column_check(&t.db(), &[]).unwrap());
+    assert_eq!(pragma(&t.db(), "schema_version"), v);
+}
+
+// ---- OS-3: bounded open (O§7.11, O-C10) ----
+
+#[test]
+fn open_bounded_replaces_the_sqlite_busy_timeout() {
+    // O§7.11: the open's own handler; sqlite3_busy_handler sets busyTimeout to 0, so SQLite's requested-time handler is off
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    assert_eq!(store::HOOK_DB_BOUND, Duration::from_millis(100));
+    assert_eq!(Store::open_bounded(&t.db(), Duration::ZERO).unwrap().busy_timeout_ms().unwrap(), 0);
+    assert_eq!(Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).unwrap().busy_timeout_ms().unwrap(), 0);
+}
+
+// ---- OS-45: the wait is bounded in elapsed time (O§7.11, O-C10); each instant is an offset from one origin (O§8.4) ----
+
+#[test]
+fn busy_wait_gives_up_at_bound_zero_without_a_sleep() {
+    let t0 = Instant::now();
+    assert_eq!(store::BusyWait::new(Duration::ZERO).next(0, t0), None);
+}
+
+#[test]
+fn busy_wait_gives_up_when_elapsed_reaches_the_bound() {
+    let ms = Duration::from_millis;
+    let t0 = Instant::now();
+    let mut w = store::BusyWait::new(store::HOOK_DB_BOUND);
+    assert_eq!(w.next(0, t0), Some(ms(1)));
+    assert_eq!(w.next(1, t0 + ms(2)), Some(ms(2)));
+    // OS-38: at SQLite's 8th call 78 ms were requested but about 145 ms had passed
+    assert_eq!(w.next(7, t0 + ms(145)), None);
+    assert_eq!(w.next(2, t0 + store::HOOK_DB_BOUND), None);
+}
+
+#[test]
+fn busy_wait_never_asks_a_sleep_past_the_bound() {
+    let t0 = Instant::now();
+    let b = store::HOOK_DB_BOUND;
+    for count in 1..40 {
+        for e in 0..=110u64 {
+            let mut w = store::BusyWait::new(b);
+            assert!(w.next(0, t0).is_some());
+            let elapsed = Duration::from_millis(e);
+            let got = w.next(count, t0 + elapsed);
+            if elapsed >= b {
+                assert_eq!(got, None, "count {count}, elapsed {e} ms");
+            } else {
+                let d = got.unwrap_or_else(|| panic!("count {count}, elapsed {e} ms: gave up before the bound"));
+                assert!(!d.is_zero() && elapsed + d <= b, "count {count}, elapsed {e} ms, sleep {d:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn busy_wait_restarts_its_clock_at_count_zero() {
+    let ms = Duration::from_millis;
+    let t0 = Instant::now();
+    let mut w = store::BusyWait::new(store::HOOK_DB_BOUND);
+    assert_eq!(w.next(0, t0), Some(ms(1)));
+    assert_eq!(w.next(5, t0 + ms(99)), Some(ms(1))); // step 20 ms, 1 ms left
+    // a new busy statement: SQLite sets the count to 0 at each run (sqlite3VdbeExec), so the clock restarts
+    assert_eq!(w.next(0, t0 + ms(500)), Some(ms(1)));
+    assert_eq!(w.next(1, t0 + ms(502)), Some(ms(2)));
+}
+
+#[test]
+fn busy_wait_open_bounded_waits_for_a_released_lock() {
+    // The real handler waits for a released lock: the bound is `Duration::MAX`, so no deadline can fail the test
+    // (O§8.4); the lock is released only after the insert is about to run, so the insert almost surely meets it.
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    let raw = Connection::open(t.db()).unwrap();
+    raw.execute_batch("BEGIN IMMEDIATE").unwrap(); // another process holds the write lock
+    let (go, ready) = std::sync::mpsc::channel::<()>();
+    let release = std::thread::spawn(move || {
+        ready.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        raw.execute_batch("COMMIT").unwrap();
+    });
+    let s = Store::open_bounded(&t.db(), Duration::MAX).unwrap();
+    go.send(()).unwrap();
+    let r = s.insert_trim(&trim("S1", 5, 1000, 100));
+    release.join().unwrap();
+    r.expect("the bounded insert must wait for the released lock");
+    assert_eq!(count(&t.db(), "trims"), 1);
+}
+
+#[test]
+fn busy_wait_open_bounded_insert_is_busy_when_the_lock_is_never_released() {
+    // The lock is never released, so the outcome does not depend on time: only the error kind is asserted.
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    let s = Store::open_bounded(&t.db(), Duration::from_millis(50)).unwrap();
+    let raw = Connection::open(t.db()).unwrap();
+    raw.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let e = s.insert_trim(&trim("S1", 5, 1000, 100)).expect_err("a lock held past the bound must fail the insert");
+    let code = e.downcast_ref::<rusqlite::Error>().and_then(|e| e.sqlite_error_code());
+    assert_eq!(code, Some(rusqlite::ErrorCode::DatabaseBusy), "{e}");
+    raw.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(count(&t.db(), "trims"), 0);
+}
+
+#[test]
+fn busy_wait_clocks_are_per_store() {
+    let ms = Duration::from_millis;
+    let t0 = Instant::now();
+    let (mut a, mut b) = (store::BusyWait::new(store::HOOK_DB_BOUND), store::BusyWait::new(store::HOOK_DB_BOUND));
+    assert_eq!(a.next(0, t0), Some(ms(1)));
+    assert_eq!(b.next(0, t0 + ms(90)), Some(ms(1)));
+    assert_eq!(a.next(3, t0 + ms(95)), Some(ms(5))); // a: 95 ms passed, step 10 ms, 5 ms left
+    assert_eq!(b.next(3, t0 + ms(95)), Some(ms(10))); // b: 5 ms passed
+    assert_eq!(a.next(4, t0 + ms(100)), None);
+    assert_eq!(b.next(4, t0 + ms(100)), Some(ms(15)));
+}
+
+// ---- OS-46: the hook's wait is bounded in total for one call (O§7.11, O-C10); instants are offsets (O§8.4) ----
+
+#[test]
+fn busy_wait_total_gives_up_at_bound_zero_without_a_sleep() {
+    let t0 = Instant::now();
+    assert_eq!(store::BusyWait::total(Duration::ZERO).next(0, t0), None);
+}
+
+#[test]
+fn busy_wait_total_keeps_its_clock_across_statements() {
+    let ms = Duration::from_millis;
+    let t0 = Instant::now();
+    let mut w = store::BusyWait::total(store::HOOK_DB_BOUND);
+    assert_eq!(w.next(0, t0), Some(ms(1))); // the open's read waits
+    assert_eq!(w.next(1, t0 + ms(40)), Some(ms(2)));
+    // the insert: SQLite passes count 0 again, but the call's clock does not restart
+    assert_eq!(w.next(0, t0 + ms(60)), Some(ms(1)));
+    assert_eq!(w.next(4, t0 + ms(95)), Some(ms(5))); // step 15 ms, 5 ms left
+    assert_eq!(w.next(0, t0 + store::HOOK_DB_BOUND), None);
+    assert_eq!(w.next(0, t0 + ms(500)), None); // a later statement: the call's bound stays spent
+}
+
+#[test]
+fn busy_wait_total_never_asks_a_sleep_past_the_bound() {
+    let t0 = Instant::now();
+    let b = store::HOOK_DB_BOUND;
+    for count in 0..40 {
+        for e in 0..=110u64 {
+            let mut w = store::BusyWait::total(b);
+            assert!(w.next(0, t0).is_some());
+            let elapsed = Duration::from_millis(e);
+            let got = w.next(count, t0 + elapsed);
+            if elapsed >= b {
+                assert_eq!(got, None, "count {count}, elapsed {e} ms");
+            } else {
+                let d = got.unwrap_or_else(|| panic!("count {count}, elapsed {e} ms: gave up before the bound"));
+                assert!(!d.is_zero() && elapsed + d <= b, "count {count}, elapsed {e} ms, sleep {d:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn open_bounded_total_never_restarts_its_wait() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    assert!(!Store::open_bounded_total(&t.db(), store::HOOK_DB_BOUND).unwrap().busy_wait_restarts());
+}
+
+#[test]
+fn open_bounded_restarts_its_wait_per_step() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    assert!(Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).unwrap().busy_wait_restarts());
+}
+
+#[test]
+fn open_bounded_total_replaces_the_sqlite_busy_timeout() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    assert_eq!(Store::open_bounded_total(&t.db(), store::HOOK_DB_BOUND).unwrap().busy_timeout_ms().unwrap(), 0);
+}
+
+#[test]
+fn open_bounded_total_waits_for_a_released_lock_on_a_rollback_journal_database() {
+    // The total open waits for a released lock: the bound is `Duration::MAX`, so no deadline can fail the test
+    // (O§8.4); the lock is released only after the open is about to run, so its read almost surely meets it.
+    let t = Tmp::new();
+    old_db(&t.db()); // journal_mode delete
+    let raw = Connection::open(t.db()).unwrap();
+    raw.execute_batch("BEGIN EXCLUSIVE").unwrap(); // blocks readers too in rollback-journal mode
+    let (go, ready) = std::sync::mpsc::channel::<()>();
+    let release = std::thread::spawn(move || {
+        ready.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        raw.execute_batch("COMMIT").unwrap();
+    });
+    go.send(()).unwrap();
+    let r = Store::open_bounded_total(&t.db(), Duration::MAX).and_then(|s| s.insert_trim(&trim("S4", 8, 4000, 400)));
+    release.join().unwrap();
+    r.expect("the total open must wait for the released lock");
+    assert_eq!(count(&t.db(), "trims"), 2);
+}
+
+#[test]
+fn open_bounded_total_is_busy_when_the_lock_is_never_released_on_a_rollback_journal_database() {
+    // The lock is never released, so the outcome does not depend on time: only the error kind is asserted.
+    let t = Tmp::new();
+    old_db(&t.db());
+    let raw = Connection::open(t.db()).unwrap();
+    raw.execute_batch("BEGIN EXCLUSIVE").unwrap();
+    let e = Store::open_bounded_total(&t.db(), Duration::from_millis(50))
+        .and_then(|s| s.insert_trim(&trim("S4", 8, 4000, 400)))
+        .expect_err("a lock held past the bound must fail the call");
+    let code = e.downcast_ref::<rusqlite::Error>().and_then(|e| e.sqlite_error_code());
+    assert_eq!(code, Some(rusqlite::ErrorCode::DatabaseBusy), "{e}");
+    raw.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(count(&t.db(), "trims"), 1);
+}
+
+#[test]
+fn open_bounded_opens_under_a_held_write_lock() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    let raw = Connection::open(t.db()).unwrap();
+    raw.execute_batch("BEGIN IMMEDIATE").unwrap(); // another process holds the write lock
+    // The open takes no write lock, so with bound 0 it still succeeds.
+    assert!(Store::open_bounded(&t.db(), Duration::ZERO).is_ok());
+    raw.execute_batch("ROLLBACK").unwrap();
+}
+
+#[test]
+fn open_bounded_insert_is_busy_at_bound_zero_under_a_held_write_lock() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    let s = Store::open_bounded(&t.db(), Duration::ZERO).unwrap();
+    let raw = Connection::open(t.db()).unwrap();
+    raw.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let e = s.insert_trim(&trim("S1", 5, 1000, 100)).expect_err("a held write lock with bound 0 must fail the insert");
+    let code = e.downcast_ref::<rusqlite::Error>().and_then(|e| e.sqlite_error_code());
+    assert_eq!(code, Some(rusqlite::ErrorCode::DatabaseBusy), "{e}");
+    raw.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(count(&t.db(), "trims"), 0); // no row, also not through the seven-column fallback
+}
+
+#[test]
+fn open_bounded_on_seven_column_database_adds_no_column() {
+    let t = Tmp::new();
+    old_db(&t.db());
+    let before = pragma(&t.db(), "schema_version");
+    let s = Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).unwrap();
+    s.insert_trim(&trim("S2", 6, 2000, 200)).unwrap();
+    drop(s);
+    assert_eq!(cols(&t.db(), "trims"), TRIM_SEVEN);
+    assert_eq!(pragma(&t.db(), "schema_version"), before);
+    assert_eq!(count(&t.db(), "trims"), 2);
+}
+
+#[test]
+fn open_bounded_on_missing_path_is_an_error_and_creates_nothing() {
+    let t = Tmp::new();
+    assert!(Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).is_err());
+    assert!(!t.db().exists());
+    let deep = t.0.join("no").join("such").join("usage.db");
+    assert!(Store::open_bounded(&deep, store::HOOK_DB_BOUND).is_err());
+    assert!(!t.0.join("no").exists());
+}
+
+#[test]
+fn open_bounded_rejects_another_schema_version() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    Connection::open(t.db()).unwrap().execute_batch("PRAGMA user_version = 2").unwrap();
+    let e = Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).err().expect("another schema version must fail").to_string();
+    assert!(e.contains('2') && e.contains('1'), "{e}");
+}
+
+#[test]
+fn open_bounded_leaves_the_journal_mode_unchanged() {
+    let t = Tmp::new();
+    old_db(&t.db());
+    let mode = |db: &Path| Connection::open(db).unwrap().query_row("PRAGMA journal_mode", [], |r| r.get::<_, String>(0)).unwrap();
+    let before = mode(&t.db());
+    assert_eq!(before, "delete");
+    let s = Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).unwrap();
+    s.insert_trim(&trim("S3", 7, 3000, 300)).unwrap();
+    drop(s);
+    assert_eq!(mode(&t.db()), before);
 }

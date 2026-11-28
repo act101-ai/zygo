@@ -106,10 +106,11 @@ fn normalize_after_other_tool_has_no_response() {
     assert!(n.get("tool_response").is_none());
 }
 
-/// The `after` bash fixture whose output is large.
+/// The `after` bash fixture whose output is large: distinct plain lines, so no O§7.3 step 1-4 changes it and the
+/// §10.1 size view applies.
 fn big_after() -> Value {
     let mut p = fixture("plugin-hooks/tool.execute.after-bash.json");
-    p["output"]["output"] = json!("x\n".repeat(20_000));
+    p["output"]["output"] = json!((0..20_000).map(|i| format!("x {i:05}\n")).collect::<String>());
     p
 }
 
@@ -709,21 +710,21 @@ fn plugin_text_matches_the_fixtures() {
     assert_eq!(TEMPLATE.matches("__ZYGO_PATH__").count(), 1);
     assert!(TEMPLATE.contains("export const ZygoPlugin = async"));
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/opencode/plugin-hooks");
-    let mut hooks = 0;
+    let mut hooks = BTreeSet::new();
     for e in std::fs::read_dir(dir).unwrap() {
         let name = e.unwrap().file_name().to_string_lossy().into_owned();
         let stem = name.strip_suffix(".json").unwrap();
         if stem == "plugin-init" {
             continue;
         }
-        let hook = stem.strip_suffix("-bash").unwrap_or(stem);
+        let hook = stem.strip_suffix("-bash").or_else(|| stem.strip_suffix("-bash-stderr")).unwrap_or(stem);
         assert!(TEMPLATE.contains(&format!("\"{hook}\"")), "{hook}");
-        hooks += 1;
+        hooks.insert(hook.to_string());
     }
-    assert_eq!(hooks, 4);
+    assert_eq!(hooks.len(), 4);
     for t in [
         "directory", "\"--agent\", \"opencode\"", "10000", "permissionDecision", "updatedToolOutput", "output.output =", "output.system.push",
-        "output.context.push", "ZYGO_MAIN_ROLE", "input.model", "stdin.on(\"error\"", "\"guard\"", "\"trim\"", "\"work\"", "\"session-start\"", "\"pre-compact\"",
+        "output.context.push", "ZYGO_MAIN_ROLE", "input.model", "stdin.on(\"error\"", "\"guard\"", "\"trim\"", "\"work\"", "\"session-start\"", "\"pre-compact\"", "\"subagent\"",
     ] {
         assert!(TEMPLATE.contains(t), "{t}");
     }
@@ -748,7 +749,13 @@ struct NodeRun {
 }
 
 #[cfg(unix)]
-fn node_run(fx: &Fx, name: &str, mode: &str, role: &str, big: bool) -> NodeRun {
+fn node_run(fx: &Fx, name: &str, mode: &str, role: Option<&str>, big: bool) -> NodeRun {
+    node_run_edge(fx, name, mode, role, big, None)
+}
+
+/// [node_run]; with `edge`, the driver makes only the one transform call of that `EDGE` case.
+#[cfg(unix)]
+fn node_run_edge(fx: &Fx, name: &str, mode: &str, role: Option<&str>, big: bool, edge: Option<&str>) -> NodeRun {
     use std::os::unix::fs::PermissionsExt;
     let dir = fx.root.join(name);
     std::fs::create_dir_all(&dir).unwrap();
@@ -758,12 +765,13 @@ d=$(dirname "$0")
 echo "$*" >> "$d/calls.txt"
 if [ "$STUB_MODE" = noread ]; then exit 0; fi
 cat > "$d/stdin-$2.json"
+{ cat "$d/stdin-$2.json"; echo; } >> "$d/stdin-$2.jsonl"
 if [ "$STUB_MODE" = fail ]; then exit 1; fi
 case "$2:$STUB_MODE" in
   guard:deny) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"R1"}}' ;;
   trim:ok) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":{"stdout":"VIEW"}}}' ;;
   trim:utf8) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":{"stdout":"'; cat "$d/stdout.txt"; printf '%s' '"}}}' ;;
-  session-start:ok) printf TEXT ;;
+  session-start:ok) printf 'TEXT%s' "$6" ;;
   pre-compact:ok) printf KEEP ;;
 esac
 "#;
@@ -776,12 +784,25 @@ esac
         r#"import { ZygoPlugin } from "./plugin.mjs";
 const h = await ZygoPlugin({ directory: "/r" });
 const res = {};
+const EDGE = {
+  "no-model": [{}, { system: [] }],
+  "null-model": [{ model: null }, { system: [] }],
+  "no-id": [{ model: { providerID: "zygo" } }, { system: [] }],
+  "no-system": [{ model: { id: "read", providerID: "zygo" } }, {}],
+};
+if (process.env.EDGE) {
+  const [input, out] = EDGE[process.env.EDGE];
+  try { await h["experimental.chat.system.transform"](input, out); res.threw = null; } catch (e) { res.threw = e.message; }
+  res.out = out;
+  console.log(JSON.stringify(res));
+  process.exit(0);
+}
 try { await h["tool.execute.before"]({ tool: "bash" }, { args: { command: "x" } }); res.threw = null; } catch (e) { res.threw = e.message; }
 const after = { output: process.env.BIG ? "y".repeat(1 << 20) : "orig" };
 await h["tool.execute.after"]({ tool: "bash", args: {} }, after);
 res.after = process.env.BIG ? after.output.length : after.output;
 res.system = {};
-for (const [id, p] of [["lead", "zygo"], ["code", "zygo"], ["read", "zygo"], ["lead", "other"]]) {
+for (const [id, p] of [["lead", "zygo"], ["code", "zygo"], ["read", "zygo"], ["lead", "anthropic"]]) {
   const out = { system: [] };
   await h["experimental.chat.system.transform"]({ model: { id, providerID: p } }, out);
   res.system[id + "/" + p] = out.system;
@@ -794,9 +815,16 @@ console.log(JSON.stringify(res));
     )
     .unwrap();
     let mut cmd = std::process::Command::new("node");
-    cmd.arg("driver.mjs").current_dir(&dir).env("ZYGO_MAIN_ROLE", role).env("STUB_MODE", mode).env_remove("ZYGO_WORKSPACE");
+    cmd.arg("driver.mjs").current_dir(&dir).env("STUB_MODE", mode).env_remove("ZYGO_WORKSPACE");
+    match role {
+        Some(r) => cmd.env("ZYGO_MAIN_ROLE", r),
+        None => cmd.env_remove("ZYGO_MAIN_ROLE"),
+    };
     if big {
         cmd.env("BIG", "1");
+    }
+    if let Some(e) = edge {
+        cmd.env("EDGE", e);
     }
     let out = cmd.output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -817,17 +845,17 @@ fn plugin_behaves_under_node() {
     let fx = fx();
     let sys = |r: &Value, k: &str| r["system"][k].clone();
 
-    let r = node_run(&fx, "deny", "deny", "lead", false);
+    let r = node_run(&fx, "deny", "deny", Some("lead"), false);
     assert_eq!(r.result.unwrap()["threw"], "R1");
 
-    let r = node_run(&fx, "ok", "ok", "lead", false);
+    let r = node_run(&fx, "ok", "ok", Some("lead"), false);
     let v = r.result.clone().unwrap();
     assert_eq!(v["threw"], Value::Null);
     assert_eq!(v["after"], "VIEW");
     assert_eq!(sys(&v, "lead/zygo"), json!(["TEXT"]));
-    for k in ["code/zygo", "read/zygo", "lead/other"] {
-        assert_eq!(sys(&v, k), json!([]), "{k}");
-    }
+    assert_eq!(sys(&v, "code/zygo"), json!(["TEXTsubagent"]));
+    assert_eq!(sys(&v, "read/zygo"), json!(["TEXTsubagent"]));
+    assert_eq!(sys(&v, "lead/anthropic"), json!([]));
     assert_eq!(v["compact"], json!(["KEEP"]));
     let calls: Vec<&str> = r.calls.lines().collect();
     assert_eq!(&calls[..3], ["hook guard --agent opencode", "hook trim --agent opencode", "hook work --agent opencode"]);
@@ -838,24 +866,17 @@ fn plugin_behaves_under_node() {
     assert_eq!(stdin["input"]["tool"], "bash");
     assert_eq!(stdin["output"]["args"]["command"], "x");
 
-    let r = node_run(&fx, "norole", "ok", "", false);
-    let v = r.result.unwrap();
-    for k in ["lead/zygo", "code/zygo", "read/zygo", "lead/other"] {
-        assert_eq!(sys(&v, k), json!([]), "{k}");
-    }
-    assert!(!r.calls.contains("session-start"));
-
     for (name, mode) in [("fail", "fail"), ("missing", "missing")] {
-        let v = node_run(&fx, name, mode, "lead", false).result.unwrap();
+        let v = node_run(&fx, name, mode, Some("lead"), false).result.unwrap();
         assert_eq!(v["threw"], Value::Null, "{mode}");
         assert_eq!(v["after"], "orig", "{mode}");
         assert_eq!(v["compact"], json!([]), "{mode}");
-        for k in ["lead/zygo", "code/zygo", "read/zygo", "lead/other"] {
+        for k in ["lead/zygo", "code/zygo", "read/zygo", "lead/anthropic"] {
             assert_eq!(sys(&v, k), json!([]), "{mode} {k}");
         }
     }
 
-    let v = node_run(&fx, "noread", "noread", "lead", true).result.unwrap();
+    let v = node_run(&fx, "noread", "noread", Some("lead"), true).result.unwrap();
     assert_eq!(v["threw"], Value::Null);
     assert_eq!(v["after"], 1 << 20);
 
@@ -863,10 +884,148 @@ fn plugin_behaves_under_node() {
     let euro = "\u{20ac}".repeat(50_000);
     std::fs::create_dir_all(fx.root.join("utf8")).unwrap();
     std::fs::write(fx.root.join("utf8/stdout.txt"), &euro).unwrap();
-    let v = node_run(&fx, "utf8", "utf8", "lead", false).result.unwrap();
+    let v = node_run(&fx, "utf8", "utf8", Some("lead"), false).result.unwrap();
     let after = v["after"].as_str().unwrap();
     assert!(!after.contains('\u{fffd}'), "U+FFFD in the trim view");
     assert_eq!(after, euro);
+}
+
+#[cfg(unix)]
+const MAIN_CALL: &str = "hook session-start --agent opencode";
+#[cfg(unix)]
+const SUB_CALL: &str = "hook session-start --agent opencode --event subagent";
+
+#[cfg(unix)]
+fn session_starts(r: &NodeRun) -> Vec<&str> {
+    r.calls.lines().filter(|l| l.starts_with("hook session-start")).collect()
+}
+
+/// Every `session-start` call's stdin, one record per call (the stub appends each to `stdin-session-start.jsonl`).
+#[cfg(unix)]
+fn session_start_stdins(r: &NodeRun) -> Vec<Value> {
+    let text = std::fs::read_to_string(r.dir.join("stdin-session-start.jsonl")).unwrap_or_default();
+    text.lines().map(|l| serde_json::from_str(l).unwrap()).collect()
+}
+
+// T§7.2 item 1, T§17 check 10
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
+fn subagent_transform_other_zygo_role_calls_event_subagent() {
+    if no_node("subagent_transform_other_zygo_role_calls_event_subagent") {
+        return;
+    }
+    let fx = fx();
+    let r = node_run(&fx, "sx-sub", "ok", Some("lead"), false);
+    let v = r.result.clone().unwrap();
+    assert_eq!(v["system"]["code/zygo"], json!(["TEXTsubagent"]));
+    assert_eq!(v["system"]["read/zygo"], json!(["TEXTsubagent"]));
+    assert_eq!(session_starts(&r)[1..], [SUB_CALL, SUB_CALL]);
+    let stdins = session_start_stdins(&r);
+    assert_eq!(stdins.len(), 3);
+    for id in ["code", "read"] {
+        let want = json!({"input": {"model": {"id": id, "providerID": "zygo"}}, "output": {"system": []}, "cwd": "/r"});
+        assert_eq!(stdins.iter().filter(|s| **s == want).count(), 1, "{id}");
+    }
+}
+
+// T§7.2 item 1, T§17 check 10
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
+fn subagent_transform_main_role_calls_without_event() {
+    if no_node("subagent_transform_main_role_calls_without_event") {
+        return;
+    }
+    let fx = fx();
+    let r = node_run(&fx, "sx-main", "ok", Some("lead"), false);
+    assert_eq!(r.result.clone().unwrap()["system"]["lead/zygo"], json!(["TEXT"]));
+    assert_eq!(session_starts(&r)[0], MAIN_CALL);
+    assert_eq!(session_starts(&r).iter().filter(|l| **l == MAIN_CALL).count(), 1);
+}
+
+// T§7.2 item 1, T§17 check 10
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
+fn subagent_transform_anthropic_provider_calls_nothing() {
+    if no_node("subagent_transform_anthropic_provider_calls_nothing") {
+        return;
+    }
+    let fx = fx();
+    let r = node_run(&fx, "sx-other", "ok", Some("lead"), false);
+    assert_eq!(r.result.clone().unwrap()["system"]["lead/anthropic"], json!([]));
+    assert_eq!(session_starts(&r), [MAIN_CALL, SUB_CALL, SUB_CALL]);
+}
+
+// T§7.2 item 1, T§17 check 10
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
+fn subagent_transform_unset_main_role_calls_event_subagent() {
+    if no_node("subagent_transform_unset_main_role_calls_event_subagent") {
+        return;
+    }
+    let fx = fx();
+    for (name, role) in [("sx-unset", None), ("sx-empty", Some(""))] {
+        let r = node_run(&fx, name, "ok", role, false);
+        let v = r.result.clone().unwrap();
+        for k in ["lead/zygo", "code/zygo", "read/zygo"] {
+            assert_eq!(v["system"][k], json!(["TEXTsubagent"]), "{name} {k}");
+        }
+        assert_eq!(v["system"]["lead/anthropic"], json!([]), "{name}");
+        assert_eq!(session_starts(&r), [SUB_CALL, SUB_CALL, SUB_CALL], "{name}");
+    }
+}
+
+// T§7.2 item 1 (SX-6 review round 1, item 3): a missing or null `input.model` is not a `zygo/` model
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
+fn subagent_transform_missing_or_null_model_calls_nothing() {
+    if no_node("subagent_transform_missing_or_null_model_calls_nothing") {
+        return;
+    }
+    let fx = fx();
+    for edge in ["no-model", "null-model"] {
+        let r = node_run_edge(&fx, &format!("sx-{edge}"), "ok", Some("lead"), false, Some(edge));
+        let v = r.result.clone().unwrap();
+        assert_eq!(v["threw"], Value::Null, "{edge}");
+        assert_eq!(v["out"], json!({"system": []}), "{edge}");
+        assert_eq!(r.calls, "", "{edge}");
+    }
+}
+
+// T§7.2 item 1 (SX-6 review round 1, item 3): a `zygo` model with no id is not the main role
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
+fn subagent_transform_zygo_model_without_id_calls_event_subagent() {
+    if no_node("subagent_transform_zygo_model_without_id_calls_event_subagent") {
+        return;
+    }
+    let fx = fx();
+    let r = node_run_edge(&fx, "sx-no-id", "ok", Some("lead"), false, Some("no-id"));
+    let v = r.result.clone().unwrap();
+    assert_eq!(v["threw"], Value::Null);
+    assert_eq!(v["out"], json!({"system": ["TEXTsubagent"]}));
+    assert_eq!(session_starts(&r), [SUB_CALL]);
+}
+
+// T-C1 (SX-6 review round 1, item 4): no `output.system` array, no zygo process and no throw
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
+fn subagent_transform_without_system_array_calls_nothing() {
+    if no_node("subagent_transform_without_system_array_calls_nothing") {
+        return;
+    }
+    let fx = fx();
+    let r = node_run_edge(&fx, "sx-no-system", "ok", Some("lead"), false, Some("no-system"));
+    let v = r.result.clone().unwrap();
+    assert_eq!(v["threw"], Value::Null);
+    assert_eq!(v["out"], json!({}));
+    assert_eq!(r.calls, "");
 }
 
 // ---- Task 4: delivery ----

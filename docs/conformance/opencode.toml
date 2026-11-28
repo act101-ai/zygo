@@ -102,19 +102,19 @@ evidence = ["test:crates/zygo-launch/tests/opencode.rs::inline_config_values", "
 [[grade]]
 criterion = "A-1.2"
 status = "met"
-evidence = ["test:crates/zygo-launch/tests/opencode.rs::opencode_token_is_only_a_file_reference", "test:crates/zygo-launch/tests/stub_launch.rs::opencode_child_environment_flags_and_inline_config_match_the_spec", "premise:docs/premises.md#PO1"]
-reason = "OpenCode has no key-helper command; its key mechanism is options.apiKey = {file:<session token file>}, read when OpenCode loads its config (base spec 8.7, PO1); the token is in no argument, environment row or other file"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::opencode_token_is_only_a_file_reference", "test:crates/zygo-launch/tests/stub_launch.rs::opencode_child_environment_flags_and_inline_config_match_the_spec", "premise:docs/premises.md#POC1"]
+reason = "OpenCode has no key-helper command; its key mechanism is options.apiKey = {file:<session token file>}, read when OpenCode loads its config (base spec 8.7, POC1); the token is in no argument, environment row or other file"
 
 [[grade]]
 criterion = "A-1.3"
 status = "met"
-evidence = ["test:crates/zygo-launch/tests/opencode.rs::inline_config_limits_providers_to_zygo", "test:crates/zygo-launch/tests/opencode.rs::inline_config_keeps_the_user_disables_without_zygo", "test:crates/zygo-launch/tests/stub_launch.rs::opencode_child_environment_flags_and_inline_config_match_the_spec", "test:crates/zygo-launch/tests/opencode.rs::preflight_names_the_file_and_key", "test:crates/zygo-launch/tests/opencode.rs::launch_sets_the_opencode_environment", "premise:docs/premises.md#PO2"]
-reason = "enabled_providers [zygo] hides every other provider and login (PO2), model keys are zygo roles. Met as for the user's and project's config: later layers (console org, managed dir, MDM, plugin config hook) are admin or plugin policy; remote wellknown merges earlier (8.7)"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::inline_config_limits_providers_to_zygo", "test:crates/zygo-launch/tests/opencode.rs::inline_config_keeps_the_user_disables_without_zygo", "test:crates/zygo-launch/tests/stub_launch.rs::opencode_child_environment_flags_and_inline_config_match_the_spec", "test:crates/zygo-launch/tests/opencode.rs::preflight_names_the_file_and_key", "test:crates/zygo-launch/tests/opencode.rs::launch_sets_the_opencode_environment", "premise:docs/premises.md#POC2"]
+reason = "enabled_providers [zygo] hides every other provider and login (POC2), model keys are zygo roles. Met as for the user's and project's config: later layers (console org, managed dir, MDM, plugin config hook) are admin or plugin policy; remote wellknown merges earlier (8.7)"
 
 [[grade]]
 criterion = "A-1.4"
 status = "not-met"
-reason = "OpenCode has no key-helper command: it reads the session token through the {file:} reference in provider.zygo.options.apiKey (base spec 8.7, PO1), so no key-helper command runs in any shell; a core criterion cannot be n/a"
+reason = "OpenCode has no key-helper command: it reads the session token through the {file:} reference in provider.zygo.options.apiKey (base spec 8.7, POC1), so no key-helper command runs in any shell; a core criterion cannot be n/a"
 
 [[grade]]
 criterion = "A-2.1"
@@ -257,7 +257,7 @@ evidence = ["test:crates/zygo-launch/tests/launcher.rs::denylist_removes_provide
 [[grade]]
 criterion = "A-10.2"
 status = "met"
-evidence = ["test:crates/zygo-launch/tests/stub_launch.rs::opencode_child_environment_flags_and_inline_config_match_the_spec", "test:crates/zygo-launch/tests/opencode.rs::opencode_token_is_only_a_file_reference", "premise:docs/premises.md#PO1"]
+evidence = ["test:crates/zygo-launch/tests/stub_launch.rs::opencode_child_environment_flags_and_inline_config_match_the_spec", "test:crates/zygo-launch/tests/opencode.rs::opencode_token_is_only_a_file_reference", "premise:docs/premises.md#POC1"]
 reason = "OPENCODE_CONFIG_CONTENT holds only the {file:} reference to the token file, and no environment row of the client holds the token (base spec 8.4, 8.7)"
 
 [[grade]]

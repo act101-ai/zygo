@@ -297,7 +297,7 @@ rline() {
 real_all() {
   command -v jq >/dev/null 2>&1 || { echo "live-detach: --zygo needs jq on PATH" >&2; exit 2; }
   printf '[features]\nworkspace_tool = true\n\n[loadout.pw15]\n[[loadout.pw15.window]]\n[[loadout.pw15.window.pane]]\nkind = "shell"\n' >"$RUN/zygo.toml"
-  printf '%s\n' "launch zygo $ZV, real down" "claude $LIVE_CC_VER" "tmux $TV" >"$RUN/pw15.txt"
+  printf '%s\n' "launch ${ZV:-zygo ?}, real down" "claude $LIVE_CC_VER" "tmux $TV" >"$RUN/pw15.txt"
   # 27a: the slash premise (P16) first, with one run; then the other five.
   for pv in "slash off" "slash on" "bash off" "bash on" "tool off" "tool on"; do
     set -- $pv; real "$1" "$2"; eval "R_$1$2=\$VR; W_$1$2=\$where"
@@ -308,8 +308,8 @@ real_all() {
   esac
   scrub "$RUN/pw15.txt" >"$FX/pw15-down.txt"
   sum="bash off: $R_bashoff; bash on: $R_bashon; tool off: $R_tooloff; tool on: $R_toolon; slash off: $R_slashoff; slash on: $R_slashon; fixtures/tmux/pw15-down.txt"
-  if [ "$R_bashoff" = ok ] && [ "$R_bashon" = ok ]; then result PW15 verified "launch zygo $ZV real down, tmux $TV; $sum"
-  else result PW15 failed "launch zygo $ZV real down, tmux $TV; $sum"; fi
+  if [ "$R_bashoff" = ok ] && [ "$R_bashon" = ok ]; then result PW15 verified "launch ${ZV:-zygo ?} real down, tmux $TV; $sum"
+  else result PW15 failed "launch ${ZV:-zygo ?} real down, tmux $TV; $sum"; fi
   # A slash run whose premise is false (P16) is no product failure: the fallback then rests on the other runs,
   # and the PW15-slash-premise line above carries the slash result.
   so=$R_slashoff sn=$R_slashon

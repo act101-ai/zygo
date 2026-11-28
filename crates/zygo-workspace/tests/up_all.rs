@@ -198,6 +198,8 @@ fn opts(t: &Path, tmux: &Path) -> UpOpts {
         vars,
         paths: paths(t),
         config: Config::default(),
+        default_loadout_set: false,
+        git: None,
     };
     assert_temp(&o.paths, t);
     o

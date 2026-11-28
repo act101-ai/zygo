@@ -93,13 +93,15 @@ fn w12_rows_parse_and_reach_the_library() {
         (&["attach", "app"], 2, "", NO_TMUX),
         (&["ls"], 0, "no workspaces\n", ""),
         (&["workspace"], 1, "", "no workspace for this session or folder\n"),
-        (&["loadout", "list"], 0, "solo  built-in\n", ""),
+        // No git on `PATH`: `git not found` (W§8.1 step 3, FX-25) is the unread line of R§10 (WD-16 review F1); zygo
+        // cannot know that the folder is a repository, so the line names none (FX-25 close).
+        (&["loadout", "list"], 0, "solo  built-in\n", "zygo: workspace files were not read (git not found); not shown\n"),
         (&["ws", "forget", "app"], 1, "", "zygo: no workspace named app\n"),
         (&["ws", "forget-pane", "kaaaaaaaa", "--name", "app"], 1, "", "zygo: no workspace named app\n"),
         (&["ws", "snapshot", "--ws-id", "0123456789abcdef", "--event", "window-layout-changed", "--force"], 0, "", ""),
     ];
     for (args, code, out, err) in rows {
-        let o = zygo_in(h.path(), "", path.as_os_str(), args, &[]);
+        let o = zygo_in(h.path(), common::NO_MARKETPLACE, path.as_os_str(), args, &[]);
         assert_eq!(
             (o.status.code(), text(&o.stdout), text(&o.stderr)),
             (Some(*code), out.to_string(), err.to_string()),
@@ -107,6 +109,7 @@ fn w12_rows_parse_and_reach_the_library() {
             args.join(" ")
         );
     }
+    common::assert_no_marketplace_sync(h.path());
 }
 
 /// D4: a bad `--timeout`, a name with `--all`, and a name that starts with `-` without `--`.
@@ -118,7 +121,7 @@ fn w12_down_refuses_a_bad_timeout_a_name_with_all_and_a_dash_name() {
     let o = zygo_in(h.path(), "", path.as_os_str(), &["down", "--timeout", "5x"], &[]);
     assert_eq!(
         (o.status.code(), text(&o.stderr)),
-        (Some(2), "zygo: bad --timeout value 5x: use <n>s, <n>m or <n>h\n".to_string())
+        (Some(2), "zygo: bad --timeout value 5x: use <n>s, <n>m, <n>h or <n>d\n".to_string())
     );
     for args in [&["down", "--all", "app"][..], &["down", "-x"]] {
         let o = zygo_in(h.path(), "", path.as_os_str(), args, &[]);
@@ -142,7 +145,7 @@ fn w12_names_reach_the_library_also_after_double_dash() {
         (&["attach", "app"], "app"),
     ];
     for (args, name) in rows {
-        let o = zygo_in(h.path(), "", &path, args, &[]);
+        let o = zygo_in(h.path(), common::NO_MARKETPLACE, &path, args, &[]);
         assert_eq!(
             (o.status.code(), text(&o.stderr)),
             (Some(1), format!("zygo: no workspace named {name}\n")),
@@ -150,6 +153,7 @@ fn w12_names_reach_the_library_also_after_double_dash() {
             args.join(" ")
         );
     }
+    common::assert_no_marketplace_sync(h.path());
 }
 
 /// FIX-16: the parsers of `zygo down`, `zygo up` and `zygo ws forget` read a name after `--`, and that name reaches
@@ -163,7 +167,7 @@ fn fix16_double_dash_names_reach_the_library() {
     let path = tmux.parent().unwrap().as_os_str().to_owned();
     for name in ["--", "-x"] {
         for args in [&["down", "--now", "--", name][..], &["up", "--no-attach", "--", name], &["ws", "forget", "--", name]] {
-            let o = zygo_in(h.path(), "", &path, args, &[]);
+            let o = zygo_in(h.path(), common::NO_MARKETPLACE, &path, args, &[]);
             assert_eq!(
                 (o.status.code(), text(&o.stderr)),
                 (Some(1), format!("zygo: no workspace named {name}\n")),
@@ -172,6 +176,7 @@ fn fix16_double_dash_names_reach_the_library() {
             );
         }
     }
+    common::assert_no_marketplace_sync(h.path());
 }
 
 /// W§18 #59 (AU71): `zygo ws snapshot` does not sweep; the next other command does.
@@ -359,7 +364,7 @@ fn w18_64_zygo_claude_outside_a_workspace_is_a_v1_launch() {
     let version = zygo_config::builtin::min_agent_version(zygo_core::Agent::ClaudeCode).to_string();
     let o = zygo_in(
         h.path(),
-        "",
+        common::NO_MARKETPLACE,
         bin.as_os_str(),
         &["claude"],
         &[("ZYGO_STUB_OUT", out.as_os_str()), ("ZYGO_STUB_VERSION", OsStr::new(&version))],
@@ -369,6 +374,7 @@ fn w18_64_zygo_claude_outside_a_workspace_is_a_v1_launch() {
     assert!(argv.iter().any(|a| a == "--settings"), "{argv:?}");
     let env: BTreeMap<String, String> = serde_json::from_slice(&std::fs::read(out.join("env.json")).unwrap()).unwrap();
     assert!(!env.contains_key("ZYGO_WORKSPACE") && !env.contains_key("ZYGO_PANE"), "{env:?}");
+    common::assert_no_marketplace_sync(h.path());
 }
 
 /// W§18 #64 (OP5): on native Windows every workspace verb exits 2 before any library call.

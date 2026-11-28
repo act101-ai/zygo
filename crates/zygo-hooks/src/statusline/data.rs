@@ -564,7 +564,7 @@ fn var(env: &dyn Fn(&str) -> Option<OsString>, key: &str) -> Option<String> {
 ///
 /// Fresh on each call: the stdin object (at most 64 KiB, 200 ms; `stdin` moves into a detached thread), `view.json`,
 /// `ZYGO_WORK` and `ZYGO_URL` through `env`, the trimmed count from `paths.usage_db` for the session of
-/// `view.json`, and the workspace phase from `paths.workspaces_dir()` (AU25, never cached). From the cache `statusline.json` in `session_dir`, refreshed under the lease `statusline.lock` when a
+/// `view.json`, the workspace phase and the run-time start from one read of `paths.workspaces_dir()` (AU25, session run time design T§2.6; never cached), and the member name and the unread count (M§9a, never cached). From the cache `statusline.json` in `session_dir`, refreshed under the lease `statusline.lock` when a
 /// part is due: the status part and the git part. The call writes the cache before it returns and nothing after.
 /// It never fails: a source that gives no answer drops only its own segments (H§6.8, C6).
 pub fn collect(
@@ -583,10 +583,15 @@ pub fn collect(
     let input = Input::of(&object);
     let now = seams.now.unwrap_or_else(unix_now);
     let view = SessionView::load(&SessionDir::new(session_dir.to_path_buf())).ok();
-    let phase = super::phase::read(paths, env);
+    // One `workspace.json` read gives the phase and the run-time start (T§2.6, H§7.6).
+    let member = view.as_ref().map(|v| super::phase::member_read(paths, v)).unwrap_or_default();
     let cwd: PathBuf = input.cwd.map(PathBuf::from).or_else(|| std::env::current_dir().ok()).unwrap_or_default();
     let cwd_key = cwd.to_string_lossy().into_owned();
     let work_end = deadline.checked_sub(WRITE_RESERVE).unwrap_or(deadline);
+    let member_name = view
+        .as_ref()
+        .and_then(|v| v.workspace.as_ref()?.member.name.clone())
+        .filter(|n| zygo_core::ids::valid_member_name(n));
 
     let cache_path = session_dir.join(CACHE_FILE);
     let mut cache = load_cache(&cache_path).unwrap_or_default();
@@ -641,6 +646,9 @@ pub fn collect(
         Some((rx, Instant::now() + cap))
     });
 
+    // The unread count (M§9a), on this thread while the workers run, so that it never shrinks their budgets.
+    let unread = view.as_ref().and_then(|v| super::mail::unread(paths, v, work_end));
+
     let trimmed_bytes = trimmed_rx.and_then(|rx| wait(&rx, trimmed_until)).flatten();
     // A try that fails, times out or panics is a git part with no data.
     let git_new = git_run.map(|(rx, until)| GitPart::of(now, &cwd_key, wait(&rx, until).flatten()));
@@ -694,7 +702,10 @@ pub fn collect(
         profile: view.and_then(|v| v.profile),
         effort: input.effort,
         trimmed_bytes,
-        phase,
+        phase: member.phase,
+        member_name,
+        unread,
+        run_time: member.start.map(|start| now.saturating_sub(start)),
         team_host: var(env, "ZYGO_URL").and_then(|u| zygo_proxy::Url::parse(&u).ok()?.host_str().map(str::to_string)),
     }
 }

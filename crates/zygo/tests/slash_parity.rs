@@ -24,7 +24,7 @@ const NULL: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 const SECRET: &str = "refused: secret redaction cannot be turned off in a session";
 const OP5: &str = "workspaces need tmux; run zygo in WSL";
 /// W§9.3 step 1, OP11: /zygo:down names the marker's workspace and zygo down the cwd's; down has no SAME row.
-const NOT_IN_SAME: &[&str] = &["down"];
+const NOT_IN_SAME: &[&str] = &["down", "decision"];
 
 /// The `Paths` that `Paths::from_env` gives for `HOME=LOCALAPPDATA=APPDATA=home`, `ZYGO_CONFIG=home/config.toml`.
 fn paths(home: &Path) -> Paths {
@@ -309,6 +309,7 @@ const SAME: &[(&str, &str, bool, i32, &str, bool)] = &[
     ("statusline", "wide", true, 2, "zygo statusline: usage: statusline [compact|verbose]", false),
     ("ls", "", false, if cfg!(windows) { 2 } else { 0 }, if cfg!(windows) { OP5 } else { "no workspaces" }, false),
     ("workspace", "", false, if cfg!(windows) { 2 } else { 1 }, if cfg!(windows) { OP5 } else { "no workspace for this session or folder" }, false),
+    ("mail", "", false, if cfg!(windows) { 2 } else { 1 }, if cfg!(windows) { OP5 } else { "zygo: no workspace for this session or folder" }, false),
 ];
 
 /// The work value of a reply: the `work:` line of `status`, else the whole reply (a `work` row).
@@ -408,7 +409,7 @@ const KEEP: &[(&str, &str, &str)] = &[
     ("results off", "results", "now: off, threshold 16384"),
     ("results threshold 32768", "results", "now: on, threshold 32768"),
     ("units off", "units", "now: off"),
-    ("guards claims enforce", "guards", "now: claims enforce, scope monitor, navigation monitor, output monitor, trailers notify, repeat monitor"),
+    ("guards claims enforce", "guards", "now: claims enforce, scope monitor, navigation monitor, output monitor, trailers notify, repeat monitor, dispositions enforce"),
     ("redaction content off", "redaction", "now: secrets on, content off"),
 ];
 
@@ -564,7 +565,7 @@ fn shell_only_slash_forms_reply_with_the_command_and_change_nothing() {
     };
     let a = Arm::new(false, "", None);
     let before = tree(a.home.path());
-    for line in ["plugins sync", "marketplace add /x", "marketplace add /x --name n --ref v1.0.0", "marketplace update", "marketplace update --all --accept"] {
+    for line in ["plugins sync", "marketplace add /x", "marketplace add /x --name n --ref v1.0.0", "marketplace update", "marketplace update --all --accept", "decision ls"] {
         assert_eq!(a.slash(line), format!("run in your shell: zygo {line}"), "{line}");
         assert_eq!(tree(a.home.path()), before, "{line}: wrote a file");
     }

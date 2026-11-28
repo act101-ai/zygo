@@ -6,13 +6,12 @@ use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::Arc;
-#[cfg(feature = "test-hooks")]
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use zygo_config::profile::{requested, select, validate, Profile};
+use zygo_config::profile::{requested, select, valid_name, validate, Profile};
 use zygo_config::keys::default_store;
+use zygo_config::repo_def::{check_default, check_pinned, is_workspace_approved_in, short, GitRunner, Pin, PinnedUse, SystemGit, Use};
 use zygo_config::{load, Dialect, LoadContext, Merged};
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
@@ -30,6 +29,7 @@ use zygo_usage::Store;
 use zygo_work::current::{resolve_noted, stderr_lines};
 use zygo_work::repo::{checkout, repository_id};
 use zygo_work::WorkItem;
+use zygo_workspace::identity::workspace_id;
 
 use crate::adapter::{AgentAdapter, LaunchCtx, Plugins};
 use crate::env::{child_env, Env};
@@ -143,6 +143,14 @@ pub struct LaunchOpts {
     pub agent_session: Option<AgentSession>,
     /// An error is logged to the session log and the launch goes on.
     pub on_session: Option<SessionCallback>,
+    /// R§7.4: the saved pin of this member. `Some`: a repository profile resolves only by the pinned read of this
+    /// commit and digest, never by a default-branch read; a pin that is gone, not approved or unread stops the launch.
+    pub definition: Option<Pin>,
+    /// R§7.4: set to the pin of this launch's own default-branch read when that read is approved and gives the
+    /// requested profile, and that profile passes `validate` and is applied; cleared when the session grant refuses
+    /// the profile (`profile_warning`, serve mode); never set by a pinned launch. The member callback reads it before
+    /// its start write.
+    pub definition_out: Option<Arc<Mutex<Option<Pin>>>>,
     /// `Some`: the built-in layer is this table (`load_with_builtin`).
     #[cfg(feature = "test-hooks")]
     pub builtin: Option<toml::Table>,
@@ -155,6 +163,12 @@ pub struct LaunchOpts {
     /// `Some`: the serve client's bounds in place of the §7 values.
     #[cfg(feature = "test-hooks")]
     pub serve_bounds: Option<Bounds>,
+    /// `Some`: the repository top level in place of the `checkout` call; `Some(None)`: no repository.
+    #[cfg(feature = "test-hooks")]
+    pub top: Option<Option<PathBuf>>,
+    /// `Some`: the git runner of the workspace-files read (R§8) in place of `SystemGit`.
+    #[cfg(feature = "test-hooks")]
+    pub definition_git: Option<Arc<dyn GitRunner + Send + Sync>>,
 }
 
 impl LaunchOpts {
@@ -173,6 +187,8 @@ impl LaunchOpts {
             resume_note: None,
             agent_session: None,
             on_session: None,
+            definition: None,
+            definition_out: None,
             #[cfg(feature = "test-hooks")]
             builtin: None,
             #[cfg(feature = "test-hooks")]
@@ -181,6 +197,10 @@ impl LaunchOpts {
             heartbeat: None,
             #[cfg(feature = "test-hooks")]
             serve_bounds: None,
+            #[cfg(feature = "test-hooks")]
+            top: None,
+            #[cfg(feature = "test-hooks")]
+            definition_git: None,
         }
     }
 }
@@ -255,7 +275,7 @@ impl Launcher {
             buf: opts.stderr.clone(),
         };
         let search = opts.env.get("PATH").map(OsStr::to_os_string);
-        let top = checkout(&opts.cwd, Instant::now() + BOUND).map(|c| c.top);
+        let (top, common_dir) = launch_checkout(&opts);
         let cfg = match load_cfg(&opts, LoadContext { paths: opts.paths.clone(), repo: top.clone(), team: None }) {
             Ok(c) => c,
             Err(e) => {
@@ -324,9 +344,54 @@ impl Launcher {
         let mut profile = None;
         let known = known_plugins(&selection(&cfg, None), &zygo_plugins::store::state(&opts.paths.plugin_store));
         let name = requested(&cfg, opts.profile.as_deref());
-        match (name, select(&cfg, opts.profile.as_deref())) {
-            (Some(n), None) => out.line(&format!("zygo: profile {n} not found; launching without it")),
-            (_, Some(p)) => {
+        // R§7.4, R§11 (FX-31 review F1): a withdrawn approval of the pin stops every pinned member launch, whatever its
+        // profile and in passthrough too, before the passthrough drop and the profile step. It reads the approvals file
+        // only (no git read); outside a checkout there is no workspace id, and only the pinned read below stops.
+        if let (Some(pin), Some(cd)) = (&opts.definition, common_dir.as_deref())
+            && !is_workspace_approved_in(&opts.paths.approvals_file, &workspace_id(cd), &pin.digest)
+        {
+            // The profile name is in the line only for a launch that makes the pinned read; else "this member".
+            let reads = name.as_deref().filter(|n| !opts.passthrough && valid_name(n) && !cfg.config.profile.contains_key(*n));
+            out.line(&pin_line(reads.map(zygo_core::esc).as_deref(), pin, NO_LONGER));
+            return 1;
+        }
+        // R§8 "Passthrough": no profile from any source, and no read; a requested name is reported.
+        let name = match name {
+            Some(n) if opts.passthrough => {
+                out.line(&format!("zygo: profile {} does not apply in passthrough", zygo_core::esc(&n)));
+                None
+            }
+            n => n,
+        };
+        // R§7.4 bullet 2: the pin of a default-branch read goes to the caller only when its profile is applied.
+        let mut read_pin = None;
+        if let Some(n) = name {
+            if !cfg.config.profile.contains_key(&n) {
+                // A name that no profile can have reads nothing.
+                let read = if !valid_name(&n) {
+                    Err(format!("zygo: profile {} not found; launching without it", zygo_core::esc(&n)))
+                } else if let Some(pin) = &opts.definition {
+                    match pinned_profile(&opts, &cfg, &n, pin, top.as_deref(), common_dir.as_deref()) {
+                        Pinned::Apply(m) => Ok(m),
+                        Pinned::NotFound(line) => Err(line),
+                        // R§7.4: before the proxy, the session and the callback, so the record does not change (AU92).
+                        Pinned::Stop(line) => {
+                            out.line(&line);
+                            return 1;
+                        }
+                    }
+                } else {
+                    repository_profile(&opts, &cfg, &n, top.as_deref(), common_dir.as_deref()).map(|(m, pin)| {
+                        read_pin = Some(pin);
+                        m
+                    })
+                };
+                match read {
+                    Ok(m) => cfg = m,
+                    Err(line) => out.line(&line),
+                }
+            }
+            if let Some(p) = select(&cfg, Some(&n)) {
                 let c = &cfg.config;
                 match validate(&p, &c.role, &c.main_role, &c.catalog.view(), Dialect::Anthropic, &known) {
                     Err(v) => out.line(&format!("zygo: {v}; launching without the profile")),
@@ -334,12 +399,14 @@ impl Launcher {
                         Ok(m) => {
                             cfg = m;
                             profile = Some(p);
+                            if let (Some(o), Some(pin)) = (&opts.definition_out, read_pin.take()) {
+                                *o.lock().unwrap_or_else(|e| e.into_inner()) = Some(pin);
+                            }
                         }
                         Err(e) => out.line(&format!("zygo: {e}; launching without the profile")),
                     },
                 }
             }
-            (None, None) => {}
         }
         let cfg = Arc::new(cfg);
 
@@ -407,6 +474,11 @@ impl Launcher {
         };
         if let Some(w) = &grant.profile_warning {
             out.line(&format!("zygo: {}; launching without the profile", zygo_plugins::check::esc(w)));
+            // R§7.4 bullet 2, R§12: the session refused the profile, so this start did not apply it; no pin goes to
+            // the callback.
+            if let Some(o) = &opts.definition_out {
+                *o.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            }
         }
         if let Some(n) = &grant.usage_note {
             out.line(&format!("zygo: {}", zygo_plugins::check::esc(n)));
@@ -596,12 +668,15 @@ impl Session<'_> {
             work_units: c.features.work_units,
             results: c.features.results,
             compact_tool: c.features.compact_tool,
+            mail: c.features.mail,
             navigation,
             trim_threshold_bytes: c.results.trim_threshold_bytes,
             head_lines: c.results.head_lines,
             tail_lines: c.results.tail_lines,
+            shape: c.results.shape,
             statusline_style: c.statusline.style.clone(),
             workspace: member.clone().map(|member| ViewWorkspace { member, resume_note: opts.resume_note.clone(), ..Default::default() }),
+            repo_root: self.top.as_deref().and_then(Path::to_str).map(String::from),
             ..Default::default()
         };
         if let Err(e) = view.save(sd) {
@@ -815,6 +890,96 @@ fn heartbeat_every(#[allow(unused_variables)] opts: &LaunchOpts) -> Duration {
         return d;
     }
     HEARTBEAT_EVERY
+}
+
+/// The checkout's top level and git common dir (§8.2 step 1); the test hook `top` gives no common dir.
+fn launch_checkout(#[allow(unused_variables)] opts: &LaunchOpts) -> (Option<PathBuf>, Option<PathBuf>) {
+    #[cfg(feature = "test-hooks")]
+    if let Some(t) = &opts.top {
+        return (t.clone(), None);
+    }
+    checkout(&opts.cwd, Instant::now() + BOUND).map_or((None, None), |c| (Some(c.top), Some(c.common_dir)))
+}
+
+/// The git runner of the workspace-files read: the test hook, else `SystemGit`.
+fn definition_git(#[allow(unused_variables)] opts: &LaunchOpts) -> Arc<dyn GitRunner + Send + Sync> {
+    #[cfg(feature = "test-hooks")]
+    if let Some(g) = &opts.definition_git {
+        return g.clone();
+    }
+    Arc::new(SystemGit)
+}
+
+/// R§8 "When the launcher reads": one default-branch read and check (R§7.3) for profile `name`, which neither the user
+/// nor the team config has. `Ok`: `cfg` with the approved definition added (`Merged::with_definition`), and the pin of
+/// that read. `Err`: the one line printed in place of the profile.
+fn repository_profile(
+    opts: &LaunchOpts,
+    cfg: &Merged,
+    name: &str,
+    top: Option<&Path>,
+    common_dir: Option<&Path>,
+) -> Result<(Merged, Pin), String> {
+    let n = zygo_core::esc(name);
+    let not_found = format!("zygo: profile {n} not found; launching without it");
+    let (Some(top), Some(cd)) = (top, common_dir) else {
+        return Err(not_found);
+    };
+    match check_default(top, &workspace_id(cd), &opts.paths.approvals_file, definition_git(opts).as_ref()) {
+        Use::Approved { def, pin, .. } if def.profiles.contains_key(name) => Ok((cfg.with_definition(&def), pin)),
+        Use::NotApproved { digest, def, .. } if def.profiles.contains_key(name) => Err(format!(
+            "zygo: profile {n} is in this repository's workspace files, which are not approved on this machine (digest {}); launching without it; see zygo workspace approve",
+            short(&digest)
+        )),
+        Use::Invalid { why, .. } => Err(format!(
+            "zygo: profile {n}: this repository's workspace files are invalid ({}); launching without it",
+            zygo_core::esc(&why)
+        )),
+        Use::Unread { why } => Err(format!(
+            "zygo: profile {n}: this repository's workspace files were not read ({}); launching without it",
+            zygo_core::esc(&why)
+        )),
+        _ => Err(not_found),
+    }
+}
+
+/// The R§7.4 stop text of a pin that is gone or no longer approved.
+const NO_LONGER: &str = "this repository no longer has or no longer approves";
+
+/// What a pinned read (R§7.4) gives the launch.
+enum Pinned {
+    /// The approved pinned definition is added; the profile applies.
+    Apply(Merged),
+    /// The approved pinned definition has no profile of the name: the R§8 not-found line; the launch goes on.
+    NotFound(String),
+    /// The launch stops before the session with this line (exit 1).
+    Stop(String),
+}
+
+/// The R§7.4 line; `n` is the escaped name of the repository profile that the launch asks for, `None` for a launch that
+/// asks for no such profile ("this member"); the commit and the digest are escaped after `short` (C6).
+fn pin_line(n: Option<&str>, pin: &Pin, which: &str) -> String {
+    let who = n.map_or_else(|| "this member".to_string(), |n| format!("profile {n} of this member"));
+    format!(
+        "zygo: {who} comes from the workspace files at commit {} (digest {}), which {which}; the agent was not started; to start from the current files: zygo down, then zygo up --reset",
+        zygo_core::esc(short(&pin.commit)),
+        zygo_core::esc(short(&pin.digest))
+    )
+}
+
+/// R§7.4: one pinned read (`check_pinned`) for profile `name`, which neither the user nor the team config has. No
+/// checkout (no common dir): the `NO_LONGER` stop.
+fn pinned_profile(opts: &LaunchOpts, cfg: &Merged, name: &str, pin: &Pin, top: Option<&Path>, common_dir: Option<&Path>) -> Pinned {
+    let n = zygo_core::esc(name);
+    let (Some(top), Some(cd)) = (top, common_dir) else {
+        return Pinned::Stop(pin_line(Some(&n), pin, NO_LONGER));
+    };
+    match check_pinned(top, &workspace_id(cd), pin, &opts.paths.approvals_file, definition_git(opts).as_ref()) {
+        PinnedUse::Approved { def } if def.profiles.contains_key(name) => Pinned::Apply(cfg.with_definition(&def)),
+        PinnedUse::Approved { .. } => Pinned::NotFound(format!("zygo: profile {n} not found; launching without it")),
+        PinnedUse::Gone | PinnedUse::NotApproved => Pinned::Stop(pin_line(Some(&n), pin, NO_LONGER)),
+        PinnedUse::Unread { why } => Pinned::Stop(pin_line(Some(&n), pin, &format!("were not read ({})", zygo_core::esc(&why)))),
+    }
 }
 
 fn serve_bounds(#[allow(unused_variables)] opts: &LaunchOpts) -> Bounds {

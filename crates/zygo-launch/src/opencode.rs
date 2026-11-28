@@ -105,7 +105,7 @@ fn limit(ctx: &LaunchCtx, model: &str) -> Value {
     json!({ "context": context, "output": facts.map_or(0, |f| f.max_output_tokens) })
 }
 
-/// The provider key as a reference to the session's `token` file (§8.7, premise PO1): OpenCode
+/// The provider key as a reference to the session's `token` file (§8.7, premise POC1): OpenCode
 /// reads the file when it loads its config, so the token is in no environment row. OpenCode matches
 /// `{file:…}` on the raw config text, so the path uses `/` (Windows `\` becomes `/`; elsewhere a `\` is refused)
 /// and may hold no `{`, `}`, `"` or control character. A path that is not absolute (on Windows: no `X:/` drive and

@@ -1,0 +1,9 @@
+{
+   "agent" : "claude-code",
+   "captured_on" : "2026-11-26",
+   "command" : "cargo test --color always -- --color always",
+   "event" : "PostToolUse",
+   "exit" : 0,
+   "source" : "scratch lib crate `scratch` (cargo new --lib --vcs none); src/lib.rs holds `pub fn add(a: u64, b: u64) -> u64 { a + b }` and, in `mod tests` with `use super::add;`, 120 unit tests tests::adds_001 to tests::adds_120, each one `assert_eq!` with literal numbers, from `assert_eq!(add(1, 1), 2);` to `assert_eq!(add(120, 120), 240);`; cargo test --color always -- --color always run with TERM=xterm-256color by capture-shaping.sh in /repo",
+   "tool" : "cargo 1.98.1"
+}

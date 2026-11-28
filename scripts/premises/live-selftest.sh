@@ -3,7 +3,7 @@
 # runs, no key, no login, no network beyond loopback. Every test token is built at run time from
 # two parts; every tree it changes is a copy under its own temporary dir, deleted on exit.
 # Usage: dash scripts/premises/live-selftest.sh   ->  "live selftest: ok (<n>)", exit 0
-# Needs: dash or sh, perl, python3, curl, tmux. No real agent: stub claude, opencode and zygo
+# Needs: dash or sh, perl, python3, curl, tmux, jq. No real agent: stub claude, opencode and zygo
 # programs come first on PATH (ZYGO_BIN is the stub too), MOCK_URL is a dead loopback port, and the
 # test stops before its first case unless `command -v` finds each stub (U4).
 # Run it only from the checkout whose scripts it tests. No review or test may run this self-test
@@ -29,6 +29,8 @@
 #   a host name shorter than 4 characters with a note; U5: "-" and "_" are part of a host name.
 # - T6: tmux targets are exact and sessions this script did not start are left alone (a private
 #   tmux server with no config file, through a tmux shim on PATH; only that server is killed, and its socket file is removed).
+# - ML16 (node ML-16): live-mail.sh with no argument exits 2; --pm and --m12 in a copied tree, with stubs that answer --version with the pins, a tmux shim that logs each call, MOCK_URL at a dead port and a made-up HOME: one LIVE line per id, the fixtures written in the copy, only stubs started, every tmux call on a private server (-S, -f /dev/null), no process, server, socket file or private folder left; usage (exit 2, no stub called) for no argument, --pm --m12, --foo, -- --pm; a caller-exported PREMISES_DIR is not written; a PREMISES_DIR with a space or a double quote is refused; PM1 1.1 passes on the hook inputs of the stub claude; --m12-judge gives the 12.2/12.3 verdicts of fixed transcripts.
+# - FX20 (node FX-20): live-detach.sh --zygo in a copied tree, on the stub claude and a stub zygo whose up fails: exit 0, one LIVE PW15 line; the record head line "launch zygo 9.8.7, real down" and the LIVE PW15 text "launch zygo 9.8.7 real down, tmux <version>" name zygo once; with a zygo stub whose --version prints nothing, "launch zygo ?, real down" and "launch zygo ? real down, tmux <version>"; only stubs ran, every tmux call on a private server, nothing left; the repository's fixtures/tmux/pw15-*.txt unchanged.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
@@ -316,12 +318,232 @@ else
   "$TM" kill-session -t =n38stub 2>/dev/null
 fi
 
+# --- ML16: live-mail.sh on stubs -----------------------------------------------------------------
+# A copied tree, stubs that answer --version with the pins (so pinned_agents passes), a tmux shim that
+# logs each call, MOCK_URL at a dead port, HOME made up, CLAUDE_CONFIG_DIR, TMUX and ZYGO_SESSION_DIR unset.
+MSTUB="$T/stubs-mail" MT="$T/mtree" MH="$T/mhome" TLOG="$T/mail-tmux.log"
+mkdir -p "$MSTUB" "$MT/scripts" "$MT/docs" "$MH" "$T/mtbin"
+cp -R "$HERE" "$MT/scripts/premises"
+cp "$REPO/docs/premises.md" "$MT/docs/"
+PCC=$(sed -n 's/^Claude Code: *//p' "$REPO/docs/premises.md" | head -n 1)
+POC=$(sed -n 's/^OpenCode: *//p' "$REPO/docs/premises.md" | head -n 1)
+# Each stub writes its marker on every call, --version included (so a usage exit can show that no stub ran).
+# The claude stub, started with --mcp-config and --settings (PM1 only), runs the Stop hook command of the
+# settings file with a SessionStart input and two Stop inputs (stop_hook_active false), as Claude Code would.
+cat >"$MSTUB/claude" <<EOF
+#!/bin/sh
+echo "\$0" >"$MARK/claude.\$\$"
+case "\${1:-}" in --version) echo "$PCC (Claude Code)"; exit 0 ;; esac
+st="" mc=0 pv=""
+for a; do [ "\$pv" = --settings ] && st=\$a; [ "\$a" = --mcp-config ] && mc=1; pv=\$a; done
+if [ "\$mc" = 1 ] && [ -n "\$st" ]; then
+  cmd=\$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["hooks"]["Stop"][0]["hooks"][0]["command"])' "\$st")
+  echo '{"hook_event_name": "SessionStart", "source": "startup"}' | sh -c "\$cmd" >/dev/null
+  echo '{"hook_event_name": "Stop", "stop_hook_active": false}' | sh -c "\$cmd" >/dev/null
+  echo '{"hook_event_name": "Stop", "stop_hook_active": true}' | sh -c "\$cmd" >/dev/null
+fi
+exec sleep 30
+EOF
+printf '#!/bin/sh\necho "$0" >"%s/opencode.$$"\ncase "${1:-}" in --version) echo "%s"; exit 0 ;; esac\nexec sleep 30\n' "$MARK" "$POC" >"$MSTUB/opencode"
+printf '#!/bin/sh\necho "$0" >"%s/zygo.$$"\ncase "${1:-}" in --version) echo "zygo 9.8.7"; exit 0 ;; esac\nexit 1\n' "$MARK" >"$MSTUB/zygo"
+: >"$TLOG"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s"\nexec "%s" "$@"\n' "$TLOG" "$TMUX_REAL" >"$T/mtbin/tmux"
+chmod +x "$MSTUB/claude" "$MSTUB/opencode" "$MSTUB/zygo" "$T/mtbin/tmux"
+MPATH="$MSTUB:$T/mtbin:$PATH"
+mguard=0
+[ -n "$TMUX_REAL" ] || mguard=1
+for a in claude opencode zygo; do [ "$(PATH="$MPATH"; command -v "$a")" = "$MSTUB/$a" ] || mguard=1; done
+[ "$(PATH="$MPATH"; command -v tmux)" = "$T/mtbin/tmux" ] || mguard=1
+# mrun <tag> [<args>]: live-mail.sh on the stubs -> rc; output in $T/m-<tag>.out; marker list before in $T/m-<tag>.before.
+# PREMISES_DIR is the copied tree (MPD when set), never a value the caller exported (lib.sh keeps a set one).
+mrun() {
+  _t=$1; shift
+  ls "$MARK" >"$T/m-$_t.before"
+  : >"$TLOG"
+  mkdir -p "$T/mscr-$_t"
+  rc=0
+  env -u CLAUDE_CONFIG_DIR -u TMUX -u ZYGO_SESSION_DIR PATH="$MPATH" HOME="$MH" MOCK_URL="http://127.0.0.1:1" ZYGO_BIN="$MSTUB/zygo" \
+    PREMISES_DIR="${MPD:-$MT/scripts/premises}" N2_SCRATCH="$T/mscr-$_t" PW_TEST=1 PW_TICKS=1 "$SH" "$MT/scripts/premises/live-mail.sh" "$@" >"$T/m-$_t.out" 2>&1 || rc=$?
+}
+# mnew <tag> <name prefix>: the markers that came after mrun <tag> started
+mnew() { ls "$MARK" | grep -vxF -f "$T/m-$1.before" | grep "^$2\\." ; }
+# mstubs <tag> <agent>: at least one new marker of <agent>, each naming a program in $MSTUB
+mstubs() {
+  _f=$(mnew "$1" "$2"); [ -n "$_f" ] || return 1
+  for _m in $_f; do case "$(cat "$MARK/$_m")" in "$MSTUB"/*) ;; *) return 1 ;; esac; done
+}
+# mtmux: every logged tmux call is -V or starts with "-S <path> -f /dev/null "; no path is in the default socket folder
+mtmux() {
+  [ -s "$TLOG" ] || return 1
+  _pre="${TMUX_TMPDIR:-/tmp}/tmux-"
+  while IFS= read -r _l; do
+    case "$_l" in
+      -V) ;;
+      "-S "*)
+        _r=${_l#-S }; _p=${_r%% *}; _r=${_r#"$_p" }
+        case "$_r" in "-f /dev/null "*) ;; *) return 1 ;; esac
+        case "$_p" in "$_pre"*) return 1 ;; esac ;;
+      *) return 1 ;;
+    esac
+  done <"$TLOG"
+}
+# mleft <tag>: one line for each thing left: a process of the run's scratch folder, a live stub, a tmux
+# server that answers (killed here), a socket file of a logged -S path or its private folder. Empty: nothing left.
+mleft() {
+  pgrep -f "$T/mscr-$1" >/dev/null 2>&1 && echo "a process of the scratch folder"
+  for _m in $(mnew "$1" '[a-z]*'); do kill -0 "${_m##*.}" 2>/dev/null && echo "stub $_m"; done
+  for _p in $(sed -n 's/^-S \([^ ]*\) .*/\1/p' "$TLOG" | sort -u); do
+    if "$TMUX_REAL" -S "$_p" -f /dev/null has-session 2>/dev/null; then echo "tmux server $_p"; "$TMUX_REAL" -S "$_p" -f /dev/null kill-server 2>/dev/null; fi
+    [ ! -e "$_p" ] || echo "socket file $_p"
+    [ ! -e "${_p%/*}" ] || echo "private folder ${_p%/*}"
+  done
+}
+# mcase <name> <0 = pass> [<output file>]: one ok or FAIL line; a FAIL shows the output
+mcase() { if [ "$2" -eq 0 ]; then ok "$1"; else no "$1"; [ -z "${3:-}" ] || sed 's/^/    /' "$3"; fi; }
+if [ "$mguard" -ne 0 ]; then
+  no "ML16: stubs or tmux shim do not resolve; live-mail.sh not run"
+else
+  # A caller-exported PREMISES_DIR names another copy of the tree; no run may write in it.
+  LK="$T/leak"; mkdir -p "$LK/scripts" "$LK/docs"; cp -R "$HERE" "$LK/scripts/premises"; cp "$REPO/docs/premises.md" "$LK/docs/"
+  find "$LK" | sort >"$T/leak.before"
+  PREMISES_DIR="$LK/scripts/premises"; export PREMISES_DIR
+  # musage <tag> <name> [<args>]: usage, exit 2, no stub called (not even --version), no tmux call, scratch folder empty
+  musage() {
+    _u=$1 _nm=$2; shift 2
+    mrun "$_u" "$@"
+    t=1; [ "$rc" -eq 2 ] && grep -qF 'usage: live-mail.sh --pm | --m12' "$T/m-$_u.out" && [ ! -s "$TLOG" ] &&
+      [ -z "$(mnew "$_u" '[a-z]*')" ] && [ -z "$(ls -A "$T/mscr-$_u")" ] && t=0
+    mcase "ML16 $_nm: usage, exit 2, nothing started (exit $rc)" "$t" "$T/m-$_u.out"
+  }
+  musage usage "no argument"
+  musage u-both "--pm --m12" --pm --m12
+  musage u-foo "--foo" --foo
+  musage u-dd "-- --pm" -- --pm
+  # PREMISES_DIR with a space or a double quote: refused with a live: line before any tmux server starts
+  for q in 'sp ace' 'q"t'; do
+    QD="$T/$q"; mkdir -p "$QD/scripts" "$QD/docs"; cp -R "$HERE" "$QD/scripts/premises"; cp "$REPO/docs/premises.md" "$QD/docs/"
+    MPD="$QD/scripts/premises"; mrun pq --m12; unset MPD
+    t=1; [ "$rc" -eq 1 ] && grep -q '^live: PREMISES_DIR ' "$T/m-pq.out" && ! grep -q '^-S ' "$TLOG" && [ ! -e "$QD/fixtures" ] && t=0
+    mcase "ML16 PREMISES_DIR holding $(printf '%s' "$q" | sed 's/[a-z]//g; s/^ $/a space/; s/^"$/a double quote/'): refused, exit 1 (exit $rc)" "$t" "$T/m-pq.out"
+  done
+  mrun pm --pm
+  o="$T/m-pm.out"
+  t=1; [ "$rc" -eq 0 ] && [ "$(grep -c '^LIVE PM[123] failed ' "$o")" -eq 3 ] &&
+    grep -q '^LIVE PM1 failed ' "$o" && grep -q '^LIVE PM2 failed ' "$o" && grep -q '^LIVE PM3 failed ' "$o" && t=0
+  mcase "ML16 --pm: exit $rc, one LIVE line for each of PM1, PM2, PM3 (failed on stubs)" "$t" "$o"
+  t=1; mstubs pm claude && mstubs pm opencode && t=0
+  mcase "ML16 --pm: the agents started were the stub claude and opencode" "$t"
+  t=1; mtmux && t=0
+  mcase "ML16 --pm: every tmux call is on a private server (-S, -f /dev/null)" "$t" "$TLOG"
+  l=$(mleft pm); t=1; [ -z "$l" ] && t=0
+  mcase "ML16 --pm: no process, tmux server or socket file left${l:+ ($(printf '%s' "$l" | tr '\n' ';'))}" "$t"
+  t=0
+  for f in claude-code/mail/pm1.txt claude-code/mail/pm2.txt claude-code/mail/pm3.txt opencode/mail/pm2.txt opencode/mail/pm3.txt; do
+    [ -s "$MT/fixtures/$f" ] || t=1
+  done
+  mcase "ML16 --pm: the five fixtures are written in the copied tree" "$t"
+  t=1; grep -q '^1[.]1 ok ' "$MT/fixtures/claude-code/mail/pm1.txt" 2>/dev/null && t=0
+  mcase "ML16 --pm: PM1 1.1 ok from the hook inputs of the stub claude (the check can pass)" "$t" "$MT/fixtures/claude-code/mail/pm1.txt"
+  mrun m12 --m12
+  o="$T/m-m12.out"
+  t=1; [ "$rc" -eq 0 ] && [ "$(grep -c '^LIVE ' "$o")" -eq 1 ] && grep -q '^LIVE M12 failed ' "$o" && t=0
+  mcase "ML16 --m12: exit $rc, one LIVE M12 line (failed on stubs)" "$t" "$o"
+  t=1; mstubs m12 zygo && t=0
+  mcase "ML16 --m12: zygo ran as the stub" "$t"
+  t=1; mtmux && t=0
+  mcase "ML16 --m12: every tmux call is on a private server (-S, -f /dev/null)" "$t" "$TLOG"
+  l=$(mleft m12); t=1; [ -z "$l" ] && t=0
+  mcase "ML16 --m12: no process, tmux server or socket file left${l:+ ($(printf '%s' "$l" | tr '\n' ';'))}" "$t"
+  t=1; [ -s "$MT/fixtures/claude-code/mail/m12.txt" ] && t=0
+  mcase "ML16 --m12: the fixture is written in the copied tree" "$t"
+  h=$(sed -n 1p "$MT/fixtures/claude-code/mail/m12.txt" 2>/dev/null)
+  t=1; printf '%s\n' "$h" | grep -qF ', zygo 9.8.7, ' && [ "$(printf '%s\n' "$h" | grep -o zygo | wc -l | tr -d ' ')" -eq 1 ] && t=0
+  mcase "FX18 --m12: the M12 head line holds \", zygo <version>,\" with the word zygo once" "$t" "$MT/fixtures/claude-code/mail/m12.txt"
+  task=$(sed -n "s/^M12_TASK='\\(.*\\)'\$/\\1/p" "$HERE/live-mail.sh" 2>/dev/null)
+  t=1; [ -n "$task" ] && ! printf '%s\n' "$task" | grep -qiE 'mail|message|send|inbox|poll|watch' && t=0
+  mcase "ML16 the M12 task names no mail" "$t"
+  find "$LK" | sort >"$T/leak.after"
+  t=1; cmp -s "$T/leak.before" "$T/leak.after" && t=0
+  mcase "ML16 an exported PREMISES_DIR: no file written in that tree" "$t"
+  unset PREMISES_DIR
+  # The 12.2/12.3 verdicts of live-mail.sh --m12-judge on fixed transcripts (no tmux, no agent).
+  JT="$T/judge"; mkdir -p "$JT"
+  tu() { printf '{"type": "user", "message": {"content": %s}}\n' "$1"; }
+  ta() { printf '{"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "mcp__zygo__%s", "input": %s}]}}\n' "$1" "$2"; }
+  tr_() { printf '{"type": "user", "message": {"content": [{"type": "tool_result", "content": "x"}]}}\n'; }
+  { tu "\"$task\""; ta mail_list '{}'; tr_; ta mail_send '{"to": ["beta"], "subject": "s", "body": "b"}'; tr_; tu '"next"'; ta mail_read '{}'; } >"$JT/before.jsonl"
+  { tu "\"$task\""; ta mail_send '{"to": "beta", "subject": "s", "body": "b"}'; tr_; ta mail_read '{}'; tr_; } >"$JT/after.jsonl"
+  # mjudge <tag> <transcript>: the record lines in $JT/<tag>/M12.txt; rc
+  mjudge() {
+    mkdir -p "$JT/$1"; rc=0
+    env -u PREMISES_DIR PATH="$MPATH" "$SH" "$MT/scripts/premises/live-mail.sh" --m12-judge "$2" "$JT/$1" >"$JT/$1.out" 2>&1 || rc=$?
+    cat "$JT/$1.out" >>"$JT/$1/M12.txt" 2>/dev/null
+  }
+  mjudge before "$JT/before.jsonl"; J="$JT/before/M12.txt"
+  t=1; [ "$rc" -eq 0 ] && grep -q '^12[.]2 ok .*beta among them: yes' "$J" && grep -q '^12[.]3 ok .*after the last mail_send of the turn: 0$' "$J" && t=0
+  mcase "ML16 judge: mail_list before mail_send to beta: 12.2 ok, 12.3 ok with 0 polls" "$t" "$J"
+  mjudge after "$JT/after.jsonl"; J="$JT/after/M12.txt"
+  t=1; [ "$rc" -eq 0 ] && grep -q '^12[.]2 ok ' "$J" && grep -q '^12[.]3 FAIL .*after the last mail_send of the turn: 1$' "$J" && t=0
+  mcase "ML16 judge: mail_read after mail_send: 12.3 FAIL with 1 poll" "$t" "$J"
+  mjudge none "$JT/missing.jsonl"; J="$JT/none/M12.txt"
+  t=1; [ "$rc" -eq 0 ] && grep -q '^12[.]2 FAIL .*found in its transcript: false' "$J" && grep -q '^12[.]3 FAIL ' "$J" && t=0
+  mcase "ML16 judge: no transcript: 12.2 and 12.3 FAIL" "$t" "$J"
+fi
+
+# --- FX20: live-detach.sh --zygo on stubs: the PW15 record line names zygo once ------------------
+# A copied tree; a zygo stub whose `up` exits 1 (no agent pane starts) and whose other calls exit 0;
+# a setsid shim for the PATH check only (the --zygo path never calls setsid).
+DT="$T/dtree"
+mkdir -p "$DT/scripts" "$DT/docs" "$T/dtbin" "$T/mscr-pw15" "$T/mscr-pw15e"
+cp -R "$HERE" "$DT/scripts/premises"; cp "$REPO/docs/premises.md" "$DT/docs/"
+printf '#!/bin/sh\necho "$0" >"%s/zygo.$$"\ncase "${1:-}" in --version) echo "zygo 9.8.7"; exit 0 ;; up) exit 1 ;; esac\nexit 0\n' "$MARK" >"$MSTUB/zygo-pw15"
+printf '#!/bin/sh\necho "$0" >"%s/zygo.$$"\ncase "${1:-}" in --version) exit 0 ;; up) exit 1 ;; esac\nexit 0\n' "$MARK" >"$MSTUB/zygo-pw15e"
+printf '#!/bin/sh\nexec "$@"\n' >"$T/dtbin/setsid"
+chmod +x "$MSTUB/zygo-pw15" "$MSTUB/zygo-pw15e" "$T/dtbin/setsid"
+if [ "$mguard" -ne 0 ] || ! command -v jq >/dev/null 2>&1 || ! command -v perl >/dev/null 2>&1; then
+  no "FX20: stubs, tmux shim, jq or perl not found; live-detach.sh not run"
+else
+  cksum "$REPO"/fixtures/tmux/pw15-*.txt >"$T/pw15.before"
+  ls "$MARK" >"$T/m-pw15.before"; : >"$TLOG"
+  rc=0
+  env -u CLAUDE_CONFIG_DIR -u TMUX -u ZYGO_SESSION_DIR PATH="$T/dtbin:$MPATH" HOME="$MH" PREMISES_DIR="$DT/scripts/premises" \
+    N2_SCRATCH="$T/mscr-pw15" "$SH" "$DT/scripts/premises/live-detach.sh" --zygo "$MSTUB/zygo-pw15" >"$T/m-pw15.out" 2>&1 || rc=$?
+  o="$T/m-pw15.out"
+  t=1; [ "$rc" -eq 0 ] && [ "$(grep -c '^LIVE PW15 ' "$o")" -eq 1 ] && grep -q '^LIVE PW15 failed ' "$o" && t=0
+  mcase "FX20 --zygo: exit $rc, one LIVE PW15 line (failed on stubs)" "$t" "$o"
+  h=$(sed -n 1p "$DT/fixtures/tmux/pw15-down.txt" 2>/dev/null)
+  t=1; [ "$h" = "launch zygo 9.8.7, real down" ] && t=0
+  mcase "FX20 --zygo: the PW15 record head line is \"launch zygo 9.8.7, real down\" (zygo once)" "$t" "$DT/fixtures/tmux/pw15-down.txt"
+  l=$(sed -n 's/^LIVE PW15 [a-z]* ([^)]*): \([^;]*\);.*/\1/p' "$o")
+  t=1; case "$l" in "launch zygo 9.8.7 real down, tmux "*) t=0 ;; esac
+  mcase "FX20 --zygo: the LIVE PW15 text starts \"launch zygo 9.8.7 real down, tmux \" (zygo once; got: $l)" "$t"
+  t=1; mstubs pw15 zygo && mstubs pw15 claude && mtmux && [ -z "$(mleft pw15)" ] && t=0
+  mcase "FX20 --zygo: only stubs ran, every tmux call on a private server, nothing left" "$t" "$TLOG"
+  # The same run on a zygo stub whose --version prints nothing: the fallback still names zygo once.
+  ls "$MARK" >"$T/m-pw15e.before"; : >"$TLOG"
+  rc=0
+  env -u CLAUDE_CONFIG_DIR -u TMUX -u ZYGO_SESSION_DIR PATH="$T/dtbin:$MPATH" HOME="$MH" PREMISES_DIR="$DT/scripts/premises" \
+    N2_SCRATCH="$T/mscr-pw15e" "$SH" "$DT/scripts/premises/live-detach.sh" --zygo "$MSTUB/zygo-pw15e" >"$T/m-pw15e.out" 2>&1 || rc=$?
+  o="$T/m-pw15e.out"
+  h=$(sed -n 1p "$DT/fixtures/tmux/pw15-down.txt" 2>/dev/null)
+  t=1; [ "$rc" -eq 0 ] && [ "$h" = "launch zygo ?, real down" ] && t=0
+  mcase "FX20 --zygo, empty version: exit $rc, the PW15 record head line is \"launch zygo ?, real down\" (zygo once)" "$t" "$DT/fixtures/tmux/pw15-down.txt"
+  l=$(sed -n 's/^LIVE PW15 [a-z]* ([^)]*): \([^;]*\);.*/\1/p' "$o")
+  t=1; case "$l" in "launch zygo ? real down, tmux "*) t=0 ;; esac
+  mcase "FX20 --zygo, empty version: the LIVE PW15 text starts \"launch zygo ? real down, tmux \" (zygo once; got: $l)" "$t" "$o"
+  t=1; mstubs pw15e zygo && mstubs pw15e claude && mtmux && [ -z "$(mleft pw15e)" ] && t=0
+  mcase "FX20 --zygo, empty version: only stubs ran, every tmux call on a private server, nothing left" "$t" "$TLOG"
+  cksum "$REPO"/fixtures/tmux/pw15-*.txt >"$T/pw15.after"
+  t=1; cmp -s "$T/pw15.before" "$T/pw15.after" && t=0
+  mcase "FX20 the repository's fixtures/tmux/pw15-*.txt are unchanged after both runs" "$t"
+fi
+
 # --- U4: every agent program that ran was a stub; no wrapped sleep is left ------------------------
 nm=0 real=0
 for m in "$MARK"/*; do
   [ -f "$m" ] || continue
   nm=$((nm + 1))
-  case "$(cat "$m")" in "$STUB"/*) ;; *) real=$((real + 1)) ;; esac
+  case "$(cat "$m")" in "$STUB"/* | "$MSTUB"/*) ;; *) real=$((real + 1)) ;; esac
 done
 if [ "$real" -eq 0 ]; then ok "U4 every agent started was a stub ($nm marker(s))"; else no "U4 $real marker(s) not from a stub"; fi
 if pgrep -f "sleep 4711$$" >/dev/null 2>&1; then no "U4 a wrapped sleep is left"; pkill -KILL -f "sleep 4711$$"; else ok "U4 no wrapped sleep is left"; fi

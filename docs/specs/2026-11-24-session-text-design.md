@@ -275,7 +275,7 @@ What it leaves on your machine, and how to remove it (step 8): Claude Code write
 1. Make a scratch folder with the probe hook, its settings file and a one-agent plugin:
 
 ```sh
-S=$(mktemp -d -t p315) && cd "$S" && git init -q
+S=$(mktemp -d "${TMPDIR:-/tmp}/p315.XXXXXX") && cd "$S" && git init -q
 cat > probe.py <<'EOF'
 import json, sys
 d = json.load(sys.stdin)
@@ -353,7 +353,7 @@ python3 -I scripts/premises/scrub.py "$S" "$S/oc.jsonl" > fixtures/opencode/live
 claude --version; opencode --version
 ```
 
-7. Send the three files and the two version lines to the lead.
+7. Send the three files, the two version lines, the MAIN and SUB model ids chosen in step 4, and whether the subagent's answer was shown in step 5 (yes or no) to the lead.
 
 8. Remove what the check left. Close every Claude Code session first, because `~/.claude.json` is shared:
 
@@ -363,6 +363,8 @@ cp ~/.claude.json ~/.claude.json.bak-p315
 python3 -I -c 'import json,os; p=os.path.expanduser("~/.claude.json"); d=json.load(open(p)); r=[k for k in list(d.get("projects",{})) if "p315" in k]; [d["projects"].pop(k) for k in r]; json.dump(d,open(p,"w"),indent=2); print("removed", r)'
 rm -rf "$S"
 ```
+
+Once Claude Code starts normally, delete `~/.claude.json.bak-p315`.
 
 The OpenCode session stays in OpenCode's data folder; delete it from OpenCode's session list if you want it gone.
 
@@ -377,10 +379,11 @@ The OpenCode session stays in OpenCode's data folder; delete it from OpenCode's 
 ## 13. Base-spec changes
 
 - **§8.5, hooks list:** add "`SubagentStart` → `zygo hook session-start` (every launch; for a member, before `workspace --event subagent-start`)".
-- **§8.6 item 7**, the parenthesis becomes: "(also given to each subagent: in the `--agents` prompt of each Claude Code `zygo-<role>` agent, built at launch; by `zygo hook session-start` on `SubagentStart` to every other Claude Code subagent whose type does not start with `zygo-`, and again after that subagent's compaction (T§9.2); on OpenCode by the system-prompt transform on each request whose model is a `zygo/` role other than the main role, T§7)".
-- **§8.6, new last paragraph:** "After a compaction: the main loop gets the text again from `SessionStart` with `source: compact`; see `docs/specs/2026-11-24-session-text-design.md` T§9."
-- **§8.7 note (N33):** "so subagents and the title agent do not get it" becomes "so subagents and the title agent get the mechanics text only (T§7)".
-- **§10.6:** add "For a subagent (an input with `agent_id`) the hook also sets the flag of T§9.2."
+- **§8.6 item 7**, the parenthesis becomes: "(also given to each subagent: in the prompt of each `zygo-<role>` agent, built at launch, on Claude Code (§8.5 Subagents) and on OpenCode (§8.7 Agents); on Claude Code by `zygo hook session-start` on `SubagentStart` to every other subagent whose type does not start with `zygo-`, and again by `zygo hook trim` after that subagent's compaction, only with the result of its next `Bash|Read|Grep|Glob|WebFetch` call (session text design T§9.2); on OpenCode, if ST4 holds (SX-10 records it), by the system-prompt transform on each `zygo/` request whose model id is not the effective role (`ZYGO_MAIN_ROLE`), and on every `zygo/` request when `ZYGO_MAIN_ROLE` is empty (session text design T§7); a request on the effective role's model gets the full session text instead (§8.7 note). On Claude Code, a user `--agents` entry with a `zygo-<role>` key replaces zygo's agent and gets the mechanics text from no channel (session text design T§6.4))". The OpenCode `zygo-<role>` prompt keeps the text (`inline_config` in `crates/zygo-launch/src/opencode.rs`) until the ST4 row (last bullet), so the item points to §8.7 Agents, which states it. The Claude Code `zygo-<role>` prompt is built by `agents` in `crates/zygo-launch/src/claude_code.rs`, and a user `--agents` key replaces it there; `subagent` in `crates/zygo-hooks/src/session_start.rs` and `run_with` in `crates/zygo-hooks/src/pre_compact.rs` skip a `zygo-` type (T§6.4). The copy after a subagent's compaction comes from `zygo hook trim` (`take_flag` in `crates/zygo-hooks/src/trim.rs`), on the `PostToolUse` entry with matcher `Bash|Read|Grep|Glob|WebFetch` (`hooks` in `crates/zygo-launch/src/claude_code.rs`), not from `session-start`, which prints nothing for that subagent's `SessionStart` (`subagent` in `crates/zygo-hooks/src/session_start.rs`). `ZYGO_MAIN_ROLE` is the effective role, empty when there is none (`effective_role` in `crates/zygo-launch/src/launcher.rs`); with it empty, every `zygo/` request calls `--event subagent` (the `experimental.chat.system.transform` handler in `crates/zygo-launch/assets/opencode-plugin.js`).
+- **§8.6, new last paragraph:** "After a compaction, the Claude Code main loop gets the text again from `SessionStart` with `source: compact`; see `docs/specs/2026-11-24-session-text-design.md` T§9." `SessionStart` is a Claude Code event (`hooks` in `crates/zygo-launch/src/claude_code.rs`); the OpenCode main agent gets the text from the transform on each request (§8.7).
+- **§8.7, Agents row:** "`prompt` (§8.6)" becomes "`prompt` = the role prompt, one space and the mechanics text (§8.6 item 7; each `zygo-<role>` prompt holds the mechanics text until SX-10 changes it per ST4, session text design T§7.2 item 3)" (`inline_config` in `crates/zygo-launch/src/opencode.rs`).
+- **§8.7 note (N33):** "The session-start text is added only to requests whose model is `zygo/<effective role>` (`ZYGO_MAIN_ROLE`; none for a direct model id), so subagents and the title agent do not get it" becomes "The system-prompt transform selects by model, not by agent: a `zygo/` request whose model id equals the effective role (`ZYGO_MAIN_ROLE`) gets the full session text; every other `zygo/` request, and every `zygo/` request when `ZYGO_MAIN_ROLE` is empty (no effective role, for example a direct model id), gets the mechanics text only, through `--event subagent` (session text design T§7.2). So a subagent on the effective role's model, and the title agent when `small_model` is `zygo/<effective role>` (the effective role is `read`, or `read` is disabled and the effective role is `main_role`), get the full session text; a subagent or the title agent gets either text only if ST4 holds (SX-10 records it)" (the `experimental.chat.system.transform` handler in `crates/zygo-launch/assets/opencode-plugin.js`; `small_model` from `inline_config` in `crates/zygo-launch/src/opencode.rs`).
+- **§10.6:** add "For a Claude Code subagent whose `agent_type` does not start with `zygo-`, and whose `agent_id` passes the agent-name rule of the work log (1 to 64 ASCII letters, digits, `_` and `-`), the hook also creates the empty flag `$ZYGO_SESSION_DIR/reinject/<agent_id>` of session text design T§9.2; the text it prints does not change." The hook skips a `zygo-` type and an `agent_id` that fails the rule (`flag_path` and `run_with` in `crates/zygo-hooks/src/pre_compact.rs`).
 - After the ST4 row: §8.7 says whether the OpenCode `zygo-<role>` prompt holds the mechanics text.
 
 ## 14. Failure handling
@@ -449,4 +452,7 @@ Each check is decided by a test with the stub agents and recorded fixtures, or b
 
 ## Change log
 
+- 2026-11-24 · T§12.2 · author's call (SX-8 review round 1) · step 1 mktemp works on GNU; step 7 sends MAIN, SUB and the step-5 answer; step 8 says when to delete the backup.
 - 2026-11-25: §7.1 and §9.3 — the OpenCode documentation caveat points to the reason of the OpenCode A-8.1 grade (capability A-8) in `docs/conformance/opencode.toml`, not to `docs/conformance.md:42`, which is generated and keeps no hand note (pointer correction, node CF-4); author's call.
+- 2026-11-26 · T§13 (bullets §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6) · author's call (SX-7 premise check) · the merged code of SX-3 to SX-6 wins: the OpenCode `zygo-<role>` prompt keeps the text until ST4; `zygo hook trim`, not `session-start`, gives the copy after a subagent's compaction; with no main role every `zygo/` request gets the mechanics text; the flag skips `zygo-` types and ids that fail the agent-name rule; `SessionStart` is the Claude Code main loop's channel. The §8.5 bullet matches the code and does not change.
+- 2026-11-26 · T§13 (bullets §8.6 item 7, §8.7 Agents row (new), §8.7 N33, and the citations of every bullet) · author's call (SX-7 review round 1) · the transform selects by model: the effective role's model gets the full text, so does the title agent on it; OpenCode subagent and title delivery depends on ST4; item 7 states the `zygo-` `--agents` entry and the trim-call limits; §8.7 Agents states the `zygo-<role>` prompt; citations name the function, not the line.

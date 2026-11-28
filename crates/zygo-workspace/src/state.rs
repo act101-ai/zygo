@@ -88,8 +88,27 @@ pub struct Pane {
     pub active: bool,
     pub cwd: PathBuf,
     pub kind: PaneKind,
+    /// The member name (M§6); checked at each read by [`Pane::valid_name`] (AU84).
+    #[serde(default, deserialize_with = "lenient_name", skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+/// A stored `name` (M§6): a string is kept as it is (its grammar is checked at each read, AU84); any other JSON value
+/// reads as none, so a bad `name` does not refuse the whole file.
+fn lenient_name<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => Some(s),
+        _ => None,
+    })
+}
+
+impl Pane {
+    /// The stored name only when it passes `zygo_core::ids::valid_member_name` (M§6, AU84); a name that fails reads as none.
+    pub fn valid_name(&self) -> Option<&str> {
+        self.name.as_deref().filter(|n| zygo_core::ids::valid_member_name(n))
+    }
 }
 
 /// One member of `members`, by pane key.
@@ -99,10 +118,16 @@ pub struct MemberRecord {
     pub zygo_session: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending: Option<Pending>,
+    /// Unix time (seconds) of the first committed start of this record (W§7.2, W AU92 as amended by T§3.2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_started_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session: Option<String>,
     pub state: MemberState,
     pub launch: Launch,
+    /// The member name (M§6); checked at each read by [`MemberRecord::valid_name`] (AU84).
+    #[serde(default, deserialize_with = "lenient_name", skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_dir: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -166,6 +191,12 @@ pub struct Launch {
     /// sets it from the arguments of that start; absent when false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub events_off: bool,
+    /// W§7.2 member.launch.job (R§9.3 effect 2): "orchestrator" or "worker"; absent for no job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job: Option<String>,
+    /// W§7.2 member.launch.definition = { commit, digest } (R§7.4): the pin of the approved read of the workspace files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<zygo_config::repo_def::Pin>,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -285,6 +316,8 @@ impl Launch {
             config_dir: None,
             args: Vec::new(),
             events_off: false,
+            job: None,
+            definition: None,
             extra: Extra::new(),
         }
     }
@@ -296,9 +329,11 @@ impl MemberRecord {
         MemberRecord {
             zygo_session: None,
             pending: None,
+            first_started_at: None,
             agent_session: None,
             state: MemberState::Ended,
             launch: Launch::new(kind),
+            name: None,
             config_dir: None,
             program: None,
             overrides: None,
@@ -311,6 +346,11 @@ impl MemberRecord {
             saved_for: None,
             extra: Extra::new(),
         }
+    }
+
+    /// The stored name only when it passes `zygo_core::ids::valid_member_name` (M§6, AU84); a name that fails reads as none.
+    pub fn valid_name(&self) -> Option<&str> {
+        self.name.as_deref().filter(|n| zygo_core::ids::valid_member_name(n))
     }
 }
 
@@ -603,6 +643,18 @@ impl Store {
         })
     }
 
+    /// The live session folder of a member (D14): `sessions/<pending.zygo_session>` when live, else
+    /// `sessions/<zygo_session>` when live; an id that fails `valid_session_id` is not looked up.
+    pub fn live_session(&self, m: &MemberRecord) -> Option<PathBuf> {
+        let pending = m.pending.as_ref().map(|p| p.zygo_session.as_str());
+        pending
+            .into_iter()
+            .chain(m.zygo_session.as_deref())
+            .filter(|id| valid_session_id(id))
+            .map(|id| self.sessions_dir.join(id))
+            .find(|d| session_dir::live(d))
+    }
+
     /// Adds the line `<unix seconds> <text>` to `errors.log`. The caller has no place to report a failure of the
     /// log, so every error is ignored. A link or an entry that is not a regular file at `errors.log` is not written
     /// or followed, and the rewrite reads at most [`ERRORS_LOG_MAX`] bytes, the newest ones (FIX-17 Round 2 F3, F4).
@@ -695,12 +747,24 @@ pub(crate) fn open_nofollow(o: &mut fs::OpenOptions, path: &Path) -> std::io::Re
 }
 
 /// [`open_nofollow`] for a file the store locks or writes: a link or an entry that is not a regular file is an error
-/// whose text names the path.
+/// whose text names the path (`<path>: is a link; it is not followed`, `<path>: is not a regular file`). A folder is
+/// such an entry too: an open for write fails on it (`EISDIR`) before the handle can be checked, so a failed open is
+/// looked at again by the path, no link followed, as [`take_lock`] does (FX-28). A failed open of kind `NotFound` is
+/// not looked at again (nothing is at the path, or its folder is missing), and every error that the second look does
+/// not explain is returned as it is, with its kind.
 fn open_regular(o: &mut fs::OpenOptions, path: &Path) -> std::io::Result<File> {
-    match open_nofollow(o, path)? {
-        Opened::File(f) => Ok(f),
-        Opened::Link => Err(std::io::Error::other(format!("{}: is a link; it is not followed", path.display()))),
-        Opened::NotFile => Err(std::io::Error::other(format!("{}: is not a regular file", path.display()))),
+    let link = || std::io::Error::other(format!("{}: is a link; it is not followed", path.display()));
+    let not_file = || std::io::Error::other(format!("{}: is not a regular file", path.display()));
+    match open_nofollow(o, path) {
+        Ok(Opened::File(f)) => Ok(f),
+        Ok(Opened::Link) => Err(link()),
+        Ok(Opened::NotFile) => Err(not_file()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(e),
+        Err(e) => match fs::symlink_metadata(path) {
+            Ok(m) if m.file_type().is_symlink() => Err(link()),
+            Ok(m) if !m.is_file() => Err(not_file()),
+            _ => Err(e),
+        },
     }
 }
 
@@ -772,11 +836,75 @@ pub(crate) fn sweep_tmp(dir: &Path) {
 /// another holder kept the lock for the whole bound. The lock ends when the file is dropped. A link at `path` is not
 /// followed and an entry that is not a regular file is refused ([`open_regular`], FIX-17 Round 2 F3).
 pub(crate) fn lock_file(path: &Path, bound: Duration) -> std::io::Result<Option<File>> {
+    lock_file_as(path, bound, false)
+}
+
+/// The locked file `lock` is still the file at `path`: the same device and inode by `fstat` of the open file and by
+/// `lstat` of `path`, no link followed (unix). `zygo ws forget` renames the state folder, with its lock files, while
+/// another taker waits for a lock; that taker then holds the lock of a file that is no longer at `path`, and a third
+/// can lock a new file there. Every taker of `mail/lock` (M§5 P1; FX-24 review R2 F3) and of `mail/sync/lock` (mail
+/// sync design S§8.3 step 3, MS-21 review R2-2) checks this after it gets the lock. On other platforms it is always
+/// `true` (`zygo ws forget` does not run there: every workspace verb exits 2, OP5).
+pub fn lock_is_at(lock: &File, path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (lock.metadata(), fs::symlink_metadata(path)) {
+            (Ok(open), Ok(at)) => (open.dev(), open.ino()) == (at.dev(), at.ino()),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (lock, path);
+        true
+    }
+}
+
+/// [`lock_file`] with the kind of lock chosen: shared when `shared` (holders of a shared lock do not wait for each
+/// other), else exclusive (M§5 `mail/lock`, FX-13).
+pub(crate) fn lock_file_as(path: &Path, bound: Duration, shared: bool) -> std::io::Result<Option<File>> {
     let f = open_regular(private().read(true).write(true).create(true).truncate(false), path)?;
+    lock_open(f, bound, shared)
+}
+
+/// What [`take_lock`] found at the lock file.
+pub(crate) enum Taken {
+    /// The lock is held; it ends when the file is dropped.
+    Held(File),
+    /// Another holder kept the lock for the whole bound.
+    Busy,
+    /// The lock file is a link or not a regular file (a folder, a FIFO, a socket, a device). No taker of the lock can
+    /// hold it, because every taker refuses to open such a file (FX-24 review R2 F4).
+    NotRegular,
+}
+
+/// [`lock_file`] (`shared`: as [`lock_file_as`]) that tells a lock file that is a link or not a regular file
+/// (`NotRegular`) apart from every other error. Nothing is followed, and a folder at `path` is `NotRegular`, as a
+/// link is. `zygo ws forget` takes `mail/lock` and `mail/sync/lock` with it: no delivery or sync can hold such a
+/// file, so the forget goes on without that lock (S§7.6 steps 1 and 4).
+pub(crate) fn take_lock(path: &Path, bound: Duration, shared: bool) -> std::io::Result<Taken> {
+    let f = match open_nofollow(private().read(true).write(true).create(true).truncate(false), path) {
+        Ok(Opened::File(f)) => f,
+        Ok(Opened::Link | Opened::NotFile) => return Ok(Taken::NotRegular),
+        // A folder at `path` fails the open for write (`EISDIR`) before the handle can be checked.
+        Err(_) if fs::symlink_metadata(path).is_ok_and(|m| !m.file_type().is_file()) => return Ok(Taken::NotRegular),
+        Err(e) => return Err(e),
+    };
+    Ok(match lock_open(f, bound, shared)? {
+        Some(f) => Taken::Held(f),
+        None => Taken::Busy,
+    })
+}
+
+/// Takes the lock of the open file `f`: tries each 5 ms until `bound` ends; `Ok(None)` when another holder kept it
+/// for the whole bound.
+fn lock_open(f: File, bound: Duration, shared: bool) -> std::io::Result<Option<File>> {
     // `None`: the bound is past the end of the clock, so no deadline exists.
     let deadline = Instant::now().checked_add(bound);
     loop {
-        match fs4::FileExt::try_lock(&f) {
+        let r = if shared { fs4::FileExt::try_lock_shared(&f) } else { fs4::FileExt::try_lock(&f) };
+        match r {
             Ok(()) => return Ok(Some(f)),
             Err(fs4::TryLockError::Error(e)) => return Err(e),
             Err(fs4::TryLockError::WouldBlock) => {
