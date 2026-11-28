@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::Value;
 use zygo_config::{Dialect, Facts, ModelRow};
+use zygo_core::ClientSpec;
 
 use crate::errors::ZygoError;
 use crate::pipeline::{Adjustment, ModelRoute, RequestCtx, ResponseCtx, Stage};
@@ -90,12 +91,10 @@ pub fn prompt(u: Usage) -> u64 {
     u.input.saturating_add(u.cache_read).saturating_add(u.cache_write)
 }
 
-/// The `zygo` MCP server's `compact` tool: `mcp__<server>__compact` with `<server>` ending in `zygo` (§10.2.3 trigger 2).
-pub fn compact_tool(name: &str) -> bool {
-    name.strip_suffix("compact")
-        .and_then(|s| s.strip_prefix("mcp__"))
-        .and_then(|s| s.strip_suffix("__"))
-        .is_some_and(|s| s.ends_with("zygo"))
+/// The `zygo` MCP server's `compact` tool in the client's MCP tool-name form (`ClientSpec::mcp_server`), its server
+/// ending in `zygo` (§10.2.3 trigger 2).
+pub fn compact_tool(client: &ClientSpec, name: &str) -> bool {
+    (client.mcp_server)(name, "compact").is_some_and(|s| s.ends_with("zygo"))
 }
 
 /// Trigger 1's threshold: the override, else `soft`; none when `off`; then at most `safety` (§10.2.1).
@@ -160,7 +159,7 @@ fn messages_line(ctx: &mut ResponseCtx, line: &mut SseLine) {
     match v.get("type").and_then(Value::as_str) {
         Some("content_block_start") => {
             let b = &v["content_block"];
-            if b["type"] == "tool_use" && b["name"].as_str().is_some_and(compact_tool) {
+            if b["type"] == "tool_use" && b["name"].as_str().is_some_and(|n| compact_tool(ctx.session.agent.spec(), n)) {
                 ctx.compact_call = true;
             }
         }
@@ -203,7 +202,7 @@ fn responses_line(ctx: &mut ResponseCtx, line: &mut SseLine) {
                 Some(ns) => Cow::Owned(flat_name(ns, name)),
                 None => Cow::Borrowed(name),
             };
-            if compact_tool(&name) {
+            if compact_tool(ctx.session.agent.spec(), &name) {
                 ctx.compact_call = true;
             }
         }
