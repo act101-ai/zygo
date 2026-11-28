@@ -200,12 +200,15 @@ fn pending_wake(b: &Machine) -> serde_json::Map<String, serde_json::Value> {
     state_json(b).get("pending_wake").and_then(|v| v.as_object().cloned()).unwrap_or_default()
 }
 
-#[test] // FX-30 Acceptance, S§8.3 steps 5 and 10, S§10.1, S§19 #14: a crash after each step of S§8.5 "Delivery"
-fn crash_recovery_counts_and_wakes_once() {
+/// FX-30 Acceptance, S§8.3 steps 5 and 10, S§10.1, S§19 #14: a crash at `point` (`import::run`), then the recovery
+/// pass counts the message once and wakes the idle `bob` with a live launcher once, and the pass after, with the
+/// clock past `wake_gap`, counts and wakes nothing. Each point runs twice on one pair, so the second run starts from
+/// the state that the first one's three passes left. Each point is its own test, so a failure names its point.
+fn crash_recovery_counts_and_wakes_once(point: &'static str) {
     let _g = one_at_a_time();
     let (_r, a, b) = pair();
     let _live = live(&b.paths, "sbob");
-    for (k, point) in (1u64..).zip(["after_incoming", "after_log", "after_new", "after_ack"]) {
+    for k in 1u64..=2 {
         let id = send(&a, T0 + k);
         assert_eq!(sync(&a).pushed, 1, "{point}");
         let crashed = Typed::default();
@@ -227,6 +230,18 @@ fn crash_recovery_counts_and_wakes_once() {
         assert!(pending_wake(&b).is_empty(), "{point}");
     }
 }
+
+#[test]
+fn crash_after_incoming_is_counted_and_woken_once() { crash_recovery_counts_and_wakes_once("after_incoming") }
+
+#[test]
+fn crash_after_log_is_counted_and_woken_once() { crash_recovery_counts_and_wakes_once("after_log") }
+
+#[test]
+fn crash_after_new_is_counted_and_woken_once() { crash_recovery_counts_and_wakes_once("after_new") }
+
+#[test]
+fn crash_after_ack_is_counted_and_woken_once() { crash_recovery_counts_and_wakes_once("after_ack") }
 
 #[test] // FX-30 author's call 3: a pending entry whose message never arrived is dropped, not counted
 fn pending_entry_whose_message_never_arrived_is_dropped() {

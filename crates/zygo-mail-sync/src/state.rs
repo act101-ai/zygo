@@ -249,6 +249,10 @@ pub struct State {
     pub pending: BTreeMap<String, String>,
     /// The S§6.6 once-only note was shown.
     pub ci_note_shown: bool,
+    /// S§8.3 steps 9 and 10 (FX-30): ULID → pane key of each delivery that the import began (recorded before its
+    /// first write, [`pending_wake_add`]) and that no pass end counted yet. The pass that counts and wakes it removes
+    /// it in its last state write; a state file written before FX-30 has none.
+    pub pending_wake: BTreeMap<String, String>,
 }
 
 /// The verdicts of the public check (S§8.2 steps 2 and 4).
@@ -318,7 +322,25 @@ fn check_state(s: &State) -> io::Result<()> {
             return bad(what);
         }
     }
+    // FX-30: a canonical ULID and a pane key (AU84), so a path made from an entry stays in `mail/<key>/`.
+    if !s.pending_wake.iter().all(|(id, key)| {
+        Ulid::from_string(id).is_ok_and(|u| u.to_string() == *id) && zygo_workspace::identity::valid_pane_key(key)
+    }) {
+        return bad("pending_wake");
+    }
     Ok(())
+}
+
+/// S§8.3 step 9 (FX-30): records the delivery of `id` to pane key `key` in `pending_wake`, before the import's first
+/// write of that delivery, so that the pass that finds the message in `new/` after a crash counts and wakes it. The
+/// caller holds `mail/sync/lock` (S§15). An entry already there is not written again.
+pub fn pending_wake_add(sp: &SyncPaths, key: &str, id: Ulid) -> std::io::Result<()> {
+    let mut s = load(sp)?;
+    if s.pending_wake.get(&id.to_string()).is_some_and(|k| k == key) {
+        return Ok(());
+    }
+    s.pending_wake.insert(id.to_string(), key.to_string());
+    save(sp, &s)
 }
 
 /// S§8.3: the state. A missing file is the default; a link, a read error or a file that is not a JSON object of

@@ -351,7 +351,9 @@ fn a_full_inbox_leaves_the_message_unacked() { // S§19 #15
 
 #[test]
 fn a_crash_after_each_delivery_step_gives_one_file() { // S§19 #14 delivery part
-    for (point, finished) in [("after_incoming", 1), ("after_log", 1), ("after_new", 0), ("after_ack", 0)] {
+    for (point, staged) in [("after_incoming", true), ("after_log", true), ("after_new", false), ("after_ack", false)] {
+        // FX-30: step 5 gives the key and ULID of the file it moves into `new/`.
+        let finished: Vec<(String, Ulid)> = staged.then(|| (KEY.to_string(), u(1))).into_iter().collect();
         let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
         let b = msg(u(1), "bob@b");
         let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
@@ -374,7 +376,7 @@ fn finish_incoming_with_the_ulid_logged_and_the_target_present() { // review foc
     imported_append(&sp, u(1)).unwrap();
     fs::create_dir_all(new_dir(&sp)).unwrap();
     fs::write(new_dir(&sp).join(file(u(1))), &b).unwrap();
-    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
+    assert!(finish_incoming(&sp, &store).unwrap().is_empty());
     assert_eq!(names(&sp.incoming), Vec::<String>::new());
     assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
     assert_eq!(fs::read_to_string(&sp.imported).unwrap(), format!("{}\n", u(1)));
@@ -385,7 +387,7 @@ fn finish_incoming_after_a_torn_log() { // review focus 17, the MS-12 half
     let (_t, sp, store) = local();
     fs::write(&sp.imported, &u(2).to_string()[..20]).unwrap();
     staged(&sp, &format!("{KEY}.{}.json", u(1)), &msg(u(1), "bob@b"));
-    assert_eq!(finish_incoming(&sp, &store).unwrap(), 1);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), [(KEY.to_string(), u(1))]);
     assert_eq!(imported_load(&sp).unwrap(), HashSet::from([u(1)]));
     assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
 }
@@ -396,7 +398,7 @@ fn incoming_is_never_swept() {
     for n in ["notes.txt".to_string(), format!("{KEY}.bad.json"), format!("KBBBBBBBB.{}.json", u(1))] {
         staged(&sp, &n, b"{}");
     }
-    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
+    assert!(finish_incoming(&sp, &store).unwrap().is_empty());
     assert_eq!(names(&sp.incoming).len(), 3);
     zygo_workspace::mail::store::sweep(&sp.mail, Duration::ZERO, SystemTime::now() + Duration::from_secs(365 * 86400));
     assert_eq!(names(&sp.incoming).len(), 3);
@@ -483,7 +485,7 @@ fn finish_incoming_deletes_a_torn_staged_file() {
             zygo_workspace::mail::ensure_mail_root(d).unwrap();
         }
         staged(&sp, &format!("{KEY}.{}.json", u(1)), &torn);
-        assert_eq!(finish_incoming(&sp, &Store::open(&m.paths, WS_ID)).unwrap(), 0, "{}", torn.len());
+        assert!(finish_incoming(&sp, &Store::open(&m.paths, WS_ID)).unwrap().is_empty(), "{}", torn.len());
         assert_eq!(names(&sp.incoming), Vec::<String>::new());
         assert!(!imported_load(&sp).unwrap().contains(&u(1)));
         assert!(!new_dir(&sp).exists());
@@ -605,7 +607,7 @@ fn finish_incoming_deletes_a_staged_file_of_a_key_with_no_record() {
         if logged {
             imported_append(&sp, u(1)).unwrap();
         }
-        assert_eq!(finish_incoming(&sp, &store).unwrap(), 0, "logged {logged}");
+        assert!(finish_incoming(&sp, &store).unwrap().is_empty(), "logged {logged}");
         assert_eq!(names(&sp.incoming), Vec::<String>::new(), "logged {logged}");
         assert!(!sp.mail.join("kcccccccc").exists(), "logged {logged}");
         assert_eq!(imported_load(&sp).unwrap().contains(&u(1)), logged, "logged {logged}");
@@ -618,12 +620,12 @@ fn finish_incoming_stops_at_a_held_mail_lock() {
     let name = format!("{KEY}.{}.json", u(1));
     staged(&sp, &name, &msg(u(1), "bob@b"));
     let held = hold_mail_lock(&sp);
-    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
+    assert!(finish_incoming(&sp, &store).unwrap().is_empty());
     assert_eq!(names(&sp.incoming), [name]);
     assert!(!new_dir(&sp).exists());
     assert!(imported_load(&sp).unwrap().is_empty());
     drop(held);
-    assert_eq!(finish_incoming(&sp, &store).unwrap(), 1);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), [(KEY.to_string(), u(1))]);
     assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
 }
 
@@ -640,14 +642,14 @@ fn a_short_record_gap_keeps_a_logged_staged_message() {
     assert!(fs::symlink_metadata(sp.mail.join(KEY)).is_ok_and(|m| m.is_dir()), "step 1 makes bob's maildir");
     // up step 8 wrote the state without bob's record; his maildir stays until the up write or the undo write (M§5)
     m.workspace(&[("kcccccccc", "carol")]);
-    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
+    assert!(finish_incoming(&sp, &store).unwrap().is_empty());
     assert_eq!(names(&sp.incoming), staged, "the staged file stays while bob's maildir exists");
     let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
     assert_eq!(res, Ok(Imported { read: None, delivered: vec![], acked: vec![], left: 1 }), "a logged ULID with a staged file waits");
     assert!(lines.is_empty(), "{lines:?}");
     // the undo write of up puts bob's record back: the next pass delivers to bob, then acknowledges
     m.workspace(&[(KEY, "bob"), ("kcccccccc", "carol")]);
-    assert_eq!(finish_incoming(&sp, &store).unwrap(), 1);
+    assert_eq!(finish_incoming(&sp, &store).unwrap(), [(KEY.to_string(), u(1))]);
     assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
     assert_eq!(names(&sp.incoming), Vec::<String>::new());
     let (res, _) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
@@ -674,10 +676,10 @@ fn finish_incoming_keeps_a_staged_file_while_its_maildir_exists() {
     staged(&sp, &name, &msg(u(1), "carol@b"));
     imported_append(&sp, u(1)).unwrap();
     zygo_workspace::mail::ensure_mail_dir(&sp.mail.join("kcccccccc")).unwrap();
-    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
+    assert!(finish_incoming(&sp, &store).unwrap().is_empty());
     assert_eq!(names(&sp.incoming), [name]);
     fs::remove_dir(sp.mail.join("kcccccccc")).unwrap(); // the M§5 removal after the up write
-    assert_eq!(finish_incoming(&sp, &store).unwrap(), 0);
+    assert!(finish_incoming(&sp, &store).unwrap().is_empty());
     assert_eq!(names(&sp.incoming), Vec::<String>::new());
     assert!(!sp.mail.join("kcccccccc").exists());
     assert!(imported_load(&sp).unwrap().contains(&u(1)));

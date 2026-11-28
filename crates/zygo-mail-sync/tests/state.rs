@@ -390,6 +390,8 @@ fn good_state() -> State {
             "d00491fd7e5bb6fa28c517a0bb32b8b506539d4d".into(),
         )]),
         ci_note_shown: true,
+        // FX-30: a delivery that the import began and no pass end counted yet (ULID → pane key).
+        pending_wake: BTreeMap::from([("01HF0000000000000000000000".into(), "kbobbb222".into())]),
     }
 }
 
@@ -398,6 +400,19 @@ fn bad_states() -> Vec<(&'static str, State)> {
     let mut s = good_state();
     s.last_error = Some("https://u:tok@h/x".into());
     bad.push(("last_error url", s));
+    // FX-30: a `pending_wake` ULID that is not canonical, or a key that is not a pane key (AU84).
+    for (id, key) in [
+        ("01hf0000000000000000000000", "kbobbb222"),
+        ("01HF000000000000000000000", "kbobbb222"),
+        ("bob@b", "kbobbb222"),
+        ("01HF0000000000000000000000", "../x"),
+        ("01HF0000000000000000000000", "bob"),
+        ("01HF0000000000000000000000", ""),
+    ] {
+        let mut s = good_state();
+        s.pending_wake.insert(id.into(), key.into());
+        bad.push(("pending_wake", s));
+    }
     for e in ["", "Push", "push failed", "push\n", &"a".repeat(65)] {
         let mut s = good_state();
         s.last_error = Some(e.into());
