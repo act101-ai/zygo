@@ -28,6 +28,10 @@
 
 ## Plan
 
+Parent: 7689cb08ae908661c8eae0ea26cc1a6c19f67003
+
+Base (author's call, 2026-11-28): CC-12's layer is open but not merged, and CC-3 shares no file with it, so the layer branches from `origin/phase-4` at `7689cb08` (the stack below is empty for this layer); `Parent:` = `git merge-base HEAD origin/phase-4`.
+
 Planning base: `phase-4` at `4c89c449` (2026-11-28). No file of this node changed since `b324e1dc`: `git diff --stat b324e1dc 4c89c449 -- crates/zygo-core crates/zygo-config crates/zygo-launch/tests/opencode.rs crates/zygo-launch/tests/stub_agent` is empty (TF-6 changed only `crates/zygo/tests`), so the CC-1 rows and the lines below hold. This file has no `Parent:` line until step 1.
 
 Interfaces (live at `4c89c449`):
@@ -58,7 +62,7 @@ Each `SPEC` is `pub(super) static SPEC: ClientSpec` in its file, so no per-clien
 
 Steps:
 
-- [ ] 1. **Parent line.** When the node starts, insert as the first line under `## Plan` the line `Parent: <40-hex>` = `git merge-base HEAD <layer base branch>`, where the layer base branch is the branch of the open layer directly below this one (`phase-4--CC-12` while CC-12's layer is open), or `origin/phase-4` when the stack below is empty (Workflows (2); CC-2 Definitions "Parent"). After every merge into the node branch (a lower layer merged into `phase-4`, `phase-4` merged in, a relink), recompute it and rewrite the line in the same commit as the merge. Check: `sed -n 's/^Parent: \([0-9a-f]\{40\}\)$/\1/p' docs/work/phase4/nodes/CC-3.md` prints exactly one hash, equal to `git merge-base HEAD <layer base branch>`. Commit `docs(work): CC-3 parent`.
+- [x] 1. **Parent line.** When the node starts, insert as the first line under `## Plan` the line `Parent: <40-hex>` = `git merge-base HEAD <layer base branch>`, where the layer base branch is the branch of the open layer directly below this one (`phase-4--CC-12` while CC-12's layer is open), or `origin/phase-4` when the stack below is empty (Workflows (2); CC-2 Definitions "Parent"). After every merge into the node branch (a lower layer merged into `phase-4`, `phase-4` merged in, a relink), recompute it and rewrite the line in the same commit as the merge. Check: `sed -n 's/^Parent: \([0-9a-f]\{40\}\)$/\1/p' docs/work/phase4/nodes/CC-3.md` prints exactly one hash, equal to `git merge-base HEAD <layer base branch>`. Commit `docs(work): CC-3 parent`.
 - [ ] 2. **Failing tests, `zygo-core`.** New file `crates/zygo-core/tests/client.rs`. No test names an `Agent` variant by path (CC-13's acceptance greps `crates/*/tests/`; CC-14 makes the kind opaque): clients come from `Agent::ALL`, `Agent::DEFAULT` or `"<id>".parse::<Agent>()`.
   - `client_specs_hold_the_concern_1_values`: `assert_eq!(Agent::ALL.len(), 2)`; for `Agent::ALL[0]` and `Agent::ALL[1]`, `assert_eq!` each field of `spec()` against its column of the table above (`id`, `name`, `program`, `verb`, `config_dir`, `install_hint`, `min_version`, `supported`, `status_line`).
   - `client_ids_round_trip_through_from_str_display_and_serde`: for each `a` in `Agent::ALL`, with `id = a.spec().id`: `a.as_str() == id`; `a.to_string() == id`; `id.parse::<Agent>().unwrap() == a`; `serde_json::to_value(a).unwrap() == json!(id)`; `serde_json::from_value::<Agent>(json!(id)).unwrap() == a`.
