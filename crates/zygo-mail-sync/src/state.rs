@@ -250,8 +250,9 @@ pub struct State {
     /// The S§6.6 once-only note was shown.
     pub ci_note_shown: bool,
     /// S§8.3 steps 9 and 10 (FX-30): ULID → pane key of each delivery that the import began (recorded before its
-    /// first write, [`pending_wake_add`]) and that no pass end counted yet. The pass that counts and wakes it removes
-    /// it in its last state write; a state file written before FX-30 has none.
+    /// first write, [`pending_wake_add`]) and that no pass counted yet. The pass that counts it removes it in the
+    /// state write right after its step 10 wake; an entry whose staged file is still in `incoming/` stays; a state
+    /// file written before FX-30 has none.
     pub pending_wake: BTreeMap<String, String>,
 }
 
