@@ -3679,6 +3679,51 @@ Author's calls in round 2 (each is also under `## Observed`):
 - The search adds `Stop`, `StopFailure` and `Notification` only as quoted literals and the bare `Plugins` only in type positions, because both are also unrelated Rust names at the base (`enum Stop` in `repo_def/read.rs`, the `plugins` subcommand `Plugins` in `cmd/mod.rs`, `Enable::Plugins` in `zygo-plugins`).
 - The test attribute is matched as `#[cfg(test)]` or `#[cfg(all(test, …))]` / `#[cfg(all(…, test))]` with no quoted part, so `#[cfg(all(unix, feature = "test-hooks"))]` (`crates/zygo/src/cmd/ws.rs:535`) is production code.
 
+## Round 3 review
+
+Review of PR #251 at `066369f6`; coordinator decisions 2026-11-27 (last round). Each finding is fixed in `1b60f3b9` (`docs(work): CC-1 round 3 F1-F10`); none is rejected.
+
+- F1 (exception rows unchecked): fixed. `docs/work/phase4/cc1_check.py` step `exception` accepts a `stays: exception list` row only inside `fn claude_attribution` of `crates/zygo-work/src/guards.rs`, whose line range the check computes at the base by counting braces outside strings, chars and comments (`:1038`-`:1072` at `b324e1dc`), or on a line of that file that calls `claude_attribution(`. Damaged copy H (`hook.rs:23` as an exception row) fails at `exception`.
+- F2 (the four call rows): fixed. They stay `stays: exception list`. `## Observed` and the CC-15 planning notes record that the CC-15 entry stays item-scoped (`item = "claude_attribution"`): the call lines hold no string literal, so the boundary scanner does not flag them, and the entry is not widened.
+- F3 (production check per node; test-region rule): fixed. (a) The Acceptance of each of CC-3 to CC-10 starts with a check that no production line names `Agent::ClaudeCode` or `Agent::OpenCode` in the files whose last production variant-path row is that node's (CC-9 and CC-10 also check their new `client/` folders); at `b324e1dc` the files hold CC-3 8, CC-4 4, CC-5 3, CC-6 7, CC-7 9, CC-8 5, CC-9 13 and CC-10 25 such lines, 74 in all. Author's call: a file that holds variant-path rows of two nodes (`crates/zygo-launch/src/launcher.rs` CC-7 and CC-9; `crates/zygo/src/cmd/member.rs` and `ws.rs` CC-9 and CC-10) is checked by the later node, because the earlier node's check would fail on the later node's rows. CC-11 keeps the global check. (b) The test region is now the inline `mod <name> {` that directly follows a column-0 `#[cfg(test)]`, `#[cfg(all(test, …))]` or `#[cfg(all(…, test))]`, to the end of the file; the same two expressions are in the check and in the awk of CC-3 to CC-11 and CC-13. At `b324e1dc` the counts stay 74 (CC-11) and 1178 (CC-13). The listed test ranges now start at the `mod` line (one line later than in round 2; `crates/zygo/src/cmd/compact.rs` starts at `:133`, after its `#[cfg(test)] fn` at `:128`).
+- F4 (CC-9 and CC-10 text): fixed. The CC-9 planning note says that CC-9 produces `adapter_for` and `prepare_resume` and makes their calls at `cmd/claude.rs:21`, `cmd/opencode.rs:21`, `ws.rs:405`-`:435`, `member.rs:644`-`:679` and `saved_config_dir`; the CC-10 Spec line and planning note say that CC-10 does not change those calls. `ws.rs:648` (the `saved_config_dir` comment that names `CLAUDE_CONFIG_DIR`) and `:651` are 8, CC-9; no other line of `saved_config_dir` (`:648`-`:657`) is a site.
+- F5: fixed. `crates/zygo/src/cmd/mod.rs:238`, `:280`, `:406` (clap help) are 1, CC-10.
+- F6: fixed. `crates/zygo/tests/definition_hooks.rs:863` is CC-9 (it names `opencode-plugin.js`); `crates/zygo-workspace/src/args.rs:618`, `:650`, `:651`, `:662` are CC-7. The comment rule is now checked: the symbol list under `## Observed` names each symbol and file that a CC row owns, and step `symbol-rule` fails on a `stays: comment` line that names one. Applying it moved 10 comment rows in all (the four above, `crates/zygo-launch/src/claude_code.rs:57` to CC-10, `ws.rs:648` to CC-9, and the three clap lines of F5).
+- F7: fixed. The check fails on two concern-table rows for one node (`concern-table`), two Test range lines for one file (`test-ranges`), and any line of the inventory table that is not a row: backticks, no `/`, a wrong cell count (`row-form`). Damaged copies I, J, K, L, M fail at those steps.
+- F8: fixed. The owners' node files are read from the folder of the given file; an unreadable file is `FAIL read`, `FAIL files` or `FAIL io` with exit 1 (damaged copy P, with `CC-8.md` missing, fails at `files`). The test rule is checked (step `symbol-rule`: a test line's owner is the node of the first symbol entry it names, or `stays: test`); the symbol list is in `## Observed` and must equal the check's (step `symbols`). The test attribute expression is the same in the check and in the awk.
+- F9: fixed. `crates/zygo-config/tests/definition_keys.rs:119`, `:132`, `:142` are CC-8: the symbol rule reads inline format arguments (`"{AGENT_ONLY}"`).
+- F10: fixed. Round 2 moved 18 comment rows to a node, not 16; round 3 moves 25 (count and list under `## Observed`). The Not-searched list adds the lines inside a client branch that name no client (`crates/zygo-workspace/src/args.rs:408`, `:411`) and client-named locals outside the patterns' forms.
+
+Damaged copies (each the real file with one change, in its own copy of the nodes folder), run with `python3 docs/work/phase4/cc1_check.py <copy>`:
+
+| Copy | Change | Fails at |
+|---|---|---|
+| A | concern 9 on a CC-8 row | `concern` |
+| B | owner CC-4 | `files` |
+| C | 7, CC-3 | `files` |
+| D | hook.rs:23 stays: comment | `comment` |
+| E | leading-space row | `row-form` |
+| F | owner CC-12 | `node` |
+| G | lib.rs:39 stays: test | `test` |
+| H | hook.rs:23 exception list | `exception` |
+| I | two concern-table rows for CC-4 | `concern-table` |
+| J | two Test range lines for ws.rs | `test-ranges` |
+| K | backticks in a table row | `row-form` |
+| L | table row with no / | `row-form` |
+| M | table row with five cells | `row-form` |
+| N | definition_keys.rs:119 stays: test | `symbol-rule` |
+| O | args.rs:618 stays: comment | `symbol-rule` |
+| P | CC-8.md missing next to the file | `files` |
+| A (reviewer) | the reviewer's round 2 copy (round 1 file) | `patterns` |
+| B (reviewer) | the reviewer's round 2 copy (round 1 file) | `patterns` |
+| C (reviewer) | the reviewer's round 2 copy (round 1 file) | `patterns` |
+| D (reviewer) | the reviewer's round 2 copy (round 1 file) | `patterns` |
+| E (reviewer) | the reviewer's round 2 copy (round 1 file) | `patterns` |
+| F (reviewer) | the reviewer's round 2 copy (round 1 file) | `patterns` |
+| G (reviewer) | the reviewer's round 2 copy (round 1 file) | `patterns` |
+
+The real file: `ok: base b324e1dc, 3503 rows = 3503 sites, 210 files`, exit 0.
+
 ## Test logic edits
 
 None.
