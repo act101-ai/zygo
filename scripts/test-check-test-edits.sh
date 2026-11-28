@@ -16,6 +16,9 @@ export GIT_AUTHOR_NAME=test
 export GIT_AUTHOR_EMAIL=test@example.invalid
 export GIT_COMMITTER_NAME=test
 export GIT_COMMITTER_EMAIL=test@example.invalid
+# The bootstrap (D1): CC-2's own tests run the in-tree helper; the cases that test the
+# parent-built helper clear this for their run.
+export ZYGO_TEST_EDITS_IN_TREE=1
 
 cargo build -q --locked --manifest-path "$ROOT/Cargo.toml" -p zygo-test-edits || {
     printf '%s\n' "test-check-test-edits: cargo build failed"
@@ -464,6 +467,309 @@ sub "$LIB" 's/    7\n/    3 + 4\n/'
 commit_change
 sub "$TF" 's/1 \+ 1, 2\)/1 + 1, 3)/'
 expect 2
+
+# Round 2 cases. mk <case>: an empty repository; wf <file> <line>...: writes the lines; par: commits
+# the tree with node.md "None." and makes it the parent.
+mk() {
+    CASE=$1
+    R="$T/$1"
+    mkdir -p "$R"
+    git -C "$R" -c init.defaultBranch=main init -q
+}
+wf() {
+    f=$1
+    shift
+    mkdir -p "$(dirname "$R/$f")"
+    printf '%s\n' "$@" > "$R/$f"
+}
+par() {
+    write_node "None."
+    new_parent
+}
+
+# expect_out <want exit> <text>: as expect, and the output must hold <text>.
+expect_out() {
+    want=$1
+    text=$2
+    out=$(cd "$R" && sh "$ROOT/scripts/check-test-edits.sh" "$PARENT" node.md 2>&1)
+    got=$?
+    case $out in
+        *"$text"*) has=1 ;;
+        *) has=0 ;;
+    esac
+    if [ "$got" -eq "$want" ] && [ "$has" -eq 1 ]; then
+        printf '%s\n' "ok $CASE"
+    else
+        printf '%s\n' "FAIL $CASE: exit $got, want $want, text '$text' found: $has"
+        printf '%s\n' "$out"
+        FAILED=1
+    fi
+}
+
+# D2: a fixture named by include_str! outside tests/, the root tests/ folder, the root fixtures/.
+mk include-str-data-changed
+wf crates/a/src/lib.rs '#[cfg(test)]' 'mod tests {' '    #[test]' '    fn g() { assert_eq!(include_str!("testdata/g.txt"), "v1"); }' '}'
+wf crates/a/src/testdata/g.txt 'v1'
+par
+wf crates/a/src/testdata/g.txt 'v2'
+commit_change
+expect 1
+
+mk root-tests-folder
+wf crates/a/Cargo.toml '[package]' 'name = "a"' 'version = "0.1.0"' '[[test]]' 'name = "fc"' 'path = "../../tests/fc.rs"'
+wf crates/a/src/lib.rs 'pub fn f() {}'
+wf tests/fc.rs '#[test]' 'fn t() { assert_eq!("x", "x"); }' '#[test]' 'fn u() {}'
+par
+wf tests/fc.rs '#[test]' 'fn t() { assert_eq!("y", "y"); }'
+commit_change
+expect 1
+
+mk root-fixtures-changed
+wf crates/a/src/lib.rs 'pub fn f() {}'
+wf fixtures/x/capture.json '{"a": 1}'
+par
+wf fixtures/x/capture.json '{"a": 2}'
+commit_change
+expect 1
+
+# D3: the gate chain up to the crate root, and the manifest.
+mk cfg-on-enclosing-prod-mod
+wf crates/a/src/lib.rs 'pub mod a {' '    pub fn f() -> u8 { 1 }' '    #[cfg(test)]' '    mod tests {' '        #[test]' '        fn t() { assert_eq!(super::f(), 1); }' '    }' '}'
+par
+sub crates/a/src/lib.rs 's/^pub mod a/#[cfg(windows)]\npub mod a/'
+commit_change
+expect 1
+
+mk inner-cfg-on-prod-file
+wf crates/a/src/lib.rs 'pub mod a;'
+wf crates/a/src/a.rs 'pub fn f() -> u8 { 1 }' '#[cfg(test)]' 'mod tests {' '    #[test]' '    fn t() { assert_eq!(super::f(), 1); }' '}'
+par
+sub crates/a/src/a.rs 's/^/#![cfg(windows)]\n/'
+commit_change
+expect 1
+
+mk cfg-on-test-mod-decl
+wf crates/a/tests/suite.rs '#[path = "suite/model.rs"]' 'mod model;'
+wf crates/a/tests/suite/model.rs '#[test]' 'fn t() { assert_eq!(1 + 1, 2); }'
+par
+sub crates/a/tests/suite.rs 's/^/#[cfg(windows)]\n/'
+commit_change
+expect 1
+
+mk cfg-on-prod-mod-decl
+wf crates/a/src/lib.rs 'pub mod a;'
+wf crates/a/src/a.rs 'pub fn f() -> u8 { 1 }' '#[cfg(test)]' 'mod tests {' '    #[test]' '    fn t() { assert_eq!(super::f(), 1); }' '}'
+par
+sub crates/a/src/lib.rs 's/^pub mod a;/#[cfg(windows)]\npub mod a;/'
+commit_change
+expect 1
+
+mk manifest-autotests-off
+wf crates/a/Cargo.toml '[package]' 'name = "a"' 'version = "0.1.0"'
+wf crates/a/src/lib.rs 'pub fn f() {}'
+wf crates/a/tests/t.rs '#[test]' 'fn t() { assert_eq!(1, 1); }'
+par
+printf 'autotests = false\n' >> "$R/crates/a/Cargo.toml"
+commit_change
+expect 1
+
+mk manifest-listed
+wf crates/a/Cargo.toml '[package]' 'name = "a"' 'version = "0.1.0"'
+wf crates/a/src/lib.rs 'pub fn f() {}'
+par
+printf '[lib]\ndoctest = false\n' >> "$R/crates/a/Cargo.toml"
+commit_change
+entry '- manifest crates/a/Cargo.toml — K§9 test logic edit'
+expect 0
+
+mk manifest-other-key
+wf crates/a/Cargo.toml '[package]' 'name = "a"' 'version = "0.1.0"'
+wf crates/a/src/lib.rs 'pub fn f() {}'
+par
+sub crates/a/Cargo.toml 's/0\.1\.0/0.2.0/'
+commit_change
+expect 0
+
+# D4: attribute order and layout do not matter.
+mk reorder-cfg-should-panic
+wf crates/a/src/lib.rs '#[cfg(test)]' 'mod tests {' '    #[test]' '    #[cfg(unix)]' '    #[should_panic]' '    fn a() { panic!(); }' '}'
+par
+sub crates/a/src/lib.rs 's/    #\[cfg\(unix\)\]\n    #\[should_panic\]/    #[should_panic]\n    #[cfg(unix)]/'
+commit_change
+expect 0
+
+mk reformat-cfg
+wf crates/a/src/lib.rs '#[cfg(all(test,unix))]' 'mod tests {' '    #[test]' '    #[cfg_attr(windows,ignore = "x")]' '    fn a() {}' '}'
+par
+wf crates/a/src/lib.rs '#[cfg(all(' '    test,' '    unix' '))]' 'mod tests {' '    #[test]' '    #[cfg_attr(' '        windows,' '        ignore = "x"' '    )]' '    fn a() {}' '}'
+commit_change
+expect 0
+
+# D6: a .rs file that does not parse is a fixture.
+mk invalid-rs-fixture-listed
+wf crates/a/src/lib.rs 'pub fn f() {}'
+par
+wf crates/a/tests/fixtures/broken/src/lib.rs 'fn ( {'
+commit_change
+entry '- fixture crates/a/tests/fixtures/broken/src/lib.rs — a parse-error fixture'
+expect 0
+
+mk invalid-rs-fixture-unlisted
+wf crates/a/src/lib.rs 'pub fn f() {}'
+par
+wf crates/a/tests/fixtures/broken/src/lib.rs 'fn ( {'
+commit_change
+expect 1
+
+# D7: src/bin/*.rs is a crate root; its child modules sit beside it.
+mk bin-crate-root
+wf crates/a/src/lib.rs 'pub fn f() {}'
+wf crates/a/src/bin/tool.rs 'fn main() {}' '#[cfg(test)]' 'mod tests;'
+wf crates/a/src/bin/tests.rs '#[test]' 'fn t() { assert_eq!(1, 1); }'
+par
+wf crates/a/src/lib.rs 'pub fn f() { let _ = 0; }'
+commit_change
+expect 0
+
+# D8: an out-of-line module inside an out-of-line test module is test code.
+mk nested-outline-helper
+wf crates/a/src/lib.rs '#[cfg(test)]' 'mod tests;'
+wf crates/a/src/tests.rs 'mod util;' '#[test]' 'fn t() { assert_eq!(util::v(), 3); }'
+wf crates/a/src/tests/util.rs 'pub fn v() -> u8 { 3 }'
+par
+sub crates/a/src/tests/util.rs 's/\{ 3 \}/{ 4 }/'
+commit_change
+expect 1
+
+# D9: an impl is named by its type, so inserting or swapping impls moves no doc test.
+mk impl-index-shift
+wf crates/a/src/lib.rs 'pub struct A;' 'impl A {' '    /// ```' '    /// assert_eq!(a::A::two(), 2);' '    /// ```' '    pub fn two() -> u8 { 2 }' '}'
+par
+wf crates/a/src/lib.rs 'pub struct A;' 'pub struct B;' 'impl B {' '    pub fn new() -> Self { B }' '}' 'impl A {' '    /// ```' '    /// assert_eq!(a::A::two(), 2);' '    /// ```' '    pub fn two() -> u8 { 2 }' '}'
+commit_change
+expect 0
+
+mk impl-swap
+wf crates/a/src/lib.rs 'pub struct A; pub struct B;' 'impl A {' '    /// ```' '    /// let _ = 1;' '    /// ```' '    pub fn f() {}' '}' 'impl B {' '    /// ```' '    /// let _ = 2;' '    /// ```' '    pub fn f() {}' '}'
+par
+wf crates/a/src/lib.rs 'pub struct A; pub struct B;' 'impl B {' '    /// ```' '    /// let _ = 2;' '    /// ```' '    pub fn f() {}' '}' 'impl A {' '    /// ```' '    /// let _ = 1;' '    /// ```' '    pub fn f() {}' '}'
+commit_change
+expect 0
+
+# D10: two tests of one name under different cfgs are two tests.
+mk dup-name-cfg-test-removed
+wf crates/a/tests/t.rs '#[cfg(unix)]' '#[test]' 'fn a() { assert!(std::path::Path::new("/").is_absolute()); }' '#[cfg(windows)]' '#[test]' 'fn a() { assert!(std::path::Path::new("/").is_absolute()); }'
+par
+wf crates/a/tests/t.rs '#[cfg(unix)]' '#[test]' 'fn b() {}' '#[cfg(windows)]' '#[test]' 'fn a() { assert!(std::path::Path::new("/").is_absolute()); }' 'fn c() { let _ = "/"; }'
+commit_change
+expect 1
+
+# D11: the section's lines.
+for c in entry-numbered entry-plain-text-line; do
+    new_repo "$c"
+    sub "$TF" 's/\n#\[test\]\nfn other\(\) \{\}\n//'
+    commit_change
+    case $c in
+        entry-numbered) entry '1. removed crates/a/tests/t.rs::other — K§9 test logic edit' ;;
+        *) entry 'removed crates/a/tests/t.rs::other — K§9 test logic edit' ;;
+    esac
+    expect 1
+done
+
+new_repo entry-h1-after
+sub "$TF" 's/\n#\[test\]\nfn other\(\) \{\}\n//'
+commit_change
+printf '# N\n\n## Test logic edits\n\nNone.\n\n# Appendix\n\n- removed crates/a/tests/t.rs::other — r\n' > "$R/node.md"
+commit_change
+expect 1
+
+new_repo entry-section-twice
+sub "$TF" 's/\n#\[test\]\nfn other\(\) \{\}\n//'
+commit_change
+printf '# N\n\n## Test logic edits\n\nNone.\n\n## Plan\n\nx\n\n## Test logic edits\n\n- removed crates/a/tests/t.rs::other — r\n' > "$R/node.md"
+commit_change
+expect 1
+
+new_repo entry-heading-trailing-hash
+sub "$TF" 's/\n#\[test\]\nfn other\(\) \{\}\n//'
+commit_change
+printf '# N\n\n## Test logic edits ##\n\n- removed crates/a/tests/t.rs::other — r\n' > "$R/node.md"
+commit_change
+expect 0
+
+# D5: the parent used is printed; a parent that is not the merge base with origin/phase-4 warns
+# and does not change the exit.
+new_repo parent-printed
+sub "$LIB" 's/    7\n/    3 + 4\n/'
+commit_change
+expect_out 0 "check-test-edits: parent $PARENT"
+
+new_repo parent-warns-off-merge-base
+sub "$LIB" 's/    7\n/    3 + 4\n/'
+commit_change
+git -C "$R" update-ref refs/remotes/origin/phase-4 HEAD
+sub "$TF" 's/1 \+ 1, 2\)/1 + 1, 3)/'
+commit_change
+expect_out 1 "warning: <parent> is not git merge-base HEAD origin/phase-4"
+
+# The checker's own files are not units: a `checker` entry lists a change to them, its unit tests
+# included.
+mk checker-own-tests-edited
+wf crates/a/src/lib.rs 'pub fn f() {}'
+wf tools/test-edits/src/main.rs 'fn main() {}' '#[cfg(test)]' 'mod tests {' '    #[test]' '    fn t() { assert_eq!(1, 1); }' '}'
+par
+sub tools/test-edits/src/main.rs 's/1, 1/1, 2/'
+commit_change
+entry '- checker tools/test-edits/src/main.rs — K-C7 review of the check'
+expect 0
+
+# D1: the checker is built from <parent>, so a node's edit to the checker does not judge the
+# node. These two cases run the wrapper without the bootstrap.
+new_repo no-checker-at-parent
+sub "$LIB" 's/    7\n/    3 + 4\n/'
+commit_change
+out=$(cd "$R" && ZYGO_TEST_EDITS_IN_TREE= sh "$ROOT/scripts/check-test-edits.sh" "$PARENT" node.md 2>&1)
+got=$?
+case $out in
+    *"no checker at <parent>"*) has=1 ;;
+    *) has=0 ;;
+esac
+if [ "$got" -eq 2 ] && [ "$has" -eq 1 ]; then
+    printf '%s\n' "ok $CASE"
+else
+    printf '%s\n' "FAIL $CASE: exit $got, want 2 with 'no checker at <parent>'"
+    printf '%s\n' "$out"
+    FAILED=1
+fi
+
+mk self-judging-checker
+wf Cargo.toml '[workspace]' 'resolver = "3"' 'members = ["tools/test-edits"]' '[workspace.package]' 'version = "0.2.1"' 'edition = "2024"' 'license = "MIT"' '[workspace.dependencies]' 'syn = { version = "3.0.10", features = ["full", "visit"] }'
+mkdir -p "$R/tools/test-edits/src" "$R/scripts"
+cp "$ROOT/tools/test-edits/Cargo.toml" "$R/tools/test-edits/Cargo.toml"
+cp "$ROOT/tools/test-edits/src/main.rs" "$R/tools/test-edits/src/main.rs"
+cp "$ROOT/scripts/check-test-edits.sh" "$R/scripts/check-test-edits.sh"
+cp "$ROOT/Cargo.lock" "$R/Cargo.lock"
+(cd "$R" && cargo generate-lockfile --offline -q)
+wf crates/a/src/lib.rs 'pub fn f() {}'
+wf crates/a/tests/t.rs '#[test]' 'fn t() { assert_eq!(1, 1); }'
+par
+# The node turns the helper into a pass-all and edits a test literal.
+sub tools/test-edits/src/main.rs 's/fn main\(\) -> ExitCode \{/fn main() -> ExitCode {\n    if std::env::args().count() > 0 {\n        return ExitCode::SUCCESS;\n    }/'
+sub crates/a/tests/t.rs 's/1, 1/1, 2/'
+commit_change
+out=$(cd "$R" && ZYGO_TEST_EDITS_IN_TREE= sh "$R/scripts/check-test-edits.sh" "$PARENT" node.md 2>&1)
+got=$?
+case $out in
+    *"literals crates/a/tests/t.rs"*) has=1 ;;
+    *) has=0 ;;
+esac
+if [ "$got" -eq 1 ] && [ "$has" -eq 1 ]; then
+    printf '%s\n' "ok $CASE"
+else
+    printf '%s\n' "FAIL $CASE: exit $got, want 1 with the literal offence"
+    printf '%s\n' "$out"
+    FAILED=1
+fi
 
 # The wrapper maps an exit other than 0 and 1 (here cargo's 101) to 2.
 new_repo wrapper-maps-exit
