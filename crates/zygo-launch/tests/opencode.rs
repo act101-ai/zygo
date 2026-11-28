@@ -1001,10 +1001,10 @@ fn subagent_transform_without_system_array_calls_nothing() {
 }
 
 /// One main-role transform with `input.sessionID` = `session` through the generated plugin under node, whose `zygo` is
-/// `stub-agent` in its real `session-start` mode (`ZYGO_STUB_HOOK_PATHS`): the pushed `output.system`.
+/// `stub-hook`, the real `session-start` hook (`ZYGO_STUB_HOOK_PATHS`): the pushed `output.system`.
 #[cfg(unix)]
 fn real_transform(fx: &Fx, dir: &Path, sd: &SessionDir, session: &str) -> Value {
-    let zygo = Path::new(env!("CARGO_BIN_EXE_stub-agent"));
+    let zygo = Path::new(env!("CARGO_BIN_EXE_stub-hook"));
     std::fs::write(dir.join("plugin.mjs"), with_fail_safe_limit(&plugin_js(&ctx(fx, |_| {}), zygo))).unwrap();
     std::fs::write(
         dir.join("real.mjs"),
@@ -1079,6 +1079,68 @@ fn opencode_transform_item_8_fixed_per_session_end_to_end() {
     assert_eq!(real_transform(&fx, &dir, &sd, "ses_E2E"), first);
     let other = real_transform(&fx, &dir, &sd, "ses_E2F");
     assert!(other[0].as_str().unwrap().contains("Members: `elena, kai, lena`."), "{other}");
+}
+
+/// `stub-hook` with `args` after `hook session-start`, the session folder `S1` of `ctx`, `ZYGO_AGENT` = `agent` (unset
+/// for `None`) and `payload` on stdin: (stdout, stderr, exit code).
+#[cfg(unix)]
+fn stub_hook(fx: &Fx, args: &[&str], agent: Option<&str>, payload: &Value) -> (String, String, Option<i32>) {
+    use std::io::Write;
+    use std::process::Stdio;
+    let sd = ctx(fx, |_| {}).session_dir;
+    let home = fx.root.join("home");
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_stub-hook"));
+    cmd.args(["hook", "session-start"])
+        .args(args)
+        .env("ZYGO_SESSION_DIR", &sd.root)
+        .env("ZYGO_STUB_HOOK_PATHS", &home)
+        .env("HOME", &home)
+        .env_remove("ZYGO_WORKSPACE")
+        .env_remove("ZYGO_AGENT")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(a) = agent {
+        cmd.env("ZYGO_AGENT", a);
+    }
+    let mut child = cmd.spawn().unwrap();
+    child.stdin.take().unwrap().write_all(payload.to_string().as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    (String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned(), out.status.code())
+}
+
+// FX-34 review F3: `stub-hook` parses `--agent` and `--event` as `zygo hook` does (`crates/zygo/src/cmd/hook.rs` `run`,
+// `crates/zygo/src/cmd/mod.rs` parse errors): a bad or missing value is one `zygo hook:` line on stderr, no hook run,
+// exit 0; no `--agent` reads `ZYGO_AGENT`. The main-role transform payload runs the hook with output for either agent,
+// so an empty stdout shows that no hook ran. The agent is seen in the parse only: with `input.tool` and `output.args`
+// the OpenCode parse makes the input a `PreToolUse` (`hook_opencode::normalize`), which gets nothing, and the Claude
+// Code parse keeps the `SubagentStart` with `agent_id`, which gets the mechanics text (T§6.3 item 2).
+#[cfg(unix)]
+#[test]
+fn stub_hook_parses_agent_and_event_as_zygo_hook() {
+    let fx = fx();
+    let line = |s: &str| format!("zygo hook: {s}\n");
+    let main = json!({"input": {"sessionID": "ses_ARG", "model": {"id": "lead", "providerID": "zygo"}}, "output": {"system": []}, "cwd": "/r"});
+    let ran = stub_hook(&fx, &["--agent", "opencode"], None, &main);
+    assert!(!ran.0.is_empty() && ran.1.is_empty() && ran.2 == Some(0), "{ran:?}");
+    let refused = [
+        (vec!["--agent", "bogus"], line("unknown agent `bogus` (claude-code or opencode)")),
+        (vec!["--agent"], line("error: a value is required for '--agent <AGENT>' but none was supplied")),
+        (vec!["--agent", "--event", "x"], line("error: a value is required for '--agent <AGENT>' but none was supplied")),
+        (vec!["--agent", "opencode", "--event"], line("error: a value is required for '--event <EVENT>' but none was supplied")),
+    ];
+    for (args, err) in refused {
+        assert_eq!(stub_hook(&fx, &args, Some("opencode"), &main), (String::new(), err, Some(0)), "{args:?}");
+    }
+    let split = json!({"input": {"tool": "bash"}, "output": {"args": {}}, "agent_id": "a1", "agent_type": "claude", "hook_event_name": "SubagentStart"});
+    let opencode = stub_hook(&fx, &["--agent", "opencode"], None, &split);
+    assert_eq!(opencode, (String::new(), String::new(), Some(0)));
+    let claude = stub_hook(&fx, &["--agent", "claude-code"], Some("opencode"), &split);
+    assert!(claude.0.contains("\"hookEventName\":\"SubagentStart\"") && claude.1.is_empty() && claude.2 == Some(0), "{claude:?}");
+    assert_eq!(stub_hook(&fx, &["--agent=opencode"], None, &split), opencode);
+    assert_eq!(stub_hook(&fx, &[], Some("opencode"), &split), opencode);
+    assert_eq!(stub_hook(&fx, &[], None, &split), claude);
+    assert_eq!(stub_hook(&fx, &[], Some("bogus"), &split), claude);
 }
 
 // ---- Task 4: delivery ----
