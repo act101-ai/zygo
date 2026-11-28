@@ -1446,7 +1446,7 @@ expect_ok
 
 # PC-13 review round 1 F4: the rescrub_codex.py tests (same(), the folders and verbatim lists, ENV_LEAKS).
 CASE="PC-13 R1: rescrub_test.py"
-OUT=$(python3 -I "$ROOT/scripts/premises/rescrub_test.py" 2>&1)
+OUT=$(python3 -I -B "$ROOT/scripts/premises/rescrub_test.py" 2>&1)
 RC=$?
 N=$((N + 1))
 [ "$RC" -eq 0 ] || fail "exit $RC, expected 0"

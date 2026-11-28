@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tests of rescrub_codex.py (node PC-13, review round 1 F4):
-python3 -I scripts/premises/rescrub_test.py -> "rescrub tests: ok (<n>)", exit 0; else one
+python3 -I -B scripts/premises/rescrub_test.py -> "rescrub tests: ok (<n>)", exit 0; else one
 "rescrub test fail: <case>" line per failure, exit 1.
 
 It tests same() (duplicate keys, the int, float and bool types, a layout-only change, a change of a

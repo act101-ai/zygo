@@ -25,9 +25,15 @@ Capability: `mechanical` (one flag at two start sites and one doc line).
 
 ### Steps
 
-- [ ] 1. Failing check first. In `.worktrees/phase4/TF-4` (branch `phase-4--TF-4` from `origin/phase-4`), with a clean tree, run `sh scripts/test-check-premises.sh` and `python3 -I scripts/premises/scrub_test.py`, then `git status --porcelain`. Pass: both runs exit 0 and `git status --porcelain` prints `?? scripts/premises/__pycache__/`. Remove the folder after.
-- [ ] 2. The fix. `scripts/test-check-premises.sh:1449`: `python3 -I "$ROOT/scripts/premises/rescrub_test.py"` → `python3 -I -B "$ROOT/scripts/premises/rescrub_test.py"`. `.github/workflows/ci.yml:79`: `python3 -I scripts/premises/rescrub_test.py` → `python3 -I -B scripts/premises/rescrub_test.py`. `scripts/premises/rescrub_test.py:3`: the usage line names `python3 -I -B`. Pass: `git diff` shows only these three lines.
-- [ ] 3. Acceptance. Each command alone from the worktree root, on a clean tree: `sh scripts/test-check-premises.sh`; `python3 -I scripts/premises/scrub_test.py`; `git status --porcelain`. Pass: both exit 0, the last line of the first is `test-check-premises: ok (<N> cases)`, and `git status --porcelain` prints nothing.
-- [ ] 4. Commit `fix(premises): TF-4 no bytecode in the checkout` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:TF-4`; no Claude attribution. Push the node branch (no force). Open the pull request into `phase-4`.
+- [x] 1. Failing check first. In `.worktrees/phase4/TF-4` (branch `phase-4--TF-4` from `origin/phase-4`), with a clean tree, run `sh scripts/test-check-premises.sh` and `python3 -I scripts/premises/scrub_test.py`, then `git status --porcelain`. Pass: both runs exit 0 and `git status --porcelain` prints `?? scripts/premises/__pycache__/`. Remove the folder after.
+- [x] 2. The fix. `scripts/test-check-premises.sh:1449`: `python3 -I "$ROOT/scripts/premises/rescrub_test.py"` → `python3 -I -B "$ROOT/scripts/premises/rescrub_test.py"`. `.github/workflows/ci.yml:79`: `python3 -I scripts/premises/rescrub_test.py` → `python3 -I -B scripts/premises/rescrub_test.py`. `scripts/premises/rescrub_test.py:3`: the usage line names `python3 -I -B`. Pass: `git diff` shows only these three lines.
+- [x] 3. Acceptance. Each command alone from the worktree root, on a clean tree: `sh scripts/test-check-premises.sh`; `python3 -I scripts/premises/scrub_test.py`; `git status --porcelain`. Pass: both exit 0, the last line of the first is `test-check-premises: ok (<N> cases)`, and `git status --porcelain` prints nothing.
+- [x] 4. Commit `fix(premises): TF-4 no bytecode in the checkout` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:TF-4`; no Claude attribution. Push the node branch (no force). Open the pull request into `phase-4`.
 
 ### Execution notes
+
+Host: Python 3.14.10, `/bin/sh` → bash; `TMPDIR=/tmp`. The CC-0 node ran its own `test-check-premises.sh` at the same time (no `lib_test.sh` ran).
+
+- Step 1 (before the fix, branch at `33fd7bc5`): `git status --porcelain` → empty; `sh scripts/test-check-premises.sh` → exit 0, `test-check-premises: ok (211 cases)`; `python3 -I scripts/premises/scrub_test.py` → exit 0, `scrub tests: ok (156)`; then `git status --porcelain` → `?? scripts/premises/__pycache__/`, which holds `rescrub_codex.cpython-314.pyc`. Folder removed.
+- Step 2: `git diff` → only `scripts/test-check-premises.sh:1449`, `.github/workflows/ci.yml:79` and `scripts/premises/rescrub_test.py:3`, each `python3 -I` → `python3 -I -B`.
+- Step 3 (after the fix, clean tree): `sh scripts/test-check-premises.sh` → exit 0, `test-check-premises: ok (211 cases)`; `python3 -I scripts/premises/scrub_test.py` → exit 0, `scrub tests: ok (156)`; `git status --porcelain` → prints nothing; `scripts/premises/__pycache__` does not exist.
