@@ -555,6 +555,25 @@ fn repo_file_over_the_cap_is_invalid() {
 
 #[test]
 #[ignore = "timing: git calls run under the 2 s production bound (GIT_BOUND)"]
+fn repo_file_directory_is_not_a_file() {
+    // §13.5 (FX-43 review F4): a tree at `.zygo.toml` is invalid as not a file, with a small listing and with one
+    // larger than REPO_FILE_MAX (1024 names of 80 bytes: 82 KiB).
+    for (name, count) in [("fx43-dir-small", 2usize), ("fx43-dir-large", 1024)] {
+        let d = tmp(name);
+        git(&d, &["init", "-b", "main"]);
+        std::fs::create_dir(d.join(".zygo.toml")).unwrap();
+        for i in 0..count {
+            std::fs::write(d.join(".zygo.toml").join(format!("{i:079}")), "x").unwrap();
+        }
+        git(&d, &["add", "."]);
+        git(&d, &["commit", "-m", "x"]);
+        let want = RepoFile::Invalid { branch: "main".into(), why: ".zygo.toml is not a file".into() };
+        assert_eq!(repo_file::read_default_branch(&d), want, "{count} names");
+    }
+}
+
+#[test]
+#[ignore = "timing: git calls run under the 2 s production bound (GIT_BOUND)"]
 fn repo_file_absent_and_invalid() {
     assert_eq!(repo_file::read_default_branch(&tmp("rf3")), RepoFile::Absent);
     let d = repo_with("rf4", "version = 2\n");
