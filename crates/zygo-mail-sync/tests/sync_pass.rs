@@ -853,6 +853,61 @@ fn push_taken_by_one_push_url_only_stops_the_pass() {
     assert_eq!(r2.tip(BRANCH), Some(moved));
 }
 
+/// The `push` stop of S§8.3 step 15.
+fn push_stop() -> SyncError {
+    SyncError::Stopped { line: "zygo: mail sync stopped (push); the outbox is kept".into(), check: "push" }
+}
+
+#[test] // FX-40 review, S§8.3 steps 11 and 15: after a split stop the flag is set; a pass with nothing new keeps the
+        // outbox file and pushes the tip again (a split again: the `push` stop, flag kept); when the second URL
+        // takes it, the flag clears, the outbox file is deleted and both URLs hold the message
+fn split_flag_keeps_the_outbox_and_pushes_the_tip_until_every_url_takes_it() {
+    let _g = shared();
+    let (r, a, _b) = pair();
+    let r2 = r.mirror();
+    common::push_urls(&a, &[&r.url, &r2.url]);
+    let before = r2.tip(BRANCH).unwrap();
+    common::advance(&r2, BRANCH);
+    let id = send(&a, "alice", ("bob", "b"), "two urls");
+    let outbox_file = a.sp().outbox.join(format!("{id}.json"));
+    let path = format!("bob@b/{id}.json");
+    assert_eq!(run(&plain_env(&a), WS_ID, Mode::Cli).unwrap_err(), push_stop());
+    assert!(load(&a.sp()).unwrap().push_split);
+    assert!(tip_file(&r, BRANCH, &path).is_some() && tip_file(&r2, BRANCH, &path).is_none());
+    // the second URL still refuses: the tip is pushed again, split again
+    assert_eq!(run(&plain_env(&a), WS_ID, Mode::Cli).unwrap_err(), push_stop());
+    assert!(outbox_file.is_file());
+    assert!(load(&a.sp()).unwrap().push_split);
+    // the second URL is back where this machine knew it: the tip push is a fast-forward there
+    git(&r2.bare, &["update-ref", &format!("refs/heads/{BRANCH}"), &before]);
+    let rep = run(&plain_env(&a), WS_ID, Mode::Cli).unwrap();
+    assert_eq!(rep.passes, 1);
+    let st = load(&a.sp()).unwrap();
+    assert!(!st.push_split);
+    assert!(st.pending.is_empty());
+    assert!(!outbox_file.exists());
+    assert_eq!(r2.tip(BRANCH), r.tip(BRANCH));
+    assert!(tip_file(&r2, BRANCH, &path).is_some());
+}
+
+#[test] // FX-40 review, S§9 Push: a pass with the split flag set does not prune: a forced prune pass pushes the tip
+        // again, stops with the `push` stop, and no URL's history is rewritten
+fn split_flag_stops_the_prune() {
+    let _g = shared();
+    let (r, a, _b) = pair();
+    let r2 = r.mirror();
+    common::push_urls(&a, &[&r.url, &r2.url]);
+    let moved = common::advance(&r2, BRANCH);
+    send(&a, "alice", ("bob", "b"), "two urls");
+    assert_eq!(run(&plain_env(&a), WS_ID, Mode::Cli).unwrap_err(), push_stop());
+    let tip = r.tip(BRANCH).unwrap();
+    let e = run_with(&plain_env(&a), WS_ID, Mode::Cli, &Opts { prune: true }).unwrap_err();
+    assert_eq!(e, push_stop());
+    assert_eq!(r.tip(BRANCH), Some(tip));
+    assert_eq!(r2.tip(BRANCH), Some(moved));
+    assert!(load(&a.sp()).unwrap().push_split);
+}
+
 /// A valid message file for `bob@b` from `alice@a`, named by `id`.
 fn bob_message(id: Ulid) -> Vec<u8> {
     format!(r#"{{"version":1,"id":"{id}","from":"alice@a","to":"bob@b","sent_at":"2026-11-25T10:00:00Z","subject":"s","body":"b"}}"#)
