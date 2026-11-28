@@ -298,7 +298,9 @@ VX="^($(printf '%s' "$VERBATIM" | sed 's/[.]/\\./g; s/ /|/g')):[0-9]+:"
 # NOTES, so a blank in place of a NUL would change a hit: "sk-<NUL>ant-" is "sk-ant-"; TF-3 round 2).
 NOTES=$( (grep -anH 'N38' "$SPEC" docs/conformance.md 2>/dev/null | tr -d '\000') || true)
 # scan <ERE> <exempt ERE> <label> [i] [<drop sed -E script>]: the first line that matches and is not
-# exempt fails; i: the ERE matches any case (the exempt ERE never does). <drop sed -E script>:
+# exempt fails; i: the ERE matches any case (the exempt ERE never does). The exempt ERE drops the whole
+# hit line, so it is only the VX line prefix (a verbatim file); an exempt form inside a line is a drop
+# script, which keeps the rest of the line under the check (TF-5 round 1 F1). <drop sed -E script>:
 # applied to a hit line, which fails only when the ERE still matches the result; the message shows
 # the line as written. A NUL in a hit line becomes a blank first (read stops at a NUL); both are
 # outside every character class of the rules and of the drop script. After the first hit line the
@@ -322,11 +324,15 @@ scan() {
 # (\n, \t, \r, \b, \f, \uXXXX) right before it in nested JSON text.
 L='(^|[^A-Za-z0-9_]|\\[nrtbf]|\\u[0-9A-Fa-f]{4})'
 # XK: an x-api-key name and its separator, quoted, backslash-quoted or bare. The name is spelled in any
-# case with bracket classes, because the exempt filter of scan is case-exact (PC-8 H2).
+# case with bracket classes, because sed -E (the drop script XKX) is case-exact.
 XK='[xX]-[aA][pP][iI]-[kK][eE][yY](\\?["'"'"'])?[[:space:]]*[:=][[:space:]]*(\\?["'"'"'])?'
+# XKX: drops each omitted x-api-key value, "<XK>[omitted]" followed by a character outside
+# [A-Za-z0-9_-] (kept) or the line end, so a hit line fails when any other value is left on it, in
+# any case (TF-5 round 1 F1). An exempt ERE would drop the whole line, and a value beside it.
+XKX='s/('"$XK"')\[omitted\]([^A-Za-z0-9_-]|$)/\4/g'
 scan 'sk-ant-' '' 'API key'
 scan 'Bearer [A-Za-z0-9]' "$VX" 'bearer token'
-scan "$XK"'[^"'"'"'\\[:space:]]' "$XK"'\[omitted\]' 'x-api-key value' i
+scan "$XK"'[^"'"'"'\\[:space:]]' '' 'x-api-key value' i "$XKX"
 scan '/Users/' "$VX" 'macOS home path'
 scan '/private/var/' '' 'temporary path'
 scan '/var/folders/' '' 'temporary path'

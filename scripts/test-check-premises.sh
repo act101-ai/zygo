@@ -1444,6 +1444,28 @@ printf '%s\n' 'OS Version: Ubuntu is fine' 'OS Version: Windowsill' 'Shell: nush
 run "$D"
 expect_ok
 
+# TF-5 round 1 F1: only the exempt x-api-key occurrence ("<name><separator>[omitted]" followed by a
+# character outside [A-Za-z0-9_-] or the line end) is dropped from a hit line; a value left on the
+# line still fails, in any case. One tree, the planted file written again for each line.
+D=$(mk tf5_xk)
+XN="x-api""-key"
+XU="X-Api""-Key"
+for l in \
+    "$XU: [omitted] and $XN: realvalue1" \
+    "$XU: [omitted] $XU: realvalue1" \
+    "{\"h\":{\"$XU\":\"[omitted]\"},\"g\":{\"$XN\":\"realvalue1\"}}" \
+    "$XU: [omitted]x" \
+    "$XN: [omitted] $XN: realvalue1"; do
+    CASE="TF-5 R1 F1: an x-api-key value beside or after an omitted one ($l)"
+    printf '%s\n' "$l" > "$D/fixtures/codex/xk.txt"
+    run "$D"
+    expect_fail "forbidden content (x-api-key value): fixtures/codex/xk.txt:1:$l"
+done
+CASE="TF-5 R1 F1: an omitted x-api-key value in any case passes"
+printf '%s\n' "$XU: [omitted]" "X-API""-KEY: [omitted]" "{\"$XU\":\"[omitted]\"}" > "$D/fixtures/codex/xk.txt"
+run "$D"
+expect_ok
+
 # PC-13 review round 1 F4: the rescrub_codex.py tests (same(), the folders and verbatim lists, ENV_LEAKS).
 CASE="PC-13 R1: rescrub_test.py"
 OUT=$(python3 -I "$ROOT/scripts/premises/rescrub_test.py" 2>&1)
