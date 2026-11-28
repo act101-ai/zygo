@@ -1,6 +1,7 @@
 //! `zygo ws forget [--yes] <name>`, `zygo ws forget-pane <key> [--name <name>]`, `zygo ws name <key> <name> [--workspace <w>]`
 //! (M§6) and the hidden `zygo ws snapshot` (W§12, AU44). `zygo ws` does not sweep (AU71).
 
+use std::cell::Cell;
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -156,8 +157,11 @@ pub fn forget_cmd(
     paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: &str, yes: bool, input: &mut dyn BufRead,
     ask: &mut dyn Write, out: &mut dyn Write, err: &mut dyn Write,
 ) -> i32 {
-    let mut before = |ws: &Workspace| forget_mail(paths, ws, yes, input, ask);
-    admin::forget(paths, tmux, tmux_env, name, &mut before, out, err)
+    // S§7.6 steps 2 and 4 (FX-28): the count that the operator saw, checked again under `mail/lock`.
+    let counted = Cell::new((0, 0));
+    let mut before = |ws: &Workspace| forget_mail(paths, ws, yes, input, ask, &counted);
+    let mut before_rename = |ws: &Workspace| forget_recount(paths, ws, counted.get());
+    admin::forget(paths, tmux, tmux_env, name, &mut before, &mut before_rename, out, err)
 }
 
 /// S§6.3 Remove (MS-21): the deadline of `git worktree remove`. The worktree has no checkout (S§6.3 Make), so the
@@ -170,23 +174,31 @@ pub(crate) fn forget_prompt(n: usize, r: usize) -> String {
     format!("zygo: {n} unsent messages and {r} refused messages will be deleted. Forget the workspace? [y/N]")
 }
 
-/// S§7.6 steps 2-3, S§6.3 Remove (MS-21): the `before_remove` step of `zygo ws forget`, which `admin::forget` runs
-/// after its checks with `op.lock` and the sync lock held. It counts the outbox and its refused messages (a folder
-/// that cannot be read is an `Err`); when either count is not 0 it asks [`forget_prompt`] on `err` (`yes`: the question and ` y (--yes)`), and an answer that
-/// is not `y` or `yes`, or the end of input, is `Ok(false)`. Then [`remove_sync_worktree`]; a failed removal is an
-/// `Err`. An `Err` is the reason that `admin::forget` prints after `zygo: cannot forget <name>: `.
-pub(crate) fn forget_mail(
-    paths: &Paths, ws: &Workspace, yes: bool, input: &mut dyn BufRead, err: &mut dyn Write,
-) -> Result<bool, String> {
-    let sp = SyncPaths::new(paths, &ws.id).map_err(|e| e.to_string())?;
+/// S§7.6 steps 2 and 4: the count of `mail/outbox/` and `mail/outbox/refused/` of `sp`. A `mail/` that is a link or
+/// not a folder is no mail, `(0, 0)`, and it is not followed; a folder that cannot be read is an `Err` with the reason.
+fn outbox_counts(sp: &SyncPaths) -> Result<(usize, usize), String> {
     // S§7.6 step 1 (review F3): a `mail/` that is a link or not a folder is no mail, and it is not followed.
     let no_mail = std::fs::symlink_metadata(&sp.mail).is_ok_and(|m| !m.is_dir());
     let unreadable = |e: std::io::Error| format!("the outbox cannot be read: {}", esc(&e.to_string()));
-    let (n, r) = if no_mail {
-        (0, 0)
-    } else {
-        (outbox::count(&sp).map_err(unreadable)?, outbox::refused_count(&sp).map_err(unreadable)?)
-    };
+    if no_mail {
+        return Ok((0, 0));
+    }
+    Ok((outbox::count(sp).map_err(unreadable)?, outbox::refused_count(sp).map_err(unreadable)?))
+}
+
+/// S§7.6 steps 2-3, S§6.3 Remove (MS-21): the `before_remove` step of `zygo ws forget`, which `admin::forget` runs
+/// after its checks with `op.lock` and the sync lock held. It counts the outbox and its refused messages (a folder
+/// that cannot be read is an `Err`) and records the count in `counted`, which [`forget_recount`] checks at step 4
+/// (FX-28); when either count is not 0 it asks [`forget_prompt`] on `err` (`yes`: the question and ` y (--yes)`), and
+/// an answer that is not `y` or `yes`, or the end of input, is `Ok(false)`. Then [`remove_sync_worktree`]; a failed
+/// removal is an `Err`. An `Err` is the reason that `admin::forget` prints after `zygo: cannot forget <name>: `.
+pub(crate) fn forget_mail(
+    paths: &Paths, ws: &Workspace, yes: bool, input: &mut dyn BufRead, err: &mut dyn Write,
+    counted: &Cell<(usize, usize)>,
+) -> Result<bool, String> {
+    let sp = SyncPaths::new(paths, &ws.id).map_err(|e| e.to_string())?;
+    let (n, r) = outbox_counts(&sp)?;
+    counted.set((n, r));
     if n > 0 || r > 0 {
         let prompt = forget_prompt(n, r);
         if yes {
@@ -201,6 +213,22 @@ pub(crate) fn forget_mail(
     }
     remove_sync_worktree(&sp, &ws.main_root)?;
     Ok(true)
+}
+
+/// S§7.6 step 4 (FX-28): the `before_rename` step of `zygo ws forget`, which `admin::forget` runs with `mail/lock`
+/// held exclusive, right before the state rename. It counts `mail/outbox/` and `mail/outbox/refused/` again as
+/// [`forget_mail`] does. When either count is higher than `counted` (the count of step 2, which the operator saw),
+/// mail came in after that count, and the forget refuses with the new counts; a lower count goes on. Every writer that
+/// can raise a count here holds `mail/lock` shared (the remote send), or `mail/sync/lock`, which the forget holds.
+pub(crate) fn forget_recount(paths: &Paths, ws: &Workspace, counted: (usize, usize)) -> Result<(), String> {
+    let sp = SyncPaths::new(paths, &ws.id).map_err(|e| e.to_string())?;
+    let (n, r) = outbox_counts(&sp)?;
+    if n > counted.0 || r > counted.1 {
+        return Err(format!(
+            "the outbox changed after the count: {n} unsent messages and {r} refused messages now; try again"
+        ));
+    }
+    Ok(())
 }
 
 /// S§6.3 Remove (MS-21): removes the sync worktree `<cache>/<id>/mail-sync`. No link is followed (review F2): a link
@@ -881,7 +909,7 @@ mod tests {
     fn ask(p: &Paths, ws: &Workspace, yes: bool, input: &str) -> (Result<bool, String>, String, u64) {
         let mut cur = std::io::Cursor::new(input.as_bytes().to_vec());
         let mut err = Vec::new();
-        let r = forget_mail(p, ws, yes, &mut cur, &mut err);
+        let r = forget_mail(p, ws, yes, &mut cur, &mut err, &Cell::new((0, 0)));
         (r, String::from_utf8(err).unwrap(), cur.position())
     }
 
@@ -918,6 +946,27 @@ mod tests {
         let q = "zygo: 0 unsent messages and 3 refused messages will be deleted. Forget the workspace? [y/N]";
         assert_eq!(ask(&p, &ws, false, "n\n"), (Ok(false), format!("{q} "), 2));
         assert_eq!(ask(&p, &ws, true, ""), (Ok(true), format!("{q} y (--yes)\n"), 0));
+    }
+
+    #[cfg(unix)]
+    #[test] // S§7.6 step 4 (FX-28): the count again under mail/lock: the same or lower goes on; higher refuses with the new counts
+    fn forget_recount_refuses_only_a_higher_count() {
+        let td = tempfile::tempdir().unwrap();
+        let p = temp_paths(td.path());
+        let ws = Workspace::new(WS);
+        assert_eq!(forget_recount(&p, &ws, (0, 0)), Ok(()));
+        let sp = SyncPaths::new(&p, WS).unwrap();
+        std::fs::create_dir_all(&sp.outbox).unwrap();
+        std::fs::write(sp.outbox.join("01ARZ3NDEKTSV4RRFFQ69G5FAV.json"), b"{}").unwrap();
+        assert_eq!(forget_recount(&p, &ws, (1, 0)), Ok(()));
+        assert_eq!(forget_recount(&p, &ws, (2, 0)), Ok(()));
+        assert_eq!(forget_recount(&p, &ws, (0, 0)), Err("the outbox changed after the count: 1 unsent messages and 0 refused messages now; try again".to_string()));
+        std::fs::create_dir_all(&sp.refused).unwrap();
+        std::fs::write(sp.refused.join("01ARZ3NDEKTSV4RRFFQ69G5FAW.json"), b"{}").unwrap();
+        assert_eq!(forget_recount(&p, &ws, (1, 0)), Err("the outbox changed after the count: 1 unsent messages and 1 refused messages now; try again".to_string()));
+        std::fs::remove_dir_all(&sp.outbox).unwrap();
+        std::fs::write(&sp.outbox, b"").unwrap();
+        assert_eq!(forget_recount(&p, &ws, (1, 1)), Err(format!("the outbox cannot be read: {} is not a folder", sp.outbox.display())));
     }
 
     #[cfg(unix)]

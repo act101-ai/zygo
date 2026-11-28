@@ -218,7 +218,17 @@ fn forget_with(
     p: &Paths, tmux: &Path, env: Option<&str>, name: &str, before: &mut dyn FnMut(&Workspace) -> Result<bool, String>,
 ) -> (i32, String, String) {
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = admin::forget(p, tmux, env.map(OsStr::new), name, before, &mut out, &mut err);
+    let code = admin::forget(p, tmux, env.map(OsStr::new), name, before, &mut |_: &Workspace| Ok(()), &mut out, &mut err);
+    (code, text(out), text(err))
+}
+
+/// `admin::forget` with the steps `before` (`before_remove`) and `before_rename` (S§7.6 step 4, FX-28); env `None`.
+fn forget_renaming(
+    p: &Paths, tmux: &Path, name: &str, before: &mut dyn FnMut(&Workspace) -> Result<bool, String>,
+    before_rename: &mut dyn FnMut(&Workspace) -> Result<(), String>,
+) -> (i32, String, String) {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = admin::forget(p, tmux, None, name, before, before_rename, &mut out, &mut err);
     (code, text(out), text(err))
 }
 
@@ -2129,6 +2139,32 @@ fn forget_with_no_sync_folder_makes_and_holds_the_sync_lock() {
     };
     assert_eq!(forget_with(&p, &t.join("none"), None, "app", &mut before), (0, "zygo: forgot app\n".to_string(), String::new()));
     assert_eq!(seen, vec![(true, 0o700, 0o700, 0o600)]);
+    assert!(fs::symlink_metadata(p.workspaces_dir().join(ID)).is_err());
+}
+
+#[test] // S§7.6 step 4 (FX-28): before_rename runs with mail/lock held, after before_remove and before the rename; an Err deletes nothing
+fn forget_runs_before_rename_under_mail_lock_and_its_err_deletes_nothing() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    ws_state(&p, ID, "app", &t.join("r/app"), |_| {});
+    let lock = mail_dir(&p, ID).join("lock");
+    let mut order = Vec::new();
+    let mut seen = Vec::new();
+    let mut before = |_: &Workspace| {
+        order.push("before_remove");
+        Ok(true)
+    };
+    let mut rename = |ws: &Workspace| {
+        seen.push((ws.id.clone(), lock_free(&lock), p.workspaces_dir().join(ID).join("workspace.json").exists()));
+        Err("changed".to_string())
+    };
+    assert_eq!(forget_renaming(&p, &t.join("none"), "app", &mut before, &mut rename), (1, String::new(), "zygo: cannot forget app: changed\n".to_string()));
+    assert_eq!((order, seen), (vec!["before_remove"], vec![(ID.to_string(), false, true)]));
+    assert_eq!(Store::open(&p, ID).read().unwrap().unwrap().name, "app");
+    assert!(lock_free(&lock));
+    assert_eq!(forget_renaming(&p, &t.join("none"), "app", &mut |_: &Workspace| Ok(true), &mut |_: &Workspace| Ok(())), (0, "zygo: forgot app\n".to_string(), String::new()));
     assert!(fs::symlink_metadata(p.workspaces_dir().join(ID)).is_err());
 }
 

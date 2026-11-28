@@ -501,7 +501,8 @@ fn remote_send_during_forget_is_never_lost_uncounted() {
     assert!(sp(&h).outbox.join(format!("{id}.json")).is_file());
     assert_eq!(count(&sp(&h)).unwrap(), 2);
     assert!(dir.join("workspace.json").is_file());
-    // A second forget asks with the new count and forgets.
+    // A second forget, with no hook at its lock, asks with the new count and forgets.
+    hook(&dir, "forget_before_mail_lock", None);
     match forgot(&h.paths, &h.root().join("none")) {
         Step::Forgot(code, out, err, ask) => {
             assert_eq!((code, out.as_str(), err.as_str(), ask), (0, "zygo: forgot app\n", "", asked(2)));
