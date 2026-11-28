@@ -367,12 +367,20 @@ impl Launcher {
             // The profile name is in the line only for a launch that makes the pinned read; else "this member".
             let reads = name.as_deref().filter(|n| !opts.passthrough && valid_name(n) && !cfg.config.profile.contains_key(*n));
             let line = |which: &str| pin_line(reads.map(zygo_core::esc).as_deref(), pin, which);
-            let (Some(_), Some(_), Some(cd)) = (&opts.definition_root, def_top.as_deref(), def_cd.as_deref()) else {
+            let (Some(_), Some(def_top), Some(cd)) = (&opts.definition_root, def_top.as_deref(), def_cd.as_deref()) else {
                 out.line(&line(NO_CHECKOUT));
                 return 1;
             };
             if !is_workspace_approved_in(&opts.paths.approvals_file, &workspace_id(cd), &pin.digest) {
                 out.line(&line(NO_LONGER));
+                return 1;
+            }
+            // R§7.4 "The pane folder" (FX-39 R2): a pane folder that resolves into a git dir stops the launch.
+            if let Some(p) = in_git_dir(&opts.cwd, def_top, cd) {
+                out.line(&format!(
+                    "zygo: the folder of this member is inside a git dir ({}); the agent was not started",
+                    zygo_core::esc(&p.to_string_lossy())
+                ));
                 return 1;
             }
         }
@@ -968,6 +976,16 @@ fn repository_profile(
 const NO_LONGER: &str = "this repository no longer has or no longer approves";
 /// The R§7.4 stop text of a launch with a pin whose main worktree gives no checkout (FX-39 R1).
 const NO_CHECKOUT: &str = "were not read (git found no checkout at the main worktree of the workspace)";
+
+/// R§7.4 "The pane folder" (FX-39 R2): the resolved pane folder `cwd` when it is inside the common dir `common_dir` of
+/// the main worktree's checkout, or has more path parts named `.git` (any ASCII letter case) than the resolved main
+/// worktree `top` (a nested repository's git dir). `top` and `common_dir` come resolved from `checkout`. A folder that
+/// cannot be resolved is left to the launch (none).
+fn in_git_dir(cwd: &Path, top: &Path, common_dir: &Path) -> Option<PathBuf> {
+    let c = cwd.canonicalize().ok()?;
+    let gits = |p: &Path| p.components().filter(|c| c.as_os_str().to_str().is_some_and(|s| s.eq_ignore_ascii_case(".git"))).count();
+    (c.starts_with(common_dir) || gits(&c) > gits(top)).then_some(c)
+}
 
 /// What a pinned read (R§7.4) gives the launch.
 enum Pinned {
