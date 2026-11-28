@@ -110,28 +110,39 @@ pub fn item_path(dir: &SessionDir, agent_session: &str) -> Option<PathBuf> {
 /// store. A store that cannot be used gives `build()` and stores nothing: a `session-item` that is a link or not a
 /// folder, a stored entry that is a link, not a regular file, empty, larger than `MAX_ITEM` or unreadable, or a store
 /// that fails. It writes no line: the OpenCode call runs per model request (D6 of `workspace::session_start_with_sync`;
-/// review F1).
+/// review F1). On unix `session-item` is opened once (`open_item_folder`) and every read and store step goes through
+/// that handle (FX-44); a stored entry with more than one link is not used (FX-44 review 2).
 pub fn fixed_item(dir: &SessionDir, agent_session: &str, build: &mut dyn FnMut() -> Option<String>) -> Option<String> {
     let Some(path) = item_path(dir, agent_session) else { return build() };
-    let folder = dir.root.join(ITEM_DIR);
-    let state = folder_state(&folder);
-    #[cfg(all(unix, feature = "test-hooks"))]
-    if matches!(state, Folder::Usable) {
-        testing::fire(&folder);
-    }
-    match state {
-        Folder::Unusable => return build(),
-        Folder::Missing => {}
-        Folder::Usable => match read_item(&path) {
+    fixed_in(&dir.root.join(ITEM_DIR), &path, build)
+}
+
+/// `fixed_item` for the folder `folder` and the item `path` in it, through one folder handle (FX-44).
+#[cfg(unix)]
+fn fixed_in(folder: &Path, path: &Path, build: &mut dyn FnMut() -> Option<String>) -> Option<String> {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else { return build() };
+    let handle = match open_item_folder(folder) {
+        Ok(h) => h,
+        Err(()) => return build(),
+    };
+    if let Some(h) = &handle {
+        match read_at(h, name) {
             Ok(Some(t)) => return Some(t),
             Ok(None) => {}
             Err(()) => return build(),
-        },
+        }
     }
     let text = build()?;
-    match store_item(&folder, &path, &text) {
+    let h = match handle {
+        Some(h) => h,
+        None => match make_folder(folder).and_then(|()| open_item_folder(folder)) {
+            Ok(Some(h)) => h,
+            _ => return Some(text),
+        },
+    };
+    match store_at(&h, name, &text) {
         // Another request stored its text after this one read: that text is the session's item 8.
-        Ok(false) => match read_item(&path) {
+        Ok(false) => match read_at(&h, name) {
             Ok(Some(t)) => Some(t),
             _ => Some(text),
         },
@@ -139,40 +150,75 @@ pub fn fixed_item(dir: &SessionDir, agent_session: &str, build: &mut dyn FnMut()
     }
 }
 
-/// What `session-item` (and `reinject/` in `pre_compact`, FX-37) is.
-pub(crate) enum Folder {
-    Missing,
-    /// A real folder (not a link).
-    Usable,
-    /// A link, or not a folder, or a stat error other than NotFound.
-    Unusable,
-}
-
-pub(crate) fn folder_state(folder: &Path) -> Folder {
-    match std::fs::symlink_metadata(folder) {
-        Ok(m) if m.file_type().is_dir() => Folder::Usable,
-        Ok(_) => Folder::Unusable,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Folder::Missing,
-        Err(_) => Folder::Unusable,
+/// `fixed_item` for the folder `folder` and the item `path` in it, by path: `folder` must be a real folder, not a link.
+#[cfg(not(unix))]
+fn fixed_in(folder: &Path, path: &Path, build: &mut dyn FnMut() -> Option<String>) -> Option<String> {
+    match folder_state(folder) {
+        Folder::Unusable => return build(),
+        Folder::Missing => {}
+        Folder::Usable => match read_item(path) {
+            Ok(Some(t)) => return Some(t),
+            Ok(None) => {}
+            Err(()) => return build(),
+        },
+    }
+    let text = build()?;
+    match store_item(folder, path, &text) {
+        // Another request stored its text after this one read: that text is the session's item 8.
+        Ok(false) => match read_item(path) {
+            Ok(Some(t)) => Some(t),
+            _ => Some(text),
+        },
+        Ok(true) | Err(()) => Some(text),
     }
 }
 
-/// The stored text at `path`: `Ok(None)` when nothing is there, `Err(())` when the entry cannot be used. Opened with
-/// `O_NOFOLLOW | O_NONBLOCK`, so a link is not followed and a FIFO does not make the reader wait; only a regular,
-/// non-empty file of at most `MAX_ITEM` bytes of UTF-8 is used (review F2, F5).
-fn read_item(path: &Path) -> Result<Option<String>, ()> {
-    let mut o = std::fs::OpenOptions::new();
-    o.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
-    }
-    let f = match o.open(path) {
+/// `session-item/` opened with `O_DIRECTORY | O_NOFOLLOW`: `Ok(None)` when it is missing, `Err(())` when it is a link,
+/// not a folder or cannot be opened. A real folder (not a link) owned by this user that cannot be opened for lack of
+/// read permission (`EACCES`, for example mode 0300) is set to 0700 by path and opened once more (FX-44 review 3).
+#[cfg(unix)]
+fn open_item_folder(folder: &Path) -> Result<Option<std::fs::File>, ()> {
+    use crate::pre_compact::at;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let h = match at::open_folder(folder) {
+        Ok(h) => h,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.raw_os_error() == Some(libc::EACCES) => {
+            let m = std::fs::symlink_metadata(folder).map_err(|_| ())?;
+            // SAFETY: `geteuid` has no preconditions and cannot fail.
+            if !m.file_type().is_dir() || m.uid() != unsafe { libc::geteuid() } {
+                return Err(());
+            }
+            std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700)).map_err(|_| ())?;
+            at::open_folder(folder).map_err(|_| ())?
+        }
+        Err(_) => return Err(()),
+    };
+    #[cfg(feature = "test-hooks")]
+    testing::fire(folder);
+    Ok(Some(h))
+}
+
+/// The stored text `name` in the opened folder `folder`, read as `read_item` reads, through the handle (`openat` with
+/// `O_NOFOLLOW | O_NONBLOCK`); only a regular file with one link is used (FX-44 review 2, the rule of the FX-37 flag).
+#[cfg(unix)]
+fn read_at(folder: &std::fs::File, name: &str) -> Result<Option<String>, ()> {
+    use std::os::unix::fs::MetadataExt;
+    let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY;
+    let f = match crate::pre_compact::at::open(folder, name, flags, 0) {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err(()),
     };
+    if f.metadata().map_err(|_| ())?.nlink() != 1 {
+        return Err(());
+    }
+    read_opened(f)
+}
+
+/// The text of the opened entry `f`: only a regular, non-empty file of at most `MAX_ITEM` bytes of UTF-8 is used
+/// (review F2, F5); else `Err(())`.
+fn read_opened(f: std::fs::File) -> Result<Option<String>, ()> {
     let m = f.metadata().map_err(|_| ())?;
     if !m.is_file() || m.len() == 0 || m.len() > MAX_ITEM {
         return Err(());
@@ -183,6 +229,37 @@ fn read_item(path: &Path) -> Result<Option<String>, ()> {
         return Err(());
     }
     Ok(Some(text))
+}
+
+/// What `session-item` (and `reinject/` in `pre_compact`, FX-37) is.
+#[cfg(not(unix))]
+pub(crate) enum Folder {
+    Missing,
+    /// A real folder (not a link).
+    Usable,
+    /// A link, or not a folder, or a stat error other than NotFound.
+    Unusable,
+}
+
+#[cfg(not(unix))]
+pub(crate) fn folder_state(folder: &Path) -> Folder {
+    match std::fs::symlink_metadata(folder) {
+        Ok(m) if m.file_type().is_dir() => Folder::Usable,
+        Ok(_) => Folder::Unusable,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Folder::Missing,
+        Err(_) => Folder::Unusable,
+    }
+}
+
+/// The stored text at `path`: `Ok(None)` when nothing is there, `Err(())` when the entry cannot be used
+/// (`read_opened`).
+#[cfg(not(unix))]
+fn read_item(path: &Path) -> Result<Option<String>, ()> {
+    match std::fs::File::open(path) {
+        Ok(f) => read_opened(f),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(()),
+    }
 }
 
 /// A new temp name for the item `name`: the process id, a per-process counter and the clock's nanoseconds (review F7).
@@ -205,29 +282,23 @@ fn make_folder(folder: &Path) -> Result<(), ()> {
     }
 }
 
-/// Stores `text` at `path` in `folder` unless the name is taken: `Ok(true)` when stored, `Ok(false)` when the name is
-/// taken, so a stored text is never replaced; `Err(())` when the store cannot be used. `folder` is made when missing
-/// (0700), then opened once with `O_DIRECTORY | O_NOFOLLOW` (a link or another entry there is `Err`, review F6), and
-/// every later step goes through that handle (FX-44), so a link put in place of `folder` after the open is never
+/// Stores `text` as `name` in the opened folder `dir` unless the name is taken: `Ok(true)` when stored, `Ok(false)`
+/// when the name is taken, so a stored text is never replaced; `Err(())` when the store cannot be used. Every step goes
+/// through the handle (FX-44), so a link put in place of the folder after it was opened (`open_item_folder`) is never
 /// followed: `fchmod` 0700 of the folder (as `reinject/` in `pre_compact`); `openat` of a new temp file
-/// (`O_CREAT | O_EXCL | O_NOFOLLOW`, 0600) that gets `text` and is synced; `linkat` of the temp name to the item name;
+/// (`O_CREAT | O_EXCL | O_NOFOLLOW`, 0600) that gets `text` and is synced; `linkat` of the temp name to `name`;
 /// `unlinkat` of the temp name. A temp name that exists is tried again with a new name, at most `TEMP_TRIES` times
-/// (review F7). A missing session folder is not made again.
+/// (review F7).
 #[cfg(unix)]
-fn store_item(folder: &Path, path: &Path, text: &str) -> Result<bool, ()> {
+fn store_at(dir: &std::fs::File, name: &str, text: &str) -> Result<bool, ()> {
     use crate::pre_compact::at;
     use std::os::unix::fs::PermissionsExt;
-    make_folder(folder)?;
-    let dir = at::open_folder(folder).map_err(|_| ())?;
-    #[cfg(feature = "test-hooks")]
-    testing::fire(folder);
     dir.set_permissions(std::fs::Permissions::from_mode(0o700)).map_err(|_| ())?;
-    let name = path.file_name().and_then(|n| n.to_str()).ok_or(())?;
     let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_NOCTTY;
     let mut opened = None;
     for _ in 0..TEMP_TRIES {
         let tmp = temp_name(name);
-        match at::open(&dir, &tmp, flags, 0o600) {
+        match at::open(dir, &tmp, flags, 0o600) {
             Ok(f) => {
                 opened = Some((tmp, f));
                 break;
@@ -240,18 +311,18 @@ fn store_item(folder: &Path, path: &Path, text: &str) -> Result<bool, ()> {
     let linked = (|| -> std::io::Result<bool> {
         f.write_all(text.as_bytes())?;
         f.sync_all()?;
-        match at::link(&dir, &tmp, name) {
+        match at::link(dir, &tmp, name) {
             Ok(()) => Ok(true),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
             Err(e) => Err(e),
         }
     })();
     // The temp file is this call's own; the stored text stays under the item name.
-    let _ = at::unlink(&dir, &tmp);
+    let _ = at::unlink(dir, &tmp);
     linked.map_err(|_| ())
 }
 
-/// Stores `text` at `path` in `folder` unless the name is taken, as the unix `store_item` but by path: `folder` is made
+/// Stores `text` at `path` in `folder` unless the name is taken, as the unix `store_at` but by path: `folder` is made
 /// when missing and must then be a real folder, not a link (review F6); `text` goes to a new temp file in `folder`,
 /// which is hard-linked to `path` and then removed.
 #[cfg(not(unix))]
@@ -290,7 +361,7 @@ fn store_item(folder: &Path, path: &Path, text: &str) -> Result<bool, ()> {
     linked.map_err(|_| ())
 }
 
-/// Test hooks of `store_item` (FX-44). Only the `test-hooks` feature builds them.
+/// Test hooks of `fixed_item` (FX-44). Only the `test-hooks` feature builds them.
 #[cfg(all(unix, feature = "test-hooks"))]
 pub mod testing {
     use std::collections::BTreeMap;
@@ -302,9 +373,9 @@ pub mod testing {
     /// The hooks by `session-item` folder path, so parallel tests do not meet.
     static HOOKS: Mutex<BTreeMap<PathBuf, Hook>> = Mutex::new(BTreeMap::new());
 
-    /// Sets (`Some`) or clears (`None`) the hook of the `session-item` folder `folder`. The hook runs one time, in
-    /// `fixed_item` after the folder is opened and checked, before the first read or store step on it (a test replaces
-    /// the folder there); it is then cleared.
+    /// Sets (`Some`) or clears (`None`) the hook of the `session-item` folder `folder`. The hook runs one time, when
+    /// `open_item_folder` has opened the folder, before the first read or store step through the handle (a test
+    /// replaces the folder there); it is then cleared.
     pub fn set_after_open(folder: &Path, hook: Option<Hook>) {
         let mut hooks = HOOKS.lock().unwrap_or_else(|e| e.into_inner());
         match hook {

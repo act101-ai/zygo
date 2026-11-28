@@ -151,7 +151,7 @@ fn create_flag(dir: &SessionDir, name: &str) -> anyhow::Result<()> {
 
 /// Steps on an entry of a folder through the folder's handle (`openat`, `fstatat`, `linkat`, `unlinkat`), so a link put
 /// in place of the folder after it was opened is never followed (FX-37). Shared by `create_flag`, `trim`'s flag take
-/// and `session_start::store_item` (FX-44).
+/// and `session_start::fixed_item` (FX-44).
 #[cfg(unix)]
 pub(crate) mod at {
     use std::ffi::CString;
