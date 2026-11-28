@@ -365,13 +365,17 @@ scan "${L}gh[pousr]_[A-Za-z0-9]{20,}" '' 'GitHub token'
 scan 'github_pat_[A-Za-z0-9_]{20,}' '' 'GitHub token'
 scan 'eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.' '' 'JWT'
 # cx_scan <ERE> <label> [i] [<drop sed -E script>]: as scan, over fixtures/codex only (PC-11 leak
-# classes of Codex captures); the verbatim files are exempt.
+# classes of Codex captures); the verbatim files are exempt. As in scan, grep and sed run with
+# LC_ALL=C and a drop sed that fails leaves the line a hit (TF-5 round 2).
 cx_scan() {
   o=-aE; [ "${3:-}" != i ] || o=-aiE
   # shellcheck disable=SC2086
-  hit=$(grep -rn $o -- "$1" fixtures/codex 2>/dev/null | grep -av -E -- "$VX" | tr '\000' ' ' |
+  hit=$(LC_ALL=C grep -rn $o -- "$1" fixtures/codex 2>/dev/null | LC_ALL=C grep -av -E -- "$VX" | tr '\000' ' ' |
     while IFS= read -r ln; do
-      [ -z "${4:-}" ] || printf '%s\n' "$ln" | sed -E "$4" | grep -q $o -- "$1" || continue
+      if [ -n "${4:-}" ]; then
+        d=$(printf '%s\n' "$ln" | LC_ALL=C sed -E "$4") || d=$ln
+        printf '%s\n' "$d" | LC_ALL=C grep -q $o -- "$1" || continue
+      fi
       printf '%s\n' "$ln"
       cat >/dev/null
       break
@@ -401,12 +405,15 @@ cx_scan "${L}[a-z]{1,8}_[0-7][0-9A-HJKMNP-TV-Z]{25}([^0-9A-Za-z]|\$)" 'time-bear
 # env_scan <ERE> <label> [<drop sed -E script>]: as cx_scan, case-sensitive, over fixtures/claude-code
 # and fixtures/opencode (PC-13). The drop script is applied to the hit's text (without its "path:line:"
 # prefix, so ^ is the line start); the hit fails only when the ERE still matches the result. grep and
-# sed run with LC_ALL=C, byte by byte, so the time stays linear on long lines (review round 2 G4). The
-# verbatim files are exempt.
+# sed run with LC_ALL=C, byte by byte, so the time stays linear on long lines (review round 2 G4). A
+# drop sed that fails leaves the text a hit (TF-5 round 2). The verbatim files are exempt.
 env_scan() {
   hit=$(LC_ALL=C grep -rn -aE -- "$1" fixtures/claude-code fixtures/opencode 2>/dev/null | LC_ALL=C grep -av -E -- "$VX" | tr '\000' ' ' |
     while IFS= read -r ln; do
-      [ -z "${3:-}" ] || printf '%s\n' "${ln#*:*:}" | LC_ALL=C sed -E "$3" | LC_ALL=C grep -qaE -- "$1" || continue
+      if [ -n "${3:-}" ]; then
+        d=$(printf '%s\n' "${ln#*:*:}" | LC_ALL=C sed -E "$3") || d=${ln#*:*:}
+        printf '%s\n' "$d" | LC_ALL=C grep -qaE -- "$1" || continue
+      fi
       printf '%s\n' "$ln"
       cat >/dev/null
       break

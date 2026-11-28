@@ -1498,17 +1498,18 @@ printf '%s\n' "$XN: [omitted]${SOH}realvalue" > "$D/fixtures/codex/xk.txt"
 soh_to_nul "$D/fixtures/codex/xk.txt"
 run "$D"
 expect_ok
-# F2: sed shims for the x-api-key drop script only (its script holds "\[omitted\]"); every other sed
-# call runs the real sed (SED_REAL). sedfail: the drop sed fails on the planted line, so the line must
-# count as a hit (fail closed). sedbsd: as BSD sed in a UTF-8 locale, the drop sed fails on a byte that is not UTF-8
-# unless LC_ALL is C, so the drop step must run with LC_ALL=C.
+# F2: sed shims for the drop scripts of scan, cx_scan and env_scan only (each script holds "omitted");
+# every other sed call runs the real sed (SED_REAL). sedfail: the drop sed fails on a planted line
+# (the x-api-key line of xk.txt, or a line that holds the word zzplant), so the line must count as a
+# hit (fail closed). sedbsd: as BSD sed in a UTF-8 locale, the drop sed fails on a byte that is not
+# UTF-8 unless LC_ALL is C, so the drop step must run with LC_ALL=C.
 SED_REAL=$(command -v sed)
 mkdir -p "$T/sedfail" "$T/sedbsd"
 cat > "$T/sedfail/sed" <<'SHIM'
 #!/bin/sh
-case "$*" in *'\[omitted\]'*)
+case "$*" in *omitted*)
     in=$(cat)
-    case "$in" in fixtures/codex/xk.txt:*) exit 1 ;; esac
+    case "$in" in fixtures/codex/xk.txt:* | *zzplant*) exit 1 ;; esac
     printf '%s\n' "$in" | "$SED_REAL" "$@"
     exit ;;
 esac
@@ -1516,7 +1517,7 @@ exec "$SED_REAL" "$@"
 SHIM
 cat > "$T/sedbsd/sed" <<'SHIM'
 #!/bin/sh
-case "$*" in *'\[omitted\]'*)
+case "$*" in *omitted*)
     if [ "${LC_ALL:-}" != C ]; then
         in=$(cat)
         case "$in" in *"$(printf '\377')"*) echo "sed: RE error: illegal byte sequence" >&2; exit 1 ;; esac
@@ -1545,6 +1546,32 @@ for l in "$XN: realkey$FF" "$XN: [omitted]$FF"; do
     run_shim "$D" "$T/sedbsd"
     expect_fail "forbidden content (x-api-key value): fixtures/codex/xk.txt:1:$l"
 done
+rm -f "$D/fixtures/codex/xk.txt"
+# The same for the drop steps of cx_scan (fixtures/codex) and env_scan (fixtures/claude-code). Each
+# zzplant line passes with the real sed: its placeholder is dropped. Each line with 0xff holds a host
+# value that the drop leaves, so it fails.
+CASE="TF-5 R2: cx_scan, an OS placeholder fails when the drop sed fails"
+printf '%s\n' '"platformOs":"(os omitted)" zzplant' > "$D/fixtures/codex/cx.txt"
+run_shim "$D" "$T/sedfail"
+expect_fail "forbidden content (OS name): fixtures/codex/cx.txt:1:\"platformOs\":\"(os omitted)\" zzplant"
+CASE="TF-5 R2: cx_scan, an OS name with a byte that is not UTF-8, under a sed that stops on it"
+printf '%s\n' "\"platformOs\":\"linux$FF\"" > "$D/fixtures/codex/cx.txt"
+run_shim "$D" "$T/sedbsd"
+expect_fail "forbidden content (OS name): fixtures/codex/cx.txt:1:\"platformOs\":\"linux$FF\""
+rm -f "$D/fixtures/codex/cx.txt"
+CASE="TF-5 R2: env_scan, a shell placeholder fails when the drop sed fails"
+printf '%s\n' 'zzplant\n- Shell: (omitted)' > "$D/fixtures/claude-code/env.txt"
+run_shim "$D" "$T/sedfail"
+expect_fail 'forbidden content (shell name): fixtures/claude-code/env.txt:1:zzplant\n- Shell: (omitted)'
+CASE="TF-5 R2: env_scan, a shell name with a byte that is not UTF-8, under a sed that stops on it"
+printf '%s\n' "- Shell: zsh$FF" > "$D/fixtures/claude-code/env.txt"
+run_shim "$D" "$T/sedbsd"
+expect_fail "forbidden content (shell name): fixtures/claude-code/env.txt:1:- Shell: zsh$FF"
+CASE="TF-5 R2: cx_scan and env_scan, the zzplant lines pass with the real sed"
+printf '%s\n' '"platformOs":"(os omitted)" zzplant' > "$D/fixtures/codex/cx.txt"
+printf '%s\n' 'zzplant\n- Shell: (omitted)' > "$D/fixtures/claude-code/env.txt"
+run "$D"
+expect_ok
 
 # PC-13 review round 1 F4: the rescrub_codex.py tests (same(), the folders and verbatim lists, ENV_LEAKS).
 CASE="PC-13 R1: rescrub_test.py"
