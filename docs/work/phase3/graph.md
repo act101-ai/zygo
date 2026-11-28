@@ -225,7 +225,7 @@ Session text (T, SX nodes):
 | FX-28 | A remote send during `ws forget` is lost uncounted | FX-24, FX-26 | TODO | judgment | — |
 | FX-29 | config check rejects default_loadout = "repository" that zygo up accepts | WD-20 | DONE | implementation | cf92636c^..2f28c271 · acceptance pass (config_check_default_loadout_repository_follows_zygo_up 1 passed, zygo-config all pass) · PR #237 |
 | FX-30 | A crash-recovered delivery gets no wake and no count | FX-26, FX-28 | TODO | judgment | — |
-| FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | PLANNED | judgment | wt .worktrees/phase3/FX-31 |
+| FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | PLANNED | judgment | wt .worktrees/phase3/FX-31 · PR #238 |
 
 ## Log
 
