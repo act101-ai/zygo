@@ -72,6 +72,24 @@ add_lines() {
         mv "$d/docs/premises.md.new" "$d/docs/premises.md"
 }
 
+# SOH: the byte \001. A shell variable cannot hold a NUL, so a case plants a SOH and soh_to_nul
+# changes it to a NUL (TF-3).
+SOH=$(printf '\001')
+
+# soh_to_nul <file>: changes each SOH byte of the file to a NUL byte; the file must then hold a NUL.
+soh_to_nul() {
+    tr '\001' '\000' <"$1" > "$1.new" && mv "$1.new" "$1"
+    [ "$(tr -cd '\000' <"$1" | wc -c | tr -d ' ')" -gt 0 ] || fail "planted NUL did not apply"
+}
+
+# add_nul <file> <ERE> <line>: inserts the line (a SOH in it becomes a NUL) after the first line of
+# the file that matches the ERE.
+add_nul() {
+    L="$3" R="$2" awk '{ print } !d && $0 ~ ENVIRON["R"] { print ENVIRON["L"]; d = 1 }' "$1" > "$1.new" &&
+        mv "$1.new" "$1"
+    soh_to_nul "$1"
+}
+
 # add_row <dir> <row>: inserts the row after the last row of the Results table (from the header row
 # "| Id | Item |" to the first line that is not a table line). The row goes through the environment
 # (not awk -v), so its backslashes stay as written.
@@ -122,10 +140,11 @@ run() {
     tick check
 }
 
-# run_names <dir> <names>: as run, with N2_FORBIDDEN_NAMES set to the names for the script.
+# run_names <dir> <names> [<shell>]: as run, with N2_FORBIDDEN_NAMES set to the names for the script,
+# run by the shell (default sh).
 run_names() {
     tick other
-    OUT=$(N2_FORBIDDEN_NAMES="$2" sh "$1/scripts/check-premises.sh" 2>&1)
+    OUT=$(N2_FORBIDDEN_NAMES="$2" "${3:-sh}" "$1/scripts/check-premises.sh" 2>&1)
     RC=$?
     N=$((N + 1))
     tick check
@@ -150,6 +169,42 @@ expect_fail_prefix() {
     [ "$RC" -eq 1 ] || fail "exit $RC, expected 1"
     [ "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" -eq 1 ] || fail "output is not one line"
     case "$OUT" in "check-premises: $1"*) ;; *) fail "output does not start with 'check-premises: $1'" ;; esac
+}
+
+# run_split <dir> <names> <shell> [nopipe]: as run_names, but OUT is stdout only and ERR is stderr
+# only (TF-3 round 2). nopipe: the script starts with SIGPIPE ignored (as on the macOS CI runner), so
+# a process that writes into a pipe whose reader has exited gets EPIPE and may print an error on
+# stderr in place of a silent death.
+ERR=""
+run_split() {
+    tick other
+    if [ "${4:-}" = nopipe ]; then
+        OUT=$( (trap '' PIPE; export N2_FORBIDDEN_NAMES="$2"; exec "$3" "$1/scripts/check-premises.sh") 2>"$T/err")
+    else
+        OUT=$( (export N2_FORBIDDEN_NAMES="$2"; exec "$3" "$1/scripts/check-premises.sh") 2>"$T/err")
+    fi
+    RC=$?
+    ERR=$(cat "$T/err")
+    N=$((N + 1))
+    tick check
+}
+
+# expect_no_stderr: ERR (from run_split) is empty.
+expect_no_stderr() {
+    [ -z "$ERR" ] || fail "the script wrote to stderr: $ERR"
+}
+
+# expect_ok_alone: after run_split, exit 0, stderr empty and the last stdout line the ok line (a note
+# line, such as the one for a host name shorter than 4 characters, may come before it).
+expect_ok_alone() {
+    expect_no_stderr
+    expect_ok
+}
+
+# expect_fail_alone <text>: after run_split, stderr empty and stdout exactly "check-premises: <text>".
+expect_fail_alone() {
+    expect_no_stderr
+    expect_fail "$1"
 }
 
 CASE="real tree"
@@ -917,6 +972,305 @@ D=$(mk h1_name)
 printf 'a\0b alice\n' > "$D/$BINF"
 run_names "$D" alice
 expect_fail "forbidden name from N2_FORBIDDEN_NAMES: $BINF:1"
+
+# bash >=4.4 writes a warning to stderr when a command substitution reads a NUL byte; under bash the
+# scan of a binary file gives only the failure line (TF-3). The e-mail and API key cases guard the
+# tr that scan has now: the NUL is a blank in the message (with no tr, read drops it: "ab").
+CASE="TF-3: under bash, a binary file with an e-mail address"
+D=$(mk tf3_mail)
+printf 'a\0b bob@corp.com\n' > "$D/$BINF"
+run_names "$D" '' bash
+expect_fail "forbidden content (e-mail address): $BINF:1:a b bob@corp.com"
+
+CASE="TF-3: under bash, a binary file with an API key"
+D=$(mk tf3_key)
+printf 'a\0b sk-ant-x\n' > "$D/$BINF"
+run_names "$D" '' bash
+expect_fail "forbidden content (API key): $BINF:1:a b sk-ant-x"
+
+CASE="TF-3: under bash, a binary file with a forbidden name"
+D=$(mk tf3_name)
+printf 'a\0b alice\n' > "$D/$BINF"
+run_names "$D" alice bash
+expect_fail "forbidden name from N2_FORBIDDEN_NAMES: $BINF:1"
+
+# TF-3: every command substitution that reads file content gives the shell no NUL byte, so bash gives
+# no warning on stderr. Round 2: where the value feeds a decision, the NUL is deleted from the output
+# of the command that reads the file, as every shell did before TF-3, so a NUL changes no result. Each
+# case runs under bash with stdout and stderr apart (run_split).
+CASE="TF-3: under bash, an N38 line with a NUL inside a forbidden name's word"
+D=$(mk tf3_notes)
+printf 'N38 note: x\0alice\n' >> "$D/docs/conformance.md"
+run_split "$D" alice bash
+expect_ok_alone
+
+CASE="TF-3: under bash, a required file with a NUL"
+D=$(mk tf3_required)
+printf 'x\0\n' > "$D/fixtures/opencode/help.txt"
+run_split "$D" '' bash
+expect_ok_alone
+
+CASE="TF-3: under bash, a header line with a NUL"
+D=$(mk tf3_header)
+add_nul "$D/docs/premises.md" '^tmux: ' "Zz-test: a${SOH}b"
+run_split "$D" '' bash
+expect_ok_alone
+
+CASE="TF-3: under bash, a table line with a NUL in its first cell"
+D=$(mk tf3_table)
+add_nul "$D/docs/premises.md" '^tmux: ' "| a${SOH}b | x |"
+run_split "$D" '' bash
+expect_ok_alone
+
+CASE="TF-3: under bash, a Results row with a NUL"
+D=$(mk tf3_row)
+evidence "$D"
+add_header "$D" 'Codex: 0.172.0'
+add_row "$D" "$(row PC99 Codex 0.172.0 verified fixtures/codex/pc1.txt | sed "s/Test row/Test${SOH}row/")"
+soh_to_nul "$D/docs/premises.md"
+run_split "$D" '' bash
+expect_ok_alone
+
+CASE="TF-3: under bash, spec section 19 with a NUL"
+D=$(mk tf3_s19)
+add_nul "$D/docs/specs/2026-11-18-zygo-design.md" '^## 19\. ' "x${SOH}y"
+run_split "$D" '' bash
+expect_ok_alone
+
+CASE="TF-3: under bash, spec section 19a with a NUL"
+D=$(mk tf3_s19a)
+add_nul "$D/docs/specs/2026-11-18-zygo-design.md" '^## 19a\. ' "x${SOH}y"
+run_split "$D" '' bash
+expect_ok_alone
+
+CASE="TF-3: under bash, spec section 10.5 with a NUL"
+D=$(mk tf3_s105)
+add_nul "$D/docs/specs/2026-11-18-zygo-design.md" '^### 10\.5 ' "x${SOH}y"
+run_split "$D" '' bash
+expect_ok_alone
+
+# TF-3 round 2 R2-F1, R2-F2, R2-F3: a NUL that a blank in its place would make significant. Before
+# TF-3 awk read the NUL as a character (so "<NUL>```" is no fence and "<NUL>| P1 |" no table line)
+# and the shell deleted it from the output (so "sk-<NUL>ant-" is "sk-ant-"); the result stays.
+CASE="TF-3 R2-F1: under bash, a fence line that starts with a NUL"
+D=$(mk tf3_fence)
+hl=$(($(grep -n '^tmux: ' "$D/docs/premises.md" | cut -d: -f1) + 2))
+add_nul "$D/docs/premises.md" '^tmux: ' "$(printf '%s```\nCodex: 0.1.0\n%s```' "$SOH" "$SOH")"
+run_split "$D" '' bash
+expect_fail_alone "docs/premises.md:$hl: header 'Codex: 0.1.0' differs from the first header line 'Codex: 0.172.0'"
+
+CASE="TF-3 R2-F2: under bash, a NUL before a table line's first bar"
+D=$(mk tf3_tablebar)
+add_nul "$D/docs/premises.md" '^tmux: ' "${SOH}| P1 | x |"
+run_split "$D" '' bash
+expect_ok_alone
+
+CASE="TF-3 R2-F3: under bash, an N38 line with a NUL inside an API key"
+D=$(mk tf3_noteskey)
+printf 'N38 note: sk-\0ant-x\n' >> "$D/docs/conformance.md"
+run_split "$D" '' bash
+expect_fail_alone "forbidden content (API key): docs/conformance.md:$(wc -l <"$D/docs/conformance.md" | tr -d ' '):N38 note: sk-ant-x"
+
+# TF-3 round 2 R2-F4: expect_ok_alone reads stderr on its own, so a note line on stdout (here the one
+# for a host name shorter than 4 characters, from a hostname stub) does not fail it.
+CASE="TF-3 R2-F4: under bash, a host name shorter than 4 characters"
+D=$(mk tf3_shorthost)
+mkdir -p "$T/stubbin"
+printf '#!/bin/sh\necho box\n' > "$T/stubbin/hostname"
+chmod +x "$T/stubbin/hostname"
+OLDPATH=$PATH
+PATH="$T/stubbin:$PATH"
+run_split "$D" '' bash
+PATH=$OLDPATH
+expect_ok_alone
+case "$OUT" in *'check-premises: note: a host name is shorter than 4 characters or localhost; host-name scan skipped for it'*) ;;
+    *) fail "the hostname stub did not apply" ;; esac
+
+# TF-3 round 2, macOS CI: with SIGPIPE ignored, a process that writes into a pipe whose reader has
+# exited gets EPIPE and prints an error (BSD tr: "tr: stdout: Broken pipe"; GNU tr: "tr: write error:
+# Broken pipe"). Each reader after a tr reads to its end. The header scan stops at the first "## " line
+# (a file of more than a pipe buffer after it); the name scan keeps only the first of many hit lines.
+CASE="TF-3 R2 EPIPE: under bash with SIGPIPE ignored, a large docs/premises.md"
+D=$(mk tf3_pipehdr)
+awk 'BEGIN { for (i = 0; i < 20000; i++) print "padding text after the header lines, to fill a pipe buffer" }' >> "$D/docs/premises.md"
+run_split "$D" '' bash nopipe
+expect_ok_alone
+
+CASE="TF-3 R2 EPIPE: under bash with SIGPIPE ignored, many name scan hit lines"
+D=$(mk tf3_pipename)
+awk 'BEGIN { for (i = 0; i < 20000; i++) print "zzpipeq" }' > "$D/fixtures/codex/many.txt"
+run_split "$D" zzpipeq bash nopipe
+expect_fail_alone "forbidden name from N2_FORBIDDEN_NAMES: fixtures/codex/many.txt:1"
+
+# The hit loops of scan, cx_scan and env_scan keep only the first hit line: 4000 hit lines (more than
+# a pipe buffer of output) of a rule with no drop script give the failure line and nothing on stderr.
+CASE="TF-3 R2 EPIPE: under bash with SIGPIPE ignored, many scan hit lines"
+D=$(mk tf3_pipescan)
+awk 'BEGIN { for (i = 0; i < 4000; i++) print "sk-ant-x" }' > "$D/fixtures/codex/many.txt"
+run_split "$D" '' bash nopipe
+expect_fail_alone "forbidden content (API key): fixtures/codex/many.txt:1:sk-ant-x"
+
+CASE="TF-3 R2 EPIPE: under bash with SIGPIPE ignored, many cx_scan hit lines"
+D=$(mk tf3_pipecx)
+awk 'BEGIN { for (i = 0; i < 4000; i++) print "__CFx" }' > "$D/fixtures/codex/many.txt"
+run_split "$D" '' bash nopipe
+expect_fail_alone "forbidden content (macOS env name): fixtures/codex/many.txt:1:__CFx"
+
+CASE="TF-3 R2 EPIPE: under bash with SIGPIPE ignored, many env_scan hit lines"
+D=$(mk tf3_pipeenv)
+awk 'BEGIN { for (i = 0; i < 4000; i++) print "/cc-socks/1.sock" }' > "$D/fixtures/claude-code/many.txt"
+run_split "$D" '' bash nopipe
+expect_fail_alone "forbidden content (socket pid): fixtures/claude-code/many.txt:1:/cc-socks/1.sock"
+
+# TF-3 round 2: cells uses the byte \001 as the placeholder of an escaped "|", so a row that already
+# holds a \001 fails closed.
+CASE="TF-3 R2: a Results row with a SOH byte"
+D=$(mk tf3_rowsoh)
+evidence "$D"
+add_header "$D" 'Codex: 0.172.0'
+add_row "$D" "$(row PC99 Codex 0.172.0 verified fixtures/codex/pc1.txt | sed "s/Test row/Test${SOH}row/")"
+rl=$(grep -n '^| PC99 |' "$D/docs/premises.md" | cut -d: -f1)
+run_split "$D" '' bash
+expect_fail_alone "docs/premises.md:$rl: row 'PC99' holds a SOH byte (\\001), the placeholder of an escaped '|'"
+
+# TF-3 round 3 helpers.
+# pad_after <file> <ERE> <n> <line>: inserts the line n times after the first line that matches the ERE.
+pad_after() {
+    R="$2" L="$4" awk -v n="$3" '{ print } !d && $0 ~ ENVIRON["R"] { for (i = 0; i < n; i++) print ENVIRON["L"]; d = 1 }' "$1" > "$1.new" &&
+        mv "$1.new" "$1"
+}
+# pad_before <file> <ERE> <n> <line>: inserts the line n times before the first line that matches the ERE.
+pad_before() {
+    R="$2" L="$4" awk -v n="$3" '!d && $0 ~ ENVIRON["R"] { for (i = 0; i < n; i++) print ENVIRON["L"]; d = 1 } { print }' "$1" > "$1.new" &&
+        mv "$1.new" "$1"
+}
+# sec_sub <file> <start ERE> <end ERE> <text> <new text>: in each line from the line that matches the
+# start ERE to the line before the one that matches the end ERE, the first <text> becomes <new text>
+# (a SOH in it then becomes a NUL).
+sec_sub() {
+    A="$2" B="$3" X="$4" Y="$5" awk '$0 ~ ENVIRON["A"] { f = 1 } $0 ~ ENVIRON["B"] { f = 0 }
+        f && (i = index($0, ENVIRON["X"])) { $0 = substr($0, 1, i - 1) ENVIRON["Y"] substr($0, i + length(ENVIRON["X"])) } { print }' "$1" > "$1.new" &&
+        mv "$1.new" "$1"
+    soh_to_nul "$1"
+}
+# AWK_NUL: 1 when awk reads a NUL as a character (gawk, mawk); empty when a NUL ends the line for it
+# (BSD awk). The spec section cases expect the pre-TF-3 result of the host's awk.
+AWK_NUL=""
+[ "$(printf 'a\000b\n' | awk '{ print length($0) }')" != 3 ] || AWK_NUL=1
+ZSPEC=docs/specs/2026-11-18-zygo-design.md
+
+# TF-3 round 3 R3-1: after the first hit line, the hit loops only read to the end (no drop script),
+# so a rule with a drop script and many hit lines is as fast as one hit; the failure line stays.
+CASE="TF-3 R3-1: under bash with SIGPIPE ignored, many e-mail hit lines"
+D=$(mk tf3_pipemail)
+awk 'BEGIN { for (i = 0; i < 2000; i++) print "bob@corp.com" }' > "$D/fixtures/codex/many.txt"
+run_split "$D" '' bash nopipe
+expect_fail_alone "forbidden content (e-mail address): fixtures/codex/many.txt:1:bob@corp.com"
+
+# TF-3 round 3 R3-3: a NUL deleted (the pre-TF-3 result) and a NUL made a blank give different
+# results at each site.
+CASE="TF-3 R3-3: under bash, a NUL inside a header version"
+D=$(mk tf3_hdrver)
+add_header "$D" "Codex: 0.17${SOH}2.0"
+soh_to_nul "$D/docs/premises.md"
+run_split "$D" '' bash
+expect_ok_alone
+
+CASE="TF-3 R3-3: under bash, a NUL inside a Results row id"
+D=$(mk tf3_rowid)
+evidence "$D"
+add_header "$D" 'Codex: 0.172.0'
+add_row "$D" "$(row "PC${SOH}99" Codex 0.172.0 verified fixtures/codex/pc1.txt)"
+soh_to_nul "$D/docs/premises.md"
+run_split "$D" '' bash
+expect_ok_alone
+
+CASE="TF-3 R3-3: under bash, a NUL inside a Results row version"
+D=$(mk tf3_rowver)
+evidence "$D"
+add_header "$D" 'Codex: 0.172.0'
+add_row "$D" "$(row PC99 Codex "0.172${SOH}.0" verified fixtures/codex/pc1.txt)"
+soh_to_nul "$D/docs/premises.md"
+run_split "$D" '' bash
+expect_ok_alone
+
+# spec_nul_case <name> <start ERE> <end ERE> <note text> <failure text>: a NUL inside the dated note
+# of a failed row in that spec section.
+spec_nul_case() {
+    CASE="TF-3 R3-3: under bash, a NUL inside the $1 note"
+    D=$(mk "tf3_note$1")
+    sec_sub "$D/$ZSPEC" "$2" "$3" "$4" "$(printf '%s' "$4" | sed "s/N2/N${SOH}2/")"
+    run_split "$D" '' bash
+    if [ -n "$AWK_NUL" ]; then expect_ok_alone; else expect_fail_alone "$5"; fi
+}
+spec_nul_case 19 '^## 19\. ' '^## 19a\. ' 'N2, P6a:' 'P6a: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, P6a: …)*'
+spec_nul_case 19a '^## 19a\. ' '^## 20\. ' 'N2, Q7:' 'Q7: failed, but spec §19a has no dated note *(Note YYYY-MM-DD, N2, Q7: …)*'
+spec_nul_case 10.5 '^### 10\.5 ' '^### 10\.6 ' 'N2, P6a:' 'P6a: failed, but spec §10.5 has no dated note amending the language list'
+
+# TF-3 round 3 R3-4, R3-5: every reader fed by a pipe reads to its end, so with SIGPIPE ignored no
+# writer gets EPIPE when its output is larger than a pipe buffer; the result stays.
+CASE="TF-3 R3-4: under bash with SIGPIPE ignored, a differing header before many header lines"
+D=$(mk tf3_pipedup)
+hl=$(($(grep -n '^tmux: ' "$D/docs/premises.md" | cut -d: -f1) + 1))
+pad_after "$D/docs/premises.md" '^tmux: ' 3000 'Zz-padding-header-with-a-long-name-to-fill-a-pipe-buffer: 1'
+add_lines "$D" 'Codex: 0.1.0'
+run_split "$D" '' bash nopipe
+expect_fail_alone "docs/premises.md:$hl: header 'Codex: 0.1.0' differs from the first header line 'Codex: 0.172.0'"
+
+CASE="TF-3 R3-4: under bash with SIGPIPE ignored, an agent header before many header lines"
+D=$(mk tf3_pipever)
+pad_after "$D/docs/premises.md" '^tmux: ' 3000 'Zz-padding-header-with-a-long-name-to-fill-a-pipe-buffer: 1'
+run_split "$D" '' bash nopipe
+expect_ok_alone
+
+CASE="TF-3 R3-4: under bash with SIGPIPE ignored, a row outside the Results table before many table lines"
+D=$(mk tf3_pipeout)
+hl=$(($(grep -n '^tmux: ' "$D/docs/premises.md" | cut -d: -f1) + 1))
+pad_after "$D/docs/premises.md" '^tmux: ' 3000 '| zz-padding-table-line-with-a-long-first-cell-to-fill-a-pipe-buffer | x |'
+add_lines "$D" '| PX1 | x |'
+run_split "$D" '' bash nopipe
+expect_fail_alone "docs/premises.md:$hl: row 'PX1' is outside the Results table"
+
+# spec_pad_case <name> <ERE of the next heading>: many lines at the end of that spec section, after
+# the dated note of its failed row.
+spec_pad_case() {
+    CASE="TF-3 R3-4: under bash with SIGPIPE ignored, a large spec section $1"
+    D=$(mk "tf3_pipesec$1")
+    pad_before "$D/$ZSPEC" "$2" 4000 'padding text at the end of the section, to fill a pipe buffer'
+    run_split "$D" '' bash nopipe
+    expect_ok_alone
+}
+spec_pad_case 19 '^## 19a\. '
+spec_pad_case 19a '^## 20\. '
+spec_pad_case 10.5 '^### 10\.6 '
+
+# find_pad_case <name> <kind> <name prefix> <failure prefix>: 1000 entries of that kind (file or
+# symlink) with long names in fixtures/codex/pad, so the find output is larger than a pipe buffer.
+# find's stderr goes to /dev/null in the script (a scope path may be missing), so an EPIPE of find
+# is not seen on stderr; these cases keep the result (the first path find prints).
+find_pad_case() {
+    CASE="TF-3 R3-4: under bash with SIGPIPE ignored, many paths $1"
+    D=$(mk "tf3_pipefind$2")
+    mkdir -p "$D/fixtures/codex/pad"
+    i=0
+    while [ "$i" -lt 1000 ]; do
+        f="$D/fixtures/codex/pad/$3-padding-name-long-enough-to-fill-a-pipe-buffer-with-few-entries-of-the-find-output-$i"
+        if [ "$2" = link ]; then ln -s pc1.txt "$f"; else : > "$f"; fi
+        i=$((i + 1))
+    done
+    run_split "$D" '' bash nopipe
+    expect_no_stderr
+    expect_fail_prefix "$4"
+}
+find_pad_case 'with whitespace' space 'a b' "a path in the scan scope holds whitespace: 'fixtures/codex/pad/a b-padding-name-"
+find_pad_case "with ':'" colon 'a:b' 'a path in the scan scope holds '"':'"': fixtures/codex/pad/a:b-padding-name-'
+find_pad_case 'that are symlinks' link 'ab' 'fixtures/codex/pad/ab-padding-name-'
+
+CASE="TF-3 R3-5: under bash with SIGPIPE ignored, many sha256 lines in a verbatim source file"
+D=$(mk tf3_pipesha)
+awk -v h="$CPIN" 'BEGIN { for (i = 0; i < 2000; i++) print "sha256: " h }' >> "$D/fixtures/codex/config.schema.source.txt"
+run_split "$D" '' bash nopipe
+expect_ok_alone
 
 # The exemption is the exact path, also for a rule that matches any case: a case variant of the
 # Codex verbatim path is scanned. The real schema is removed first. On a case-insensitive file system
