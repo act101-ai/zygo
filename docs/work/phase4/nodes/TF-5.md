@@ -1,10 +1,10 @@
 # TF-5 — live-selftest.sh: T5 and U5 pass again; each planted-name case fails on its planted line
 
 **Spec:** none (premise harness defect), as TF-3; the live-check self-test header (`scripts/premises/live-selftest.sh:26-29`: "x-api-key forms, any case"; "check-premises.sh in a copied tree fails on each planted line"); found by the CC-0 reviewer, round 1 F1 (2026-11-27, `nodes/CC-0.md` "Round 1 review")
-**Files:** `scripts/check-premises.sh` (the `XK` definition and its comment, the new `XKX` drop script, the x-api-key `scan` line and the `scan` comment), `scripts/premises/live-selftest.sh` (section "T4, T5, T8: check-premises.sh scans" only), `scripts/test-check-premises.sh` (the TF-5 round 1 cases only; round 1 F2)
+**Files:** `scripts/check-premises.sh` (the `XK` definition and its comment, the new `XKX` drop script, the x-api-key `scan` line, the `scan` function's grep, sed and drop step (round 2 F2) and the `scan` comment), `scripts/premises/live-selftest.sh` (section "T4, T5, T8: check-premises.sh scans" only), `scripts/test-check-premises.sh` (the TF-5 round 1 and round 2 cases only; round 1 F2, round 2 F3)
 **Depends:** CC-0, TF-4 (round 1 F2: TF-4 is DONE and changes `scripts/test-check-premises.sh`, which this node now changes; the graph row edge is set when TF-5 closes)
 **Consumes:** —
-**Produces:** `XK` in `scripts/check-premises.sh` spells `x-api-key` in any case with bracket classes, and the x-api-key rule drops only each omitted value (`XKX`, a drop script) and fails when any other value is left on the line, so `X-Api-Key: [omitted]` passes and a real value beside it fails (round 1 F1); `scripts/premises/live-selftest.sh` holds no literal planted host name or forbidden name (each is built at run time), and each T4 name case and T8 host-name case asserts the planted line `fixtures/zz-selftest.txt:1`
+**Produces:** the x-api-key rule of `scripts/check-premises.sh` flags every value after an x-api-key name (any case; each quote bare, backslash-escaped once or more, or absent; a value that starts with any number of backslashes and then a character that is not a quote, a backslash or a blank). Exempt is only each occurrence of `<name><separator>[omitted]` followed by a value end of `scrub.py:296` (a blank, `"`, `'`, `\`, `,`) or the line end: `XKX`, a drop script, removes it, and the line fails when any value is left (round 1 F1, round 2 F1). `scan` runs grep and sed with `LC_ALL=C`, and a drop sed that fails leaves the line a hit (round 2 F2); `scripts/premises/live-selftest.sh` holds no literal planted host name or forbidden name (each is built at run time), and each T4 name case and T8 host-name case asserts the planted line `fixtures/zz-selftest.txt:1`
 **Acceptance:** each command run alone from the repository root: `TMPDIR=/tmp sh scripts/premises/live-selftest.sh` → exit 0 and last line `live selftest: ok (<N>)` (no `FAIL:` line); `sh scripts/test-check-premises.sh` → exit 0, last line `test-check-premises: ok (<M> cases)`; `sh scripts/check-premises.sh` → exit 0; `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → exit 0.
 
 ## Planning notes
@@ -71,3 +71,27 @@ Checks after round 1 (each alone, `TMPDIR=/tmp`, from `.worktrees/phase4/TF-5`):
 - `sh scripts/test-check-premises.sh` → exit 0, `test-check-premises: ok (217 cases)`.
 - `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → exit 0; `sh scripts/check-premises.sh` → exit 0.
 - `scripts/premises/__pycache__/` was there once after the first round of these runs (deleted before its contents were listed). A second run of each command (`check-premises.sh`, the self-test under `sh` and under `dash`, `test-check-premises.sh`, `python3 -I scripts/premises/rescrub_test.py`) wrote none, so its source is not known. Then `git status --porcelain` → nothing.
+
+## Round 2 review
+
+Reviewer probe driver: `/tmp/claude-1000/-home-kagemartin-Work-zygo/480ccd97-3082-430f-9398-9d4a24d037d6/scratchpad/run.sh`; trees `/tmp/tf5rev/{old,new}`. Dispositions by the coordinator, 2026-11-28. `origin/phase-4` (at `aeaff173`) merged into the branch first (no script changed there).
+
+- **F1 (fix)** — fixed in `60ae5631`. The round 1 boundary after `[omitted]` ("a character outside `[A-Za-z0-9_-]`") let a value go through after `.`, `+`, `/`, `:` or `=`. Now the boundary is the value end of `scrub.py:296` (`[^\s"',\\]+`): a blank, `"`, `'`, `\`, `,` or the line end. `x-api-key: [omitted].realvalue1`, `[omitted]+AbCd/123=`, `[omitted]/abc`, `[omitted]:abc`, `[omitted]=abc` fail.
+  - `x-api-key: [omitted],abc` passes, and that is intended: `,` is a value end of the scrubber, so the omitted form is dropped and `abc` is left with no header name. That is the right reading of a comma-separated list. The Produces line now states exactly what is exempt.
+- **F2 (fix)** — fixed in `60ae5631`. `scan` runs every grep and sed with `LC_ALL=C` (as `env_scan` does). The drop step is `d=$(printf '%s\n' "$ln" | LC_ALL=C sed -E "$5") || d=$ln`, so a sed that fails leaves the line as it was and the line is a hit (fail closed). `x-api-key: realkey<0xff>` and `x-api-key: [omitted]<0xff>` fail (0xff is not a value end).
+- **Older gaps (fix)** — fixed in `60ae5631`. Each quote of `XK` is now `\\*["']` (any number of backslashes), so the double-escaped JSON form `\\\"x-api-key\\\":\\\"realvalue\\\"` is found. The rule's value is now `\\*[^"'\\[:space:]]` (any number of backslashes, then a character that is not a quote, a backslash or a blank), so `x-api-key: \abc` is found and an escaped empty string (`\"\"`, `\\\"\\\"`) is not. Their omitted forms pass: `x-api-key: [omitted]` and `\\\"x-api-key\\\":\\\"[omitted]\\\"`. `x-api-key: \[omitted]` (an omitted form after a backslash) fails. The scrubber never writes it: its value cannot start with `\`.
+- **Rejected** — `x-api-key: [omitted]<NUL>realvalue` passes. Reason: `scan` changes the NUL to a blank before the drop step, and a blank is a value end, so `realvalue` stands alone with no header name. A CI case records it ("TF-5 R2: an omitted value, a NUL and a word pass").
+- **F3 (fix)** — fixed in `60ae5631`. CI cases in `scripts/test-check-premises.sh`:
+  - "TF-5 R2: an x-api-key value that is not an omitted one (<line>)", one for each of the nine lines that must fail;
+  - "…an omitted value before a comma and the omitted double-escaped JSON form pass" and "…an omitted value, a NUL and a word pass";
+  - with sed shims for the drop script only: "…an omitted value fails when the drop sed fails" (`sedfail`: the drop sed fails on the planted line), and "…a value with a byte that is not UTF-8, under a sed that stops on it (<line>)" for both 0xff lines (`sedbsd`: as BSD sed in a UTF-8 locale, the drop sed fails on a byte that is not UTF-8 unless `LC_ALL` is C).
+  - Failing first: I ran a copy of the harness that holds only the helpers and the TF-5 cases, with `fail` changed to report without stopping, against the round 1 `check-premises.sh` (HEAD before this fix). All 12 cases that must fail failed except the two plain 0xff cases: GNU sed on this host does not stop on 0xff, so those two already passed before the fix. The `sedbsd` cases are the ones that fail first for F2. The pass cases passed.
+- Timing of `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` on the real tree, three runs each: before 4577, 4977, 4526 ms; after 4934, 4503, 4507 ms (no change).
+
+Checks after round 2 (each alone, `TMPDIR=/tmp`, from `.worktrees/phase4/TF-5`):
+
+- `sh scripts/test-check-premises.sh` → exit 0, `test-check-premises: ok (231 cases)`; `/home/kagemartin/.local/bin/dash scripts/test-check-premises.sh` → exit 0, `test-check-premises: ok (231 cases)`.
+- `sh scripts/premises/live-selftest.sh` and the same under `dash` → exit 0, `live selftest: ok (87)`, no `FAIL:` line.
+- `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → exit 0.
+- `git status --porcelain` → nothing.
+- Not changed (outside the brief): `cx_scan` and `env_scan` have the same drop step with no check of sed's exit status, and `cx_scan` runs grep and sed with no `LC_ALL=C`.
