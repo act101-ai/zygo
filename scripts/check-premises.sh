@@ -359,7 +359,7 @@ scan() {
       if [ -n "${5:-}" ]; then
         d=$(printf '%s\n' "$ln" | LC_ALL=C sed -E "$5") || d=$ln
         printf '%s\n' "$d" | LC_ALL=C grep -q $o -- "$1"
-        case $? in 1) continue ;; esac
+        case $? in (1) continue ;; esac
       fi
       printf '%s\n' "$ln"
       cat >/dev/null
@@ -419,7 +419,7 @@ cx_scan() {
       if [ -n "${4:-}" ]; then
         d=$(printf '%s\n' "$ln" | LC_ALL=C sed -E "$4") || d=$ln
         printf '%s\n' "$d" | LC_ALL=C grep -q $o -- "$1"
-        case $? in 1) continue ;; esac
+        case $? in (1) continue ;; esac
       fi
       printf '%s\n' "$ln"
       cat >/dev/null
@@ -460,7 +460,7 @@ env_scan() {
       if [ -n "${3:-}" ]; then
         d=$(printf '%s\n' "${ln#*:*:}" | LC_ALL=C sed -E "$3") || d=${ln#*:*:}
         printf '%s\n' "$d" | LC_ALL=C grep -qaE -- "$1"
-        case $? in 1) continue ;; esac
+        case $? in (1) continue ;; esac
       fi
       printf '%s\n' "$ln"
       cat >/dev/null
