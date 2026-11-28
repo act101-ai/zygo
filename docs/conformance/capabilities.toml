@@ -130,11 +130,11 @@ text = "The view takes the place of the tool's output in the tool's own result, 
 
 [[capability.criterion]]
 id = "A-7.6"
-text = "Bash tool output reaches the model through output shaping (§10.1, Shaping): color codes and progress removed, runs of equal lines counted, runner and kind views, below and above the threshold."
+text = "With [results] shape = true, Bash tool output reaches the model through output shaping below and above the threshold: clean, dedup and runner views, and a kind view only above it; a file printer or unsure parse is not shaped, and text the model may reuse gets no dedup (§10.1 Shaping, O§7.1, O§7.3)."
 
 [[capability.criterion]]
 id = "A-7.7"
-text = "The output of a failed Bash call (exit code not 0) reaches the model through output shaping too (§10.1, Failed Bash call)."
+text = "A Bash call that exits with a code that is not 0 reaches the model through output shaping too, with the client's exit-code line, when it sends one, kept first and not counted (output shaping design O§7.12, O§7.13 If PO1 holds)."
 
 [[capability]]
 id = "A-8"
@@ -182,7 +182,7 @@ text = "Each status command that zygo writes runs in each shell the client uses.
 
 [[capability.criterion]]
 id = "A-9.7"
-text = "The session run time (since the member's first start, or the session's own start outside a workspace) shows on the client's status surface, or in `zygo status` when the client has no surface."
+text = "The session run time (since the member's first start, or the session's own start outside a workspace) shows on the client's status surface, or in `zygo status` when the client has no surface (session run time design T§2.1, T§2.4, T§2.5; §17 `zygo status`)."
 
 [[capability]]
 id = "A-10"
@@ -408,7 +408,7 @@ standard = "Workspace mail reaches the member it is sent to: a busy member reads
 
 [[capability.criterion]]
 id = "WA-3.1"
-text = "A member busy in a turn reads mail delivered during the turn before the turn ends (M§7.1)."
+text = "A member busy in a turn reads mail delivered during the turn before the turn ends: its Stop hook blocks with the unread count, except while the phase is draining or stopping and when stop_hook_active is true (M§7.1)."
 
 [[capability.criterion]]
 id = "WA-3.2"

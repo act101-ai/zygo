@@ -106,7 +106,7 @@
           "missing": [
             {
               "criterion": "A-7.7",
-              "text": "The output of a failed Bash call (exit code not 0) reaches the model through output shaping too (§10.1, Failed Bash call).",
+              "text": "A Bash call that exits with a code that is not 0 reaches the model through output shaping too, with the client's exit-code line, when it sends one, kept first and not counted (output shaping design O§7.12, O§7.13 If PO1 holds).",
               "reason": "PO1 failed: on Claude Code 2.1.332 a failed Bash call fires PostToolUseFailure and no hook output replaces the text the model sees, so zygo registers no trim hook there and the output passes unshaped (base spec 10.1 Failed Bash call)"
             }
           ],
@@ -384,7 +384,7 @@
         "A-7": {
           "tier": "standard",
           "grade": "partial",
-          "value": 0.5714285714285714,
+          "value": 0.42857142857142855,
           "url": "https://opencode.ai/docs/plugins/",
           "missing": [
             {
@@ -401,6 +401,11 @@
               "criterion": "A-7.4",
               "text": "Web-fetch output, the same (`n/a` for a client with no such tool).",
               "reason": "OpenCode has a webfetch tool (live check OC-SHAPES), but hook_opencode::normalize gives a tool_response only for bash, so webfetch output is never trimmed"
+            },
+            {
+              "criterion": "A-7.7",
+              "text": "A Bash call that exits with a code that is not 0 reaches the model through output shaping too, with the client's exit-code line, when it sends one, kept first and not counted (output shaping design O§7.12, O§7.13 If PO1 holds).",
+              "reason": "No capture shows OpenCode tool.execute.after for a bash call that exits non-zero (the plugin-hook fixtures and PO3 cover exit 0 only); the shaping tests put failing output into that exit-0 capture form, so no test shows what OpenCode sends for a failed call (O 7.12 states it with no capture)"
             }
           ],
           "na": []
@@ -529,7 +534,7 @@
           "missing": [
             {
               "criterion": "WA-3.1",
-              "text": "A member busy in a turn reads mail delivered during the turn before the turn ends (M§7.1).",
+              "text": "A member busy in a turn reads mail delivered during the turn before the turn ends: its Stop hook blocks with the unread count, except while the phase is draining or stopping and when stop_hook_active is true (M§7.1).",
               "reason": "OpenCode has no Stop block: the plugin sends its idle event as stop and does not read the hook output (opencode-plugin.js:75-78), and the hook blocks only a Claude Code Stop (workspace.rs:347-358); mail that comes after the last model request of a turn waits for the next turn or start"
             }
           ],
@@ -591,7 +596,7 @@
           "partial": 6,
           "none": 0,
           "na": 0,
-          "met": 26,
+          "met": 25,
           "applicable": 38
         },
         "extra": {
@@ -607,7 +612,7 @@
           "partial": 7,
           "none": 1,
           "na": 0,
-          "met": 53,
+          "met": 52,
           "applicable": 68
         },
         "bar": {
@@ -620,9 +625,9 @@
         "release": "supported"
       },
       "score": {
-        "total": 85,
+        "total": 84,
         "core": 96,
-        "standard": 77,
+        "standard": 76,
         "extra": 66
       }
     }

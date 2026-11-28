@@ -212,7 +212,7 @@ evidence = ["test:crates/zygo-hooks/tests/hooks_basic.rs::trim_other_events_pass
 [[grade]]
 criterion = "A-7.6"
 status = "met"
-evidence = ["test:crates/zygo-hooks/tests/shaping.rs::case_views_meet_floors_and_keep_lines", "test:crates/zygo-hooks/tests/shaping_hook.rs::po1_same_text_after_a_passing_call_is_shaped", "test:crates/zygo-hooks/tests/shaping_hook.rs::stderr_cleared_branch_counts_both_streams", "premise:docs/premises.md#PO2"]
+evidence = ["test:crates/zygo-hooks/tests/shaping.rs::case_views_meet_floors_and_keep_lines", "test:crates/zygo-hooks/tests/shaping_hook.rs::po1_same_text_after_a_passing_call_is_shaped", "test:crates/zygo-hooks/tests/shaping_hook.rs::stderr_cleared_branch_counts_both_streams", "test:crates/zygo-hooks/tests/shaping_hook.rs::file_printers_get_the_size_view_of_stdout_only", "test:crates/zygo-hooks/tests/shaping_hook.rs::reuse_text_loses_only_escapes", "test:crates/zygo-results/tests/shape_pipeline.rs::kind_view_runs_over_the_threshold", "test:crates/zygo-results/tests/shape_pipeline.rs::kind_view_not_run_at_the_threshold", "premise:docs/premises.md#PO2"]
 
 [[grade]]
 criterion = "A-7.7"
