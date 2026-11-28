@@ -2,7 +2,7 @@
 
 use serde_json::{json, Map, Value};
 
-use super::ClientSpec;
+use super::{ClientSpec, Dialect};
 
 pub(super) static SPEC: ClientSpec = ClientSpec {
     id: "opencode",
@@ -15,6 +15,25 @@ pub(super) static SPEC: ClientSpec = ClientSpec {
     supported: true,
     status_line: false,
     hook_input: normalize,
+    dialect: Dialect::Anthropic,
+    request_class_header: None,
+    compaction_header: None,
+    agent_id_header: None,
+    agent_type_header: None,
+    window_rewrite: false,
+    passthrough_credential: None,
+    cache_markers: true,
+    redact_skip_tags: &["file", "shell"],
+    // The base content pass applied the Claude Code harness rule to every client; OpenCode keeps it (K-D3).
+    redact_harness_prefixes: &[
+        "<system-reminder>",
+        "<bash-stdout>",
+        "<bash-stderr>",
+        "<system-update>",
+        "Stop hook feedback:",
+        "SubagentStop hook feedback:",
+    ],
+    redact_harness_spans: &["command-name"],
 };
 
 /// The Claude Code name of an OpenCode tool; any other name is unchanged.

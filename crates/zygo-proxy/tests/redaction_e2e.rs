@@ -753,3 +753,58 @@ fn secret_keeps_an_earlier_stage_change() {
     assert_eq!(post(&t, &g, M, &b, &[]).0, 200);
     assert_eq!(t.up.bodies()[0], to_vec(&want));
 }
+
+/// The four Claude Code request headers (K§6.1.2 concern 9), with the class `subagent`, which the §16.2 gate skips.
+const CC_HEADERS: [(&str, &str); 4] = [("x-claude-code-request-class", "subagent"), ("x-claude-code-agent-id", "ag-1"),
+    ("x-claude-code-agent-type", "custom"), ("x-claude-code-compaction", "1")];
+
+#[test] // CC-4 round 1 F1, K§6.1.2 concern 9: a client reads only the header names of its descriptor; OpenCode names none
+fn opencode_ignores_claude_code_headers() {
+    let t = setup("", generous()); let g = grant_with(&t, "opencode".parse().unwrap(), vec![]);
+    let b = body(json!([{"role":"user","content":format!("say {TRACER}")}]));
+    assert_eq!(post(&t, &g, M, &b, &CC_HEADERS).0, 200);
+    assert_eq!(up_json(&t, 0)["messages"][0]["content"], "say 🤬");          // no class: the content pass runs
+    let r = row(&t, &g, 1);
+    assert_eq!((r.request_class, r.agent_id, r.agent_type, r.compaction), (None, None, None, false));
+    assert_eq!(r.redactions, vec![count("content_profane", 1)]);
+}
+
+#[test] // CC-4 round 1 F1: the same request in a Claude Code session keeps the base result
+fn claude_code_reads_its_headers() {
+    let t = setup("", generous()); let g = grant(&t, vec![]);
+    let b = body(json!([{"role":"user","content":format!("say {TRACER}")}]));
+    assert_eq!(post(&t, &g, M, &b, &CC_HEADERS).0, 200);
+    assert_eq!(up_json(&t, 0)["messages"][0]["content"], format!("say {TRACER}"));  // `subagent`: the content pass is skipped
+    let r = row(&t, &g, 1);
+    assert_eq!((r.request_class.as_deref(), r.agent_id.as_deref(), r.agent_type.as_deref(), r.compaction),
+               (Some("subagent"), Some("ag-1"), Some("custom"), true));
+    assert_eq!(r.redactions, vec![]);
+}
+
+#[test] // CC-4 round 3 L1, §10.2 A-9: a main-loop request (class absent or `main`) sets the session's used context;
+        // OpenCode names no class header, so its request is main loop; Claude Code's `subagent` request is not
+fn used_context_per_client() {
+    let t = setup("", generous());
+    let b = body(json!([{"role":"user","content":"hi"}]));
+    for (n, (id, want)) in [("opencode", Some(1)), ("claude-code", None)].into_iter().enumerate() {
+        let g = grant_with(&t, id.parse().unwrap(), vec![]);
+        assert_eq!(post(&t, &g, M, &b, &CC_HEADERS).0, 200);
+        let r = row(&t, &g, n as u64 + 1);                       // the used context is set before the row is written
+        assert_eq!((r.input_tokens, t.h.session(&g.session).unwrap().status().used_context), (1, want), "{id}");
+    }
+}
+
+#[test] // CC-4 round 1 F1: a non-UTF-8 class header is a class only for a client that names the header
+fn stage_non_utf8_class_header_per_client() {
+    let t = setup("", generous()); let stage = RedactStage::with_limits(generous());
+    let b = body(json!([{"role":"user","content":format!("say {TRACER}")}]));
+    for (id, filtered) in [("opencode", true), ("claude-code", false)] {
+        let agent: Agent = id.parse().unwrap();
+        let g = grant_with(&t, agent, vec![]);
+        let mut c = ctx(&t, &g, b.clone(), Dialect::Anthropic);
+        c.headers.insert("x-claude-code-request-class", http::HeaderValue::from_bytes(b"\xff").unwrap());
+        stage.on_request(&mut c).unwrap();
+        let want = if filtered { "say 🤬".to_string() } else { format!("say {TRACER}") };
+        assert_eq!((c.body["messages"][0]["content"].as_str().unwrap(), c.changed), (want.as_str(), filtered), "{agent}");
+    }
+}

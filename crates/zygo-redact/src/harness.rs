@@ -1,19 +1,14 @@
-//! Harness text the content pass skips (§16.2 and its 2026-11-18 N9 note; command forms per premises Q6).
+//! Harness text the content pass skips (§16.2 and its 2026-11-18 N9 note; command forms per premises Q6). The rule
+//! of each client is in its descriptor (`ClientSpec::redact_harness_prefixes`, `redact_harness_spans`,
+//! `redact_skip_tags`; K§6.1.2 concern 9).
 
 use std::ops::Range;
 
-/// Text that starts with one of these is written by the agent, not typed.
-pub const PREFIXES: [&str; 6] = [
-    "<system-reminder>",
-    "<bash-stdout>",
-    "<bash-stderr>",
-    "<system-update>",
-    "Stop hook feedback:",
-    "SubagentStop hook feedback:",
-];
+use zygo_core::ClientSpec;
 
-pub fn is_harness(s: &str) -> bool {
-    PREFIXES.iter().any(|p| s.starts_with(p))
+/// Text that starts with one of the client's harness prefixes is written by the agent, not typed.
+pub fn is_harness(s: &str, client: &ClientSpec) -> bool {
+    client.redact_harness_prefixes.iter().any(|p| s.starts_with(p))
 }
 
 /// `Some(typed arguments)` when `s` is a `<command-message>` block (empty when it has no
@@ -39,17 +34,18 @@ fn merge(spans: Vec<Range<usize>>) -> Vec<Range<usize>> {
     merged
 }
 
-/// Spans skipped inside user text, sorted and disjoint: each `<command-name>…</command-name>`
-/// element of a `<command-message>` block, and for OpenCode each `<file …>…</file>` and
-/// `<shell …>…</shell>` span.
-pub fn skipped_spans(s: &str, opencode: bool) -> Vec<Range<usize>> {
+/// Spans skipped inside user text, sorted and disjoint: in a `<command-message>` block, each
+/// element of the client's harness spans (`ClientSpec::redact_harness_spans`), and in any text
+/// each `<tag …>…</tag>` span of the client's skip tags (`ClientSpec::redact_skip_tags`).
+pub fn skipped_spans(s: &str, client: &ClientSpec) -> Vec<Range<usize>> {
     let mut spans = Vec::new();
     if s.starts_with("<command-message>") {
-        tag_spans(s, "command-name", &mut spans);
+        for tag in client.redact_harness_spans {
+            tag_spans(s, tag, &mut spans);
+        }
     }
-    if opencode {
-        tag_spans(s, "file", &mut spans);
-        tag_spans(s, "shell", &mut spans);
+    for tag in client.redact_skip_tags {
+        tag_spans(s, tag, &mut spans);
     }
     spans.sort_by_key(|r| r.start);
     merge(spans)

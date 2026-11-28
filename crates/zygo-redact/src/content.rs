@@ -10,7 +10,7 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 use std::time::{Duration, Instant};
-use zygo_core::Agent;
+use zygo_core::{Agent, ClientSpec};
 
 /// The classifier the cache keys on; a test checks it against `Cargo.lock`.
 pub const CLASSIFIER: &str = "rustrict 0.7.39";
@@ -31,7 +31,8 @@ pub enum Layout {
     Input,
 }
 
-/// Body layout, and the agent (OpenCode `<file>`/`<shell>` spans are skipped for OpenCode only).
+/// Body layout, and the agent: its descriptor sets the harness rule (`ClientSpec::redact_skip_tags`,
+/// `redact_harness_prefixes`, `redact_harness_spans`), for example the `<file>`/`<shell>` spans that it skips.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shape {
     pub layout: Layout,
@@ -66,7 +67,9 @@ pub fn builtin_classifier_calls() -> u64 {
     BUILTIN_CALLS.with(Cell::get)
 }
 
-/// The gate: `x-claude-code-request-class` is `main`, `compaction`, `auxiliary` or absent.
+/// The gate: the request class is `main`, `compaction`, `auxiliary` or absent. The class is the value of the
+/// client's `ClientSpec::request_class_header` (for Claude Code `x-claude-code-request-class`); a client without
+/// that header has no class, so the gate admits.
 pub fn admits(request_class: Option<&str>) -> bool {
     matches!(request_class, None | Some("main" | "compaction" | "auxiliary"))
 }
@@ -95,7 +98,7 @@ enum Ctx {
 
 fn pass(body: &mut Value, shape: Shape, c: &Compiled, cache: &mut SessionCache, budget: Duration, trie: Option<&'static Trie>) -> ContentFindings {
     let base = version(c, shape.agent, trie);
-    let texts = user_texts(body, shape.layout);
+    let texts = user_texts(body, shape.layout, shape.agent.spec());
     let keys: Vec<CacheKey> = texts.iter().map(|(s, ctx)| key(&base, ctx, s)).collect();
     // One lock; hits are copies. The budget starts here, so cached strings do not spend it.
     let found = cache.get_many(&keys);
@@ -181,24 +184,24 @@ fn key(base: &[u8; 16], ctx: &Ctx, s: &str) -> CacheKey {
     }
 }
 
-/// The user-text strings of §16.2, in body order; harness blocks are left out.
-fn user_texts(body: &mut Value, layout: Layout) -> Vec<(&mut String, Ctx)> {
+/// The user-text strings of §16.2, in body order; the client's harness blocks are left out.
+fn user_texts<'a>(body: &'a mut Value, layout: Layout, client: &ClientSpec) -> Vec<(&'a mut String, Ctx)> {
     let mut out = Vec::new();
     match layout {
         Layout::Messages => {
             for m in body.get_mut("messages").and_then(Value::as_array_mut).into_iter().flatten() {
                 if m["role"] == "user" {
-                    push_content(m.get_mut("content"), "text", &mut out);
+                    push_content(m.get_mut("content"), "text", client, &mut out);
                 }
             }
         }
         Layout::Input => match body.get_mut("input") {
-            Some(Value::String(s)) if !harness::is_harness(s) => out.push((s, Ctx::Plain)),
+            Some(Value::String(s)) if !harness::is_harness(s, client) => out.push((s, Ctx::Plain)),
             Some(Value::Array(items)) => {
                 for it in items {
                     let message = it.get("type").is_none() || it["type"] == "message";
                     if message && it["role"] == "user" {
-                        push_content(it.get_mut("content"), "input_text", &mut out);
+                        push_content(it.get_mut("content"), "input_text", client, &mut out);
                     }
                 }
             }
@@ -211,9 +214,9 @@ fn user_texts(body: &mut Value, layout: Layout) -> Vec<(&mut String, Ctx)> {
 /// The expanded command file is the block directly after `<command-message>`, when that block is
 /// a text block, not a harness block and not a `<command-message>` block (§16.2); otherwise no
 /// block is. A `<command-message>` block is always plain text.
-fn push_content<'a>(content: Option<&'a mut Value>, kind: &str, out: &mut Vec<(&'a mut String, Ctx)>) {
+fn push_content<'a>(content: Option<&'a mut Value>, kind: &str, client: &ClientSpec, out: &mut Vec<(&'a mut String, Ctx)>) {
     match content {
-        Some(Value::String(s)) if !harness::is_harness(s) => out.push((s, Ctx::Plain)),
+        Some(Value::String(s)) if !harness::is_harness(s, client) => out.push((s, Ctx::Plain)),
         Some(Value::Array(blocks)) => {
             let mut pending: Option<String> = None;
             for b in blocks {
@@ -222,7 +225,7 @@ fn push_content<'a>(content: Option<&'a mut Value>, kind: &str, out: &mut Vec<(&
                     continue;
                 }
                 let Some(Value::String(s)) = b.get_mut("text") else { continue };
-                if harness::is_harness(s) {
+                if harness::is_harness(s, client) {
                     continue;
                 }
                 pending = harness::command_args(s).map(str::to_owned);
@@ -259,7 +262,7 @@ impl Cx<'_> {
             }
             Ctx::Plain => None,
         };
-        let ranges = outside(s.len(), &harness::skipped_spans(s, agent == Agent::OpenCode));
+        let ranges = outside(s.len(), &harness::skipped_spans(s, agent.spec()));
         let (mut out, mut last, mut counts, mut changed) = (String::with_capacity(s.len()), 0, [0u32; 3], false);
         for r in ranges {
             out.push_str(&s[last..r.start]);

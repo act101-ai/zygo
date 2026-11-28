@@ -16,7 +16,6 @@ use crate::Url;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CredentialType {
     pub name: &'static str,
-    pub agent: Agent,
     /// The only host the client's credential is sent to.
     pub upstream_host: &'static str,
     pub dialect: Dialect,
@@ -32,7 +31,6 @@ pub struct CredentialType {
 
 pub const CLAUDE_AI: CredentialType = CredentialType {
     name: "claude-ai",
-    agent: Agent::ClaudeCode,
     upstream_host: "api.anthropic.com",
     dialect: Dialect::Anthropic,
     header: "authorization",
@@ -46,8 +44,10 @@ pub const CLAUDE_AI: CredentialType = CredentialType {
 pub const TYPES: &[CredentialType] = &[CLAUDE_AI];
 
 impl CredentialType {
+    /// The row whose `name` is the client's `ClientSpec::passthrough_credential`; `None` when the client names none.
     pub fn for_agent(a: Agent) -> Option<&'static CredentialType> {
-        TYPES.iter().find(|t| t.agent == a)
+        let name = a.spec().passthrough_credential?;
+        TYPES.iter().find(|t| t.name == name)
     }
 
     /// No refused header; exactly one credential header; its value is the scheme (case-insensitive, RFC 9110 §11.1),

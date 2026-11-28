@@ -45,8 +45,9 @@ static IDS: [&str; Agent::COUNT] = {
     ids
 };
 
-/// The facts of one client that do not need a behavior (K§6.1.2): concern 1 (identity and updates) and
-/// concern 2 (hook input). Each client's value is in its own file of this module.
+/// The facts of one client that do not need a behavior (K§6.1.2): concern 1 (identity and updates),
+/// concern 2 (hook input) and concern 9 (proxy, redaction, usage and work-join policy). Each client's value is in
+/// its own file of this module.
 #[derive(Debug, Clone)]
 pub struct ClientSpec {
     /// The client id: the serde name, the `ZYGO_AGENT` value and the grade file name.
@@ -69,6 +70,28 @@ pub struct ClientSpec {
     pub status_line: bool,
     /// Turns the client's hook JSON into the common (Claude Code) form.
     pub hook_input: fn(Value) -> Value,
+    /// The client's model API dialect.
+    pub dialect: Dialect,
+    /// The request-class header (`main` marks a main-loop request).
+    pub request_class_header: Option<&'static str>,
+    /// The header whose presence marks a compaction request.
+    pub compaction_header: Option<&'static str>,
+    /// The per-agent request id header; `None`: requests carry no per-agent id (the whole session is one agent).
+    pub agent_id_header: Option<&'static str>,
+    /// The agent type header.
+    pub agent_type_header: Option<&'static str>,
+    /// The window rewrite (§10.2) is armed for the client.
+    pub window_rewrite: bool,
+    /// The `name` of the client's §12.2 passthrough credential type.
+    pub passthrough_credential: Option<&'static str>,
+    /// The default of `[cache] insert_markers.<id>`.
+    pub cache_markers: bool,
+    /// The element names whose spans the content pass skips in user text (the harness span rule).
+    pub redact_skip_tags: &'static [&'static str],
+    /// The prefixes of harness text: a user text that starts with one is skipped by the content pass (§16.2).
+    pub redact_harness_prefixes: &'static [&'static str],
+    /// The element names whose spans the content pass skips inside a `<command-message>` block (§16.2).
+    pub redact_harness_spans: &'static [&'static str],
 }
 
 impl Agent {

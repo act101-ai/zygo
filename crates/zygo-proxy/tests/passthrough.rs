@@ -348,8 +348,8 @@ fn final_rows(t: &T, g: &SessionGrant, k: u64, statuses: &[u16]) -> (Vec<Request
 #[test] // §12.2 row; §12.4 allowlist; reading 6 host match
 fn unit_credential_type_row_and_allowlist() {
     assert_eq!(TYPES, &[CLAUDE_AI]);
-    assert_eq!((CLAUDE_AI.name, CLAUDE_AI.agent, CLAUDE_AI.upstream_host, CLAUDE_AI.dialect, CLAUDE_AI.header, CLAUDE_AI.scheme, CLAUDE_AI.prefix),
-               ("claude-ai", Agent::ClaudeCode, "api.anthropic.com", Dialect::Anthropic, "authorization", "Bearer", "sk-ant-oat"));
+    assert_eq!((CLAUDE_AI.name, Agent::ClaudeCode.spec().passthrough_credential, CLAUDE_AI.upstream_host, CLAUDE_AI.dialect, CLAUDE_AI.header, CLAUDE_AI.scheme, CLAUDE_AI.prefix),
+               ("claude-ai", Some(CLAUDE_AI.name), "api.anthropic.com", Dialect::Anthropic, "authorization", "Bearer", "sk-ant-oat"));
     assert_eq!((CLAUDE_AI.refused, CLAUDE_AI.forwarded), (&["x-api-key"][..], &["authorization", "anthropic-beta"][..]));
     assert_eq!((CredentialType::for_agent(Agent::ClaudeCode), CredentialType::for_agent(Agent::OpenCode)), (Some(&CLAUDE_AI), None));
     for (h, ok) in [(hm(&[("authorization", BEARER)]), true), (hm(&[("authorization", "bearer sk-ant-oat-x")]), true),
