@@ -879,16 +879,15 @@ fn opencode_session_id_that_fails_the_rule_is_not_stored() {
 fn fixed_item_loser_of_a_race_returns_the_winner() {
     use std::os::unix::fs::PermissionsExt;
     let (_t, d) = sd();
-    let no_log = |l: &str| panic!("no log line expected: {l}");
     let mut loser = || {
         // Another request stores its text while this one builds.
         let mut winner = || Some("WINNER".to_string());
-        assert_eq!(session_start::fixed_item(&d, "ses_A", &mut winner, &no_log).as_deref(), Some("WINNER"));
+        assert_eq!(session_start::fixed_item(&d, "ses_A", &mut winner).as_deref(), Some("WINNER"));
         Some("LOSER".to_string())
     };
-    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut loser, &no_log).as_deref(), Some("WINNER"));
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut loser).as_deref(), Some("WINNER"));
     let mut later = || panic!("a stored item is not built again");
-    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut later, &no_log).as_deref(), Some("WINNER"));
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut later).as_deref(), Some("WINNER"));
     let folder = d.root.join("session-item");
     let file = session_start::item_path(&d, "ses_A").unwrap();
     assert_eq!(file.parent(), Some(folder.as_path()));
@@ -910,7 +909,7 @@ fn fixed_item_from_threads_gives_one_text() {
                 s.spawn(move || {
                     barrier.wait();
                     let mut build = || Some(format!("TEXT-{i}"));
-                    session_start::fixed_item(d, "ses_A", &mut build, &|l| panic!("no log line expected: {l}"))
+                    session_start::fixed_item(d, "ses_A", &mut build)
                 })
             })
             .collect();
@@ -925,14 +924,11 @@ fn fixed_item_from_threads_gives_one_text() {
 #[test] // FX-9 Decision 5, review F1 (D6): `None` stores nothing; a stored entry that is a link is not read, no line
 fn fixed_item_stores_no_none_and_reads_no_link() {
     let (t, d) = sd();
-    let lines = std::cell::RefCell::new(Vec::new());
-    let log = |l: &str| lines.borrow_mut().push(l.to_string());
-    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || None, &log), None);
-    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || Some("NOW".into()), &log).as_deref(), Some("NOW"));
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || None), None);
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || Some("NOW".into())).as_deref(), Some("NOW"));
     std::fs::write(t.path().join("outside"), "OUTSIDE").unwrap();
     std::os::unix::fs::symlink(t.path().join("outside"), session_start::item_path(&d, "ses_B").unwrap()).unwrap();
-    assert_eq!(session_start::fixed_item(&d, "ses_B", &mut || Some("BUILT".into()), &log).as_deref(), Some("BUILT"));
-    assert!(lines.borrow().is_empty(), "{:?}", lines.borrow());
+    assert_eq!(session_start::fixed_item(&d, "ses_B", &mut || Some("BUILT".into())).as_deref(), Some("BUILT"));
     assert_eq!(std::fs::read_to_string(t.path().join("outside")).unwrap(), "OUTSIDE");
 }
 
@@ -1088,9 +1084,8 @@ fn ids_that_differ_in_case_get_different_names() {
     assert_ne!(low(&a), low(&b));
     let long = session_start::item_path(&d, &"Z".repeat(64)).unwrap();
     assert!(long.file_name().unwrap().len() <= 255);
-    let no_log = |l: &str| panic!("no log line expected: {l}");
-    assert_eq!(session_start::fixed_item(&d, "ses_a", &mut || Some("LOWER".into()), &no_log).as_deref(), Some("LOWER"));
-    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || Some("UPPER".into()), &no_log).as_deref(), Some("UPPER"));
+    assert_eq!(session_start::fixed_item(&d, "ses_a", &mut || Some("LOWER".into())).as_deref(), Some("LOWER"));
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || Some("UPPER".into())).as_deref(), Some("UPPER"));
     assert_eq!(std::fs::read_to_string(a).unwrap(), "LOWER");
     assert_eq!(std::fs::read_to_string(b).unwrap(), "UPPER");
 }

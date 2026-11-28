@@ -89,54 +89,73 @@ const ITEM_DIR: &str = "session-item";
 /// The most bytes of a stored item 8 that are read; a larger file is not used.
 const MAX_ITEM: u64 = 1 << 20;
 
-/// `<dir>/session-item/<agent_session>`, the stored item 8 of an OpenCode session (FX-9 Decision 3), when
-/// `agent_session` passes the rule of `pre_compact::flag_path` (1-64 of `[A-Za-z0-9_-]`, T§9.2 item 1), so the path
-/// stays in the session folder; else `None`.
+/// How many temp names one store tries before it gives up (FX-9 review F7).
+const TEMP_TRIES: u32 = 8;
+
+/// `<dir>/session-item/<hex>`, the stored item 8 of an OpenCode session (FX-9 Decision 3), when `agent_session`
+/// passes the rule of `pre_compact::flag_path` (1-64 of `[A-Za-z0-9_-]`, T§9.2 item 1); else `None`. `<hex>` is the
+/// lower-case hex of the id's bytes (at most 128 characters), so ids that differ only in case get different names on
+/// a case-insensitive file system (review F8). The path is used only while `session-item` is a real folder, not a
+/// link (`fixed_item`, review F6).
 pub fn item_path(dir: &SessionDir, agent_session: &str) -> Option<PathBuf> {
-    crate::pre_compact::flag_path(dir, agent_session).map(|_| dir.root.join(ITEM_DIR).join(agent_session))
+    crate::pre_compact::flag_path(dir, agent_session)?;
+    let hex: String = agent_session.bytes().map(|b| format!("{b:02x}")).collect();
+    Some(dir.root.join(ITEM_DIR).join(hex))
 }
 
 /// Item 8 of the OpenCode session `agent_session`, fixed at its first main-loop request (M§8a item 1, FX-9
-/// Decisions 1-5). A stored text is returned as it is and `build` is not called. Else `build()`; a `Some` text is
-/// stored first-writer-wins (a temp file, then a hard link that fails when the name is taken), and a call that loses
-/// the race returns the stored text. `None` stores nothing. An id that fails `item_path` gives `build()` with no
-/// store. A stored entry that is a link, not a regular file, too large or unreadable gives `build()` with no store and
-/// one `log` line; a store that fails gives the built text and one `log` line.
-pub fn fixed_item(
-    dir: &SessionDir, agent_session: &str, build: &mut dyn FnMut() -> Option<String>, log: &dyn Fn(&str),
-) -> Option<String> {
+/// Decisions 1-5). A stored, non-empty text is returned as it is and `build` is not called. Else `build()`; a `Some`
+/// text is stored first-writer-wins (a temp file, then a hard link that fails when the name is taken), and a call that
+/// loses the race returns the stored text. `None` stores nothing. An id that fails `item_path` gives `build()` with no
+/// store. A store that cannot be used gives `build()` and stores nothing: a `session-item` that is a link or not a
+/// folder, a stored entry that is a link, not a regular file, empty, larger than `MAX_ITEM` or unreadable, or a store
+/// that fails. It writes no line: the OpenCode call runs per model request (D6 of `workspace::session_start_with_sync`;
+/// review F1).
+pub fn fixed_item(dir: &SessionDir, agent_session: &str, build: &mut dyn FnMut() -> Option<String>) -> Option<String> {
     let Some(path) = item_path(dir, agent_session) else { return build() };
-    match read_item(&path) {
-        Ok(Some(t)) => return Some(t),
-        Ok(None) => {}
-        Err(e) => {
-            log(&format!("{}: {e:#}; item 8 not stored", path.display()));
-            return build();
-        }
+    let folder = dir.root.join(ITEM_DIR);
+    match folder_state(&folder) {
+        Folder::Unusable => return build(),
+        Folder::Missing => {}
+        Folder::Usable => match read_item(&path) {
+            Ok(Some(t)) => return Some(t),
+            Ok(None) => {}
+            Err(()) => return build(),
+        },
     }
     let text = build()?;
-    match store_item(dir, &path, &text) {
-        Ok(true) => Some(text),
+    match store_item(&folder, &path, &text) {
         // Another request stored its text after this one read: that text is the session's item 8.
         Ok(false) => match read_item(&path) {
             Ok(Some(t)) => Some(t),
-            Ok(None) => Some(text),
-            Err(e) => {
-                log(&format!("{}: {e:#}", path.display()));
-                Some(text)
-            }
+            _ => Some(text),
         },
-        Err(e) => {
-            log(&format!("{}: cannot store item 8: {e:#}", path.display()));
-            Some(text)
-        }
+        Ok(true) | Err(()) => Some(text),
     }
 }
 
-/// The stored text at `path`: `Ok(None)` when nothing is there. Opened with `O_NOFOLLOW | O_NONBLOCK`, so a link is
-/// not followed and a FIFO does not make the reader wait; only a regular file of at most `MAX_ITEM` bytes of UTF-8 is
-/// read.
-fn read_item(path: &Path) -> anyhow::Result<Option<String>> {
+/// What `session-item` is.
+enum Folder {
+    Missing,
+    /// A real folder (not a link).
+    Usable,
+    /// A link, or not a folder, or a stat error other than NotFound.
+    Unusable,
+}
+
+fn folder_state(folder: &Path) -> Folder {
+    match std::fs::symlink_metadata(folder) {
+        Ok(m) if m.file_type().is_dir() => Folder::Usable,
+        Ok(_) => Folder::Unusable,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Folder::Missing,
+        Err(_) => Folder::Unusable,
+    }
+}
+
+/// The stored text at `path`: `Ok(None)` when nothing is there, `Err(())` when the entry cannot be used. Opened with
+/// `O_NOFOLLOW | O_NONBLOCK`, so a link is not followed and a FIFO does not make the reader wait; only a regular,
+/// non-empty file of at most `MAX_ITEM` bytes of UTF-8 is used (review F2, F5).
+fn read_item(path: &Path) -> Result<Option<String>, ()> {
     let mut o = std::fs::OpenOptions::new();
     o.read(true);
     #[cfg(unix)]
@@ -147,44 +166,63 @@ fn read_item(path: &Path) -> anyhow::Result<Option<String>> {
     let f = match o.open(path) {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(anyhow::Error::new(e).context("cannot open")),
+        Err(_) => return Err(()),
     };
-    let m = f.metadata()?;
-    if !m.is_file() {
-        anyhow::bail!("is not a regular file");
-    }
-    if m.len() > MAX_ITEM {
-        anyhow::bail!("is larger than {MAX_ITEM} bytes");
+    let m = f.metadata().map_err(|_| ())?;
+    if !m.is_file() || m.len() == 0 || m.len() > MAX_ITEM {
+        return Err(());
     }
     let mut text = String::new();
-    std::io::Read::read_to_string(&mut std::io::Read::take(f, MAX_ITEM), &mut text)?;
+    std::io::Read::read_to_string(&mut std::io::Read::take(f, MAX_ITEM), &mut text).map_err(|_| ())?;
+    if text.is_empty() {
+        return Err(());
+    }
     Ok(Some(text))
 }
 
-/// Stores `text` at `path` unless the name is taken: `Ok(true)` when stored, `Ok(false)` when the name is taken, so a
-/// stored text is never replaced. `session-item/` is made when missing (0700, set also when it exists, as `reinject/`
-/// in `pre_compact`); `text` goes to a new temp file next to `path` (0600, synced, a name unique to this process and
-/// call), which is hard-linked to `path` and then removed. A missing session folder is an error and is not made again.
-fn store_item(dir: &SessionDir, path: &Path, text: &str) -> anyhow::Result<bool> {
+/// Stores `text` at `path` in `folder` unless the name is taken: `Ok(true)` when stored, `Ok(false)` when the name is
+/// taken, so a stored text is never replaced; `Err(())` when the store cannot be used. `folder` is made when missing
+/// (0700); it must then be a real folder, not a link (review F6), and is set to 0700 (as `reinject/` in
+/// `pre_compact`). `text` goes to a new temp file in `folder` (0600, synced), which is hard-linked to `path` and then
+/// removed. The temp name holds the process id, a per-process counter and the clock's nanoseconds; a name that exists
+/// is tried again with a new name, at most `TEMP_TRIES` times (review F7). A missing session folder is not made again.
+fn store_item(folder: &Path, path: &Path, text: &str) -> Result<bool, ()> {
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let folder = dir.root.join(ITEM_DIR);
     let mut b = std::fs::DirBuilder::new();
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
-    match b.create(&folder) {
-        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => return Err(e.into()),
+    match b.create(folder) {
+        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => return Err(()),
         _ => {}
     }
+    if !matches!(folder_state(folder), Folder::Usable) {
+        return Err(());
+    }
     #[cfg(unix)]
-    std::fs::set_permissions(&folder, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
-    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::fs::set_permissions(folder, std::os::unix::fs::PermissionsExt::from_mode(0o700)).map_err(|_| ())?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let tmp = folder.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
     let mut o = std::fs::OpenOptions::new();
     o.write(true).create_new(true);
     #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
-    let mut f = o.open(&tmp)?;
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut opened = None;
+    for _ in 0..TEMP_TRIES {
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        let tmp = folder.join(format!(".{name}.{}.{seq}.{nanos}.tmp", std::process::id()));
+        match o.open(&tmp) {
+            Ok(f) => {
+                opened = Some((tmp, f));
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err(()),
+        }
+    }
+    let Some((tmp, mut f)) = opened else { return Err(()) };
     let linked = (|| -> std::io::Result<bool> {
         f.write_all(text.as_bytes())?;
         f.sync_all()?;
@@ -196,7 +234,7 @@ fn store_item(dir: &SessionDir, path: &Path, text: &str) -> anyhow::Result<bool>
     })();
     // The temp file is this call's own; the stored text stays under `path`.
     let _ = std::fs::remove_file(&tmp);
-    Ok(linked?)
+    linked.map_err(|_| ())
 }
 
 /// `run_in` with the member part (H1 D3, D11). The view is loaded as `run_in` loads it. A launch that is not a member

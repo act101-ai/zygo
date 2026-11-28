@@ -759,9 +759,8 @@ pub fn session_start_with_sync(
     // an OpenCode session id, and later requests of that id reuse its stored item 8.
     let item = match (view.mail, view.agent, payload.pointer("/input/sessionID").and_then(Value::as_str)) {
         (false, ..) => None,
-        (true, Agent::OpenCode, Some(id)) => {
-            crate::session_start::fixed_item(dir, id, &mut built, &|t| slog(dir, "session-start", t))
-        }
+        // A store that cannot be used builds item 8 and writes no line (D6).
+        (true, Agent::OpenCode, Some(id)) => crate::session_start::fixed_item(dir, id, &mut built),
         (true, ..) => built(),
     };
     // M§7.2, ML-10 D5: the mail delivery line comes after the resume note while `new/` holds mail.
