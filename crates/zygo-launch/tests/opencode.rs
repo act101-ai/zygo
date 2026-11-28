@@ -27,7 +27,7 @@ fn fixture(rel: &str) -> Value {
 
 /// OpenCode's hook input function, read from its descriptor (`ClientSpec::hook_input`).
 fn normalize(v: Value) -> Value {
-    (Agent::OpenCode.spec().hook_input)(v)
+    ("opencode".parse::<Agent>().unwrap().spec().hook_input)(v)
 }
 
 fn hook_input(v: &Value) -> HookInput {

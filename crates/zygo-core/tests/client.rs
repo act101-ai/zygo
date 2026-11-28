@@ -56,8 +56,41 @@ fn unknown_client_id_is_refused_by_serde() {
         let e = serde_json::from_value::<Agent>(json!(bad)).unwrap_err().to_string();
         assert_eq!(e, format!("unknown variant `{bad}`, expected `claude-code` or `opencode`"));
     }
-    assert!(serde_json::from_value::<Agent>(json!(1)).is_err());
-    assert!(serde_json::from_value::<Agent>(json!(null)).is_err());
+    let text = |v| serde_json::from_value::<Agent>(v).unwrap_err().to_string();
+    assert_eq!(text(json!(1)), "invalid type: integer `1`, expected a client id");
+    assert_eq!(text(json!(null)), "invalid type: null, expected a client id");
+    // The enum-map form of the old derive; `Serialize` never wrote it.
+    assert_eq!(text(json!({"opencode": null})), "invalid type: map, expected a client id");
+}
+
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Holder {
+    agent: Agent,
+}
+
+#[derive(Debug, PartialEq, serde::Deserialize)]
+struct Flat {
+    #[serde(flatten)]
+    holder: Holder,
+    other: u32,
+}
+
+/// The id is read from borrowed JSON text, from TOML and through a `#[serde(flatten)]` field (serde's buffered
+/// content), and written back as the id; the TOML table form of the old derive is refused.
+#[test]
+fn client_ids_read_from_json_text_toml_and_flatten() {
+    for a in Agent::ALL {
+        let id = a.spec().id;
+        assert_eq!(serde_json::from_str::<Agent>(&format!("\"{id}\"")).unwrap(), a);
+        let t = format!("agent = \"{id}\"\n");
+        assert_eq!(toml::from_str::<Holder>(&t).unwrap(), Holder { agent: a });
+        assert_eq!(toml::to_string(&Holder { agent: a }).unwrap(), t);
+        let f: Flat = serde_json::from_str(&format!("{{\"agent\": \"{id}\", \"other\": 7}}")).unwrap();
+        assert_eq!(f, Flat { holder: Holder { agent: a }, other: 7 });
+    }
+    assert!(toml::from_str::<Holder>("[agent.opencode]\n").is_err());
+    let e = serde_json::from_value::<Flat>(json!({"agent": "codex", "other": 7})).unwrap_err().to_string();
+    assert_eq!(e, "unknown variant `codex`, expected `claude-code` or `opencode`");
 }
 
 #[test]

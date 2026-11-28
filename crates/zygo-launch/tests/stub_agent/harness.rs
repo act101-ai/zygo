@@ -20,8 +20,37 @@ use zygo_launch::opencode::OpenCode;
 use zygo_launch::{AgentAdapter, LaunchOpts, Launcher};
 
 /// The minimum versions in each client's descriptor (`Agent::spec().min_version`), equal to the `docs/premises.md` header.
-pub const CLAUDE_VERSION: &str = Agent::ClaudeCode.spec().min_version;
-pub const OPENCODE_VERSION: &str = Agent::OpenCode.spec().min_version;
+pub const CLAUDE_VERSION: &str = min_version("claude-code");
+pub const OPENCODE_VERSION: &str = min_version("opencode");
+
+/// The `min_version` of the client of `Agent::ALL` whose descriptor id is `id`, found when the tests compile; an id
+/// of no client does not compile.
+const fn min_version(id: &str) -> &'static str {
+    let mut i = 0;
+    while i < Agent::ALL.len() {
+        let s = Agent::ALL[i].spec();
+        if same(s.id.as_bytes(), id.as_bytes()) {
+            return s.min_version;
+        }
+        i += 1;
+    }
+    panic!("no client of Agent::ALL has this id");
+}
+
+/// Byte equality, usable in a `const fn`.
+const fn same(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
 
 pub struct Rig {
     pub _t: TempDir,
