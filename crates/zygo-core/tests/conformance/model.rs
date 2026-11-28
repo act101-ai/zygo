@@ -1222,14 +1222,6 @@ pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Clien
     faults
 }
 
-/// The display name of a client (P4-6 replaces this with the descriptor).
-fn client_name(a: Agent) -> &'static str {
-    match a {
-        Agent::ClaudeCode => "Claude Code",
-        Agent::OpenCode => "OpenCode",
-    }
-}
-
 /// The `.toml` files in `docs/conformance/` that are not grade files: the registry and CC-15's exception list.
 const NOT_GRADE_FILES: [&str; 2] = ["capabilities.toml", "boundary-exceptions.toml"];
 
@@ -1278,21 +1270,13 @@ pub fn grade_files(dir: &Path) -> Result<Vec<GradeFile>, String> {
         .collect()
 }
 
-/// One `Client` per `Agent::ALL`, its version the built-in minimum in `crates/zygo-config/data/agents.toml`.
-pub fn clients(root: &Path) -> Result<Vec<Client>, String> {
-    let path = root.join("crates/zygo-config/data/agents.toml");
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let table: toml::Table = text.parse().map_err(|e| format!("{}: {e}", path.display()))?;
+/// One `Client` per `Agent::ALL`, from its descriptor (`Agent::spec`): id, name, minimum version and `supported` (K§6.2.5 items 7, 8).
+pub fn clients() -> Vec<Client> {
     Agent::ALL
         .iter()
-        .map(|&a| {
-            let id = a.as_str();
-            let version = table
-                .get(id)
-                .and_then(|t| t.get("min_version"))
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| format!("{}: no `[{id}] min_version`", path.display()))?;
-            Ok(Client { id: id.into(), name: client_name(a).into(), version: version.into(), supported: true })
+        .map(|a| {
+            let s = a.spec();
+            Client { id: s.id.into(), name: s.name.into(), version: s.min_version.into(), supported: s.supported }
         })
         .collect()
 }

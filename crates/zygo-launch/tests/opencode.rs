@@ -8,7 +8,6 @@ use serde_json::{json, Value};
 use zygo_config::schema::CustomRole;
 use zygo_config::{load_with_builtin, LoadContext};
 use zygo_core::hook::{HookInput, HookOutput};
-use zygo_core::hook_opencode::normalize;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::SessionView;
@@ -24,6 +23,11 @@ use zygo_work::hooks::HookCtx;
 fn fixture(rel: &str) -> Value {
     let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/opencode").join(rel);
     serde_json::from_slice(&std::fs::read(p).unwrap()).unwrap()
+}
+
+/// OpenCode's hook input function, read from its descriptor (`ClientSpec::hook_input`).
+fn normalize(v: Value) -> Value {
+    ("opencode".parse::<Agent>().unwrap().spec().hook_input)(v)
 }
 
 fn hook_input(v: &Value) -> HookInput {

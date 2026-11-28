@@ -53,12 +53,12 @@ pub struct SessionView {
     pub extra: UnknownFields,
 }
 
-/// Each field that has a serde default holds that default; `agent` is Claude Code; every other field is empty or `false`.
+/// Each field that has a serde default holds that default; `agent` is `Agent::DEFAULT`; every other field is empty or `false`.
 impl Default for SessionView {
     fn default() -> Self {
         SessionView {
             session: String::new(),
-            agent: Agent::ClaudeCode,
+            agent: Agent::DEFAULT,
             main_role: String::new(),
             effective_role: None,
             role_prompt: None,
