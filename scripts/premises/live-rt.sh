@@ -1,5 +1,5 @@
 #!/bin/sh
-# Owner-run live check R-RT (node N38, spec §7.6): the reasoning round trip in a tool loop against
+# Live check R-RT (node N38, spec §7.6): the reasoning round trip in a tool loop against
 # each vendor, gpt-6.2-sol (OpenAI, translated) then claude-haiku-5-5 (Anthropic, native).
 # Needs the Anthropic API key and the OpenAI API key in the environment.
 # Spend bound: --max-turns 5 (the task takes 3: two Bash calls and the reply) and 600 s of wall
