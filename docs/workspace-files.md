@@ -47,7 +47,7 @@ With no `[members]`, the members are `orchestrator` and `worker-1` to `worker-4`
 `cwd` is printable ASCII only (bytes `0x20`-`0x7e`). It must not start with `~` (a `~` later in the text is allowed), and it must not be an absolute path (a leading `/`, or a drive such as `C:`). It has one of two forms:
 
 * `branch:<name>`: the worktree that has branch `<name>` checked out. `<name>` is 1-255 bytes, with no other check. When no worktree has that branch checked out, the member starts in the main worktree, and `zygo up` prints `` zygo: loadout repository: no worktree has branch `<name>` checked out; using the main worktree ``.
-* A path relative to the main worktree: at most 1024 bytes in all; parts split by `/`, each part 1-255 bytes (so no empty part and no `/` at the end), and no part `.` or `..`; no `\`.
+* A path relative to the main worktree: at most 1024 bytes in all; parts split by `/`, each part 1-255 bytes (so no empty part and no `/` at the end), and no part `.` or `..`; no part `.git` in any letter case (`.git`, `sub/.git` and `.GIT` are refused; `.github` is valid), because the git dir is never a folder to work in; no `\`.
 
 ## `.zygo/profiles/<name>.toml`
 
@@ -68,7 +68,8 @@ One violation makes the files invalid as a whole, and nothing from them applies.
 * `.zygo/workspace.toml`, or a `.toml` entry in `.zygo/profiles/`, is not a regular file: a symlink, a directory or a submodule (`.zygo/profiles/link.toml is not a regular file`);
 * a profile file name does not match `^[a-z0-9-]{1,32}\.toml$` (`.zygo/profiles/Rust.toml: a profile file name must match ^[a-z0-9-]{1,32}\.toml$`), or is `none.toml` (`.zygo/profiles/none.toml: the profile name none is reserved`);
 * a file is not UTF-8 (`.zygo/profiles/rust.toml is not UTF-8`);
-* `.zygo/workspace.toml` is larger than 64 KiB, a profile file is larger than 16 KiB, or `.zygo/profiles/` holds more than 32 profile files.
+* `.zygo/workspace.toml` is larger than 64 KiB, a profile file is larger than 16 KiB, or `.zygo/profiles/` holds more than 32 profile files;
+* `.zygo/` or `.zygo/profiles/` holds more than 256 entries of any kind (`.zygo lists more than 256 entries`), or its git listing is larger than 131072 bytes (`.zygo: the listing is larger than 131072 bytes`), for example because of very long entry names.
 
 ## Approve
 
@@ -140,9 +141,9 @@ When you choose `repository` yourself (`--loadout repository`, or `default_loado
 
 ## Members keep their files
 
-Each member keeps the files it started with: its record saves the commit and the digest (the pin), and a resume or a restore uses them, even after the default branch changes. New files apply after `zygo down`, then `zygo up --reset`. A restore reads no workspace files from the default branch.
+Each member keeps the files it started with: its record saves the commit, the digest and the workspace id of the approval (the pin), and a resume or a restore uses them, even after the default branch changes. New files apply after `zygo down`, then `zygo up --reset`. A restore reads no workspace files from the default branch.
 
-When you withdraw the approval of the files that a member started with (you delete that `[[workspace]]` entry from `approvals.toml`), no member that has a pin starts, also at a resume and at a restore: this includes a member with no profile, a member whose profile is a user profile or a team preset, and a pool member in passthrough. zygo checks only `approvals.toml` for this; it reads nothing from git. It prints `zygo: profile <n> of this member comes from the workspace files at commit <12> (digest <12>), which this repository no longer has or no longer approves; the agent was not started; to start from the current files: zygo down, then zygo up --reset`; for a member that does not read its profile from the pinned commit (described in the next paragraph), the line starts `zygo: this member comes from` in its place.
+When you withdraw the approval of the files that a member started with (you delete that `[[workspace]]` entry from `approvals.toml`), no member that has a pin starts, also at a resume and at a restore: this includes a member with no profile, a member whose profile is a user profile or a team preset, and a pool member in passthrough. zygo checks only `approvals.toml` for this, with the workspace id in the pin; it reads nothing from git, so the member's folder (a submodule, a nested repository) and a git call that fails do not change the check. A pin saved by a zygo before this check (it has no workspace id) takes the workspace id of the member's folder; when git finds no checkout there, that member does not start, and the line says `which were not read (the pin has no workspace id and git found no checkout at the launch folder)`. For a withdrawal, zygo prints `zygo: profile <n> of this member comes from the workspace files at commit <12> (digest <12>), which this repository no longer has or no longer approves; the agent was not started; to start from the current files: zygo down, then zygo up --reset`; for a member that does not read its profile from the pinned commit (described in the next paragraph), the line starts `zygo: this member comes from` in its place.
 
 When the approval stays, but the pinned commit is gone, the read of the pinned commit fails, or the member's folder is not in a git checkout, only a member that reads its profile from the pinned commit does not start: a member that asks for a profile (its `profile`, or your default profile from `zygo profile use`) that only the workspace files define, not a user profile or a team preset, and that does not run in passthrough. It prints the same line; when the read of the pinned commit fails, the line says `which were not read (<why>)` in place of `which this repository no longer has or no longer approves`.
 
