@@ -25,9 +25,9 @@
 
 ## Plan
 
-Parent: 9b030436bcd64c38008fbdb82f44d6dde34fb7f2
+Parent: c7e76e6b07abc64898f8e4caaa9a01abc57b72a1
 
-The node started on `036b92a2b32899abd50e3c608ae83fa1804f309f`; round 1 merged `origin/phase-4` at `9b030436` (TF-4 done, CC-1 in progress) into the layer, so `9b030436` is now the top of the stack below it.
+The node started on `036b92a2b32899abd50e3c608ae83fa1804f309f`; round 1 merged `origin/phase-4` at `9b030436` (TF-4 done, CC-1 in progress) and then at `c7e76e6b` (TF-6 done) into the layer, so `c7e76e6b` is now the top of the stack below it.
 
 Interfaces:
 
