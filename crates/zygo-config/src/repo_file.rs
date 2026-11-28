@@ -143,7 +143,7 @@ pub fn exited_unreaped(child: &std::process::Child) -> std::io::Result<bool> {
 /// Why a `git` call gave no stdout: the thing is absent (git's one stderr line), or the read failed (a fixed reason word).
 enum GitFail {
     Absent(String),
-    Read(&'static str),
+    Read(String),
 }
 
 /// A finished `git` call: exit status, stdout and up to 64 KiB of stderr.
@@ -159,24 +159,37 @@ fn git(repo: &Path, args: &[&str], deadline: Instant) -> Result<String, GitFail>
     let o = git_out(repo, args, deadline).map_err(GitFail::Read)?;
     if o.status.code() != Some(0) {
         let err = String::from_utf8_lossy(&o.err).into_owned();
-        return Err(if git_absent(&err) { GitFail::Absent(err) } else { GitFail::Read("failed") });
+        return Err(if git_absent(&err) { GitFail::Absent(err) } else { GitFail::Read("failed".into()) });
     }
-    String::from_utf8(o.out).map_err(|_| GitFail::Read("output is not UTF-8"))
+    String::from_utf8(o.out).map_err(|_| GitFail::Read("output is not UTF-8".into()))
 }
 
-/// `git -C <repo> <args>` with `LC_ALL=C`, run to its end: a reason word when it does not start, does not finish by
+/// `git -C <repo> <args>` with `LC_ALL=C`, run to its end: a reason when it does not start, does not finish by
 /// `deadline` (the child is killed and its pipe readers, which a grandchild may hold open, are left behind) or its
-/// stdout cannot be read.
-pub(crate) fn git_out(repo: &Path, args: &[&str], deadline: Instant) -> Result<GitOut, &'static str> {
-    git_out_with(git_command(), repo, args, deadline)
+/// stdout cannot be read. Its stdout has no cap.
+pub(crate) fn git_out(repo: &Path, args: &[&str], deadline: Instant) -> Result<GitOut, String> {
+    git_out_with(git_command(), repo, args, deadline, None)
 }
 
-/// [`git_out`] with `git` as the command (a caller's [`git_command`] with more environment set).
-pub(crate) fn git_out_with(mut git: Command, repo: &Path, args: &[&str], deadline: Instant) -> Result<GitOut, &'static str> {
-    let timed_out = "timed out";
+/// The reason of a call whose stdout is above `cap` bytes.
+pub(crate) fn output_larger(cap: usize) -> String {
+    format!("output larger than {cap} bytes")
+}
+
+/// [`git_out`] with `git` as the command (a caller's [`git_command`] with more environment set). With `cap`, zygo keeps
+/// at most `cap` bytes of stdout: past that it stops the read, kills the child and gives [`output_larger`] (R§6.1
+/// step 4).
+pub(crate) fn git_out_with(
+    mut git: Command,
+    repo: &Path,
+    args: &[&str],
+    deadline: Instant,
+    cap: Option<usize>,
+) -> Result<GitOut, String> {
+    let timed_out = || "timed out".to_string();
     let left = deadline.saturating_duration_since(Instant::now());
     if left.is_zero() {
-        return Err(timed_out);
+        return Err(timed_out());
     }
     let mut child = git
         .arg("-C")
@@ -186,16 +199,18 @@ pub(crate) fn git_out_with(mut git: Command, repo: &Path, args: &[&str], deadlin
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|_| "tool not found")?;
-    let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        .map_err(|_| "tool not found".to_string())?;
+    let (Some(stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
         let _ = child.kill();
         let _ = child.wait();
-        return Err("failed");
+        return Err("failed".into());
     };
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut b = Vec::new();
-        let _ = tx.send(stdout.read_to_end(&mut b).map(|_| b));
+        // One byte past the cap tells a stdout above it; the read stops there.
+        let limit = cap.map_or(u64::MAX, |c| c as u64 + 1);
+        let _ = tx.send(stdout.take(limit).read_to_end(&mut b).map(|_| b));
     });
     let (etx, erx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -210,25 +225,31 @@ pub(crate) fn git_out_with(mut git: Command, repo: &Path, args: &[&str], deadlin
     };
     let Ok(out) = rx.recv_timeout(left) else {
         kill(&mut child);
-        return Err(timed_out);
+        return Err(timed_out());
     };
+    if let (Some(c), Ok(b)) = (cap, &out)
+        && b.len() > c
+    {
+        kill(&mut child);
+        return Err(output_larger(c));
+    }
     let status = loop {
         match child.try_wait() {
             Ok(Some(st)) => break st,
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
             _ => {
                 kill(&mut child);
-                return Err(timed_out);
+                return Err(timed_out());
             }
         }
     };
-    let err = erx.recv_timeout(deadline.saturating_duration_since(Instant::now())).map_err(|_| timed_out)?;
-    Ok(GitOut { status, out: out.map_err(|_| "failed")?, err })
+    let err = erx.recv_timeout(deadline.saturating_duration_since(Instant::now())).map_err(|_| timed_out())?;
+    Ok(GitOut { status, out: out.map_err(|_| "failed".to_string())?, err })
 }
 
 /// `git show` said `.zygo.toml` or the branch is absent (`said`, git's one stderr line); a corrupt object or ref can say
 /// the same, so a second call under the same deadline confirms it. `None`: absent; `Some(reason)`: a failed read.
-fn confirm_absent(repo: &Path, branch: &str, said: &str, deadline: Instant) -> Option<&'static str> {
+fn confirm_absent(repo: &Path, branch: &str, said: &str, deadline: Instant) -> Option<String> {
     let (args, absent): (Vec<&str>, fn(&GitOut) -> bool) = if said.contains("invalid object name") {
         // No such ref: exit 1, nothing printed. A ref to a missing object resolves (exit 0); a broken one warns.
         (vec!["rev-parse", "--verify", "--quiet", branch], |o| o.status.code() == Some(1) && o.out.is_empty() && o.err.is_empty())
@@ -241,7 +262,7 @@ fn confirm_absent(repo: &Path, branch: &str, said: &str, deadline: Instant) -> O
     };
     match git_out(repo, &args, deadline) {
         Ok(o) if absent(&o) => None,
-        Ok(_) => Some("failed"),
+        Ok(_) => Some("failed".into()),
         Err(w) => Some(w),
     }
 }
@@ -333,6 +354,24 @@ mod process_tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(gone(&grandchild), "grandchild {grandchild} still runs");
+    }
+
+    #[test] // R§6.1 step 4 (FX-39 D3): a call past the stdout cap is stopped with the reason; one at the cap is read
+    fn git_out_with_stops_a_call_past_the_stdout_cap() {
+        let far = Instant::now() + Duration::from_secs(600);
+        let dir = std::env::temp_dir();
+        // `sh -c <script> sh -C <dir> x`: the script runs, `-C <dir> x` are its unused arguments.
+        let sh = |script: &str| {
+            let mut c = Command::new("sh");
+            c.args(["-c", script, "sh"]);
+            c
+        };
+        // `yes` writes lines with no end: only the cap ends the call.
+        assert_eq!(git_out_with(sh("yes"), &dir, &["x"], far, Some(4096)).err(), Some("output larger than 4096 bytes".into()));
+        // Exactly the cap is read; one byte more is not.
+        let o = git_out_with(sh("printf abc"), &dir, &["x"], far, Some(3)).unwrap();
+        assert_eq!(o.out, b"abc");
+        assert_eq!(git_out_with(sh("printf abc"), &dir, &["x"], far, Some(2)).err(), Some(output_larger(2)));
     }
 
     #[test] // exited_unreaped: false while the child runs, true after it exits, and the status stays for wait
