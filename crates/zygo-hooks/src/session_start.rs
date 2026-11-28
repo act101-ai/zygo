@@ -180,41 +180,87 @@ fn read_item(path: &Path) -> Result<Option<String>, ()> {
     Ok(Some(text))
 }
 
-/// Stores `text` at `path` in `folder` unless the name is taken: `Ok(true)` when stored, `Ok(false)` when the name is
-/// taken, so a stored text is never replaced; `Err(())` when the store cannot be used. `folder` is made when missing
-/// (0700); it must then be a real folder, not a link (review F6), and is set to 0700 (as `reinject/` in
-/// `pre_compact`). `text` goes to a new temp file in `folder` (0600, synced), which is hard-linked to `path` and then
-/// removed. The temp name holds the process id, a per-process counter and the clock's nanoseconds; a name that exists
-/// is tried again with a new name, at most `TEMP_TRIES` times (review F7). A missing session folder is not made again.
-fn store_item(folder: &Path, path: &Path, text: &str) -> Result<bool, ()> {
+/// A new temp name for the item `name`: the process id, a per-process counter and the clock's nanoseconds (review F7).
+fn temp_name(name: &str) -> String {
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    format!(".{name}.{}.{seq}.{nanos}.tmp", std::process::id())
+}
+
+/// Creates `folder` when it is missing, mode 0700 at creation. Only `folder` itself is made: a missing session folder
+/// is not made again.
+fn make_folder(folder: &Path) -> Result<(), ()> {
     let mut b = std::fs::DirBuilder::new();
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
     match b.create(folder) {
-        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => return Err(()),
-        _ => {}
+        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => Err(()),
+        _ => Ok(()),
     }
+}
+
+/// Stores `text` at `path` in `folder` unless the name is taken: `Ok(true)` when stored, `Ok(false)` when the name is
+/// taken, so a stored text is never replaced; `Err(())` when the store cannot be used. `folder` is made when missing
+/// (0700), then opened once with `O_DIRECTORY | O_NOFOLLOW` (a link or another entry there is `Err`, review F6), and
+/// every later step goes through that handle (FX-44), so a link put in place of `folder` after the open is never
+/// followed: `fchmod` 0700 of the folder (as `reinject/` in `pre_compact`); `openat` of a new temp file
+/// (`O_CREAT | O_EXCL | O_NOFOLLOW`, 0600) that gets `text` and is synced; `linkat` of the temp name to the item name;
+/// `unlinkat` of the temp name. A temp name that exists is tried again with a new name, at most `TEMP_TRIES` times
+/// (review F7). A missing session folder is not made again.
+#[cfg(unix)]
+fn store_item(folder: &Path, path: &Path, text: &str) -> Result<bool, ()> {
+    use crate::pre_compact::at;
+    use std::os::unix::fs::PermissionsExt;
+    make_folder(folder)?;
+    let dir = at::open_folder(folder).map_err(|_| ())?;
+    #[cfg(feature = "test-hooks")]
+    testing::fire(folder);
+    dir.set_permissions(std::fs::Permissions::from_mode(0o700)).map_err(|_| ())?;
+    let name = path.file_name().and_then(|n| n.to_str()).ok_or(())?;
+    let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_NOCTTY;
+    let mut opened = None;
+    for _ in 0..TEMP_TRIES {
+        let tmp = temp_name(name);
+        match at::open(&dir, &tmp, flags, 0o600) {
+            Ok(f) => {
+                opened = Some((tmp, f));
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err(()),
+        }
+    }
+    let Some((tmp, mut f)) = opened else { return Err(()) };
+    let linked = (|| -> std::io::Result<bool> {
+        f.write_all(text.as_bytes())?;
+        f.sync_all()?;
+        match at::link(&dir, &tmp, name) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(e) => Err(e),
+        }
+    })();
+    // The temp file is this call's own; the stored text stays under the item name.
+    let _ = at::unlink(&dir, &tmp);
+    linked.map_err(|_| ())
+}
+
+/// Stores `text` at `path` in `folder` unless the name is taken, as the unix `store_item` but by path: `folder` is made
+/// when missing and must then be a real folder, not a link (review F6); `text` goes to a new temp file in `folder`,
+/// which is hard-linked to `path` and then removed.
+#[cfg(not(unix))]
+fn store_item(folder: &Path, path: &Path, text: &str) -> Result<bool, ()> {
+    make_folder(folder)?;
     if !matches!(folder_state(folder), Folder::Usable) {
         return Err(());
     }
-    #[cfg(all(unix, feature = "test-hooks"))]
-    testing::fire(folder);
-    #[cfg(unix)]
-    std::fs::set_permissions(folder, std::os::unix::fs::PermissionsExt::from_mode(0o700)).map_err(|_| ())?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let mut o = std::fs::OpenOptions::new();
     o.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        o.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-    }
     let mut opened = None;
     for _ in 0..TEMP_TRIES {
-        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-        let tmp = folder.join(format!(".{name}.{}.{seq}.{nanos}.tmp", std::process::id()));
+        let tmp = folder.join(temp_name(&name));
         match o.open(&tmp) {
             Ok(f) => {
                 opened = Some((tmp, f));

@@ -149,8 +149,9 @@ fn create_flag(dir: &SessionDir, name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Steps on an entry of a folder through the folder's handle (`openat`, `fstatat`, `unlinkat`), so a link put in place
-/// of the folder after it was opened is never followed (FX-37). Shared by `create_flag` and `trim`'s flag take.
+/// Steps on an entry of a folder through the folder's handle (`openat`, `fstatat`, `linkat`, `unlinkat`), so a link put
+/// in place of the folder after it was opened is never followed (FX-37). Shared by `create_flag`, `trim`'s flag take
+/// and `session_start::store_item` (FX-44).
 #[cfg(unix)]
 pub(crate) mod at {
     use std::ffi::CString;
@@ -187,6 +188,18 @@ pub(crate) mod at {
             return Err(io::Error::last_os_error());
         }
         Ok(st.st_mode & libc::S_IFMT == libc::S_IFREG)
+    }
+
+    /// `linkat(folder, old, folder, new, 0)`: a new name `new` for the entry `old`, both in `folder`. Flag 0: a link
+    /// at `old` is not followed. A taken `new` is `AlreadyExists`.
+    pub(crate) fn link(folder: &File, old: &str, new: &str) -> io::Result<()> {
+        let (o, n) = (CString::new(old)?, CString::new(new)?);
+        let fd = folder.as_raw_fd();
+        // SAFETY: the folder descriptor is open for the call and `o` and `n` are NUL-terminated names.
+        if unsafe { libc::linkat(fd, o.as_ptr(), fd, n.as_ptr(), 0) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
     }
 
     /// `unlinkat(folder, name, 0)`.
