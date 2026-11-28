@@ -192,7 +192,6 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | DONE | lookup | SP1 verified 8/8, run c, claude 2.1.332, opencode 1.19.6 · PR #247 |
-| MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17, FX-15 | DONE | implementation | 5e2be987^..1de15e3e · acceptance pass (mail_remote_cli 20 passed) · PR #215 |
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | DONE | implementation | e887478a^..a9ed0c7b · acceptance pass (mail_sync_forget 9 passed, admin 31 passed) · PR #217 |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | DONE | mechanical | check-premises ok SP1-SP6, git: 2.50.1 · PR #253 |
 | OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45, OS-47 | DONE | lookup | 5 passed, release, 01855abf · PR #239 |
@@ -205,7 +204,7 @@ Session text (T, SX nodes):
 | WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | DONE | mechanical | cff91852^..b884b0b7 · acceptance pass (docs_readme_and_passthrough_md 1 passed, cli_surface 21 passed) · PR #228 |
 | SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | DONE | implementation | 1b49483c^..7b96c5b5 · acceptance pass (builtin 13, check-premises ok) · PR #227 |
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | DONE | mechanical | fc991ad1^..7018a2f3 · acceptance pass (builtin 13, check-premises ok) · PR #229 |
-| SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
+| SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | DONE | judgment | check-premises ok ST1-ST4 verified; workspace 4131 passed · PR #254 |
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | DONE | judgment | 87a292d6^..da0207f1 · acceptance pass (mail_lifecycle 23 passed) · PR #219 |
 | FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
@@ -218,6 +217,7 @@ Session text (T, SX nodes):
 | FX-29 | config check rejects default_loadout = "repository" that zygo up accepts | WD-20 | DONE | implementation | cf92636c^..2f28c271 · acceptance pass (config_check_default_loadout_repository_follows_zygo_up 1 passed, zygo-config all pass) · PR #237 |
 | FX-30 | A crash-recovered delivery gets no wake and no count | FX-26, FX-28 | DONE | judgment | 1f871269^..c0675e47 · acceptance pass (crash_recovery_wake 11 passed, mail_sync_no_content 5 passed) · PR #240 |
 | FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | DONE | judgment | 3279f092^..4bae96ba · acceptance pass (pin_gone_stops_exactly_the_r11_members 1 passed, workspace_definition 17 passed + 9 ignored passed) · PR #238 |
+| FX-32 | The P and Q arms of `check-premises.sh` refuse a dated note whose text holds `)` | SX-10 | TODO | mechanical | — |
 
 ## Log
 
@@ -474,3 +474,4 @@ Session text (T, SX nodes):
 | 2026-11-27 | WD-21, WD-22 DONE: the executor ran PR1 and PR2 live with synthetic logins and a loopback TLS recorder; one review, 12 findings, all fixed; author's calls: committed run scripts widen Files; pin 2.1.328, ran 2.1.332 · PR #244 |
 | 2026-11-27 | MS-23 DONE: SP1 verified on 3 arms (ssh-agent via zygo up env, the user's ssh-key setup, https gh helper) × 2 agents; one review, 16 findings, all fixed; author's calls: zygo's built-in marketplace fetch listed, not failed; run scripts widen Files · PR #247 |
 | 2026-11-27 | MS-25 DONE: SP1-SP6 recorded; git: 2.50.1 is the pin (a minimum; S§18 rewritten, author's call); SP3-SP6 run on 2.50.1; one review, 9 findings, all fixed (an SP6 control step, uncited checks deleted). |
+| 2026-11-28 | SX-10 DONE: ST1-ST4 verified (SX-9 record); ST4 change: OpenCode zygo-<role> prompt is the role prompt only; one review, 6 findings, all fixed (7 subagent tests now in CI); FX-32 added for the P/Q note `)` limit (pre-existing); MS-18 row archived · PR #254 |

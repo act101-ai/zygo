@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Context};
 use serde_json::{json, Map, Value};
 use zygo_core::Agent;
-use zygo_hooks::session_text::mechanics;
 use zygo_plugins::snapshot::command_found;
 use zygo_plugins::{embedded, store};
 use zygo_proxy::client::WindowArg;
@@ -136,11 +135,12 @@ fn inline_config(ctx: &LaunchCtx, zygo: &str, d: &Delivery) -> Value {
             agent.insert(name.into(), a);
         }
     }
-    let mech = mechanics(&ctx.view);
+    // ST4 verified (`docs/premises.md`, session text design T§7.2 item 3): the prompt is the role prompt only; the
+    // plugin's system-prompt transform gives the mechanics text (`--event subagent`).
     let roles = c.roles.iter().map(|(k, r)| (k, &r.description, &r.prompt)).chain(c.custom_roles.iter().map(|(k, r)| (k, &r.description, &r.prompt)));
     for (role, description, prompt) in roles.filter(|(k, _, _)| **k != c.main_role) {
         let key = format!("zygo-{role}");
-        let mut a = json!({ "mode": "subagent", "description": description, "prompt": format!("{prompt} {mech}"), "model": format!("zygo/{role}") });
+        let mut a = json!({ "mode": "subagent", "description": description, "prompt": prompt, "model": format!("zygo/{role}") });
         if names.edit_deny.contains(&key) {
             a["permission"] = json!({ "edit": "deny" });
         }

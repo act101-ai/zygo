@@ -16,6 +16,9 @@ WIDS="PW6 PW11 PW15 PW1 PW2 PW3 PW4 PW5 PW7 PW9 PW10 PW16"
 WSKIP=""
 MSPEC=docs/specs/2026-11-24-mail-sync-design.md
 MIDS="SP1 SP2 SP3 SP4 SP5 SP6"
+# Session text design T§12.1 item 4 (node SX-10): ST rows; a failed one needs its P3-15 note in this spec.
+SSPEC=docs/specs/2026-11-24-session-text-design.md
+SIDS="ST1 ST2 ST3 ST4"
 
 fail() { echo "check-premises: $*"; exit 1; }
 
@@ -90,7 +93,7 @@ sp_answered() {
   return 1
 }
 
-for id in $IDS $WIDS $MIDS; do
+for id in $IDS $WIDS $MIDS $SIDS; do
   n=$(grep -c "^| $id |" "$P")
   [ "$n" -eq 1 ] || fail "$id: expected exactly one row, found $n"
   row=$(grep "^| $id |" "$P")
@@ -149,6 +152,11 @@ EOF_PATHS
       # Node MS-25 Acceptance: "a failed SP row names the spec change or work node that answers it".
       SP*) sp_answered "$id" "$evidence" ||
         fail "$id: failed, but the evidence names no work node (docs/work/<phase>/nodes/<id>.md) and no spec change (an S§ section whose mail-sync change-log line names $id)" ;;
+      # Session text design T§12.1 items 3 and 4 (node SX-10 Acceptance, review F5): the dated P3-15 note in T§12.1
+      # of $SSPEC (from "### 12.1 " to "### 12.2 "), with a real date shape; its text may hold ")".
+      ST*) awk '/^### 12\.1 /{f=1;next} /^### 12\.2 /{f=0} f' "$SSPEC" 2>/dev/null |
+        grep -Eq "\*\(Note [0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01]), P3-15, $id: .*\)\*" ||
+        fail "$id: failed, but the session-text spec has no dated note *(Note YYYY-MM-DD, P3-15, $id: …)*" ;;
       P*) echo "$S19" | grep -Eq "$pat" || fail "$id: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
       Q*) echo "$S19A" | grep -Eq "$pat" || fail "$id: failed, but spec §19a has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
     esac
@@ -256,5 +264,5 @@ EOF_HOSTS
 [ -n "${N2_FORBIDDEN_NAMES:-}" ] || echo "check-premises: note: N2_FORBIDDEN_NAMES not set; name scan skipped"
 
 [ -z "$WSKIP" ] || echo "check-premises: note: $WSPEC not found; W§17 result check skipped"
-echo "check-premises: ok (${IDS} ${WIDS} ${MIDS})"
+echo "check-premises: ok (${IDS} ${WIDS} ${MIDS} ${SIDS})"
 exit 0

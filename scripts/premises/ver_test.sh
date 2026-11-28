@@ -2,7 +2,7 @@
 # Tests of ver_ge (scripts/premises/ver.sh), the agent version rule of pinned_agents
 # (scripts/premises/live.sh) and the agent row rule of scripts/check-premises.sh (node PRB-2:
 # a pinned agent version is a minimum; act-lite stays exact), and its SP rows and `git:` header
-# (node MS-25).
+# (node MS-25), and its ST rows and failed-ST-row note rule (node SX-10).
 # Usage: sh scripts/premises/ver_test.sh   ->  "ver tests: ok (<n>)", exit 0
 # No agent, no network; not run by CI. Stub claude and opencode programs print fixed text.
 set -u
@@ -178,8 +178,9 @@ pcheck "P15 empty prerelease" 1 "live: opencode is 1.19.0-; the minimum is 1.18.
 K=$T/k
 kmiss=""
 MS=docs/specs/2026-11-24-mail-sync-design.md
+TS=docs/specs/2026-11-24-session-text-design.md   # node SX-10: the ST arm reads failed-row notes from it
 for f in scripts/check-premises.sh scripts/premises/ver.sh docs/specs/2026-11-18-zygo-design.md docs/conformance.md \
-  "$MS"; do
+  "$MS" "$TS"; do
   [ -f "$REPO/$f" ] || { kmiss=$f; break; }
 done
 [ -n "$kmiss" ] || [ -d "$REPO/fixtures" ] || kmiss=fixtures
@@ -192,7 +193,7 @@ if [ -z "$kmiss" ]; then
   mkdir -p "$K/scripts/premises" "$K/docs/specs"
   cp "$REPO/scripts/check-premises.sh" "$K/scripts/"
   cp "$REPO/scripts/premises/ver.sh" "$K/scripts/premises/"
-  cp "$REPO/docs/specs/2026-11-18-zygo-design.md" "$REPO/$MS" "$K/docs/specs/"
+  cp "$REPO/docs/specs/2026-11-18-zygo-design.md" "$REPO/$MS" "$REPO/$TS" "$K/docs/specs/"
   cp "$REPO/docs/conformance.md" "$K/docs/"
   cp -R "$REPO/fixtures" "$K/"
   for f in $KNODES; do
@@ -223,24 +224,33 @@ kcase K6 SP2 git '2\.50\.1' 2.50.0 1 "SP2: version '2.50.0' is below the header'
 kcase K7 SP3 git '2\.50\.1' 2.60.0 0 "check-premises: ok"
 
 # --- K (node MS-25): the git header, SP rows, S§20 items, the failed-SP-row rule ------------------
-# kplant <case> <premises.md sed> <mail-sync spec sed, or ''> <want rc> <fixed text>
-kplant() {
+# kplant_in <spec> <case> <premises.md sed, or ''> <spec sed, or ''> <want rc> <fixed text>: plants in
+# docs/premises.md and in <spec> (a path under the repository) of the K tree, runs the script, restores <spec>.
+kplant_in() {
+  s=$1; shift
   name="$1 -> exit $4"
   if [ -n "$kmiss" ]; then no "$name" "$kmiss missing"; return; fi
-  sed "$2" "$REPO/docs/premises.md" >"$K/docs/premises.md"
-  if cmp -s "$K/docs/premises.md" "$REPO/docs/premises.md"; then no "$name" "the premises plant changed nothing"; return; fi
-  cp "$REPO/$MS" "$K/$MS"
+  cp "$REPO/docs/premises.md" "$K/docs/premises.md"
+  if [ -n "$2" ]; then
+    sed "$2" "$REPO/docs/premises.md" >"$K/docs/premises.md"
+    if cmp -s "$K/docs/premises.md" "$REPO/docs/premises.md"; then no "$name" "the premises plant changed nothing"; return; fi
+  fi
+  cp "$REPO/$s" "$K/$s"
   if [ -n "$3" ]; then
-    sed "$3" "$REPO/$MS" >"$K/$MS"
-    if cmp -s "$K/$MS" "$REPO/$MS"; then no "$name" "the spec plant changed nothing"; return; fi
+    sed "$3" "$REPO/$s" >"$K/$s"
+    if cmp -s "$K/$s" "$REPO/$s"; then no "$name" "the spec plant changed nothing"; return; fi
   fi
   sh "$K/scripts/check-premises.sh" >"$T/k.out" 2>&1
   rc=$?
-  cp "$REPO/$MS" "$K/$MS"
+  cp "$REPO/$s" "$K/$s"
   if [ "$rc" -ne "$4" ]; then no "$name" "exit $rc: $(head -n 3 "$T/k.out" | tr '\n' '|')"; return; fi
   grep -qF -- "$5" "$T/k.out" || { no "$name" "output lacks: $5; has: $(head -n 3 "$T/k.out" | tr '\n' '|')"; return; }
   ok "$name"
 }
+# kplant <case> <premises.md sed> <mail-sync spec sed, or ''> <want rc> <fixed text>
+kplant() { kplant_in "$MS" "$@"; }
+# ksplant <case> <premises.md sed, or ''> <session-text spec sed, or ''> <want rc> <fixed text> (node SX-10)
+ksplant() { kplant_in "$TS" "$@"; }
 # sp6failed <evidence text>: a sed that makes the SP6 row failed, with one evidence path and the text.
 sp6failed() { printf 's/^| SP6 | .*$/| SP6 | planted | git | 2.50.1 | 2026-11-27 | failed | `fixtures\\/mail-sync\\/sp1.txt`: %s |/' "$1"; }
 NOANS="check-premises: SP6: failed, but the evidence names no work node"
@@ -260,6 +270,32 @@ kplant "K16 failed SP6 names a spec section whose change-log lines do not name S
 # CR line ends (a file saved with CRLF) do not change the header values.
 kplant "K17 header lines with CRLF ends" 's/^\(Claude Code\|OpenCode\|act-lite\|tmux\|git\): \(.*\)$/\1: \2\r/' '' 0 \
   "check-premises: ok"
+
+# --- K (node SX-10): ST rows and the ST arm (session text design T§12.1 item 4, T§17 check 13) -----------
+kcase K18 ST1 'Claude Code' '2\.1\.332' 2.1.327 1 "ST1: version '2.1.327' is below the header's '2.1.328' for Claude Code"
+kcase K19 ST3 OpenCode '1\.18\.16' 1.18.20 0 "check-premises: ok"
+ksplant "K20 the ST rows as recorded" '' '' 0 "SP6 ST1 ST2 ST3 ST4)"
+ksplant "K21 ST2 row missing" '/^| ST2 |/d' '' 1 "check-premises: ST2: expected exactly one row, found 0"
+ksplant "K22 ST3 result pending" 's/^\(| ST3 | .*| 2026-11-25 | \)verified |/\1pending |/' '' 1 \
+  "check-premises: ST3: result 'pending' is not verified or failed"
+ST4F='s/^\(| ST4 | .*| 2026-11-25 | \)verified |/\1failed |/'
+# stnote <note>: a sed that puts <note> at the end of the T§12.1 line "Checked by hand (T§12.2), one result per id:".
+stnote() { printf 's/^\\(Checked by hand (T.*one result per id:\\)$/\\1 %s/' "$1"; }
+NONOTE="check-premises: ST4: failed, but the session-text spec has no dated note *(Note YYYY-MM-DD, P3-15, ST4: …)*"
+ksplant "K23 failed ST4 with no note" "$ST4F" '' 1 "$NONOTE"
+ksplant "K24 failed ST4 with its P3-15 note in T§12.1" "$ST4F" "$(stnote '*(Note 2026-11-25, P3-15, ST4: failed)*')" 0 \
+  "check-premises: ok"
+ksplant "K25 failed ST4 with a note for ST3 only" "$ST4F" "$(stnote '*(Note 2026-11-25, P3-15, ST3: failed)*')" 1 "$NONOTE"
+ksplant "K26 failed ST4 with an N2 note" "$ST4F" "$(stnote '*(Note 2026-11-25, N2, ST4: failed)*')" 1 "$NONOTE"
+# SX-10 review F5: the note counts only in T§12.1 (T§12.1 item 3), with a real date; its text may hold ")".
+ksplant "K27 failed ST4 with its note only in the change log" "$ST4F" \
+  '/^## Change log$/a *(Note 2026-11-25, P3-15, ST4: failed)*' 1 "$NONOTE"
+ksplant "K28 failed ST4 with its note only in a T§12.2 code block" "$ST4F" \
+  '/^### 12\.2 /,/^```sh$/{/^```sh$/a # *(Note 2026-11-25, P3-15, ST4: failed)*
+}' 1 "$NONOTE"
+ksplant "K29 failed ST4 with a note dated 0000-99-99" "$ST4F" "$(stnote '*(Note 0000-99-99, P3-15, ST4: failed)*')" 1 "$NONOTE"
+ksplant "K30 failed ST4 with a T§12.1 note whose text holds )" "$ST4F" \
+  "$(stnote '*(Note 2026-11-25, P3-15, ST4: failed (see SX-9))*')" 0 "check-premises: ok"
 
 # --- L (node PRB-1): a LIVE line names the agent version that pinned_agents found, never the pin ----
 # The fallback of each LIVE_VER site in the live scripts is LIVE_CC_VER or LIVE_OC_VER (both set by
