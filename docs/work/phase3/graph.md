@@ -192,10 +192,9 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | DONE | lookup | SP1 verified 8/8, run c, claude 2.1.332, opencode 1.19.6 · PR #247 |
-| WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | DONE | judgment | 1324716e^..e1276ac2 · acceptance pass (workspace_definition 23 passed with tmux) · PR #214 |
 | MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17, FX-15 | DONE | implementation | 5e2be987^..1de15e3e · acceptance pass (mail_remote_cli 20 passed) · PR #215 |
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | DONE | implementation | e887478a^..a9ed0c7b · acceptance pass (mail_sync_forget 9 passed, admin 31 passed) · PR #217 |
-| MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | TODO | mechanical | — |
+| MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | DONE | mechanical | check-premises ok SP1-SP6, git: 2.50.1 · PR #253 |
 | OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45, OS-47 | DONE | lookup | 5 passed, release, 01855abf · PR #239 |
 | WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | DONE | implementation | 15ea1e5b^..9a264b0a · acceptance pass (definition_hooks 11 passed) · PR #218 |
 | WD-21 | PR1 live check: two pool members send two logins | WD-14, ML-19 | DONE | mechanical | PR1 6/6, PR2 8/8, two runs, claude 2.1.332 · PR #244 |
@@ -474,3 +473,4 @@ Session text (T, SX nodes):
 | 2026-11-27 | operator: "never by an agent" live-check rule never made (false citation, graph line 28); deleted from graph, specs R§19 etc., open nodes; executor runs MS-23, WD-21, WD-22 |
 | 2026-11-27 | WD-21, WD-22 DONE: the executor ran PR1 and PR2 live with synthetic logins and a loopback TLS recorder; one review, 12 findings, all fixed; author's calls: committed run scripts widen Files; pin 2.1.328, ran 2.1.332 · PR #244 |
 | 2026-11-27 | MS-23 DONE: SP1 verified on 3 arms (ssh-agent via zygo up env, the user's ssh-key setup, https gh helper) × 2 agents; one review, 16 findings, all fixed; author's calls: zygo's built-in marketplace fetch listed, not failed; run scripts widen Files · PR #247 |
+| 2026-11-27 | MS-25 DONE: SP1-SP6 recorded; git: 2.50.1 is the pin (a minimum; S§18 rewritten, author's call); SP3-SP6 run on 2.50.1; one review, 9 findings, all fixed (an SP6 control step, uncited checks deleted). |
