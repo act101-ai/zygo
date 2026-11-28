@@ -156,7 +156,7 @@ fn one_of(v: &Value, allowed: &[&str], reason: &'static str) -> Result<String, &
 }
 
 /// R§6.2 `cwd`: printable ASCII; not `~`-led, not absolute; `branch:<1-255 bytes>` or a relative path of 1-255 byte
-/// parts, none `.` or `..`, no `\`, at most 1024 bytes.
+/// parts, none `.`, `..` or `.git` (any ASCII letter case), no `\`, at most 1024 bytes.
 fn cwd_rule(v: &Value) -> Result<String, &'static str> {
     let s = v.as_str().ok_or("must be a string")?;
     if !s.bytes().all(|b| (0x20..=0x7e).contains(&b)) {
@@ -188,6 +188,10 @@ fn cwd_rule(v: &Value) -> Result<String, &'static str> {
         }
         if part == "." || part == ".." {
             return Err("must not hold a . or .. part");
+        }
+        // FX-39: the git dir is never a work folder; a file system that ignores letter case also finds it by `.GIT`.
+        if part.eq_ignore_ascii_case(".git") {
+            return Err("must not hold a .git part");
         }
     }
     Ok(s.to_string())
