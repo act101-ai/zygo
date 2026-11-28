@@ -31,7 +31,7 @@
 
 Parent: 84484e35dd402008e45ee16e0c6bfe81574c8ca4
 
-Base (author's call, 2026-11-28): CC-12's layer is open but not merged, and CC-3 shares no file with it, so the layer branches from `origin/phase-4` at `7689cb08` (the stack below is empty for this layer); `Parent:` = `git merge-base HEAD origin/phase-4`.
+Base (author's call, 2026-11-28): CC-12's layer is open but not merged, and CC-3 shares no file with it, so the layer branches from `origin/phase-4` at `7689cb08` (the stack below is empty for this layer); `Parent:` = `git merge-base HEAD origin/phase-4`. Round 1 merged `origin/phase-4` at `84484e35` (docs only, `graph.md`) into the layer and rewrote `Parent:` in the merge commit.
 
 Planning base: `phase-4` at `4c89c449` (2026-11-28). No file of this node changed since `b324e1dc`: `git diff --stat b324e1dc 4c89c449 -- crates/zygo-core crates/zygo-config crates/zygo-launch/tests/opencode.rs crates/zygo-launch/tests/stub_agent` is empty (TF-6 changed only `crates/zygo/tests`), so the CC-1 rows and the lines below hold. This file has no `Parent:` line until step 1.
 
@@ -100,7 +100,7 @@ Steps:
 Results (implementer, 2026-11-28, at `9a6c6b26`):
 
 - Step 9: the Acceptance line, run alone as one command, exits 0: the variant-path check prints nothing; `agents.toml` and `hook_opencode.rs` do not exist; `cargo test -p zygo-core -p zygo-config` 0 failed; `minimum_agent_versions_match_premises` and `conformance_tree` pass; K-C7 gate: `check-test-edits: parent 7689cb08ae908661c8eae0ea26cc1a6c19f67003`, `check-test-edits: ok (273 units)`, exit 0, with the four planned entries unchanged.
-- Step 10, local part: `cargo test --workspace --locked --no-fail-fast` exit 0 (4640 passed, 0 failed, 941 ignored); `ZYGO_WRITE_CONFORMANCE=1 cargo test -p zygo-core --test conformance --locked` (121 passed), then `git diff --exit-code docs/conformance.md docs/conformance.json` exit 0; `sh scripts/test-install.sh` → `test-install: all passed`; `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → `check-premises: ok (...)`, exit 0; `git status --porcelain` empty. CI and the review gate are open.
+- Step 10, local part: `cargo test --workspace --locked --no-fail-fast` exit 0, 0 failed (the count first written here, 4640 passed, was wrong: that log holds the run's tail from `up_all` to the doc tests twice; round 1 has the count of a clean log); `ZYGO_WRITE_CONFORMANCE=1 cargo test -p zygo-core --test conformance --locked` (121 passed), then `git diff --exit-code docs/conformance.md docs/conformance.json` exit 0; `sh scripts/test-install.sh` → `test-install: all passed`; `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → `check-premises: ok (...)`, exit 0; `git status --porcelain` empty. CI and the review gate are open.
 
 Author's calls (graph Log):
 
@@ -120,5 +120,24 @@ Author's calls (implementer, 2026-11-28):
 
 Findings (implementer):
 
-- Three grade-file reasons in `docs/conformance/opencode.toml` (`:194`, `:199`, `:204`) and their copies in `docs/conformance.json` still name `hook_opencode::normalize`, now `client::opencode::normalize`. Not changed here: they are not in this node's file list, and a grade-file text change regenerates the conformance outputs. For the controller (CC-12 or CC-16).
+- Three grade-file reasons in `docs/conformance/opencode.toml` (`:194`, `:199`, `:204`), their copies in `docs/conformance.json` and `docs/live-checks.md:619` still name `hook_opencode::normalize`. Not changed here: they are not in this node's file list. Round 1 F4: the coordinator routes them to CC-12 after CC-3 merges.
 
+## Round 1 review
+
+Reviewer: coordinator's round 1 review of PR #258 at `c4a3b0c3` (no correctness defect; six findings). Fixes in `fix(core): CC-3 round 1 F1-F3, F5, F6` (`4a519de0`), after the merge of `origin/phase-4` at `84484e35` (`Parent:` rewritten in that merge commit).
+
+| # | Finding | Disposition | Evidence |
+|---|---------|-------------|----------|
+| F1 | The removed `assert!(clients(tempdir).is_err())` in `check_clients_from_agent_all` is a test logic edit that the node file does not state | Fixed: the `literals crates/zygo-core/tests/conformance.rs` entry's reason now states the removal and its cause (`clients()` reads no file and cannot fail). The assert holds no literal, and CC-2's grammar has no form for a removed assertion, so the reason carries it | K-C7 gate at `4a519de0`: `ok (273 units)`, exit 0 |
+| F2 | `client::opencode` is public; a per-client function is reachable outside `Agent::spec()` | Fixed: `mod opencode;` (private) beside the private `mod claude_code;`; `normalize` is `pub(super)`. `crates/zygo-launch/tests/opencode.rs` defines `fn normalize(v)` as `(Agent::OpenCode.spec().hook_input)(v)`, so its tests call the descriptor; no literal and no test function changed, so no entry. `crates/zygo-core/tests/client.rs` (new in this node) no longer names the module | `cargo build --workspace --all-targets` exit 0; `cargo test -p zygo-launch --test opencode` 49 passed, 0 failed |
+| F3 | `Agent`'s serde ids are separate `#[serde(rename)]` literals, not the descriptor ids | Fixed: `Serialize` writes `as_str()`; `Deserialize` reads a string and finds the client by its descriptor id, else `unknown_variant(s, &IDS)`, the same text the derive gave. `IDS` is a `static` built from `Agent::ALL[i].spec().id` when the crate compiles (`spec` is now a `const fn`), and `FromStr` builds its refusal from it. New test `unknown_client_id_is_refused_by_serde` (`codex`, `Claude-Code`, empty: ``unknown variant `<id>`, expected `claude-code` or `opencode` ``; a number and `null` refused); the round-trip test stays | `cargo test -p zygo-core --test client` 7 passed; workspace 0 failed (state files, usage store and `ZYGO_AGENT` readers unchanged) |
+| F4 | Stale `hook_opencode::normalize` text in `docs/conformance/opencode.toml`, `docs/conformance.json`, `docs/live-checks.md:619` | Not CC-3 (coordinator): outside this node's file list; routed to CC-12 after CC-3 merges. Recorded under Findings | — |
+| F5 | `harness.rs` doc line says the versions come from the descriptor, but the constants are literals; version literals elsewhere in the tests | Fixed in part: `CLAUDE_VERSION` and `OPENCODE_VERSION` are `const`s read from `Agent::…spec().min_version`; entry `literals crates/zygo-launch/tests/stub_agent/harness.rs: -"1.18.16" x1, -"2.1.328" x1`. Rejected for the rest (coordinator's reason): the version literals in `client.rs`, `client_spec.rs` and `conformance.rs` are the tests' expected values from the spec; writing them out is what makes those tests check the descriptor | K-C7 gate exit 0 with the new entry; `cargo test -p zygo-launch --test premise --test stub_launch` pass |
+| F6 | `schema_dialect_is_the_core_dialect` compares a value with itself | Fixed: replaced by `config_dialects_load_as_the_core_dialect`: a user config file with `dialects = ["anthropic", "openai", "openai-chat"]` is read by `load_with_builtin`; the provider's dialects equal `[zygo_core::Dialect::Anthropic, Openai, OpenaiChat]` (a type error if `zygo_config`'s `Dialect` were another type) and serialize back to the three names | `cargo test -p zygo-config --test client_spec` 2 passed |
+
+Checks after round 1 (at `4a519de0`):
+
+- Acceptance line, run alone as one command: exit 0, with K-C7 gate `check-test-edits: parent 84484e35dd402008e45ee16e0c6bfe81574c8ca4`, `check-test-edits: ok (273 units)`.
+- `cargo test --workspace --locked --no-fail-fast`: exit 0, 4583 passed, 0 failed, 862 ignored (219 result lines; each test binary once).
+- `ZYGO_WRITE_CONFORMANCE=1 cargo test -p zygo-core --test conformance --locked` exit 0, then `git diff --exit-code docs/conformance.md docs/conformance.json` exit 0.
+- `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → `check-premises: ok (...)`, exit 0; `sh scripts/test-install.sh` → `test-install: all passed`; `git status --porcelain` empty.
