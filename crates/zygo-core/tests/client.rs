@@ -1,0 +1,82 @@
+//! The client module `zygo_core::client` (K§6.1.1, K§6.1.2 concerns 1 and 2): the descriptor values, the id
+//! round trip, `Agent::DEFAULT`, the hook input function and `Dialect` in core. No test names a client variant by
+//! path: clients come from `Agent::ALL`, `Agent::DEFAULT` or an id.
+
+use serde_json::json;
+use zygo_core::hook::HookInput;
+use zygo_core::Agent;
+
+#[test]
+fn client_specs_hold_the_concern_1_values() {
+    assert_eq!(Agent::ALL.len(), 2);
+    let c = Agent::ALL[0].spec();
+    assert_eq!(c.id, "claude-code");
+    assert_eq!(c.name, "Claude Code");
+    assert_eq!(c.program, "claude");
+    assert_eq!(c.verb, "claude");
+    assert_eq!(c.config_dir, ".claude");
+    assert_eq!(c.install_hint, "zygo: claude not found on PATH; install Claude Code: https://code.claude.com/docs/en/setup");
+    assert_eq!(c.min_version, "2.1.328");
+    assert!(c.supported);
+    assert!(c.status_line);
+    let o = Agent::ALL[1].spec();
+    assert_eq!(o.id, "opencode");
+    assert_eq!(o.name, "OpenCode");
+    assert_eq!(o.program, "opencode");
+    assert_eq!(o.verb, "opencode");
+    assert_eq!(o.config_dir, ".opencode");
+    assert_eq!(o.install_hint, "zygo: opencode was not found on PATH; install OpenCode: https://opencode.ai/docs/");
+    assert_eq!(o.min_version, "1.18.16");
+    assert!(o.supported);
+    assert!(!o.status_line);
+}
+
+#[test]
+fn client_ids_round_trip_through_from_str_display_and_serde() {
+    for a in Agent::ALL {
+        let id = a.spec().id;
+        assert_eq!(a.as_str(), id);
+        assert_eq!(a.to_string(), id);
+        assert_eq!(id.parse::<Agent>().unwrap(), a);
+        assert_eq!(serde_json::to_value(a).unwrap(), json!(id));
+        assert_eq!(serde_json::from_value::<Agent>(json!(id)).unwrap(), a);
+    }
+}
+
+#[test]
+fn unknown_client_id_is_refused_with_the_same_text() {
+    assert_eq!("codex".parse::<Agent>().unwrap_err().to_string(), "unknown agent `codex` (claude-code or opencode)");
+}
+
+#[test]
+fn default_client_is_claude_code() {
+    assert_eq!(Agent::DEFAULT.spec().id, "claude-code");
+    assert_eq!(zygo_core::session_view::SessionView::default().agent, Agent::DEFAULT);
+}
+
+#[test]
+fn hook_input_reads_the_descriptor() {
+    let v = json!({"input": {"tool": "bash"}, "output": {"args": {"command": "ls"}}});
+    assert_eq!((Agent::DEFAULT.spec().hook_input)(v.clone()), v);
+    let oc = "opencode".parse::<Agent>().unwrap();
+    let want = json!({"tool_name": "Bash", "hook_event_name": "PreToolUse", "tool_input": {"command": "ls"}});
+    assert_eq!((oc.spec().hook_input)(v.clone()), want);
+    assert_eq!(zygo_core::client::opencode::normalize(v.clone()), want);
+    let bytes = v.to_string();
+    let h = HookInput::parse(oc, bytes.as_bytes()).unwrap();
+    assert_eq!(h.event.as_deref(), Some("PreToolUse"));
+    assert_eq!(h.tool_name.as_deref(), Some("Bash"));
+    let d = HookInput::parse(Agent::DEFAULT, bytes.as_bytes()).unwrap();
+    assert_eq!(d.event, None);
+    assert_eq!(d.tool_name, None);
+    assert_eq!(d.raw, v);
+}
+
+#[test]
+fn dialect_keeps_its_serde_names() {
+    use zygo_core::Dialect;
+    for (d, s) in [(Dialect::Anthropic, "anthropic"), (Dialect::Openai, "openai"), (Dialect::OpenaiChat, "openai-chat")] {
+        assert_eq!(serde_json::to_value(d).unwrap(), json!(s));
+        assert_eq!(serde_json::from_value::<Dialect>(json!(s)).unwrap(), d);
+    }
+}
