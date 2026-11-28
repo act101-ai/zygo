@@ -62,7 +62,8 @@ fn trim_col(cols: &[String], name: &'static str) -> &'static str {
     if cols.iter().any(|c| c == name) { name } else { "NULL" }
 }
 
-/// O§6.3 step 1: `Q_C` in `ts`, `rowid` order, and the OpenCode flag of its session.
+/// O§6.3 step 1: `Q_C` in `ts`, `rowid` order, and the whole-session flag of its session: true when it has a request
+/// of a client that sends no per-agent id (`ClientSpec::agent_id_header` is `None`, O§6.3).
 fn context(tx: &Transaction<'_>, ctx: &Ctx) -> Result<(Vec<CtxRequest>, bool)> {
     let mut s = tx.prepare_cached(
         "SELECT rowid, ts, model, provider, input_tokens, cache_read_tokens, cache_write_tokens, compaction FROM requests \
@@ -73,9 +74,12 @@ fn context(tx: &Transaction<'_>, ctx: &Ctx) -> Result<(Vec<CtxRequest>, bool)> {
         Ok(CtxRequest { rowid: r.get(0)?, ts: r.get(1)?, model: r.get(2)?, provider: r.get(3)?, input_tokens: u64_at(r, 4)?,
             cache_read_tokens: u64_at(r, 5)?, cache_write_tokens: u64_at(r, 6)?, compaction: r.get(7)? })
     })?.collect::<rusqlite::Result<Vec<_>>>()?;
-    let opencode = tx.query_row("SELECT EXISTS (SELECT 1 FROM requests WHERE session = ?1 AND agent = ?2)",
-        rusqlite::params![ctx.0, Agent::OpenCode.as_str()], |r| r.get(0))?;
-    Ok((q, opencode))
+    let mut whole = false;
+    for a in Agent::ALL.iter().filter(|a| a.spec().agent_id_header.is_none()) {
+        whole |= tx.query_row("SELECT EXISTS (SELECT 1 FROM requests WHERE session = ?1 AND agent = ?2)",
+            rusqlite::params![ctx.0, a.spec().id], |r| r.get::<_, bool>(0))?;
+    }
+    Ok((q, whole))
 }
 
 fn trim_events(tx: &Transaction<'_>, f: &Filter, cols: &[String]) -> Result<Vec<Event>> {
