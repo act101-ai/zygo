@@ -70,8 +70,10 @@ HDR=$(awk '
   }
   END { if (bad) { print bad; exit } printf "%s", out }' "$P" | tr -d '\000')
 case $HDR in [0-9]*) fail "$P:$HDR: the value of a header line holds a tab" ;; esac
-# A name given again must have the same value as its first header line.
-dup=$(printf '%s\n' "$HDR" | awk -F'\t' '$1 in v && v[$1] != $2 { print $3 "\t" $1 ": " $2 "\t" $1 ": " v[$1]; exit } !($1 in v) { v[$1] = $2 }')
+# A name given again must have the same value as its first header line. Here and in every awk or
+# grep below that reads a pipe, the reader reads to the end and keeps the first match (no exit, no
+# grep -q), so with SIGPIPE ignored the writer gets no EPIPE (TF-3 round 3).
+dup=$(printf '%s\n' "$HDR" | awk -F'\t' 'd == "" && $1 in v && v[$1] != $2 { d = $3 "\t" $1 ": " $2 "\t" $1 ": " v[$1] } !($1 in v) { v[$1] = $2 } END { if (d != "") print d }')
 TAB=$(printf '\t')
 SOH=$(printf '\001')
 if [ -n "$dup" ]; then
@@ -82,7 +84,7 @@ EOF_DUP
 fi
 
 # version_of <name>: the header value for that name (the first line wins), or nothing.
-version_of() { printf '%s\n' "$HDR" | N="$1" awk -F'\t' '$1 == ENVIRON["N"] { print $2; exit }'; }
+version_of() { printf '%s\n' "$HDR" | N="$1" awk -F'\t' '!f && $1 == ENVIRON["N"] { v = $2; f = 1 } END { if (f) print v }'; }
 
 # TROWS: "line<TAB>id<TAB>r|o" for every table line of the file (it starts with zero to three
 # blanks and "|"; a line with four or more leading blanks or a leading tab is not a table line, as
@@ -134,7 +136,7 @@ done
 
 # A table line outside the Results table whose first cell has the form of a premise id
 # (capital letters, then a digit: P1, P6a, Q7, PW15-bash, PC1) is a Results row in the wrong place.
-out=$(printf '%s\n' "$TROWS" | awk -F'\t' '$3 == "o" && $2 ~ /^[A-Z]+[0-9][A-Za-z0-9-]*$/ { print $1 "\t" $2; exit }')
+out=$(printf '%s\n' "$TROWS" | awk -F'\t' 'o == "" && $3 == "o" && $2 ~ /^[A-Z]+[0-9][A-Za-z0-9-]*$/ { o = $1 "\t" $2 } END { if (o != "") print o }')
 if [ -n "$out" ]; then
   fail "$P:${out%%"$TAB"*}: row '${out#*"$TAB"}' is outside the Results table"
 fi
@@ -198,11 +200,11 @@ EOF_PATHS
   if [ "$result" = failed ]; then
     pat="\*\(Note [0-9]{4}-[0-9]{2}-[0-9]{2}, N2, $id: [^)]*\)\*"
     case "$id" in
-      P*) printf '%s\n' "$S19" | grep -Eq "$pat" || fail "$id: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
-      Q*) printf '%s\n' "$S19A" | grep -Eq "$pat" || fail "$id: failed, but spec §19a has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
+      P*) [ "$(printf '%s\n' "$S19" | grep -Ec "$pat")" -gt 0 ] || fail "$id: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
+      Q*) [ "$(printf '%s\n' "$S19A" | grep -Ec "$pat")" -gt 0 ] || fail "$id: failed, but spec §19a has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
     esac
     if [ "$id" = P6a ]; then
-      printf '%s\n' "$S105" | grep -Eq "$pat" || fail "P6a: failed, but spec §10.5 has no dated note amending the language list"
+      [ "$(printf '%s\n' "$S105" | grep -Ec "$pat")" -gt 0 ] || fail "P6a: failed, but spec §10.5 has no dated note amending the language list"
       nontrivial fixtures/act-lite/README.md || fail "P6a: failed, but fixtures/act-lite/README.md is missing or trivial"
       nontrivial fixtures/act-lite/languages.json || fail "P6a: failed, but fixtures/act-lite/languages.json is missing or trivial"
     fi
@@ -246,14 +248,14 @@ for f in scripts/premises/live scripts/premises/live*.sh docs/live-checks.md; do
 done
 set -f
 # shellcheck disable=SC2086
-bad=$(find $SCOPE -name '*[[:space:]]*' 2>/dev/null | head -n 1)
+bad=$(find $SCOPE -name '*[[:space:]]*' 2>/dev/null | sed -n 1p)
 [ -z "$bad" ] || fail "a path in the scan scope holds whitespace: '$bad'"
 # shellcheck disable=SC2086
-bad=$(find $SCOPE -name '*:*' 2>/dev/null | head -n 1)
+bad=$(find $SCOPE -name '*:*' 2>/dev/null | sed -n 1p)
 [ -z "$bad" ] || fail "a path in the scan scope holds ':': $bad"
 # grep -r does not follow symlinks on macOS, so a symlink in the scope is neither scanned nor evidence.
 # shellcheck disable=SC2086
-lnk=$(find $SCOPE -type l 2>/dev/null | head -n 1)
+lnk=$(find $SCOPE -type l 2>/dev/null | sed -n 1p)
 [ -z "$lnk" ] || fail "$lnk is a symlink; a symlink in the scan scope is not scanned and is not evidence"
 # settings-schema.json is the upstream schema kept verbatim (its source is beside it); so is the
 # Codex config.schema.json (from the pinned rust-v0.172.0 tag, K§6.3.7). Their own example texts
@@ -284,7 +286,7 @@ for f in $VERBATIM; do
   src=${f%.json}.source.txt
   [ -f "$src" ] || fail "verbatim file $f has no source file $src"
   pin=$(pin_of "$f")
-  want=$(sed -n 's/^sha256:[[:space:]]*\([0-9A-Fa-f]\{64\}\)[[:space:]]*$/\1/p' "$src" | head -n 1 | tr 'A-F' 'a-f')
+  want=$(sed -n 's/^sha256:[[:space:]]*\([0-9A-Fa-f]\{64\}\)[[:space:]]*$/\1/p' "$src" | sed -n 1p | tr 'A-F' 'a-f')
   got=$(sha256_of "$f")
   [ "$got" = "$pin" ] && [ "$want" = "$pin" ] ||
     fail "verbatim file $f (sha256 $got) and its source file $src (sha256 ${want:-<none>}) must both give the pinned sha256 $pin"
@@ -299,9 +301,11 @@ NOTES=$( (grep -anH 'N38' "$SPEC" docs/conformance.md 2>/dev/null | tr -d '\000'
 # exempt fails; i: the ERE matches any case (the exempt ERE never does). <drop sed -E script>:
 # applied to a hit line, which fails only when the ERE still matches the result; the message shows
 # the line as written. A NUL in a hit line becomes a blank first (read stops at a NUL); both are
-# outside every character class of the rules and of the drop script. sed -n 1p, not head, keeps the
-# first hit line (also in cx_scan and env_scan): it reads to the end, so with SIGPIPE ignored the loop
-# and the commands before it get no EPIPE (bash: "printf: write error: Broken pipe"; TF-3 round 2).
+# outside every character class of the rules and of the drop script. After the first hit line the
+# loop (also in cx_scan and env_scan) only reads the rest with cat, with no drop script: the commands
+# before it get no EPIPE when SIGPIPE is ignored (bash: "printf: write error: Broken pipe"; TF-3 round
+# 2), and many hit lines cost no more than one (round 3). read takes one byte at a time from a pipe,
+# so cat gets every byte after the hit line.
 scan() {
   o=-aE; [ "${4:-}" != i ] || o=-aiE
   # shellcheck disable=SC2086
@@ -309,8 +313,10 @@ scan() {
     tr '\000' ' ' | while IFS= read -r ln; do
       [ -z "${5:-}" ] || printf '%s\n' "$ln" | sed -E "$5" | grep -q $o -- "$1" || continue
       printf '%s\n' "$ln"
-    done | sed -n 1p)
-  [ -z "$hit" ] || fail "forbidden content ($3): $(printf '%s\n' "$hit" | head -n 1 | cut -c1-160)"
+      cat >/dev/null
+      break
+    done)
+  [ -z "$hit" ] || fail "forbidden content ($3): $(printf '%s\n' "$hit" | cut -c1-160)"
 }
 # L: the left edge of a key or id: line start, a non-word character, or a JSON backslash escape
 # (\n, \t, \r, \b, \f, \uXXXX) right before it in nested JSON text.
@@ -351,8 +357,10 @@ cx_scan() {
     while IFS= read -r ln; do
       [ -z "${4:-}" ] || printf '%s\n' "$ln" | sed -E "$4" | grep -q $o -- "$1" || continue
       printf '%s\n' "$ln"
-    done | sed -n 1p)
-  [ -z "$hit" ] || fail "forbidden content ($2): $(printf '%s\n' "$hit" | head -n 1 | cut -c1-160)"
+      cat >/dev/null
+      break
+    done)
+  [ -z "$hit" ] || fail "forbidden content ($2): $(printf '%s\n' "$hit" | cut -c1-160)"
 }
 # TAG <shell> and ECX <environment_context> in their three bracket forms (plain, <..>, &lt;..&gt;).
 # The shell rules have the scope of scrub.py (review round 2 G1): the <shell> tag after an
@@ -384,8 +392,10 @@ env_scan() {
     while IFS= read -r ln; do
       [ -z "${3:-}" ] || printf '%s\n' "${ln#*:*:}" | LC_ALL=C sed -E "$3" | LC_ALL=C grep -qaE -- "$1" || continue
       printf '%s\n' "$ln"
-    done | sed -n 1p)
-  [ -z "$hit" ] || fail "forbidden content ($2): $(printf '%s\n' "$hit" | head -n 1 | cut -c1-160)"
+      cat >/dev/null
+      break
+    done)
+  [ -z "$hit" ] || fail "forbidden content ($2): $(printf '%s\n' "$hit" | cut -c1-160)"
 }
 # ci <text>: an ERE for the text in any case ([Ss][Hh]...); the text holds no ERE syntax but . / ( ) | -.
 ci() {
@@ -449,7 +459,7 @@ name_scan() {
   rx="(^|[^$wc]|\\\\[nrtbf])$e([^$wc]|\$)"
   # shellcheck disable=SC2086
   hit=$( (grep -rnaiE -- "$rx" $SCOPE "$P" 2>/dev/null; printf '%s\n' "$NOTES" | grep -aiE -- "$rx") | grep -av -E -- "${4:-^\$}" | tr '\000' ' ' | sed -n 1p)
-  [ -z "$hit" ] || fail "$1: $(printf '%s\n' "$hit" | head -n 1 | cut -d: -f1-2)"
+  [ -z "$hit" ] || fail "$1: $(printf '%s\n' "$hit" | cut -d: -f1-2)"
 }
 for w in ${N2_FORBIDDEN_NAMES:-}; do name_scan "forbidden name from N2_FORBIDDEN_NAMES" "$w" A-Za-z0-9_ "$VX"; done
 # The machine's host names (from the OS at run time, full and short): hostname, and on macOS

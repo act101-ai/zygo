@@ -1133,6 +1133,145 @@ rl=$(grep -n '^| PC99 |' "$D/docs/premises.md" | cut -d: -f1)
 run_split "$D" '' bash
 expect_fail_alone "docs/premises.md:$rl: row 'PC99' holds a SOH byte (\\001), the placeholder of an escaped '|'"
 
+# TF-3 round 3 helpers.
+# pad_after <file> <ERE> <n> <line>: inserts the line n times after the first line that matches the ERE.
+pad_after() {
+    R="$2" L="$4" awk -v n="$3" '{ print } !d && $0 ~ ENVIRON["R"] { for (i = 0; i < n; i++) print ENVIRON["L"]; d = 1 }' "$1" > "$1.new" &&
+        mv "$1.new" "$1"
+}
+# pad_before <file> <ERE> <n> <line>: inserts the line n times before the first line that matches the ERE.
+pad_before() {
+    R="$2" L="$4" awk -v n="$3" '!d && $0 ~ ENVIRON["R"] { for (i = 0; i < n; i++) print ENVIRON["L"]; d = 1 } { print }' "$1" > "$1.new" &&
+        mv "$1.new" "$1"
+}
+# sec_sub <file> <start ERE> <end ERE> <text> <new text>: in each line from the line that matches the
+# start ERE to the line before the one that matches the end ERE, the first <text> becomes <new text>
+# (a SOH in it then becomes a NUL).
+sec_sub() {
+    A="$2" B="$3" X="$4" Y="$5" awk '$0 ~ ENVIRON["A"] { f = 1 } $0 ~ ENVIRON["B"] { f = 0 }
+        f && (i = index($0, ENVIRON["X"])) { $0 = substr($0, 1, i - 1) ENVIRON["Y"] substr($0, i + length(ENVIRON["X"])) } { print }' "$1" > "$1.new" &&
+        mv "$1.new" "$1"
+    soh_to_nul "$1"
+}
+# AWK_NUL: 1 when awk reads a NUL as a character (gawk, mawk); empty when a NUL ends the line for it
+# (BSD awk). The spec section cases expect the pre-TF-3 result of the host's awk.
+AWK_NUL=""
+[ "$(printf 'a\000b\n' | awk '{ print length($0) }')" != 3 ] || AWK_NUL=1
+ZSPEC=docs/specs/2026-11-18-zygo-design.md
+
+# TF-3 round 3 R3-1: after the first hit line, the hit loops only read to the end (no drop script),
+# so a rule with a drop script and many hit lines is as fast as one hit; the failure line stays.
+CASE="TF-3 R3-1: under bash with SIGPIPE ignored, many e-mail hit lines"
+D=$(mk tf3_pipemail)
+awk 'BEGIN { for (i = 0; i < 2000; i++) print "bob@corp.com" }' > "$D/fixtures/codex/many.txt"
+run_split "$D" '' bash nopipe
+expect_fail_alone "forbidden content (e-mail address): fixtures/codex/many.txt:1:bob@corp.com"
+
+# TF-3 round 3 R3-3: a NUL deleted (the pre-TF-3 result) and a NUL made a blank give different
+# results at each site.
+CASE="TF-3 R3-3: under bash, a NUL inside a header version"
+D=$(mk tf3_hdrver)
+add_header "$D" "Codex: 0.17${SOH}2.0"
+soh_to_nul "$D/docs/premises.md"
+run_split "$D" '' bash
+expect_ok_alone
+
+CASE="TF-3 R3-3: under bash, a NUL inside a Results row id"
+D=$(mk tf3_rowid)
+evidence "$D"
+add_header "$D" 'Codex: 0.172.0'
+add_row "$D" "$(row "PC${SOH}99" Codex 0.172.0 verified fixtures/codex/pc1.txt)"
+soh_to_nul "$D/docs/premises.md"
+run_split "$D" '' bash
+expect_ok_alone
+
+CASE="TF-3 R3-3: under bash, a NUL inside a Results row version"
+D=$(mk tf3_rowver)
+evidence "$D"
+add_header "$D" 'Codex: 0.172.0'
+add_row "$D" "$(row PC99 Codex "0.172${SOH}.0" verified fixtures/codex/pc1.txt)"
+soh_to_nul "$D/docs/premises.md"
+run_split "$D" '' bash
+expect_ok_alone
+
+# spec_nul_case <name> <start ERE> <end ERE> <note text> <failure text>: a NUL inside the dated note
+# of a failed row in that spec section.
+spec_nul_case() {
+    CASE="TF-3 R3-3: under bash, a NUL inside the $1 note"
+    D=$(mk "tf3_note$1")
+    sec_sub "$D/$ZSPEC" "$2" "$3" "$4" "$(printf '%s' "$4" | sed "s/N2/N${SOH}2/")"
+    run_split "$D" '' bash
+    if [ -n "$AWK_NUL" ]; then expect_ok_alone; else expect_fail_alone "$5"; fi
+}
+spec_nul_case 19 '^## 19\. ' '^## 19a\. ' 'N2, P6a:' 'P6a: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, P6a: …)*'
+spec_nul_case 19a '^## 19a\. ' '^## 20\. ' 'N2, Q7:' 'Q7: failed, but spec §19a has no dated note *(Note YYYY-MM-DD, N2, Q7: …)*'
+spec_nul_case 10.5 '^### 10\.5 ' '^### 10\.6 ' 'N2, P6a:' 'P6a: failed, but spec §10.5 has no dated note amending the language list'
+
+# TF-3 round 3 R3-4, R3-5: every reader fed by a pipe reads to its end, so with SIGPIPE ignored no
+# writer gets EPIPE when its output is larger than a pipe buffer; the result stays.
+CASE="TF-3 R3-4: under bash with SIGPIPE ignored, a differing header before many header lines"
+D=$(mk tf3_pipedup)
+hl=$(($(grep -n '^tmux: ' "$D/docs/premises.md" | cut -d: -f1) + 1))
+pad_after "$D/docs/premises.md" '^tmux: ' 3000 'Zz-padding-header-with-a-long-name-to-fill-a-pipe-buffer: 1'
+add_lines "$D" 'Codex: 0.1.0'
+run_split "$D" '' bash nopipe
+expect_fail_alone "docs/premises.md:$hl: header 'Codex: 0.1.0' differs from the first header line 'Codex: 0.172.0'"
+
+CASE="TF-3 R3-4: under bash with SIGPIPE ignored, an agent header before many header lines"
+D=$(mk tf3_pipever)
+pad_after "$D/docs/premises.md" '^tmux: ' 3000 'Zz-padding-header-with-a-long-name-to-fill-a-pipe-buffer: 1'
+run_split "$D" '' bash nopipe
+expect_ok_alone
+
+CASE="TF-3 R3-4: under bash with SIGPIPE ignored, a row outside the Results table before many table lines"
+D=$(mk tf3_pipeout)
+hl=$(($(grep -n '^tmux: ' "$D/docs/premises.md" | cut -d: -f1) + 1))
+pad_after "$D/docs/premises.md" '^tmux: ' 3000 '| zz-padding-table-line-with-a-long-first-cell-to-fill-a-pipe-buffer | x |'
+add_lines "$D" '| PX1 | x |'
+run_split "$D" '' bash nopipe
+expect_fail_alone "docs/premises.md:$hl: row 'PX1' is outside the Results table"
+
+# spec_pad_case <name> <ERE of the next heading>: many lines at the end of that spec section, after
+# the dated note of its failed row.
+spec_pad_case() {
+    CASE="TF-3 R3-4: under bash with SIGPIPE ignored, a large spec section $1"
+    D=$(mk "tf3_pipesec$1")
+    pad_before "$D/$ZSPEC" "$2" 4000 'padding text at the end of the section, to fill a pipe buffer'
+    run_split "$D" '' bash nopipe
+    expect_ok_alone
+}
+spec_pad_case 19 '^## 19a\. '
+spec_pad_case 19a '^## 20\. '
+spec_pad_case 10.5 '^### 10\.6 '
+
+# find_pad_case <name> <kind> <name prefix> <failure prefix>: 1000 entries of that kind (file or
+# symlink) with long names in fixtures/codex/pad, so the find output is larger than a pipe buffer.
+# find's stderr goes to /dev/null in the script (a scope path may be missing), so an EPIPE of find
+# is not seen on stderr; these cases keep the result (the first path find prints).
+find_pad_case() {
+    CASE="TF-3 R3-4: under bash with SIGPIPE ignored, many paths $1"
+    D=$(mk "tf3_pipefind$2")
+    mkdir -p "$D/fixtures/codex/pad"
+    i=0
+    while [ "$i" -lt 1000 ]; do
+        f="$D/fixtures/codex/pad/$3-padding-name-long-enough-to-fill-a-pipe-buffer-with-few-entries-of-the-find-output-$i"
+        if [ "$2" = link ]; then ln -s pc1.txt "$f"; else : > "$f"; fi
+        i=$((i + 1))
+    done
+    run_split "$D" '' bash nopipe
+    expect_no_stderr
+    expect_fail_prefix "$4"
+}
+find_pad_case 'with whitespace' space 'a b' "a path in the scan scope holds whitespace: 'fixtures/codex/pad/a b-padding-name-"
+find_pad_case "with ':'" colon 'a:b' 'a path in the scan scope holds '"':'"': fixtures/codex/pad/a:b-padding-name-'
+find_pad_case 'that are symlinks' link 'ab' 'fixtures/codex/pad/ab-padding-name-'
+
+CASE="TF-3 R3-5: under bash with SIGPIPE ignored, many sha256 lines in a verbatim source file"
+D=$(mk tf3_pipesha)
+awk -v h="$CPIN" 'BEGIN { for (i = 0; i < 2000; i++) print "sha256: " h }' >> "$D/fixtures/codex/config.schema.source.txt"
+run_split "$D" '' bash nopipe
+expect_ok_alone
+
 # The exemption is the exact path, also for a rule that matches any case: a case variant of the
 # Codex verbatim path is scanned. The real schema is removed first. On a case-insensitive file system
 # the variant is the verbatim file, so its hash is pinned here (pin_codex) and the hash check passes; on a case-sensitive one the hash
