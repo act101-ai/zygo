@@ -1,6 +1,7 @@
 //! WD-17: `zygo doctor` lines for the workspace files, the pool and the member maximum (R§10 `zygo doctor`, R§9.5,
 //! R-C6; R§18 items 13 and 23).
-use std::io::Write;
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -64,7 +65,7 @@ fn blob(dir: &Path, bytes: &[u8]) -> String {
         .stderr(Stdio::piped())
         .spawn()
         .expect("git on PATH");
-    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    common::write_stdin(child.stdin.take().unwrap(), bytes);
     let o = child.wait_with_output().unwrap();
     assert!(
         o.status.success(),

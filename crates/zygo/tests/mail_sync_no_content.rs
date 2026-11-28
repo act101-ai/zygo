@@ -38,7 +38,7 @@ use zygo_workspace::mail::{mail_dir, store};
 use zygo_workspace::mux::{HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split};
 use zygo_workspace::state::{MemberRecord, Phase, Workspace};
 
-use common::feed_stdin;
+use common::write_stdin;
 use common::workspace::{Harness, WS_ID};
 
 const ALICE: &str = "kaaaaaaaa"; // A's member key
@@ -167,7 +167,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 fn git_in(dir: &Path, args: &[&str], input: &[u8]) -> String {
     let mut ch = git_cmd().args(args).current_dir(dir)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    feed_stdin(ch.stdin.take().unwrap(), input);
+    write_stdin(ch.stdin.take().unwrap(), input);
     let o = ch.wait_with_output().unwrap();
     assert!(o.status.success(), "git {args:?}: {}", err_of(&o));
     out_of(&o).trim_end().to_string()
@@ -222,7 +222,7 @@ fn zygo(h: &Harness, args: &[&str], input: Option<&[u8]>) -> Output {
         Some(bytes) => {
             c.stdin(Stdio::piped());
             let mut child = c.spawn().unwrap();
-            feed_stdin(child.stdin.take().unwrap(), bytes);
+            write_stdin(child.stdin.take().unwrap(), bytes);
             child.wait_with_output().unwrap()
         }
     };
@@ -1991,7 +1991,7 @@ fn no_mail_content_after_the_scenarios() {
     let mut trim = b.zygo(&["hook", "trim"], &[("ZYGO_SESSION_DIR", sd.root.as_os_str())]);
     trim.stdin(Stdio::piped());
     let mut child = trim.spawn().unwrap();
-    feed_stdin(child.stdin.take().unwrap(), &serde_json::to_vec(&event).unwrap());
+    write_stdin(child.stdin.take().unwrap(), &serde_json::to_vec(&event).unwrap());
     let o = child.wait_with_output().unwrap();
     common::assert_no_marketplace_sync(b.root());
     assert_eq!(o.status.code(), Some(0), "{}", err_of(&o));

@@ -19,7 +19,7 @@ use zygo_redact::secret::DeadlinePolicy;
 use zygo_workspace::mail::{mail_dir, store};
 use zygo_workspace::state::MemberRecord;
 
-use common::feed_stdin;
+use common::write_stdin;
 use common::workspace::{Harness, WS_ID};
 use e2e::set_mtime;
 
@@ -94,7 +94,7 @@ fn zygo(h: &Harness, args: &[&str], extra: &[(&str, &OsStr)], input: Option<&[u8
     let Some(bytes) = input else { return c.output().unwrap() };
     c.stdin(std::process::Stdio::piped());
     let mut child = c.spawn().unwrap();
-    feed_stdin(child.stdin.take().unwrap(), bytes);
+    write_stdin(child.stdin.take().unwrap(), bytes);
     child.wait_with_output().unwrap()
 }
 fn out(o: &Output) -> String { String::from_utf8_lossy(&o.stdout).into_owned() }

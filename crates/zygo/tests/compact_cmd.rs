@@ -452,7 +452,7 @@ fn statusline_without_a_session_dir_exits_before_it_reads_stdin() {
     let mut child = spawn_zygo(d.path(), &["hook", "statusline"], &env);
     let si = child.stdin.take().unwrap(); // taken first: `wait` closes a stdin it still holds
     assert_eq!(child.wait().unwrap().code(), Some(0));
-    common::feed_stdin(si, b"{}");
+    common::write_stdin(si, b"{}");
     let out = child.wait_with_output().unwrap();
     assert_eq!((String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap()), (String::new(), String::new()));
 }
