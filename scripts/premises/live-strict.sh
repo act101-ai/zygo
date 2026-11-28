@@ -1,5 +1,5 @@
 #!/bin/sh
-# Owner-run live checks N14-S and N14-E (node N38, spec §7.6). Needs the Anthropic API key and the
+# Live checks N14-S and N14-E (node N38, spec §7.6). Needs the Anthropic API key and the
 # OpenAI API key in the environment (entered at a hidden prompt, docs/live-checks.md).
 # N14-S: zygo rewrites one tool schema per built-in `refuse` rule (strict_schemas on); the
 # rewrites are captured at the mock (no key), then each is sent with strict mode to its vendor.

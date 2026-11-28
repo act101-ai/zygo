@@ -1,5 +1,5 @@
 #!/bin/sh
-# Owner-run live check #16b (node N38, spec §20 #16b). Needs the OpenAI API key and LIVE_SMALL_MODEL
+# Live check #16b (node N38, spec §20 #16b). Needs the OpenAI API key and LIVE_SMALL_MODEL
 # (an OpenAI-dialect model id whose real input limit is at most 128,000 tokens) in the
 # environment; optional LIVE_SMALL_BASE_URL (default https://api.openai.com).
 # zygo is told the model has a 1M window, so a zygo-code subagent reading 26 large files overruns

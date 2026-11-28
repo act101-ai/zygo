@@ -191,8 +191,7 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | DONE | implementation | 37139e44^..e21d5e0b · acceptance pass (mail_remote 16 passed) · PR #212 |
-| MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
+| MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | DONE | lookup | SP1 verified 8/8, run c, claude 2.1.332, opencode 1.19.6 · PR #247 |
 | WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | DONE | judgment | 1324716e^..e1276ac2 · acceptance pass (workspace_definition 23 passed with tmux) · PR #214 |
 | MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17, FX-15 | DONE | implementation | 5e2be987^..1de15e3e · acceptance pass (mail_remote_cli 20 passed) · PR #215 |
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | DONE | implementation | e887478a^..a9ed0c7b · acceptance pass (mail_sync_forget 9 passed, admin 31 passed) · PR #217 |
@@ -474,3 +473,4 @@ Session text (T, SX nodes):
 | 2026-11-27 | FX-30 DONE: pending-wake record in state.json; review F1-F4 fixed; author's calls: count `cur/` but wake only `new/`; clear at the step-10 write; recorded limit: one state write (a crash between wake and write wakes again). PR #240 |
 | 2026-11-27 | operator: "never by an agent" live-check rule never made (false citation, graph line 28); deleted from graph, specs R§19 etc., open nodes; executor runs MS-23, WD-21, WD-22 |
 | 2026-11-27 | WD-21, WD-22 DONE: the executor ran PR1 and PR2 live with synthetic logins and a loopback TLS recorder; one review, 12 findings, all fixed; author's calls: committed run scripts widen Files; pin 2.1.328, ran 2.1.332 · PR #244 |
+| 2026-11-27 | MS-23 DONE: SP1 verified on 3 arms (ssh-agent via zygo up env, the user's ssh-key setup, https gh helper) × 2 agents; one review, 16 findings, all fixed; author's calls: zygo's built-in marketplace fetch listed, not failed; run scripts widen Files · PR #247 |

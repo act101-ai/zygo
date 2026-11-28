@@ -1,5 +1,5 @@
 #!/bin/sh
-# Owner-run live checks #21 and P1 (node N38, spec §20 #21, §19 P1). Needs the Anthropic API key
+# Live checks #21 and P1 (node N38, spec §20 #21, §19 P1). Needs the Anthropic API key
 # in the environment (entered at a hidden prompt, docs/live-checks.md); it stays in the
 # environment and is in no argv and no file.
 # 21 + P1 end_turn: with soft_context_window = 40000, the turn that crosses it gets the context
