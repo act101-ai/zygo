@@ -18,6 +18,8 @@
 
 ## Plan
 
+Parent: d93fbc0963fdc3094ea7f9e43f6ae0c77b9046c2
+
 Step 1 writes the first line of this section: `Parent: <40-hex>`, the commit this node's layer starts from. This file has no `Parent:` line until step 1.
 
 Planning base: `phase-4` at `1140f668` (2026-11-28; CC-4 merged at `a081c87b`; `1140f668` changes only `docs/work/phase4/`). Since the inventory base `b324e1dc`, only `crates/zygo-proxy/src/window.rs` of this node's code changed (CC-4: the `use zygo_core::Agent;` line `:13` is removed, so the base rows `:95` and `:97` are now `:94` and `:96`; `:163` and `:206` are unchanged). `git diff --stat b324e1dc a081c87b -- crates/zygo-work/src/hooks.rs crates/zygo-mcp/src/tools/mod.rs crates/zygo-proxy/tests/window.rs` is empty, so those rows hold at their base lines.
@@ -60,7 +62,7 @@ Behavior per client (K-D3: no change; each case with its test):
 
 Steps:
 
-- [ ] 1. **Parent line.** When the node starts, insert as the first line under `## Plan` the line `Parent: <40-hex>` = `git merge-base HEAD <layer base branch>`, where the layer base branch is the branch of the open layer directly below this one, or `origin/phase-4` when the stack below is empty (Workflows (2); CC-2 Definitions "Parent"). CC-12's layer is open but shares no file with this node (its Files are registry, grade and generated conformance files), so, as in CC-3 and CC-4, the layer branches from `origin/phase-4`. After every merge into the node branch, recompute the line and rewrite it in the merge commit. Check: `sed -n 's/^Parent: \([0-9a-f]\{40\}\)$/\1/p' docs/work/phase4/nodes/CC-5.md` prints exactly one hash, equal to `git merge-base HEAD <layer base branch>`. Commit `docs(work): CC-5 parent`.
+- [x] 1. **Parent line.** When the node starts, insert as the first line under `## Plan` the line `Parent: <40-hex>` = `git merge-base HEAD <layer base branch>`, where the layer base branch is the branch of the open layer directly below this one, or `origin/phase-4` when the stack below is empty (Workflows (2); CC-2 Definitions "Parent"). CC-12's layer is open but shares no file with this node (its Files are registry, grade and generated conformance files), so, as in CC-3 and CC-4, the layer branches from `origin/phase-4`. After every merge into the node branch, recompute the line and rewrite it in the merge commit. Check: `sed -n 's/^Parent: \([0-9a-f]\{40\}\)$/\1/p' docs/work/phase4/nodes/CC-5.md` prints exactly one hash, equal to `git merge-base HEAD <layer base branch>`. Commit `docs(work): CC-5 parent`.
 - [ ] 2. **Failing tests**, four new files (K-C7 does not check a file that is new in the node). No test names an `Agent` variant by path (CC-13, CC-14): a client comes from its id.
   - `crates/zygo-core/tests/client_tools.rs`:
     ```rust
