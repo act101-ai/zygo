@@ -306,6 +306,39 @@ fn input_deeply_nested_test_source_refused() {
 }
 
 #[test]
+fn input_brackets_in_literals_and_comments_are_not_nesting() {
+    // CC-0: a bracket in a string, char, raw or byte literal or in a comment is no nesting for the parser; 300
+    // unclosed ones (the ANSI escapes `"\x1b[31m"` of a status line test) parse.
+    let n = 300;
+    let lines = [
+        "#[test] fn plain() {}".to_string(),
+        format!("/// {}", "{".repeat(n)),
+        format!("const S: &str = \"{}\";", r"\x1b[31m".repeat(n)),
+        format!("const E: &str = \"{}\";", r#"\"(\\"#.repeat(n)),
+        format!("const R: &str = r##\"{}\"##;", "{\"#(".repeat(n)),
+        format!("const B: &[u8] = b\"{}\";", "[".repeat(n)),
+        format!("const BR: &[u8] = br#\"{}\"#;", "(".repeat(n)),
+        format!("const C: [char; {n}] = [{}];", "'[', ".repeat(n)),
+        format!("const CE: [char; {n}] = [{}];", r"'\'', '{', ".repeat(n / 2)),
+        format!("// {}", "(".repeat(n)),
+        format!("/* {} /* {} */ {} */", "[".repeat(n), "{".repeat(n), "(".repeat(n)),
+    ];
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let d = test_target(&lines);
+    let r = evidence(d.path(), "test:crates/x/tests/t.rs::plain", "Alpha");
+    assert!(r.is_ok(), "{:?}", r.err());
+    // Code brackets after a lifetime, a label and a char literal still count.
+    for open in ["(", "[", "{"] {
+        let close = match open { "(" => ")", "[" => "]", _ => "}" };
+        let body = format!("{}0{}", open.repeat(300), close.repeat(300));
+        let src = format!("fn deep<'a>(_: &'a str) {{ let _c = 'x'; 'l: loop {{ break 'l; }} let _ = {body}; }}");
+        let d = test_target(&["#[test] fn plain() {}", &src]);
+        let e = evidence(d.path(), "test:crates/x/tests/t.rs::plain", "Alpha").unwrap_err();
+        assert!(e.contains("nested"), "{open}: {e}");
+    }
+}
+
+#[test]
 fn input_long_toml_error_clipped() {
     let bad = format!("{}\n", "x".repeat(10_000));
     for e in [Registry::parse(&bad).unwrap_err(), GradeFile::parse(&bad).unwrap_err()] {
