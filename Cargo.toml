@@ -15,6 +15,7 @@ members = [
     "crates/zygo-launch",
     "crates/zygo-workspace",
     "crates/zygo-mail-sync",
+    "tools/test-edits",
 ]
 
 [workspace.package]
