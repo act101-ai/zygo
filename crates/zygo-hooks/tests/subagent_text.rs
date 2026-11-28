@@ -449,3 +449,132 @@ fn opencode_subagent_unparseable_view_is_an_error() {
     assert!(out.is_empty());
     assert!(!d.log().exists());
 }
+
+// FX-37 SX-F2: an `overrides.json` that is not a regular file gives the default overrides, and a FIFO there does not
+// make the hook wait.
+
+const CASE: &str = "ZYGO_SX1_CASE";
+
+/// A FIFO at `path`, mode 0600.
+#[cfg(unix)]
+fn mkfifo(path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `c` is a valid NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo {}", path.display());
+}
+
+/// `<t>/s` with `view()` (agent `agent`) saved; `make(t, overrides.json)` puts the entry under test. Returns the
+/// command that runs `case` of `c6_child_overrides_default` against it (stdin null).
+#[cfg(unix)]
+fn overrides_case(agent: Agent, case: &str, make: &dyn Fn(&Path, &Path)) -> (tempfile::TempDir, Command) {
+    let (t, d) = sd();
+    SessionView { agent, ..view() }.save(&d).unwrap();
+    make(t.path(), &d.overrides_json());
+    let mut cmd = Command::new(std::env::current_exe().unwrap());
+    cmd.args(["--ignored", "--exact", "c6_child_overrides_default", "--nocapture", "--test-threads=1"])
+        .env(CHILD, t.path())
+        .env(CASE, case)
+        .stdin(Stdio::null());
+    (t, cmd)
+}
+
+/// Asserts that the child test passed and wrote nothing to stderr.
+#[cfg(unix)]
+fn overrides_child_passed(o: std::process::Output) {
+    assert!(o.status.success(), "{o:?}");
+    assert!(String::from_utf8(o.stdout).unwrap().contains("c6_child_overrides_default ... ok"));
+    assert_eq!(String::from_utf8(o.stderr).unwrap(), "");
+}
+
+/// `overrides_case` with a FIFO at `overrides.json`, run within a 60 s bound: a hook that waits is killed and fails
+/// the test instead of hanging the suite. A deadline: only `#[ignore = "timing: …"]` tests use it.
+#[cfg(unix)]
+fn overrides_fifo_case(agent: Agent, case: &str) {
+    let bound = Duration::from_secs(60);
+    let (_t, mut cmd) = overrides_case(agent, case, &|_, p| mkfifo(p));
+    let c = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    let pid = c.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(c.wait_with_output());
+    });
+    match rx.recv_timeout(bound) {
+        Ok(o) => overrides_child_passed(o.unwrap()),
+        Err(_) => {
+            // SAFETY: `kill` takes a plain pid and signal; `pid` is this test's own child.
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGKILL);
+            }
+            panic!("the hook did not return within {} s", bound.as_secs());
+        }
+    }
+}
+
+/// A link at `overrides.json` to valid overrides that turn results and units off: not followed, so the text is the
+/// default M. No open can wait here, so the test has no deadline and runs in CI.
+#[cfg(unix)]
+fn overrides_link_case(agent: Agent, case: &str) {
+    let (_t, mut cmd) = overrides_case(agent, case, &|t, p| {
+        let target = t.join("target.json");
+        std::fs::write(&target, br#"{"results":false,"work_units":false}"#).unwrap();
+        std::os::unix::fs::symlink(&target, p).unwrap();
+    });
+    overrides_child_passed(cmd.output().unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: the hook must return inside a 60 s bound on a FIFO"]
+fn subagent_start_overrides_fifo_does_not_block() {
+    overrides_fifo_case(Agent::ClaudeCode, "subagent");
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: the hook must return inside a 60 s bound on a FIFO"]
+fn opencode_subagent_event_overrides_fifo_does_not_block() {
+    overrides_fifo_case(Agent::OpenCode, "opencode");
+}
+
+#[cfg(unix)]
+#[test]
+fn subagent_start_overrides_link_gives_default() {
+    overrides_link_case(Agent::ClaudeCode, "subagent");
+}
+
+#[cfg(unix)]
+#[test]
+fn opencode_subagent_event_overrides_link_gives_default() {
+    overrides_link_case(Agent::OpenCode, "opencode");
+}
+
+/// Child half of the overrides tests; returns at once without `CHILD`. `subagent`: the C6 wrapper over `run_member`
+/// with `SubagentStart-sub` gives the default text M in the `SubagentStart` envelope and exit 0. `opencode`:
+/// `run_member` and `run_in` with `--event subagent` give M as plain text.
+#[test]
+#[ignore]
+fn c6_child_overrides_default() {
+    let (Some(root), Ok(case)) = (std::env::var_os(CHILD), std::env::var(CASE)) else { return };
+    let t = Path::new(&root);
+    let d = SessionDir::new(t.join("s"));
+    let m = [REDACT, ATTRIBUTION, STORE, NAV, TRAILER].join(" ");
+    assert_eq!(m.len(), 721);
+    match case.as_str() {
+        "subagent" => {
+            let stdin = serde_json::to_vec(&fixture("SubagentStart-sub")).unwrap();
+            let out = RefCell::new(Vec::new());
+            let got = guarded(
+                &|b| {
+                    session_start::run_member(&HookInput::parse(Agent::ClaudeCode, b)?, &d, &paths(t),
+                        &t.join("no-zygo"), &mut *out.borrow_mut())
+                },
+                &stdin,
+            );
+            assert_eq!(got, (envelope(&m), 0));
+            assert!(out.borrow().is_empty());
+        }
+        "opencode" => assert_eq!(oc_text(t, &d, &paths(t), &oc_subagent()), m),
+        other => panic!("unknown case {other}"),
+    }
+}
