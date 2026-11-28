@@ -136,12 +136,12 @@ impl Wake for StubWake {
 }
 
 /// The env of `m` with the seam `seam`, the clock at `secs`, and an idle wake that records into `typed`.
-fn env_at(m: &Machine, seam: CrashAt, secs: u64, typed: &Typed) -> Env {
+fn env_at(m: &Machine, seam: Box<dyn Seam>, secs: u64, typed: &Typed) -> Env {
     Env {
         paths: m.paths.clone(),
         clock: Box::new(Clock(Arc::new(AtomicU64::new(secs)))),
         probe: Box::new(Says(Verdict::Local)),
-        seam: Box::new(seam),
+        seam,
         spawner: Box::new(NoSpawn),
         wake: Box::new(StubWake { idle: true, typed: typed.clone() }),
         secret_policy: DeadlinePolicy { base: Duration::from_secs(3600), ..Default::default() },
@@ -150,6 +150,11 @@ fn env_at(m: &Machine, seam: CrashAt, secs: u64, typed: &Typed) -> Env {
 
 /// One CLI pass of `m` with the seam `seam` at `secs`, an hour of pass deadline.
 fn pass(m: &Machine, seam: CrashAt, secs: u64, typed: &Typed) -> Result<Report, SyncError> {
+    pass_with(m, Box::new(seam), secs, typed)
+}
+
+/// [`pass`] with any seam.
+fn pass_with(m: &Machine, seam: Box<dyn Seam>, secs: u64, typed: &Typed) -> Result<Report, SyncError> {
     run_with_deadline(&env_at(m, seam, secs, typed), WS_ID, Mode::Cli, &Opts::default(), FAR_PASS)
 }
 
@@ -275,6 +280,247 @@ fn old_state_without_pending_wake_loads() {
     sync(&a);
     let typed = Typed::default();
     assert_eq!(pass(&b, CrashAt::none(), T0 + 100, &typed).unwrap().delivered, 1);
+    assert_eq!(*typed.lock().unwrap(), wake_once());
+    assert_eq!(in_new(&b, id), 1);
+}
+
+/// `bob` reads the message `id`: its file moves from `mail/<BOB>/new/` to `cur/`.
+fn read_by_bob(b: &Machine, id: Ulid) {
+    let md = b.sp().mail.join(BOB);
+    let n = format!("{id}.json");
+    fs::create_dir_all(md.join("cur")).unwrap();
+    fs::rename(md.join("new").join(&n), md.join("cur").join(&n)).unwrap();
+}
+
+/// How many times the file of `id` is in `mail/<BOB>/cur/`.
+fn in_cur(b: &Machine, id: Ulid) -> usize {
+    let Ok(d) = fs::read_dir(b.sp().mail.join(BOB).join("cur")) else { return 0 };
+    d.filter(|e| e.as_ref().unwrap().file_name().to_str() == Some(&format!("{id}.json"))).count()
+}
+
+/// The names in `b`'s `mail/sync/incoming/`.
+fn incoming(b: &Machine) -> Vec<String> {
+    let Ok(d) = fs::read_dir(b.sp().incoming) else { return Vec::new() };
+    d.map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect()
+}
+
+/// Puts the bare repository back at `.0` when it was moved to `<bare>.away` (the guard of [`BreakPush`] and of a
+/// pass whose fetch fails).
+struct BareBack(PathBuf);
+impl Drop for BareBack {
+    fn drop(&mut self) {
+        let away = self.0.with_extension("away");
+        if away.exists() {
+            fs::rename(&away, &self.0).unwrap();
+        }
+    }
+}
+
+/// At `before_push`: a crash (`crash`), or the bare repository moved to `<bare>.away`, so the push fails (a stop
+/// that is not a crash). [`BareBack`] puts it back.
+struct BreakPush {
+    bare: PathBuf,
+    crash: bool,
+}
+impl Seam for BreakPush {
+    fn at(&self, p: &'static str) -> Result<(), Crash> {
+        if p == "before_push" {
+            if self.crash {
+                return Err(Crash(p));
+            }
+            fs::rename(&self.bare, self.bare.with_extension("away")).unwrap();
+        }
+        Ok(())
+    }
+}
+
+/// At `point`: the mode of `dir` becomes `mode`; its mode before goes into `before`, which [`ModeBack`] puts back.
+struct ModeAt {
+    point: &'static str,
+    dir: PathBuf,
+    mode: u32,
+    before: Arc<Mutex<Option<u32>>>,
+}
+impl Seam for ModeAt {
+    fn at(&self, p: &'static str) -> Result<(), Crash> {
+        use std::os::unix::fs::PermissionsExt;
+        if p == self.point {
+            let old = fs::metadata(&self.dir).unwrap().permissions().mode() & 0o7777;
+            self.before.lock().unwrap().get_or_insert(old);
+            fs::set_permissions(&self.dir, fs::Permissions::from_mode(self.mode)).unwrap();
+        }
+        Ok(())
+    }
+}
+
+/// Puts back the mode of `.0` that a [`ModeAt`] changed.
+struct ModeBack(PathBuf, Arc<Mutex<Option<u32>>>);
+impl Drop for ModeBack {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        if let Some(m) = *self.1.lock().unwrap() {
+            fs::set_permissions(&self.0, fs::Permissions::from_mode(m)).unwrap();
+        }
+    }
+}
+
+/// A [`ModeAt`] seam and the guard that puts the mode back.
+fn mode_at(point: &'static str, dir: PathBuf, mode: u32) -> (Box<dyn Seam>, ModeBack) {
+    let before = Arc::new(Mutex::new(None));
+    (Box::new(ModeAt { point, dir: dir.clone(), mode, before: before.clone() }), ModeBack(dir, before))
+}
+
+/// At `point`: the folder `dir` moves to `<dir>.away` and a regular file takes its name, so a delivery into it
+/// fails and its staged file stays in `incoming/` (`make_dirs` puts the mode of a folder back to `0700`, so a
+/// read-only folder does not stop it). [`DirBack`] puts the folder back.
+struct NotDirAt {
+    point: &'static str,
+    dir: PathBuf,
+}
+impl Seam for NotDirAt {
+    fn at(&self, p: &'static str) -> Result<(), Crash> {
+        if p == self.point {
+            fs::rename(&self.dir, self.dir.with_extension("away")).unwrap();
+            fs::write(&self.dir, b"").unwrap();
+        }
+        Ok(())
+    }
+}
+
+/// Puts back the folder `.0` that a [`NotDirAt`] moved away.
+struct DirBack(PathBuf);
+impl Drop for DirBack {
+    fn drop(&mut self) {
+        let away = self.0.with_extension("away");
+        if away.exists() {
+            fs::remove_file(&self.0).unwrap();
+            fs::rename(&away, &self.0).unwrap();
+        }
+    }
+}
+
+#[test] // FX-30 review F1: a pass that wakes and then stops at its push clears the record of what it counted
+fn push_stops_after_the_wake_wake_once() {
+    let _g = one_at_a_time();
+    let (r, a, b) = pair();
+    let _live = live(&b.paths, "sbob");
+    let id = send(&a, T0 + 1);
+    assert_eq!(sync(&a).pushed, 1);
+    let typed = Typed::default();
+    for k in 0..3u64 {
+        let _back = BareBack(r.bare.clone());
+        let e = pass_with(&b, Box::new(BreakPush { bare: r.bare.clone(), crash: false }), T0 + 1000 + 120 * k, &typed)
+            .unwrap_err();
+        assert!(matches!(e, SyncError::Stopped { check, .. } if check != "seam"), "pass {k}: {e:?}");
+        // Only the first pass delivers and counts. A stopped pass gives no Report, so its count shows in the record
+        // it leaves: the step 10 write removed the counted entry.
+        assert_eq!(*typed.lock().unwrap(), wake_once(), "pass {k}: a stopped pass wakes again");
+        assert!(pending_wake(&b).is_empty(), "pass {k}: the counted entry is still recorded");
+    }
+    let rep = pass(&b, CrashAt::none(), T0 + 2000, &typed).unwrap();
+    assert_eq!(rep.delivered, 0, "the pass that works counts the message again");
+    assert_eq!(*typed.lock().unwrap(), wake_once(), "the pass that works wakes again");
+    assert_eq!(in_new(&b, id), 1);
+}
+
+#[test] // FX-30 review F1: a crash at `before_push`, after the wake, does not count or wake the message again
+fn crash_before_push_after_the_wake_wakes_once() {
+    let _g = one_at_a_time();
+    let (r, a, b) = pair();
+    let _live = live(&b.paths, "sbob");
+    let id = send(&a, T0 + 1);
+    assert_eq!(sync(&a).pushed, 1);
+    let typed = Typed::default();
+    let e = pass_with(&b, Box::new(BreakPush { bare: r.bare.clone(), crash: true }), T0 + 1000, &typed).unwrap_err();
+    assert_eq!(e, SyncError::Stopped { line: "zygo: stopped at seam before_push".into(), check: "seam" });
+    assert_eq!(*typed.lock().unwrap(), wake_once());
+    let rep = pass(&b, CrashAt::none(), T0 + 1000 + WAKE_GAP + 1, &typed).unwrap();
+    assert_eq!(rep.delivered, 0, "the pass after the crash counts the message again");
+    assert_eq!(*typed.lock().unwrap(), wake_once(), "the pass after the crash wakes again");
+    assert_eq!(in_new(&b, id), 1);
+    assert!(pending_wake(&b).is_empty());
+}
+
+#[test] // FX-30 review F1: a stop after the wake and before the commit's state save (the outbox step) keeps no entry
+fn outbox_stop_after_the_wake_wakes_once() {
+    use std::os::unix::fs::DirBuilderExt;
+    let _g = one_at_a_time();
+    let (_r, a, b) = pair();
+    let _live = live(&b.paths, "sbob");
+    let id = send(&a, T0 + 1);
+    assert_eq!(sync(&a).pushed, 1);
+    let outbox = b.sp().outbox;
+    fs::DirBuilder::new().recursive(true).mode(0o700).create(&outbox).unwrap();
+    let typed = Typed::default();
+    let (seam, back) = mode_at("after_ack", outbox, 0o000);
+    let e = pass_with(&b, seam, T0 + 1000, &typed).unwrap_err();
+    drop(back);
+    assert!(matches!(e, SyncError::Stopped { check: "outbox", .. }), "{e:?}");
+    assert_eq!(*typed.lock().unwrap(), wake_once());
+    assert!(pending_wake(&b).is_empty(), "the counted entry is still recorded after the stop");
+    let rep = pass(&b, CrashAt::none(), T0 + 1000 + WAKE_GAP + 1, &typed).unwrap();
+    assert_eq!(rep.delivered, 0, "the pass after the stop counts the message again");
+    assert_eq!(*typed.lock().unwrap(), wake_once(), "the pass after the stop wakes again");
+    assert_eq!(in_new(&b, id), 1);
+}
+
+#[test] // FX-30 review F2: a recovered message that bob already read is counted once and wakes no one (S§10.1)
+fn recovered_message_already_read_is_counted_not_woken() {
+    let _g = one_at_a_time();
+    let (_r, a, b) = pair();
+    let _live = live(&b.paths, "sbob");
+    let id = send(&a, T0 + 1);
+    assert_eq!(sync(&a).pushed, 1);
+    let typed = Typed::default();
+    let e = pass(&b, CrashAt::at("after_new"), T0 + 1000, &typed).unwrap_err();
+    assert_eq!(e, SyncError::Stopped { line: "zygo: stopped at seam after_new".into(), check: "seam" });
+    read_by_bob(&b, id);
+    let rep = pass(&b, CrashAt::none(), T0 + 1001, &typed).unwrap();
+    assert_eq!(rep.delivered, 1, "the recovered message in cur/ is not counted");
+    assert!(typed.lock().unwrap().is_empty(), "bob is woken for a message he already read");
+    let rep = pass(&b, CrashAt::none(), T0 + 1001 + WAKE_GAP + 1, &typed).unwrap();
+    assert_eq!(rep.delivered, 0, "the pass after the recovery counts again");
+    assert!(typed.lock().unwrap().is_empty());
+    assert_eq!((in_new(&b, id), in_cur(&b, id)), (0, 1));
+    assert!(pending_wake(&b).is_empty());
+}
+
+#[test] // FX-30 review F3: an entry whose delivery is still staged in `incoming/` is kept until a pass counts it
+fn staged_delivery_keeps_its_entry_until_counted() {
+    let _g = one_at_a_time();
+    let (r, a, b) = pair();
+    let _live = live(&b.paths, "sbob");
+    let id = send(&a, T0 + 1);
+    assert_eq!(sync(&a).pushed, 1);
+    let typed = Typed::default();
+    // Pass 1 stages and logs the delivery, then cannot move it into `new/` (not a folder from `after_log`): the
+    // staged file and the pending entry are what a crash at `after_log` leaves, and this pass runs to its end.
+    let new_dir = b.sp().mail.join(BOB).join("new");
+    let back = DirBack(new_dir.clone());
+    let rep = pass_with(&b, Box::new(NotDirAt { point: "after_log", dir: new_dir }), T0 + 1000, &typed).unwrap();
+    drop(back);
+    assert_eq!(rep.delivered, 0);
+    assert!(typed.lock().unwrap().is_empty());
+    assert_eq!(incoming(&b), vec![format!("{BOB}.{id}.json")]);
+    assert_eq!(pending_wake(&b).get(&id.to_string()), Some(&serde_json::json!(BOB)),
+        "the pass end removed the entry of a delivery still staged");
+    // Pass 2: step 5 moves the staged file into `new/`, then the fetch fails, before the first round.
+    {
+        let _bare = BareBack(r.bare.clone());
+        fs::rename(&r.bare, r.bare.with_extension("away")).unwrap();
+        pass(&b, CrashAt::none(), T0 + 1100, &typed).unwrap_err();
+    }
+    assert_eq!(in_new(&b, id), 1);
+    assert!(incoming(&b).is_empty());
+    assert!(typed.lock().unwrap().is_empty());
+    assert_eq!(pending_wake(&b).get(&id.to_string()), Some(&serde_json::json!(BOB)));
+    // Pass 3 counts and wakes it; pass 4, past `wake_gap`, does neither.
+    let rep = pass(&b, CrashAt::none(), T0 + 1200, &typed).unwrap();
+    assert_eq!(rep.delivered, 1, "the message step 5 moved into new/ is not counted");
+    assert_eq!(*typed.lock().unwrap(), wake_once(), "bob is not woken for it");
+    assert!(pending_wake(&b).is_empty());
+    let rep = pass(&b, CrashAt::none(), T0 + 1200 + WAKE_GAP + 1, &typed).unwrap();
+    assert_eq!(rep.delivered, 0);
     assert_eq!(*typed.lock().unwrap(), wake_once());
     assert_eq!(in_new(&b, id), 1);
 }
