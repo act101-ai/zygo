@@ -1156,6 +1156,34 @@ fn store_item_hard_link_at_the_item_name_is_not_written() {
 }
 
 #[cfg(unix)]
+#[test] // FX-44 CI: a store in progress (the item and its temp name, two links in the folder) is read as the item
+fn fixed_item_store_in_progress_is_read() {
+    let (_t, d) = sd();
+    let path = session_start::item_path(&d, "ses_A").unwrap();
+    std::fs::create_dir(path.parent().unwrap()).unwrap();
+    let name = path.file_name().unwrap().to_str().unwrap().to_string();
+    std::fs::write(&path, "WINNER").unwrap();
+    std::fs::hard_link(&path, path.with_file_name(format!(".{name}.1.2.3.tmp"))).unwrap();
+    let mut later = || panic!("a stored item is not built again");
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut later).as_deref(), Some("WINNER"));
+}
+
+#[cfg(unix)]
+#[test] // FX-44 CI: an item with a temp-named link in the folder and a link outside it (three links) is not used
+fn fixed_item_temp_link_and_outside_link_is_not_used() {
+    let (t, d) = sd();
+    let path = session_start::item_path(&d, "ses_A").unwrap();
+    std::fs::create_dir(path.parent().unwrap()).unwrap();
+    let name = path.file_name().unwrap().to_str().unwrap().to_string();
+    let outside = t.path().join("outside");
+    std::fs::write(&outside, "OUTSIDE").unwrap();
+    std::fs::hard_link(&outside, &path).unwrap();
+    std::fs::hard_link(&outside, path.with_file_name(format!(".{name}.1.2.3.tmp"))).unwrap();
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || Some("BUILT".into())).as_deref(), Some("BUILT"));
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "OUTSIDE");
+}
+
+#[cfg(unix)]
 #[test] // FX-44 review 1: a `session-item/` replaced by a link after it was opened: the read never follows the link
 fn fixed_item_folder_swapped_before_the_read_reads_inside() {
     let (t, d) = sd();
