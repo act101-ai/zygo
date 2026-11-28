@@ -537,6 +537,43 @@ fn repo_file_origin_head() {
 
 #[test]
 #[ignore = "timing: git calls run under the 2 s production bound (GIT_BOUND)"]
+fn repo_file_over_the_cap_is_invalid() {
+    // §13.5 (FX-43): at most REPO_FILE_MAX bytes; one byte more is invalid, with the load warning and no key used.
+    let head = "version = 1\n[guards]\nclaims = \"enforce\"\n";
+    let pad = |len: usize| format!("{head}#{}\n", "x".repeat(len - head.len() - 2));
+    let at = pad(repo_file::REPO_FILE_MAX);
+    assert_eq!(at.len(), repo_file::REPO_FILE_MAX);
+    assert!(matches!(repo_file::read_default_branch(&repo_with("fx43-at", &at)), RepoFile::Found { .. }));
+    let over = pad(repo_file::REPO_FILE_MAX + 1);
+    let d = repo_with("fx43-over", &over);
+    let why = format!(".zygo.toml is larger than {} bytes", repo_file::REPO_FILE_MAX);
+    assert_eq!(repo_file::read_default_branch(&d), RepoFile::Invalid { branch: "main".into(), why: why.clone() });
+    let m = load(&ctx(None, Some(d.to_path_buf()), None)).unwrap();
+    assert!(m.warnings.contains(&format!(".zygo.toml: invalid ({why}); ignored")), "{:?}", m.warnings);
+    assert_eq!(m.config.guards.claims, Level::Monitor);
+}
+
+#[test]
+#[ignore = "timing: git calls run under the 2 s production bound (GIT_BOUND)"]
+fn repo_file_directory_is_not_a_file() {
+    // §13.5 (FX-43 review F4): a tree at `.zygo.toml` is invalid as not a file, with a small listing and with one
+    // larger than REPO_FILE_MAX (1024 names of 80 bytes: 82 KiB).
+    for (name, count) in [("fx43-dir-small", 2usize), ("fx43-dir-large", 1024)] {
+        let d = tmp(name);
+        git(&d, &["init", "-b", "main"]);
+        std::fs::create_dir(d.join(".zygo.toml")).unwrap();
+        for i in 0..count {
+            std::fs::write(d.join(".zygo.toml").join(format!("{i:079}")), "x").unwrap();
+        }
+        git(&d, &["add", "."]);
+        git(&d, &["commit", "-m", "x"]);
+        let want = RepoFile::Invalid { branch: "main".into(), why: ".zygo.toml is not a file".into() };
+        assert_eq!(repo_file::read_default_branch(&d), want, "{count} names");
+    }
+}
+
+#[test]
+#[ignore = "timing: git calls run under the 2 s production bound (GIT_BOUND)"]
 fn repo_file_absent_and_invalid() {
     assert_eq!(repo_file::read_default_branch(&tmp("rf3")), RepoFile::Absent);
     let d = repo_with("rf4", "version = 2\n");
@@ -885,7 +922,8 @@ fn git_bound_is_total() {
     std::fs::set_permissions(&g, std::fs::Permissions::from_mode(0o755)).unwrap();
     let path = format!("{}:{}", d.display(), std::env::var("PATH").unwrap_or_default());
     let out = Command::new(std::env::current_exe().unwrap())
-        .args(["git_bound_is_total", "--exact", "--test-threads=1"])
+        // `--ignored`: the test is ignored, so without it the child skips it and passes nothing.
+        .args(["git_bound_is_total", "--exact", "--ignored", "--test-threads=1"])
         .env("ZYGO_N3_FAKE_GIT", "1")
         .env("PATH", path)
         .output()
