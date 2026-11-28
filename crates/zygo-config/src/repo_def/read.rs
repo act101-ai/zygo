@@ -247,8 +247,9 @@ fn files(top: &Path, git: &dyn GitRunner, full_ref: &Option<String>, commit: &st
         return Err(invalid(".zygo is not a directory".into(), false));
     }
     let (mut workspace, mut dir, mut ignored) = (None, None, Vec::new());
-    // A refused listing lists no entry, so its read has no `.zygo/workspace.toml`.
-    for e in list(".zygo/", Some(&zygo.oid), b".zygo/", false)? {
+    // R§10 `zygo loadout list` (FX-39 R5): a `.zygo/` listing above a limit counts as a read with
+    // `.zygo/workspace.toml`, because it is not known whether it has one; so it gives the `invalid` row.
+    for e in list(".zygo/", Some(&zygo.oid), b".zygo/", true)? {
         match &e.path[b".zygo/".len()..] {
             b"workspace.toml" => workspace = Some(e),
             b"profiles" => dir = Some(e),
