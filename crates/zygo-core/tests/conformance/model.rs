@@ -178,21 +178,109 @@ const NEST_MAX: usize = 256;
 /// The stack of the thread that parses Rust source: `NEST_MAX` levels need more than a test thread's 2 MiB.
 const PARSE_STACK: usize = 64 << 20;
 
-/// Parse Rust source text and give the file to `f`, on a thread with a `PARSE_STACK` stack; refuse nesting
-/// deeper than `NEST_MAX`, counted on the raw text, before the parse. `syn` types are not `Send`, so `f`
-/// returns what the caller needs.
-fn with_parsed<T: Send>(rel: &str, text: &str, f: impl FnOnce(&syn::File) -> T + Send) -> Result<T, String> {
-    let (mut depth, mut deepest) = (0usize, 0usize);
-    for b in text.bytes() {
-        match b {
+/// The end of a quoted literal whose text starts at `start`: the index after the first `close` that no `\`
+/// escapes, or the end of `b` when there is none.
+fn quoted_end(b: &[u8], start: usize, close: u8) -> usize {
+    let mut i = start;
+    while i < b.len() {
+        match b[i] {
+            b'\\' => i += 2,
+            c if c == close => return i + 1,
+            _ => i += 1,
+        }
+    }
+    b.len()
+}
+
+/// The end of a raw string whose `#` run starts at `start` (after `r`, `br` or `cr`), or `None` when no `"`
+/// follows the run (a raw identifier such as `r#match`, or plain code).
+fn raw_end(b: &[u8], start: usize) -> Option<usize> {
+    let hashes = b[start..].iter().take_while(|&&c| c == b'#').count();
+    let body = start + hashes;
+    if b.get(body) != Some(&b'"') {
+        return None;
+    }
+    let mut i = body + 1;
+    while i < b.len() {
+        if b[i] == b'"' && b.len() - (i + 1) >= hashes && b[i + 1..i + 1 + hashes].iter().all(|&c| c == b'#') {
+            return Some(i + 1 + hashes);
+        }
+        i += 1;
+    }
+    Some(b.len())
+}
+
+/// The deepest nesting of `(`, `[` and `{` in the code of `text`. As Rust's lexer does, it skips the brackets in
+/// comments (block comments nest) and in string, byte, C-string, raw and char literals; a `'` that starts no
+/// char literal is a lifetime or a label. A literal or block comment with no end runs to the end of the text,
+/// whose parse then fails.
+fn code_nesting(text: &str) -> usize {
+    let b = text.as_bytes();
+    let ident = |c: u8| c == b'_' || c.is_ascii_alphanumeric() || c >= 0x80;
+    let (mut i, mut depth, mut deepest) = (0usize, 0usize, 0usize);
+    while i < b.len() {
+        let next = b.get(i + 1).copied();
+        match b[i] {
+            b'/' if next == Some(b'/') => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if next == Some(b'*') => {
+                let mut level = 0usize;
+                while i < b.len() {
+                    if b[i] == b'/' && b.get(i + 1) == Some(&b'*') {
+                        level += 1;
+                        i += 2;
+                    } else if b[i] == b'*' && b.get(i + 1) == Some(&b'/') {
+                        level -= 1;
+                        i += 2;
+                        if level == 0 {
+                            break;
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            b'"' => i = quoted_end(b, i + 1, b'"'),
+            b'r' | b'b' | b'c' if i == 0 || !ident(b[i - 1]) => {
+                let raw_at = if b[i] == b'r' { Some(i + 1) } else if next == Some(b'r') { Some(i + 2) } else { None };
+                if let Some(end) = raw_at.and_then(|at| raw_end(b, at)) {
+                    i = end;
+                } else if b[i] != b'r' && next == Some(b'"') {
+                    i = quoted_end(b, i + 2, b'"');
+                } else if b[i] == b'b' && next == Some(b'\'') {
+                    i = quoted_end(b, i + 2, b'\'');
+                } else {
+                    i += 1;
+                }
+            }
+            b'\'' if next == Some(b'\\') => i = quoted_end(b, i + 1, b'\''),
+            b'\'' => {
+                let len = text[i + 1..].chars().next().map_or(0, char::len_utf8);
+                i += if len > 0 && b.get(i + 1 + len) == Some(&b'\'') { len + 2 } else { 1 };
+            }
             b'(' | b'[' | b'{' => {
                 depth += 1;
                 deepest = deepest.max(depth);
+                i += 1;
             }
-            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
-            _ => {}
+            b')' | b']' | b'}' => {
+                depth = depth.saturating_sub(1);
+                i += 1;
+            }
+            _ => i += 1,
         }
     }
+    deepest
+}
+
+/// Parse Rust source text and give the file to `f`, on a thread with a `PARSE_STACK` stack; refuse nesting
+/// deeper than `NEST_MAX`, counted on the code of the text (`code_nesting`), before the parse. `syn` types are
+/// not `Send`, so `f` returns what the caller needs.
+fn with_parsed<T: Send>(rel: &str, text: &str, f: impl FnOnce(&syn::File) -> T + Send) -> Result<T, String> {
+    let deepest = code_nesting(text);
     if deepest > NEST_MAX {
         return Err(format!("{rel}: brackets are nested {deepest} deep, more than {NEST_MAX}"));
     }

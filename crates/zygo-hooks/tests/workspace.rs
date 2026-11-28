@@ -22,8 +22,9 @@ use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::{Member, ResumeNote, SessionView, SubagentRef, ViewWorkspace};
 use zygo_core::Agent;
-use zygo_hooks::{prompt, session_start, session_text, workspace};
+use zygo_hooks::{mail, prompt, session_start, session_text, workspace};
 use zygo_workspace::activity::{self, Activity};
+use zygo_workspace::mail::mail_dir;
 use zygo_workspace::snapshot;
 use zygo_workspace::state::{MemberRecord, MemberState, Pending, Phase, Store, Subagent};
 
@@ -39,6 +40,7 @@ const S5: Duration = Duration::from_secs(5);
 const I1: &str = "zygo stopped this session while subagents Explore a1 were running; their results were lost; dispatch them again if still needed.";
 const U12: &str = "Units u-1, u-2 were closed when zygo stopped this session; call work_begin to open them again if work continues.";
 const U1: &str = "Units u-1 were closed when zygo stopped this session; call work_begin to open them again if work continues.";
+const L2: &str = "zygo: 2 new messages; read them with mail_read";
 const CRASH: &str = "zygo did not stop this session cleanly; the list of closed units was not saved.";
 
 /// `data_dir` = `<p>/data` is not under `$HOME`, so the state folder is `<p>/data/state`.
@@ -1027,6 +1029,79 @@ fn session_start_refusals() {
     assert!(!g.paths.state_dir().exists());
 }
 
+/// The hook commit of a pending start by `agent` (T§3.2): the Claude Code `SessionStart` with no `session_id`, or the
+/// OpenCode `session` call with only `cwd`. The zygo program does not exist and the agent id does not change, so no
+/// snapshot child starts.
+fn commit_by_hook(f: &Fx, agent: Agent) {
+    let missing = f.t.path().join("missing");
+    match agent {
+        Agent::ClaudeCode => {
+            let input = hook(Agent::ClaudeCode, &without(fixture("SessionStart-main"), "session_id"));
+            session_start::run_member(&input, &f.dir, &f.paths, &missing, &mut Vec::new()).unwrap();
+        }
+        Agent::OpenCode => {
+            ws_with(f, &missing, "session", json!({"cwd": "/repo"})).unwrap();
+        }
+    }
+}
+
+/// `members.<KEY>` of `workspace.json` as JSON.
+fn member_json(f: &Fx) -> Value {
+    serde_json::from_slice::<Value>(&raw(f)).unwrap()["members"][KEY].clone()
+}
+
+#[test] // T§3.2 (W AU92 addition), T§5 "Fresh member", T§7 item 4
+fn first_started_at_is_set_by_the_hook_commit_of_each_agent() {
+    let _s = serial();
+    for agent in [Agent::ClaudeCode, Agent::OpenCode] {
+        let f = fx(agent);
+        ws_state(&f, Phase::Up, rec_pending()); // pending SID, started_at 7; no first_started_at
+        commit_by_hook(&f, agent);
+        let m = member(&f);
+        assert_eq!((m.pending.clone(), m.zygo_session.as_deref(), m.first_started_at), (None, Some(SID), Some(7)), "{agent:?}");
+        assert_eq!(member_json(&f)["first_started_at"], json!(7), "{agent:?}");
+        assert!(errors(&f).is_empty(), "{agent:?}");
+    }
+}
+
+#[test] // T§3.2 "never changed after it is set", T§5 "`zygo down`, then `zygo up`", T§7 item 4
+fn first_started_at_is_kept_by_a_later_hook_commit() {
+    let _s = serial();
+    for agent in [Agent::ClaudeCode, Agent::OpenCode] {
+        let f = fx(agent);
+        ws_state(&f, Phase::Up, MemberRecord { first_started_at: Some(3), ..rec_pending() }); // pending started_at 7
+        commit_by_hook(&f, agent);
+        let m = member(&f);
+        assert_eq!((m.pending.clone(), m.zygo_session.as_deref(), m.first_started_at), (None, Some(SID), Some(3)), "{agent:?}");
+    }
+}
+
+#[test] // T§2.2 (0 is unknown), T§3.2, T§7 item 4; graph review focus 60
+fn first_started_at_stays_absent_for_a_zero_start_until_a_later_nonzero_hook_commit() {
+    let _s = serial();
+    let zero = |at| MemberRecord { pending: Some(Pending { zygo_session: SID.into(), agent_session: None, started_at: at, ..Default::default() }), ..rec_pending() };
+    for agent in [Agent::ClaudeCode, Agent::OpenCode] {
+        let f = fx(agent);
+        let store = ws_state(&f, Phase::Up, zero(0));
+        commit_by_hook(&f, agent);
+        let m = member(&f);
+        assert_eq!((m.pending.clone(), m.zygo_session.as_deref(), m.first_started_at), (None, Some(SID), None), "{agent:?}");
+        assert!(member_json(&f).get("first_started_at").is_none(), "{agent:?}");
+        // a later start with a non-zero time: its commit sets the field
+        store.update(S5, &mut |w| {
+            w.members.get_mut(KEY).unwrap().pending = Some(Pending { zygo_session: SID.into(), agent_session: None, started_at: 11, ..Default::default() });
+            Ok(())
+        }).unwrap();
+        commit_by_hook(&f, agent);
+        assert_eq!(member(&f).first_started_at, Some(11), "{agent:?}");
+        // a stored 0 counts as absent (T§3.2 "absent or 0")
+        let g = fx(agent);
+        ws_state(&g, Phase::Up, MemberRecord { first_started_at: Some(0), ..rec_pending() });
+        commit_by_hook(&g, agent);
+        assert_eq!(member(&g).first_started_at, Some(7), "{agent:?}");
+    }
+}
+
 #[test] // W§9.4, AU42, AU104, D14, D15; controller decision 1
 fn resume_note_texts_and_agents() {
     let _s = serial();
@@ -1457,7 +1532,7 @@ fn hostile_inputs_change_nothing() {
     assert!(!f.dir.activity_json().exists());
     assert_eq!(
         slog(&f),
-        [format!("workspace hook prompt: {lock_path}: open lock file: {lock_path}: is a link; it is not followed")]
+        [format!("workspace hook prompt: {lock_path}: is a link; it is not followed")]
     );
     // A session folder made read-only: the write fails, a persistent condition (round 4 T3). The session log exists
     // before, so its lines can still be appended. Root writes in a read-only folder, so the case is skipped there.
@@ -1906,4 +1981,360 @@ fn prompt_hook_child() {
         &bytes,
     );
     assert_eq!(out, (String::new(), 0));
+}
+
+/// Writes `n` message files with body `{}` into `new/` of the member `KEY` (made when missing) and returns that folder.
+fn put_new(f: &Fx, n: usize) -> PathBuf {
+    let new = mail_dir(&f.paths, ID).join(KEY).join("new");
+    fs::create_dir_all(&new).unwrap();
+    for i in 0..n {
+        fs::write(new.join(format!("01J{i:023}.json")), "{}").unwrap();
+    }
+    new
+}
+
+/// Sets `[features] mail` on in the view of `f` (M§8, M§8a), as the launcher writes it for a member with mail on.
+fn mail_on(f: &Fx) {
+    let mut v = SessionView::load(&f.dir).unwrap();
+    v.mail = true;
+    v.save(&f.dir).unwrap();
+}
+
+#[test] // M§7.1, M§7.2
+fn mail_lines_name_the_count_and_the_tool() {
+    assert_eq!(mail::delivery_line(2), L2);
+    assert_eq!(serde_json::from_str::<Value>(&mail::stop_block(2)).unwrap(), json!({"decision": "block", "reason": L2}));
+}
+
+#[test] // M§7.1, AU43; ML-10 D1, D2
+fn mail_stop_blocks_once_and_keeps_busy() {
+    let _s = serial();
+    let f = fx(Agent::ClaudeCode);
+    mail_on(&f);
+    put_new(&f, 2);
+    set_act(&f, true, 2);
+    assert_eq!(parsed(ws(&f, "stop", fixture("Stop-main"))), json!({"decision": "block", "reason": L2}));
+    assert_eq!(bt(&f), (true, 2)); // blocking: activity.json not changed
+    assert_eq!(ws(&f, "stop", with(fixture("Stop-main"), "stop_hook_active", json!(true))).unwrap(), None);
+    assert_eq!(bt(&f), (false, 0));
+}
+
+#[test] // M§7.1, M§13 #4, AU43; ML-10 D1, D2
+fn mail_stop_without_a_block_clears_busy() {
+    let _s = serial();
+    let f = fx(Agent::ClaudeCode);
+    mail_on(&f);
+    set_act(&f, true, 1);
+    assert_eq!(ws(&f, "stop", fixture("Stop-main")).unwrap(), None); // no mail/ at all
+    assert_eq!(bt(&f), (false, 0));
+    let new = put_new(&f, 0);
+    set_act(&f, true, 1);
+    assert_eq!(ws(&f, "stop", fixture("Stop-main")).unwrap(), None); // empty new/
+    assert_eq!(bt(&f), (false, 0));
+    put_new(&f, 2);
+    set_act(&f, true, 1);
+    assert_eq!(ws(&f, "stop", with(fixture("Stop-main"), "hook_event_name", json!("StopFailure"))).unwrap(), None);
+    assert_eq!(bt(&f), (false, 0));
+    set_act(&f, true, 1);
+    assert_eq!(ws(&f, "stop", with(fixture("Stop-main"), "agent_id", json!("a1"))).unwrap(), None);
+    assert_eq!(bt(&f), (true, 1)); // not the main loop (AU43)
+    let o = fx(Agent::OpenCode);
+    mail_on(&o);
+    put_new(&o, 2);
+    set_act(&o, true, 0);
+    assert_eq!(ws(&o, "stop", oc("ses_A")).unwrap(), None);
+    assert_eq!(bt(&o), (false, 0));
+    assert_eq!(entries(&new).len(), 2); // no message moved
+}
+
+#[test] // M§7.2, AU86; ML-10 D3
+fn mail_prompt_adds_the_line_and_the_stopping_block_wins() {
+    let _s = serial();
+    let f = fx(Agent::ClaudeCode);
+    mail_on(&f);
+    assert_eq!(ws(&f, "prompt", ups("hello")).unwrap(), None); // no mail
+    put_new(&f, 2);
+    set_act(&f, false, 0);
+    assert_eq!(
+        parsed(ws(&f, "prompt", ups("hello"))),
+        json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": L2}})
+    );
+    assert_eq!(bt(&f), (true, 0));
+    let store = ws_state(&f, Phase::Stopping, MemberRecord::new(Agent::ClaudeCode));
+    set_act(&f, false, 0);
+    let _op = store.op_lock().unwrap();
+    assert_eq!(parsed(ws(&f, "prompt", ups("hello"))), json!({"decision": "block", "reason": "zygo: workspace is stopping"}));
+    assert_eq!(bt(&f), (false, 0));
+    let o = fx(Agent::OpenCode);
+    mail_on(&o);
+    put_new(&o, 2);
+    assert_eq!(ws(&o, "prompt", oc("ses_A")).unwrap(), None); // D3
+    assert_eq!(bt(&o), (true, 0));
+}
+
+#[test] // M§7.2, M§8a, W§9.4; ML-10 D5
+fn mail_session_start_line_follows_the_resume_note() {
+    let _s = serial();
+    let f = fx_note();
+    mail_on(&f);
+    let store = ws_state(&f, Phase::Up, rec_pending());
+    let missing = f.t.path().join("missing");
+    put_new(&f, 2);
+    let item = mail::session_item(&store.read().unwrap().unwrap(), KEY).unwrap();
+    assert_eq!(ss_text(&f, &ss(AS1), &missing), format!("{}\n\n{item}\n\n{I1}\n{U12}\n\n{L2}", base(&f)));
+    // No mail: no line.
+    let g = fx_note();
+    mail_on(&g);
+    let item = mail::session_item(&ws_state(&g, Phase::Up, rec_pending()).read().unwrap().unwrap(), KEY).unwrap();
+    let missing = g.t.path().join("missing");
+    assert_eq!(ss_text(&g, &ss(AS1), &missing), format!("{}\n\n{item}\n\n{I1}\n{U12}", base(&g)));
+}
+
+#[test] // M§7.2, AU104; ML-10 D5
+fn mail_opencode_request_text_holds_the_line_while_new_is_not_empty() {
+    let _s = serial();
+    let f = fx(Agent::OpenCode);
+    mail_on(&f);
+    let missing = f.t.path().join("missing");
+    let new = put_new(&f, 2);
+    for _ in 0..2 {
+        assert_eq!(ss_text(&f, &oc_start(), &missing), format!("{}\n\n{L2}", base(&f)));
+    }
+    for e in entries(&new) {
+        fs::remove_file(new.join(e)).unwrap();
+    }
+    assert_eq!(ss_text(&f, &oc_start(), &missing), base(&f));
+}
+
+/// Child half of `mail_unreadable_folder_changes_no_decision`: one hook call as the binary runs it, so its stderr line
+/// can be read. `ZYGO_ML10_CHILD` is the fixture's temp root and `ZYGO_ML10_EVENT` the event (`stop`, `prompt` or
+/// `session-start`); an `Err` fails the child. It prints `OUT=<JSON string of the output text>` (`""` for none). In a
+/// normal run it returns at once.
+#[test]
+fn mail_hook_child() {
+    let Some(root) = std::env::var_os("ZYGO_ML10_CHILD") else { return };
+    let event = std::env::var("ZYGO_ML10_EVENT").unwrap();
+    let root = PathBuf::from(root);
+    let paths = paths(&root);
+    let dir = SessionDir::new(paths.sessions_dir.join(SID));
+    let zygo = root.join("missing");
+    let sd = dir.root.clone().into_os_string();
+    let env = |k: &str| if k == "ZYGO_SESSION_DIR" { Some(sd.clone()) } else { None };
+    let out = match event.as_str() {
+        "stop" | "prompt" => {
+            let payload = if event == "stop" { fixture("Stop-main") } else { ups("hello") };
+            workspace::run(&event, &serde_json::to_vec(&payload).unwrap(), &paths, &env, &zygo).unwrap().unwrap_or_default()
+        }
+        "session-start" => {
+            let input = match SessionView::load(&dir).unwrap().agent {
+                Agent::ClaudeCode => ss(AS1),
+                Agent::OpenCode => oc_start(),
+            };
+            let mut printed = Vec::new();
+            match session_start::run_member(&input, &dir, &paths, &zygo, &mut printed).unwrap() {
+                HookOutput::None if printed.is_empty() => String::new(),
+                HookOutput::None => context(&serde_json::from_slice(&printed).unwrap()),
+                HookOutput::Json(v) => context(&v),
+                HookOutput::Text(t) => t,
+            }
+        }
+        e => panic!("unknown event {e}"),
+    };
+    println!("OUT={}", serde_json::to_string(&out).unwrap());
+}
+
+/// Runs `mail_hook_child` for `event` on the fixture `f`; asserts it exits 0 and returns the `OUT=` text (libtest
+/// prints it after `test mail_hook_child ... ` on the same line) and the
+/// stderr lines that start with `zygo hook: `.
+fn child(f: &Fx, event: &str) -> (String, Vec<String>) {
+    let out = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "mail_hook_child", "--nocapture", "--test-threads=1"])
+        .env("ZYGO_ML10_CHILD", f.t.path())
+        .env("ZYGO_ML10_EVENT", event)
+        .env_remove("ZYGO_SESSION_DIR")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let line = stdout.lines().find_map(|l| l.split_once("OUT=").map(|(_, t)| t)).unwrap_or_else(|| panic!("no OUT= line: {stdout}"));
+    let text: String = serde_json::from_str(line).unwrap();
+    let err = String::from_utf8(out.stderr).unwrap().lines().filter(|l| l.starts_with("zygo hook: ")).map(String::from).collect();
+    (text, err)
+}
+
+/// `put_new(f, 2)`, then the mail folder of `f` to mode `0o000`.
+fn lock_mail(f: &Fx) -> PathBuf {
+    put_new(f, 2);
+    let m = mail_dir(&f.paths, ID);
+    fs::set_permissions(&m, fs::Permissions::from_mode(0o000)).unwrap();
+    m
+}
+
+#[test] // M-C1, M§10 "Hook cannot read `mail/`", M§13 #9, C6; ML-10 D4
+fn mail_unreadable_folder_changes_no_decision() {
+    let _s = serial();
+    // Root reads a folder of mode 0o000, so the case is skipped there.
+    // SAFETY: `geteuid` takes no argument and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipped the unreadable mail folder case: the test runs as root");
+        return;
+    }
+    // Claude Code
+    let f = fx(Agent::ClaudeCode);
+    mail_on(&f);
+    let m = lock_mail(&f);
+    set_act(&f, true, 1);
+    let stop = child(&f, "stop");
+    let stop_bt = bt(&f);
+    set_act(&f, false, 0);
+    let prompt = child(&f, "prompt");
+    let prompt_bt = bt(&f);
+    let start = child(&f, "session-start");
+    fs::set_permissions(&m, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!((stop.0.as_str(), stop.1.len()), ("", 1), "{stop:?}");
+    assert_eq!(stop_bt, (false, 0));
+    assert_eq!((prompt.0.as_str(), prompt.1.len()), ("", 1), "{prompt:?}");
+    assert_eq!(prompt_bt, (true, 0));
+    assert_eq!((start.0, start.1.len()), (base(&f), 1), "{:?}", start.1);
+    // OpenCode
+    let o = fx(Agent::OpenCode);
+    mail_on(&o);
+    let m = lock_mail(&o);
+    let start = child(&o, "session-start");
+    fs::set_permissions(&m, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!((start.0, start.1.len()), (base(&o), 1), "{:?}", start.1);
+}
+
+#[test] // M§7.2 last sentence, M-C2
+fn mail_no_hook_opens_a_message_file() {
+    let _s = serial();
+    let f = fx_note();
+    mail_on(&f);
+    ws_state(&f, Phase::Up, rec_pending());
+    let missing = f.t.path().join("missing");
+    let new = put_new(&f, 2);
+    for e in entries(&new) {
+        fs::set_permissions(new.join(e), fs::Permissions::from_mode(0o000)).unwrap();
+    }
+    assert_eq!(parsed(ws(&f, "stop", fixture("Stop-main"))), json!({"decision": "block", "reason": L2})); // counted unopened
+    assert_eq!(
+        parsed(ws(&f, "prompt", ups("hello"))),
+        json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": L2}})
+    );
+    assert!(ss_text(&f, &ss(AS1), &missing).ends_with(&format!("\n\n{L2}")));
+    // The watch needs readable message files: an open that fails gives no `IN_OPEN` event, so it would see nothing.
+    #[cfg(target_os = "linux")]
+    {
+        for e in entries(&new) {
+            fs::set_permissions(new.join(e), fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let names = opened(&new, || {
+            assert_eq!(parsed(ws(&f, "stop", fixture("Stop-main"))), json!({"decision": "block", "reason": L2}));
+            assert_eq!(
+                parsed(ws(&f, "prompt", ups("hello"))),
+                json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": L2}})
+            );
+            assert!(ss_text(&f, &ss(AS1), &missing).ends_with(&format!("\n\n{L2}")));
+        });
+        assert!(!names.iter().any(|n| n.ends_with(".json")), "{names:?}");
+        assert!(names.iter().any(|n| n == "."), "{names:?}"); // positive control: the hooks opened `new/` itself
+    }
+}
+
+#[test] // M§8, M§8a item 1; ML-10 review R1
+fn mail_off_reads_no_mail() {
+    let _s = serial();
+    // Claude Code: no block, `busy` cleared, no prompt line, no SessionStart line.
+    let f = fx(Agent::ClaudeCode);
+    let missing = f.t.path().join("missing");
+    put_new(&f, 2);
+    set_act(&f, true, 1);
+    assert_eq!(ws(&f, "stop", fixture("Stop-main")).unwrap(), None);
+    assert_eq!(bt(&f), (false, 0));
+    assert_eq!(ws(&f, "prompt", ups("hello")).unwrap(), None);
+    assert_eq!(bt(&f), (true, 0));
+    assert_eq!(ss_text(&f, &ss(AS1), &missing), base(&f));
+    // OpenCode: no per-request line.
+    let o = fx(Agent::OpenCode);
+    let missing = o.t.path().join("missing");
+    put_new(&o, 2);
+    assert_eq!(ss_text(&o, &oc_start(), &missing), base(&o));
+    // `mail/` is not read at all: an unreadable `mail/` writes no stderr line. Root reads it, so that part is skipped.
+    // SAFETY: `geteuid` takes no argument and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipped the unreadable mail folder part: the test runs as root");
+        return;
+    }
+    let g = fx(Agent::ClaudeCode);
+    let m = lock_mail(&g);
+    set_act(&g, true, 1);
+    let stop = child(&g, "stop");
+    let stop_bt = bt(&g);
+    let prompt = child(&g, "prompt");
+    let start = child(&g, "session-start");
+    fs::set_permissions(&m, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!((stop.0.as_str(), stop.1.len()), ("", 0), "{stop:?}");
+    assert_eq!(stop_bt, (false, 0));
+    assert_eq!((prompt.0.as_str(), prompt.1.len()), ("", 0), "{prompt:?}");
+    assert_eq!((start.0, start.1.len()), (base(&g), 0), "{:?}", start.1);
+}
+
+/// A Claude Code `stop` with 2 unread in phase `phase`: no block, and `busy` is cleared (M§9: `down` does not wait for
+/// unread mail).
+fn stop_in_phase_clears(phase: Phase) {
+    let f = fx(Agent::ClaudeCode);
+    mail_on(&f);
+    ws_state(&f, phase, MemberRecord::new(Agent::ClaudeCode));
+    put_new(&f, 2);
+    set_act(&f, true, 1);
+    let stop = fixture("Stop-main");
+    assert_eq!(stop.get("stop_hook_active"), Some(&json!(false)));
+    assert_eq!(ws(&f, "stop", stop).unwrap(), None, "{phase:?}");
+    assert_eq!(bt(&f), (false, 0), "{phase:?}");
+}
+
+#[test] // M§7.1, M§9; ML-10 review R3
+fn mail_stop_does_not_block_while_stopping() {
+    let _s = serial();
+    stop_in_phase_clears(Phase::Stopping);
+}
+
+#[test] // M§7.1, M§9; ML-10 review R3
+fn mail_stop_does_not_block_while_draining() {
+    let _s = serial();
+    stop_in_phase_clears(Phase::Draining);
+}
+
+#[test] // M§7.1; ML-10 review R6
+fn mail_stop_without_the_active_key_does_not_block() {
+    let _s = serial();
+    let f = fx(Agent::ClaudeCode);
+    mail_on(&f);
+    put_new(&f, 2);
+    set_act(&f, true, 1);
+    assert_eq!(ws(&f, "stop", without(fixture("Stop-main"), "stop_hook_active")).unwrap(), None);
+    assert_eq!(bt(&f), (false, 0));
+}
+
+#[test] // M-C1, M§10, C6; ML-10 review R6
+fn mail_new_that_is_a_file_changes_no_decision() {
+    let _s = serial();
+    let f = fx(Agent::ClaudeCode);
+    mail_on(&f);
+    let key = mail_dir(&f.paths, ID).join(KEY);
+    fs::create_dir_all(&key).unwrap();
+    fs::write(key.join("new"), "x").unwrap();
+    set_act(&f, true, 1);
+    let stop = child(&f, "stop");
+    let stop_bt = bt(&f);
+    set_act(&f, false, 0);
+    let prompt = child(&f, "prompt");
+    let prompt_bt = bt(&f);
+    let start = child(&f, "session-start");
+    assert_eq!((stop.0.as_str(), stop.1.len()), ("", 1), "{stop:?}");
+    assert_eq!(stop_bt, (false, 0));
+    assert_eq!((prompt.0.as_str(), prompt.1.len()), ("", 1), "{prompt:?}");
+    assert_eq!(prompt_bt, (true, 0));
+    assert_eq!((start.0, start.1.len()), (base(&f), 1), "{:?}", start.1);
 }

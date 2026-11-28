@@ -284,7 +284,7 @@
             {
               "criterion": "A-1.4",
               "text": "The key-helper command runs in each shell that the client uses on Linux, macOS and Windows.",
-              "reason": "OpenCode has no key-helper command: it reads the session token through the {file:} reference in provider.zygo.options.apiKey (base spec 8.7, PO1), so no key-helper command runs in any shell; a core criterion cannot be n/a"
+              "reason": "OpenCode has no key-helper command: it reads the session token through the {file:} reference in provider.zygo.options.apiKey (base spec 8.7, POC1), so no key-helper command runs in any shell; a core criterion cannot be n/a"
             }
           ],
           "na": []

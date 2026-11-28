@@ -14,6 +14,8 @@ use zygo_proxy::server::StartOpts;
 use zygo_proxy::team::new_token;
 use zygo_usage::{RequestRow, Store};
 
+mod dead_port;
+
 struct Home {
     d: TempDir,
 }
@@ -84,13 +86,6 @@ fn server(extra: &str) -> (Srv, String) {
     })
     .unwrap();
     (Srv { _d: d, root, h }, alice)
-}
-
-fn closed_url() -> String {
-    let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    let port = l.local_addr().unwrap().port();
-    drop(l);
-    format!("http://127.0.0.1:{port}/")
 }
 
 fn command(home: &Path, args: &[&str], token: Option<&str>) -> Command {
@@ -211,7 +206,7 @@ fn usage_sync_replaces_pending_rows() { // §14, B2, R5
         out(&zygo(h.path(), &["usage", "--sync"], None)),
         (Some(1), String::new(), "zygo usage --sync: no server configured ([server] url)\n".into())
     );
-    h.config(&serve_cfg(&closed_url()));
+    h.config(&serve_cfg(&dead_port::closed_url()));
     h.db().mark_sync_pending("A1").unwrap();
     let (code, _, stderr) = out(&zygo(h.path(), &["usage", "--sync"], Some(&alice)));
     assert_eq!(code, Some(12), "{stderr}");
@@ -250,7 +245,7 @@ fn setting_verbs_read_the_team_layer() { // §6.1 layer 7 owner note, N30 and N4
     let (code, _, stderr) = out(&zygo(h.path(), &["units", "off", "--save"], Some(&alice)));
     assert_eq!(code, Some(1), "{stderr}");
     assert!(stderr.contains("refused: `features.work_units` is set by the team config"), "{stderr}");
-    h.config(&serve_cfg(&closed_url()));
+    h.config(&serve_cfg(&dead_port::closed_url()));
     let (code, _, stderr) = out(&zygo(h.path(), &["compact-tool", "off"], Some(&alice)));
     assert_eq!(code, Some(12), "{stderr}");
     assert!(stderr.starts_with("zygo compact-tool: server unreachable: "), "{stderr}");
@@ -428,7 +423,7 @@ fn git(dir: &Path, args: &[&str]) {
 #[ignore = "timing: the 10/30 s team-server client timeouts in the zygo binary"]
 fn status_reads_the_team_layer() { // N66, §14 note 2026-11-19 (every config-reading verb), §13.5 (`zygo status` prints the repo policy)
     const FLOOR: &str = "[guards]\nmin_level = \"enforce\"\n";
-    let levels = "@main (claims enforce, scope enforce, navigation enforce, output enforce, trailers enforce, repeat monitor)";
+    let levels = "@main (claims enforce, scope enforce, navigation enforce, output enforce, trailers enforce, repeat monitor, dispositions enforce)";
     let h = Home::new();
     git(h.path(), &["init", "-q", "-b", "main"]);
     std::fs::write(h.path().join(".zygo.toml"), "version = 1\n").unwrap();
@@ -463,7 +458,7 @@ fn status_reads_the_team_layer() { // N66, §14 note 2026-11-19 (every config-re
     std::fs::write(dir.join("team.toml"), "[guards]\nclaims = \"notify\"\n").unwrap();
     std::fs::write(dir.join("overrides.json"), r#"{"guards": {"claims": "monitor", "scope": "enforce"}}"#).unwrap();
     let line = policy(&in_session());
-    assert!(line.ends_with("(claims notify, scope enforce, navigation monitor, output monitor, trailers notify, repeat monitor)"), "{line}");
+    assert!(line.ends_with("(claims notify, scope enforce, navigation monitor, output monitor, trailers notify, repeat monitor, dispositions enforce)"), "{line}");
     std::fs::remove_file(dir.join("team.toml")).unwrap();
     std::fs::create_dir(dir.join("team.toml")).unwrap();
     let (code, _, stderr) = out(&in_session());

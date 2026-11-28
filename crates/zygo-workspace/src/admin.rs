@@ -1,4 +1,4 @@
-//! `ls`, `workspace`, `ws forget`, `ws forget-pane`. Owner: node W8 (W§12).
+//! `ls`, `workspace`, `ws forget`, `ws forget-pane`, `ws name`. Owner: node W8 (W§12); `ws name`: node ML-8 (M§6).
 //!
 //! The library reads no process environment: the tmux program, `$TMUX` and `ZYGO_WORKSPACE` come in as inputs, and
 //! `forget` and `forget_pane` write their lines to the writers they are given.
@@ -14,14 +14,16 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
 use zygo_core::esc;
+use zygo_core::ids::valid_member_name;
 use zygo_core::paths::Paths;
 
 use crate::identity::{valid_name, valid_pane_key, valid_ws_id, workspace_id};
+use crate::mail::{self, MAIL_LOCK_WAIT, mail_dir, names, store as mail_store};
 use crate::mux::tmux::Tmux;
 use crate::mux::{check_path, session_target, Multiplexer, MuxError, SessionAnswer, BOUND, UNSAFE_PATH_MESSAGE};
 use crate::repair::check_saved_socket;
 use crate::snapshot;
-use crate::state::{list_all, lock_file, read_state_capped, StateBytes, MemberRecord, MemberState, OpLock, PaneKind, Phase, StateError, Store, Workspace};
+use crate::state::{list_all, lock_file, read_state_capped, take_lock, StateBytes, MemberRecord, MemberState, OpLock, PaneKind, Phase, StateError, Store, Taken, Workspace};
 use crate::up::{check_server, find_checkout, fire, member_live, server, socket_is_private, Exit, GIT_BOUND};
 
 /// The git bound of `status`, so `/zygo:workspace` fits the 4.5 s hook bound (D12, D23).
@@ -32,6 +34,7 @@ const WS_OPTION: &str = "@zygo-ws";
 const NEWER: &str = "zygo: workspace state is from a newer zygo; run zygo update";
 const NO_STATUS: &str = "no workspace for this session or folder";
 const NO_FOLDER: &str = "zygo: no workspace for this folder; run in the workspace's checkout or pass --name";
+const NO_FOLDER_WS: &str = "zygo: no workspace for this folder; run in the workspace's checkout or pass --workspace";
 /// The largest state file that W8 reads (Round 2 R6).
 const STATE_MAX: u64 = 1024 * 1024;
 
@@ -129,6 +132,8 @@ pub struct ListRow {
     pub agents: Option<(usize, usize, usize)>,
     /// Attached clients, only for a session of this workspace.
     pub clients: Option<u32>,
+    /// Unread messages over all member records (M§9); `None` when the state or a member's maildir cannot be read.
+    pub unread: Option<usize>,
 }
 
 impl fmt::Display for ListRow {
@@ -136,7 +141,8 @@ impl fmt::Display for ListRow {
         let root = self.main_root.as_ref().map_or_else(|| "-".to_string(), |p| esc(&p.to_string_lossy()));
         let agents = self.agents.map_or_else(|| "-".to_string(), |(r, s, d)| format!("{r}/{s}/{d}"));
         let clients = self.clients.map_or_else(|| "-".to_string(), |n| n.to_string());
-        write!(f, "{}  {root}  {}  agents {agents}  clients {clients}", esc(&self.name), self.state)
+        let unread = self.unread.map_or_else(|| "-".to_string(), |n| n.to_string());
+        write!(f, "{}  {root}  {}  agents {agents}  clients {clients}  unread {unread}", esc(&self.name), self.state)
     }
 }
 
@@ -242,7 +248,7 @@ fn list_by(
         let ws = match r {
             Ok(ws) => ws,
             Err(_) => {
-                rows.push(ListRow { id: id.clone(), name: id, main_root: None, state: ListState::Unreadable, agents: None, clients: None });
+                rows.push(ListRow { id: id.clone(), name: id, main_root: None, state: ListState::Unreadable, agents: None, clients: None, unread: None });
                 continue;
             }
         };
@@ -272,7 +278,9 @@ fn list_by(
             };
             (state, clients)
         };
-        rows.push(ListRow { id, name: ws.name.clone(), main_root: Some(ws.main_root.clone()), state, agents: Some(agents), clients });
+        let mail = mail_dir(paths, &id);
+        let unread = ws.members.keys().map(|k| mail_store::unread(&mail, k).ok()).sum::<Option<usize>>();
+        rows.push(ListRow { id, name: ws.name.clone(), main_root: Some(ws.main_root.clone()), state, agents: Some(agents), clients, unread });
     }
     rows
 }
@@ -383,8 +391,9 @@ fn state_word(s: MemberState) -> &'static str {
     }
 }
 
-/// `zygo workspace` (W§12, D12, D13): the workspace of `ZYGO_WORKSPACE`, else of the checkout of `cwd`. The text has
-/// no trailing new line; an `Err` text has no `zygo: ` prefix.
+/// `zygo workspace` (W§12, D12, D13): the workspace of `ZYGO_WORKSPACE`, else of the checkout of `cwd`. Each member
+/// line ends with its unread count when it is not zero (M§9). The text has no trailing new line; an `Err` text has no
+/// `zygo: ` prefix.
 pub fn status(paths: &Paths, cwd: &Path, zygo_workspace: Option<&OsStr>) -> anyhow::Result<String> {
     let (id, by_env) = match zygo_workspace {
         Some(v) => {
@@ -395,7 +404,7 @@ pub fn status(paths: &Paths, cwd: &Path, zygo_workspace: Option<&OsStr>) -> anyh
             (id.to_string(), true)
         }
         None => {
-            let (co, _, _) = find_checkout(cwd, STATUS_GIT_BOUND).map_err(|_| anyhow!(NO_STATUS))?;
+            let (co, _, _) = find_checkout(cwd, STATUS_GIT_BOUND, &paths.workspace_cache_dir()).map_err(|_| anyhow!(NO_STATUS))?;
             (workspace_id(&co.common_dir), false)
         }
     };
@@ -411,9 +420,15 @@ pub fn status(paths: &Paths, cwd: &Path, zygo_workspace: Option<&OsStr>) -> anyh
         Err(e) => bail!("{e}"),
     };
     let mut lines = vec![format!("workspace {}: {}", esc(&ws.name), phase_word(ws.phase))];
+    let mail = mail_dir(paths, &id);
     for (key, m) in &ws.members {
         let session = m.agent_session.as_deref().map_or_else(|| "-".to_string(), esc);
-        lines.push(format!("{key} {} {} {session}", m.launch.kind.as_str(), state_word(m.state)));
+        let unread = match mail_store::unread(&mail, key) {
+            Ok(0) => String::new(),
+            Ok(n) => format!(" unread {n}"),
+            Err(_) => " unread -".to_string(),
+        };
+        lines.push(format!("{key} {} {} {session}{unread}", m.launch.kind.as_str(), state_word(m.state)));
     }
     if ws.members.is_empty() {
         lines.push("no members".to_string());
@@ -523,6 +538,36 @@ enum Found {
     Link(String),
 }
 
+/// D14, Round 2 R1: the readable workspace of `all` (from [`list_all`]) whose name is `name` and whose state folder is
+/// a real folder (as `list_all` and `sweep` count them); `Ok(None)` when there is none. More than one is the line
+/// `zygo: more than one workspace has the name <name>; <tail>` (exit 1): `in_checkout` gives the tail
+/// `run in its checkout` (`ws forget-pane`, `ws name`, `zygo mail sync --name`), else `forget it by id: <ids>`.
+pub fn named<'a>(
+    paths: &Paths,
+    all: &'a [(String, Result<Workspace, StateError>)],
+    name: &str,
+    in_checkout: bool,
+) -> Result<Option<&'a Workspace>, String> {
+    let named: Vec<&Workspace> = all
+        .iter()
+        .filter_map(|(_, r)| r.as_ref().ok().filter(|w| w.name == name))
+        .filter(|w| state_kind(paths, &w.id) == Kind::Real)
+        .collect();
+    match named[..] {
+        [] => Ok(None),
+        [ws] => Ok(Some(ws)),
+        _ => {
+            let tail = if in_checkout {
+                "run in its checkout".to_string()
+            } else {
+                let ids: Vec<&str> = named.iter().map(|w| w.id.as_str()).collect();
+                format!("forget it by id: {}", ids.join(", "))
+            };
+            Err(format!("zygo: more than one workspace has the name {}; {tail}", esc(name)))
+        }
+    }
+}
+
 /// D14: the id first, then the readable states by name, then a newer state by its JSON `name`. `for_pane` gives the
 /// `forget-pane` form of the line for a shared name.
 fn find(paths: &Paths, arg: &str, for_pane: bool) -> Result<Found, Exit> {
@@ -542,32 +587,13 @@ fn find(paths: &Paths, arg: &str, for_pane: bool) -> Result<Found, Exit> {
         }
     }
     let all = list_all(paths);
-    // Round 2 R1: only a real state folder is a candidate (as `list_all` and `sweep` count them).
-    let mut named: Vec<&Workspace> = all
-        .iter()
-        .filter_map(|(_, r)| r.as_ref().ok().filter(|w| w.name == arg))
-        .filter(|w| state_kind(paths, &w.id) == Kind::Real)
-        .collect();
-    match named.len() {
-        0 => {}
-        1 => {
-            let ws = named.remove(0);
-            // The file grew after `list_all` read it (FIX-17 Round 2 F1: refused, as by id).
-            let dir = paths.workspaces_dir().join(&ws.id);
-            if too_large(&dir) {
-                return Err(fail(format!("zygo: {}", too_large_err(&dir))));
-            }
-            return Ok(Found::Readable(Box::new(ws.clone())));
+    if let Some(ws) = named(paths, &all, arg, for_pane).map_err(fail)? {
+        // The file grew after `list_all` read it (FIX-17 Round 2 F1: refused, as by id).
+        let dir = paths.workspaces_dir().join(&ws.id);
+        if too_large(&dir) {
+            return Err(fail(format!("zygo: {}", too_large_err(&dir))));
         }
-        _ => {
-            let tail = if for_pane {
-                "run in its checkout".to_string()
-            } else {
-                let ids: Vec<&str> = named.iter().map(|w| w.id.as_str()).collect();
-                format!("forget it by id: {}", ids.join(", "))
-            };
-            return Err(fail(format!("zygo: more than one workspace has the name {}; {tail}", esc(arg))));
-        }
+        return Ok(Found::Readable(Box::new(ws.clone())));
     }
     for (id, r) in &all {
         let Err(StateError::Newer { .. }) = r else { continue };
@@ -583,11 +609,24 @@ fn find(paths: &Paths, arg: &str, for_pane: bool) -> Result<Found, Exit> {
     Err(fail(format!("zygo: no workspace named {}", esc(arg))))
 }
 
-/// `zygo ws forget <name>` (W§12, D14-D17, D26): exit 0 with `zygo: forgot <label>` on `out`, or exit 1 with one line on
-/// `err` (exit 2 for the AU54 refusal, FIX-30). `tmux_env` is `$TMUX`.
-pub fn forget(paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: &str, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+/// `zygo ws forget <name>` (W§12, D14-D17, D26; mail sync design S§7.6, S§14): exit 0 with `zygo: forgot <label>` on
+/// `out`, or exit 1 with one line on `err` (exit 2 for the AU54 refusal, FIX-30). `tmux_env` is `$TMUX`. After the
+/// checks, with `op.lock` and the sync lock ([`sync_lock`]) held, and before anything is deleted, `before_remove`
+/// runs on the state (a state that cannot be read: the probe of [`check_invalid`]): `Ok(true)` goes on; `Ok(false)`
+/// prints `zygo: <label> not forgotten` on `out` (exit 0, nothing deleted); `Err(reason)` refuses with
+/// `zygo: cannot forget <label>: <reason>` (exit 1, nothing deleted). After `Ok(true)`, `mail/lock` is taken exclusive
+/// and held across the state rename ([`mail_lock`]; M§5 P1, S§7.6 step 4); held by a delivery for the whole
+/// [`MAIL_LOCK_WAIT`]: `zygo: cannot forget <label>: mail is busy; try again` (exit 1, nothing deleted). After
+/// `mail/lock` is taken (or found to be no lock), `before_rename` runs on the state, right before the rename (S§7.6
+/// step 4, FX-28): `Err(reason)` refuses with `zygo: cannot forget <label>: <reason>` (exit 1, nothing deleted).
+#[allow(clippy::too_many_arguments)]
+pub fn forget(
+    paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: &str,
+    before_remove: &mut dyn FnMut(&Workspace) -> Result<bool, String>,
+    before_rename: &mut dyn FnMut(&Workspace) -> Result<(), String>, out: &mut dyn Write, err: &mut dyn Write,
+) -> i32 {
     sweep(paths);
-    match forget_run(paths, tmux, tmux_env, name) {
+    match forget_run(paths, tmux, tmux_env, name, before_remove, before_rename) {
         Ok(line) => {
             say(out, &line);
             0
@@ -599,7 +638,11 @@ pub fn forget(paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: &str, 
     }
 }
 
-fn forget_run(paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, arg: &str) -> Result<String, ForgetError> {
+fn forget_run(
+    paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, arg: &str,
+    before_remove: &mut dyn FnMut(&Workspace) -> Result<bool, String>,
+    before_rename: &mut dyn FnMut(&Workspace) -> Result<(), String>,
+) -> Result<String, ForgetError> {
     let found = find(paths, arg, false).map_err(|e| e.message)?;
     let (id, first_label) = match &found {
         Found::Readable(ws) => (ws.id.clone(), ws.name.clone()),
@@ -620,20 +663,94 @@ fn forget_run(paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, arg: &str) -
         Err(e) => return Err(ForgetError::Line(format!("zygo: {e}"))),
     };
     // D15: the state again under `op.lock`.
-    let label = match read_capped(&store) {
+    let (label, ws) = match read_capped(&store) {
         Ok(None) => return Err(ForgetError::Line(format!("zygo: no workspace named {}", esc(arg)))),
         Err(StateError::Newer { .. }) => return Err(ForgetError::Line(NEWER.into())),
         Err(e @ StateError::TooLarge { .. }) => return Err(ForgetError::Line(format!("zygo: {e}"))),
         Ok(Some(ws)) => {
             check_readable(&store, &ws, tmux, tmux_env)?;
-            ws.name
+            (ws.name.clone(), ws)
         }
-        Err(_) => {
-            check_invalid(&store, &id, tmux, tmux_env)?;
-            id.clone()
-        }
+        Err(_) => (id.clone(), check_invalid(&store, &id, tmux, tmux_env)?),
     };
-    remove(paths, &store, &id, &label, op).map_err(ForgetError::Line)
+    // S§7.6 step 1: held until this function returns, after `remove`.
+    let _sync = sync_lock(paths, &id, &label)?;
+    match before_remove(&ws) {
+        Ok(true) => {}
+        Ok(false) => return Ok(format!("zygo: {label} not forgotten")),
+        Err(reason) => return Err(ForgetError::Line(format!("zygo: cannot forget {label}: {reason}"))),
+    }
+    // S§7.6 step 4, M§5 P1: held across the rename; `remove` releases it before `op.lock` (review F7).
+    let mail = mail_lock(&store, &label)?;
+    // S§7.6 step 4 (FX-28): under `mail/lock`, before the rename; an `Err` drops `mail` before `op` (review F7).
+    before_rename(&ws).map_err(|reason| ForgetError::Line(format!("zygo: cannot forget {label}: {reason}")))?;
+    remove(paths, &store, &id, &label, op, mail).map_err(ForgetError::Line)
+}
+
+/// S§7.6 step 4 (FX-24; M§5 P1, the removal of every maildir): `mail/lock` taken exclusive, waiting at most
+/// [`MAIL_LOCK_WAIT`], after `before_remove` and before the state rename, so a delivery in flight links first and
+/// none starts until the state folder is gone (a later one finds no workspace). A missing `mail/` is made `0700` so
+/// the lock exists before the rename; `None` when `mail/` is a link or not a folder (no mail; nothing made through
+/// the link). `None` too when `mail/lock` is a link or not a regular file: no delivery can hold it, since every
+/// delivery refuses to open it, so the forget goes on without it (FX-24 review R2 F4). A lock held for the whole
+/// bound: `zygo: cannot forget <label>: mail is busy; try again` (exit 1); any other error refuses with its text.
+fn mail_lock(store: &Store, label: &str) -> Result<Option<fs::File>, ForgetError> {
+    let fail = |e: &dyn fmt::Display| ForgetError::Line(format!("zygo: cannot forget {label}: {e}"));
+    let mail = store.dir().join("mail");
+    if !real_dir(&mail).map_err(|e| fail(&e))? {
+        return Ok(None);
+    }
+    fire(store.dir(), "forget_before_mail_lock").map_err(|e| fail(&e))?;
+    match take_lock(&mail.join("lock"), MAIL_LOCK_WAIT, false) {
+        Ok(Taken::Held(f)) => Ok(Some(f)),
+        Ok(Taken::NotRegular) => Ok(None),
+        Ok(Taken::Busy) => Err(ForgetError::Line(format!("zygo: cannot forget {label}: mail is busy; try again"))),
+        Err(e) => Err(fail(&e)),
+    }
+}
+
+/// S§7.6 step 1 (MS-21): the lock of `mail/sync/lock` (the sync's lock, `SyncPaths::lock` of `zygo-mail-sync`),
+/// taken at once. `mail/`, `mail/sync/` (each `0700`) and the lock file (`0600`) are made when missing, and no link is
+/// followed, so a sync that starts meanwhile waits for this lock and then finds the workspace gone (review F1).
+/// `None` when `mail/` or `mail/sync/` is a link or not a folder: the workspace has no mail, and nothing is made
+/// through the link (review F3). `None` too when `mail/sync/lock` is a link or not a regular file: no sync can hold
+/// it, since the sync refuses to open it, so the forget goes on without it (FX-24 review R2 F4). Held by a sync:
+/// `zygo: a mail sync runs for <label>; try again` (exit 1); any other error refuses with its text.
+fn sync_lock(paths: &Paths, id: &str, label: &str) -> Result<Option<fs::File>, ForgetError> {
+    let fail = |e: std::io::Error| ForgetError::Line(format!("zygo: cannot forget {label}: {e}"));
+    let mail = mail_dir(paths, id);
+    let dir = mail.join("sync");
+    if !real_dir(&mail).map_err(fail)? || !real_dir(&dir).map_err(fail)? {
+        return Ok(None);
+    }
+    match take_lock(&dir.join("lock"), Duration::ZERO, false) {
+        Ok(Taken::Held(f)) => Ok(Some(f)),
+        Ok(Taken::NotRegular) => Ok(None),
+        Ok(Taken::Busy) => Err(ForgetError::Line(format!("zygo: a mail sync runs for {label}; try again"))),
+        Err(e) => Err(fail(e)),
+    }
+}
+
+/// Whether `dir` is a real folder, made `0700` when missing (its parent must be a real folder). A link or a file at
+/// `dir` is `false`; no link is followed (`symlink_metadata`, and `mkdir` does not follow one).
+fn real_dir(dir: &Path) -> std::io::Result<bool> {
+    match fs::symlink_metadata(dir) {
+        Ok(m) => return Ok(m.is_dir()),
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        Err(_) => {}
+    }
+    let mut b = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        b.mode(0o700);
+    }
+    match b.create(dir) {
+        Ok(()) => Ok(true),
+        // A sync made it meanwhile: look again, still without following a link.
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(fs::symlink_metadata(dir)?.is_dir()),
+        Err(e) => Err(e),
+    }
 }
 
 /// Round 2 R1: `<workspaces_dir>/<id>` is a link: it is removed as a link (an unlink of the link itself, after one more
@@ -688,7 +805,9 @@ fn check_readable(store: &Store, ws: &Workspace, tmux: &Path, tmux_env: Option<&
 }
 
 /// D17: the checks of a state that cannot be read, from its raw JSON: name, socket, member launchers, session.
-fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>) -> Result<(), ForgetError> {
+/// Returns the probe of the S§7.6 steps: id, name, members, and the raw `main_root` when it is an absolute path, else
+/// empty.
+fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>) -> Result<Workspace, ForgetError> {
     let refuse = |reason: &str| {
         format!(
             "zygo: workspace {id} not forgotten: {reason}; its state cannot be read, so repair it with zygo up --reset in its checkout"
@@ -711,12 +830,19 @@ fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>)
         Some(m) => serde_json::from_value(m.clone()).map_err(|_| refuse("its members cannot be read"))?,
     };
     let mut probe = Workspace::new(id);
+    probe.name = name.to_string();
+    probe.main_root = v
+        .get("main_root")
+        .and_then(|m| m.as_str())
+        .map(PathBuf::from)
+        .filter(|m| m.is_absolute())
+        .unwrap_or_default();
     probe.members = members;
     if let Some(key) = store.live_launcher(&probe) {
         return Err(ForgetError::Line(refuse(&format!("a member launcher is live (pane {})", esc(&key)))));
     }
     if gone || no_tmux(tmux) {
-        return Ok(());
+        return Ok(probe);
     }
     // FIX-30 (AU54): the raw socket is not a `Workspace`, so `check_path`, which `check_saved_socket` wraps; right before
     // the first tmux call.
@@ -724,7 +850,7 @@ fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>)
         return Err(unsafe_socket(store, true));
     }
     match server(tmux, Some(&sock), tmux_env).session_exists(&format!("zygo-{name}")) {
-        SessionAnswer::Gone => Ok(()),
+        SessionAnswer::Gone => Ok(probe),
         SessionAnswer::Exists => Err(ForgetError::Line(refuse("its session runs"))),
         SessionAnswer::Error { message } => Err(ForgetError::Line(refuse(&format!("tmux: {message}")))),
     }
@@ -735,7 +861,15 @@ fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>)
 /// removed, then the renamed folder. A writer of the cache (`ws run`) that reads the state after it made a folder
 /// finds the state gone whenever the cache removal could have run before its folder, so it removes that folder
 /// itself (W§12). A cache that cannot be removed is reported after the rest; the next `forget` sweeps it (D26).
-fn remove(paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock) -> Result<String, String> {
+/// `mail` (`mail/lock` held exclusive, [`mail_lock`]) is released after `lock` and before `op` (FX-24 review F7), the
+/// reverse of the lock order. The rename moves the file that `mail` locks into the tombstone, so a taker of `mail/lock`
+/// that waited for it (a delivery, a read, a removal) then holds the lock of a file that is no longer at
+/// `<state>/mail/lock`; each taker checks that ([`crate::state::lock_is_at`]) and finds no workspace, whatever a
+/// `zygo up` of the same id wrote after `op` was released (FX-24 review R2 F3). On an early return the parameters drop
+/// in reverse order, `mail` before `op`, too.
+fn remove(
+    paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock, mail: Option<fs::File>,
+) -> Result<String, String> {
     let cannot = |e: &dyn fmt::Display| format!("zygo: cannot forget {label}: {e}");
     let lock = match lock_file(&store.dir().join("lock"), snapshot::OP_WAIT) {
         Ok(Some(f)) => f,
@@ -751,6 +885,7 @@ fn remove(paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock) -> Re
         .and_then(|()| remove_tree(&cache).map_err(|e| e.to_string()))
         .err();
     drop(lock);
+    drop(mail);
     drop(op);
     let gone = |e: &dyn fmt::Display| format!("zygo: {label} forgotten, but {} was not removed: {e}", tomb.display());
     fire(store.dir(), "forget_before_tombstone_remove").map_err(|e| gone(&e))?;
@@ -761,8 +896,8 @@ fn remove(paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock) -> Re
     Ok(format!("zygo: forgot {label}"))
 }
 
-/// `zygo ws forget-pane <key>` (W§12, D18-D20): the workspace named `name`, else the one of the checkout of `cwd`.
-/// Exit 0 with `zygo: forgot pane <key> of <name>` on `out`, or exit 1 with one line on `err`.
+/// `zygo ws forget-pane <key>` (W§12, D18-D20): the workspace named `name`, else the one of the checkout of `cwd`. It
+/// removes the member record, the pane caches and the maildir `mail/<key>/` (M§5). Exit 0 with `zygo: forgot pane <key> of <name>` on `out`, or exit 1 with one line on `err`.
 pub fn forget_pane(
     paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, key: &str, out: &mut dyn Write, err: &mut dyn Write,
 ) -> i32 {
@@ -778,38 +913,114 @@ pub fn forget_pane(
     }
 }
 
-fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, key: &str) -> Result<String, String> {
+/// zygo ws name <key> <name> (M§6, W§7.3)
+#[allow(clippy::too_many_arguments)]
+pub fn rename_member(
+    paths: &Paths, tmux: &Path, workspace: Option<&str>, cwd: &Path, key: &str, new_name: &str, out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    match rename_run(paths, tmux, workspace, cwd, key, new_name) {
+        Ok(line) => {
+            say(out, &line);
+            0
+        }
+        Err(line) => {
+            say(err, &line);
+            1
+        }
+    }
+}
+
+fn rename_run(
+    paths: &Paths, tmux: &Path, workspace: Option<&str>, cwd: &Path, key: &str, new_name: &str,
+) -> Result<String, String> {
     if !valid_pane_key(key) {
         return Err(format!("zygo: invalid pane key {}", esc(key)));
     }
-    let not_found = || name.map_or_else(|| NO_FOLDER.to_string(), |n| format!("zygo: no workspace named {}", esc(n)));
-    let link = |id: &str| format!("zygo: the state folder of workspace {id} is a link; it is not changed");
-    let ws = match name {
+    if !valid_member_name(new_name) {
+        return Err(format!(
+            "zygo: bad name `{}`: use ^[a-z][a-z0-9-]{{0,31}}$, not all, cli, zygo or a pane key",
+            esc(new_name)
+        ));
+    }
+    let ws = pane_workspace(paths, workspace, cwd, NO_FOLDER_WS)?;
+    let label = ws.name;
+    // W§7.3: the record and its `panes[]` entry in one write under `lock`; `mail/<key>/` stays (M§6).
+    let written = Store::open(paths, &ws.id).update_existing(snapshot::OP_WAIT, &mut |c| {
+        if !c.members.contains_key(key) {
+            bail!("zygo: {label} has no member record for pane {key}");
+        }
+        if let Some(t) = names::members(c).into_iter().find(|t| t.key != key && t.name.as_deref() == Some(new_name)) {
+            bail!("zygo: name {new_name} belongs to pane {}; nothing changed", t.key);
+        }
+        if let Some(m) = c.members.get_mut(key) {
+            m.name = Some(new_name.to_string());
+        }
+        // A shell pane has no name (`up.rs`, `forget_pane`); only the record is renamed then.
+        if let Some(p) = c.panes.iter_mut().find(|p| p.key == key && p.kind != PaneKind::Shell) {
+            p.name = Some(new_name.to_string());
+        }
+        Ok(())
+    });
+    match written {
+        Ok(Some(w)) => {
+            let mux = Tmux::new(tmux.to_path_buf(), w.tmux_socket.clone());
+            let _ = snapshot::after_write(paths, &mux, &ws.id, snapshot::OP_WAIT);
+            Ok(format!("zygo: pane {key} of {label} is now named {new_name}"))
+        }
+        Ok(None) => Err(format!("zygo: no workspace named {}", esc(&label))),
+        Err(StateError::Refused(e)) => Err(e.to_string()),
+        Err(StateError::Busy) => Err(format!("zygo: workspace {label} is busy; try again")),
+        Err(e) => Err(format!("zygo: {e}")),
+    }
+}
+
+/// The line of a workspace that is not there: `no workspace named <name>`, else `no_folder` (W§12).
+fn not_found(name: Option<&str>, no_folder: &str) -> String {
+    name.map_or_else(|| no_folder.to_string(), |n| format!("zygo: no workspace named {}", esc(n)))
+}
+
+/// The line of a state folder that is a link (Round 2 R1).
+fn link_line(id: &str) -> String {
+    format!("zygo: the state folder of workspace {id} is a link; it is not changed")
+}
+
+/// The workspace of `ws forget-pane` and `ws name` (W§12): the one named `name`, else the one of the checkout of `cwd`;
+/// `no_folder` is the line when `cwd` has none.
+fn pane_workspace(paths: &Paths, name: Option<&str>, cwd: &Path, no_folder: &str) -> Result<Workspace, String> {
+    Ok(match name {
         Some(n) => match find(paths, n, true).map_err(|e| e.message)? {
             Found::Readable(ws) => *ws,
             Found::Invalid(id) => match read_capped(&Store::open(paths, &id)) {
                 Ok(Some(ws)) => ws,
-                Ok(None) => return Err(not_found()),
+                Ok(None) => return Err(not_found(name, no_folder)),
                 Err(e) => return Err(format!("zygo: {e}")),
             },
-            Found::Link(id) => return Err(link(&id)),
+            Found::Link(id) => return Err(link_line(&id)),
         },
         None => {
-            let (co, _, _) = find_checkout(cwd, GIT_BOUND).map_err(|_| NO_FOLDER.to_string())?;
+            let (co, _, _) = find_checkout(cwd, GIT_BOUND, &paths.workspace_cache_dir()).map_err(|_| no_folder.to_string())?;
             let id = workspace_id(&co.common_dir);
             match state_kind(paths, &id) {
                 Kind::Real => {}
-                Kind::Link => return Err(link(&id)),
-                Kind::Missing | Kind::Other => return Err(NO_FOLDER.into()),
+                Kind::Link => return Err(link_line(&id)),
+                Kind::Missing | Kind::Other => return Err(no_folder.into()),
             }
             match read_capped(&Store::open(paths, &id)) {
                 Ok(Some(ws)) => ws,
-                Ok(None) => return Err(NO_FOLDER.into()),
+                Ok(None) => return Err(no_folder.into()),
                 Err(StateError::Newer { .. }) => return Err(NEWER.into()),
                 Err(e) => return Err(format!("zygo: {e}")),
             }
         }
-    };
+    })
+}
+
+fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, key: &str) -> Result<String, String> {
+    if !valid_pane_key(key) {
+        return Err(format!("zygo: invalid pane key {}", esc(key)));
+    }
+    let ws = pane_workspace(paths, name, cwd, NO_FOLDER)?;
     let (id, label) = (ws.id.clone(), ws.name.clone());
     let cannot = |e: &dyn fmt::Display| format!("zygo: cannot forget pane {key} of {label}: {e}");
     let store = Store::open(paths, &id);
@@ -817,8 +1028,8 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
     // Round 2 R1: `op_lock` creates and chmods its folder, so the folder is checked again right before it.
     match state_kind(paths, &id) {
         Kind::Real => {}
-        Kind::Link => return Err(link(&id)),
-        Kind::Missing | Kind::Other => return Err(not_found()),
+        Kind::Link => return Err(link_line(&id)),
+        Kind::Missing | Kind::Other => return Err(not_found(name, NO_FOLDER)),
     }
     let _op = match store.op_lock() {
         Ok(l) => l,
@@ -827,7 +1038,7 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
     };
     let cur = match read_capped(&store) {
         Ok(Some(ws)) => ws,
-        Ok(None) => return Err(not_found()),
+        Ok(None) => return Err(not_found(name, NO_FOLDER)),
         Err(StateError::Newer { .. }) => return Err(NEWER.into()),
         Err(e) => return Err(format!("zygo: {e}")),
     };
@@ -837,6 +1048,7 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
     for (sub, _) in PANE_CACHES {
         has_cache |= pane_cache(paths, &id, sub, key).map_err(|r| cannot(&r))?.is_some();
     }
+    let has_mail = pane_maildir(paths, &id, key).map_err(|r| cannot(&r))?.is_some();
     if cur.members.contains_key(key) {
         // D18-D20: the live check under `lock`, on the record as read there; the record and `panes[].kind` in one write.
         let mut live = false;
@@ -851,9 +1063,11 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
             }
             c.members.remove(key);
             if let Some(p) = c.panes.iter_mut().find(|p| p.key == key)
-                && p.kind != PaneKind::Shell
+                && (p.kind != PaneKind::Shell || p.name.is_some())
             {
+                // M§6: the name goes with the record.
                 p.kind = PaneKind::Shell;
+                p.name = None;
                 c.snapshot_seq += 1;
             }
             Ok(())
@@ -869,7 +1083,7 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
             Err(StateError::Busy) => return Err(format!("zygo: workspace {label} is busy; try again")),
             Err(e) => return Err(format!("zygo: {e}")),
         }
-    } else if !has_cache {
+    } else if !has_cache && !has_mail {
         return Err(format!("zygo: {label} has no member record for pane {key}"));
     }
     fire(store.dir(), "forget_pane_before_cache").map_err(|e| cannot(&e))?;
@@ -884,6 +1098,16 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
         if let Err(e) = removed {
             first.get_or_insert(cannot(&e));
         }
+    }
+    // M§5 P1: mail/<key>/ after the record and after the caches; tried also after a cache error. `remove_maildir` takes
+    // mail/lock exclusive and reads the records under it, so a delivery that read the records before the record
+    // removal has finished its last link, and a later one cannot resolve the key. It runs also when mail/<key> does not
+    // exist yet (a delivery in flight can still make it). A folder is removed with its contents, a link as a link and
+    // any other entry as itself. A lock held for the whole bound leaves the maildir for the next run (exit 1).
+    let removed = pane_maildir(paths, &id, key)
+        .and_then(|_| mail::remove_maildir(&store, key, MAIL_LOCK_WAIT).map(|_| ()).map_err(|e| e.to_string()));
+    if let Err(e) = removed {
+        first.get_or_insert(cannot(&e));
     }
     match first {
         Some(e) => Err(e),
@@ -912,6 +1136,26 @@ pub fn pane_cache(paths: &Paths, id: &str, sub: &str, key: &str) -> Result<Optio
         }
     }
     let entry = at.join(key);
+    match fs::symlink_metadata(&entry) {
+        Ok(_) => Ok(Some(entry)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{}: {e}", entry.display())),
+    }
+}
+
+/// M§5: `<workspaces_dir>/<id>/mail/<key>` of one pane, `mail/` checked with `symlink_metadata`. `Ok(Some(path))`
+/// when `<key>` exists (a link there is removed as a link); `Ok(None)` when `mail/` or `<key>` is missing or `mail/`
+/// is not a folder; `Err(reason)` for a link at `mail/` (it is not followed) or a part that cannot be read.
+fn pane_maildir(paths: &Paths, id: &str, key: &str) -> Result<Option<PathBuf>, String> {
+    let mail = mail_dir(paths, id);
+    match fs::symlink_metadata(&mail) {
+        Ok(m) if m.file_type().is_symlink() => return Err(format!("{} is a link; it is not followed", mail.display())),
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {e}", mail.display())),
+    }
+    let entry = mail.join(key);
     match fs::symlink_metadata(&entry) {
         Ok(_) => Ok(Some(entry)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),

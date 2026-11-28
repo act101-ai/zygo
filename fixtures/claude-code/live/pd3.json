@@ -1,0 +1,89 @@
+{
+  "premise": "PD3",
+  "claude_code": "2.1.332",
+  "date": "2026-11-25",
+  "harness": {
+    "mcp_servers": [
+      {
+        "name": "zygo",
+        "status": "connected",
+        "source": "dynamic"
+      }
+    ],
+    "work_verdict_listed": true,
+    "small_call_reached_stub": true
+  },
+  "result": "verified",
+  "pre_tool_use_inputs": [
+    {
+      "file": "0001-PreToolUse-mcp__zygo__work_verdict-main.json",
+      "tool_name": "mcp__zygo__work_verdict",
+      "keys": [
+        "cwd",
+        "effort",
+        "hook_event_name",
+        "mcp_server",
+        "permission_mode",
+        "prompt_id",
+        "session_id",
+        "tool_input",
+        "tool_name",
+        "tool_use_id",
+        "transcript_path"
+      ],
+      "has_agent_id": false,
+      "has_agent_type": false
+    },
+    {
+      "file": "0002-PreToolUse-mcp__zygo__work_verdict-main.json",
+      "tool_name": "mcp__zygo__work_verdict",
+      "keys": [
+        "cwd",
+        "effort",
+        "hook_event_name",
+        "mcp_server",
+        "permission_mode",
+        "prompt_id",
+        "session_id",
+        "tool_input",
+        "tool_name",
+        "tool_use_id",
+        "transcript_path"
+      ],
+      "has_agent_id": false,
+      "has_agent_type": false
+    }
+  ],
+  "small_call_input": {
+    "session_id": "00000000-0000-4000-8000-000000000001",
+    "transcript_path": "/home/user/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+    "cwd": "/repo",
+    "prompt_id": "00000000-0000-4000-8000-000000000002",
+    "permission_mode": "default",
+    "effort": {
+      "level": "medium"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "mcp__zygo__work_verdict",
+    "tool_input": {
+      "unit": "phase3:DR-15:probe",
+      "round": 1,
+      "verdict": "discard",
+      "findings": "dr15 pd3 probe"
+    },
+    "tool_use_id": "toolu_dr15_00",
+    "mcp_server": {
+      "name": "zygo",
+      "source": "dynamic"
+    }
+  },
+  "tool_result": {
+    "is_error": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "dr15-stub-ok call 1"
+      }
+    ]
+  }
+}

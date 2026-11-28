@@ -8,7 +8,8 @@
 //! the state folder through `paths` and the zygo program through `zygo`. A hook never breaks the agent (C6): a failure
 //! writes one line, to the session log for the session folder's files and to `errors.log` for the state folder's,
 //! and the hook exits 0 (AU56, D14). The `session` event never changes `activity.json`: an open turn stays busy until
-//! its stop, the agent exit, the drain timeout or `down --now` (D5). No wait here is longer than the 1 s lock bounds
+//! its stop, the agent exit, the drain timeout or `down --now` (D5). `session` (main loop), `prompt`, `stop` and
+//! `tool-end` start the rate-limited mail sync child (mail sync design S§8.1, S§8.4, S-C1). No wait here is longer than the 1 s lock bounds
 //! of AU56 and W§7.3, and nothing here ends or removes a session, pane, member, turn or file (D19).
 
 use std::ffi::OsString;
@@ -22,13 +23,17 @@ use std::time::Duration;
 use anyhow::{anyhow, bail};
 use serde_json::{json, Value};
 use zygo_core::esc;
-use zygo_core::hook::{slash_dispatch, HookOutput, SlashDispatch};
+use zygo_core::hook::{error_line, slash_dispatch, HookOutput, SlashDispatch};
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::{ResumeNote, SessionView};
 use zygo_core::Agent;
+use zygo_mail_sync::env::{Env, NoSeam, SystemClock, TmuxWake};
+use zygo_mail_sync::public::LsRemote;
+use zygo_mail_sync::spawn::ChildSpawner;
 use zygo_workspace::activity::{self, Activity};
 use zygo_workspace::identity::{valid_pane_key, valid_ws_id};
+use zygo_workspace::mail::{mail_dir, store};
 use zygo_workspace::snapshot;
 use zygo_workspace::state::{MemberRecord, MemberState, Phase, StateError, Store};
 
@@ -232,6 +237,23 @@ pub fn mark_busy(paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, bound: D
     }
 }
 
+/// The number of unread messages of the member (M§7, ML-2 `store::unread`), counted from the names in `new/` with no
+/// message opened. A read error writes one stderr line and counts as 0, so no hook decision changes (M-C1, M§10, C6;
+/// ML-10 D4). A member with `[features] mail` off (`view.mail`) has no mail tools: 0, and `mail/` is not read (M§7.1,
+/// M§7.2, M§8; ML-10 review R1).
+fn unread_mail(c: &Ctx) -> usize {
+    if !c.view.mail {
+        return 0;
+    }
+    match store::unread(&mail_dir(c.paths, &c.ws_id), &c.pane) {
+        Ok(n) => n,
+        Err(e) => {
+            error_line(&format!("workspace hook {}: {e}", c.event));
+            0
+        }
+    }
+}
+
 /// The main loop: the input object has no `agent_id` key (W§9.1, the test of W§8.3; D5).
 fn main_loop(p: &Value) -> bool {
     !p.as_object().is_some_and(|o| o.contains_key("agent_id"))
@@ -239,9 +261,11 @@ fn main_loop(p: &Value) -> bool {
 
 /// `zygo hook workspace --event <event>` (W§9.1, D4, D5). It checks the event, then reads `ZYGO_SESSION_DIR`
 /// through `env` (none or empty: nothing), then parses the input; a prompt line that `zygo hook prompt` consumes ends
-/// here (D4, R1); then the session folder, the view and the marker. `pre-tool` can give the deny JSON of W§9.2 and a
-/// Claude Code `prompt` the block JSON of AU86; every other call gives `None`. The dispatcher is the one that the
-/// `zygo` binary registers (`slash_dispatch`).
+/// here (D4, R1); then the session folder, the view and the marker. `pre-tool` can give the deny JSON of W§9.2, a
+/// Claude Code `prompt` the block JSON of AU86 or the mail delivery line (M§7.2), and a Claude Code `stop` the mail
+/// block JSON of M§7.1; every other call gives `None`. `session` (main loop), `prompt`, `stop` and `tool-end` start the
+/// mail sync child when sync is on and the gap has passed; a child that does not start changes no output (S§8.1,
+/// S§8.4, S-C1). The dispatcher is the one that the `zygo` binary registers (`slash_dispatch`).
 pub fn run(
     event: &str, stdin: &[u8], paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, zygo: &Path,
 ) -> anyhow::Result<Option<String>> {
@@ -252,6 +276,14 @@ pub fn run(
 pub fn run_with(
     event: &str, stdin: &[u8], paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, zygo: &Path,
     dispatch: Option<SlashDispatch>,
+) -> anyhow::Result<Option<String>> {
+    run_with_sync(event, stdin, paths, env, zygo, dispatch, &sync_env(paths, zygo))
+}
+
+/// `run_with` with the mail sync seams `sync` (S-C9): the clock and the spawn of the sync child.
+pub fn run_with_sync(
+    event: &str, stdin: &[u8], paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, zygo: &Path,
+    dispatch: Option<SlashDispatch>, sync: &Env,
 ) -> anyhow::Result<Option<String>> {
     if !EVENTS.contains(&event) {
         bail!("workspace: unknown event \"{}\"", esc(event));
@@ -272,6 +304,9 @@ pub fn run_with(
     let dir = SessionDir::new(PathBuf::from(sd));
     let Some(c) = member(event, &dir, paths)? else { return Ok(None) };
     let main = main_loop(&payload);
+    if matches!(event, "prompt" | "stop" | "tool-end") || (event == "session" && main) {
+        start_sync(&c, sync);
+    }
     match event {
         "pre-tool" => {
             if payload.get("tool_name").and_then(Value::as_str) == Some("Agent")
@@ -295,12 +330,37 @@ pub fn run_with(
             }
             if main {
                 change(&c, &mut start_turn);
+                // M§7.2, ML-10 D3: a Claude Code prompt adds the delivery line; the OpenCode plugin drops this output
+                // and gets the line from the per-request session text.
+                if matches!(c.view.agent, Agent::ClaudeCode) {
+                    let n = unread_mail(&c);
+                    if n > 0 {
+                        let line = crate::mail::delivery_line(n);
+                        return Ok(Some(
+                            json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": line}})
+                                .to_string(),
+                        ));
+                    }
+                }
             }
         }
-        "stop" if main => change(&c, &mut |a| {
-            a.busy = false;
-            a.tools_running = 0;
-        }),
+        "stop" if main => {
+            // M§7.1, ML-10 D1, D2: a Claude Code `Stop` that is not already a forced continuation blocks once while
+            // `new/` holds mail, and changes nothing in `activity.json`; every other main-loop stop clears. M§9, ML-10
+            // review R3: no block while the phase is `draining` or `stopping`, so `down` does not wait for the mail.
+            if payload.get("hook_event_name").and_then(Value::as_str) == Some("Stop")
+                && payload.get("stop_hook_active") == Some(&Value::Bool(false))
+            {
+                let n = unread_mail(&c);
+                if n > 0 && !matches!(c.store.phase_unlocked(), Some(Phase::Draining | Phase::Stopping)) {
+                    return Ok(Some(crate::mail::stop_block(n)));
+                }
+            }
+            change(&c, &mut |a| {
+                a.busy = false;
+                a.tools_running = 0;
+            })
+        }
         // W§9.1 names no `busy` change for `SessionEnd`.
         "session-end" if main => change(&c, &mut |a| a.tools_running = 0),
         // D5, D8-D10: `session` changes nothing in `activity.json`; it commits and records (one write), then applies
@@ -328,6 +388,56 @@ pub fn run_with(
         _ => {}
     }
     Ok(None)
+}
+
+/// The production mail sync seams of the hook: the system clock and the `<zygo> mail sync` child. The wake is the
+/// real one (mail sync design S§18) with the D2 tmux program; `secret_policy` is the default deadline policy of the
+/// secret pass (S§8.6, `DeadlinePolicy::default()`).
+fn sync_env(paths: &Paths, zygo: &Path) -> Env {
+    Env {
+        paths: paths.clone(),
+        clock: Box::new(SystemClock),
+        probe: Box::new(LsRemote),
+        seam: Box::new(NoSeam),
+        spawner: Box::new(ChildSpawner { zygo: zygo.to_path_buf() }),
+        wake: Box::new(TmuxWake { tmux: tmux_program() }),
+        secret_policy: Default::default(),
+    }
+}
+
+/// The first `<entry>/tmux` over the absolute entries of `PATH` that is an executable file, else `/dev/null/tmux`:
+/// rule D2 (`docs/work/phase2/nodes/M1.md:39`) of `crates/zygo/src/cmd/mod.rs:109`, which is `pub(crate)` there.
+fn tmux_program() -> PathBuf {
+    let found = std::env::var_os("PATH").and_then(|v| {
+        std::env::split_paths(&v).filter(|p| p.is_absolute()).map(|p| p.join("tmux")).find(|p| executable(p))
+    });
+    found.unwrap_or_else(|| PathBuf::from("/dev/null/tmux"))
+}
+
+fn executable(p: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(p) else { return false };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.is_file() && meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    meta.is_file()
+}
+
+/// Starts the mail sync child of the member's workspace by the gap of S§8.4 (S§8.1). A config that does not load,
+/// no `[mail.workspace.*]` table, no `workspace.json` or sync off: nothing, and no line. `workspace.json` is read
+/// only when some `[mail.workspace.*]` table exists. A failure of the start gives one `errors.log` line (S-C1).
+fn start_sync(c: &Ctx, sync: &Env) {
+    let Ok(m) = zygo_config::load(&zygo_config::LoadContext { paths: c.paths.clone(), repo: None, team: None }) else {
+        return;
+    };
+    if m.config.mail.workspace.is_empty() {
+        return;
+    }
+    let Ok(Some(ws)) = c.store.read() else { return };
+    let Ok(s) = zygo_config::sync_for(&m.config, &ws.name) else { return };
+    zygo_mail_sync::spawn::trigger(sync, &c.ws_id, Some(s.sync_gap), &|t| elog(c, t));
 }
 
 /// `drain_block_dispatch` of the user config (W§9.2, W-C5); a config that does not load counts as `true` (D16).
@@ -380,7 +490,8 @@ fn log_state(c: &Ctx, e: &StateError) {
 
 /// The member record at a start, in one write (AU60, AU92, AU104, C8, W§7.4; D8, D9). No state writes nothing and
 /// makes no folder. Commit: a `pending` that names this zygo session moves into the record (its own agent session id
-/// when it has one), `note_pending` is cleared, and the values that `down` saved are cleared unless they were saved
+/// when it has one), `first_started_at` is set from `pending.started_at` when it is absent or 0 and that time is not 0
+/// (T§3.2), `note_pending` is cleared, and the values that `down` saved are cleared unless they were saved
 /// for this zygo session (`saved_for`). A record of another zygo session is not changed. Record: a payload id that
 /// differs from the stored one is written; no payload replaces a stored id with none. A record equal to the one read
 /// is not written. After a write the `snapshot.pending` check runs, and a changed id starts the same snapshot child
@@ -401,6 +512,9 @@ fn record_session(c: &Ctx, id: Option<&str>, zygo: &Path) {
         let before = m.agent_session.clone();
         match m.pending.clone() {
             Some(p) if p.zygo_session == session => {
+                if m.first_started_at.unwrap_or(0) == 0 && p.started_at != 0 {
+                    m.first_started_at = Some(p.started_at);
+                }
                 m.zygo_session = Some(p.zygo_session);
                 if let Some(a) = p.agent_session {
                     m.agent_session = Some(a);
@@ -609,23 +723,47 @@ fn bind_note(c: &Ctx, id: &str) {
 }
 
 /// The member part of `SessionStart` (W§9.1, W§9.4, AU60, AU92, AU104; D11) for the main loop of a member view;
-/// `text` is the session text. The output is `text`, an empty line, then the note (the note alone when `text` is
-/// empty). Claude Code: the whole hook output is written to `out` and flushed first (a write error returns `Err` with
-/// nothing written to any file), then the member record is written (D8, D9), then the note inputs are removed from the
-/// view when it held them; the result is `None`. OpenCode adds the session text to every model request, so the result
-/// is `Some(output)` and nothing is written: the plugin's `session` call owns the record and the note rule (D10).
+/// `text` is the session text. The output is the session text, an empty line, item 8 when `view.mail` is on (with the
+/// S§10.4 clause when sync is on and the member cache is not empty), the
+/// state reads and holds a record for the pane, then the note, then the mail delivery line when `view.mail` is on and
+/// `new/` holds mail (M§7.2); empty parts are left out. Claude Code: the whole hook
+/// output is written to `out` and flushed first (a write error returns `Err` with nothing written to any file), then
+/// the member record is written (D8, D9), then the note inputs are removed from the view when it held them; the result
+/// is `None`; for the main loop the mail sync child then starts by the gap, and a child that does not start changes no
+/// output (S§8.1 row 2, S§8.4, S-C1). OpenCode adds the session text to every model request, so the result is
+/// `Some(output)` and nothing is written: the plugin's `session` call owns the record, the note rule (D10) and the
+/// sync start.
 pub fn session_start(
     payload: &Value, dir: &SessionDir, view: &SessionView, paths: &Paths, zygo: &Path, out: &mut dyn Write, text: &str,
+) -> anyhow::Result<Option<String>> {
+    session_start_with_sync(payload, dir, view, paths, zygo, out, text, &sync_env(paths, zygo))
+}
+
+/// `session_start` with the mail sync seams `sync` (S-C9): the clock and the spawn of the sync child.
+#[allow(clippy::too_many_arguments)]
+pub fn session_start_with_sync(
+    payload: &Value, dir: &SessionDir, view: &SessionView, paths: &Paths, zygo: &Path, out: &mut dyn Write, text: &str,
+    sync: &Env,
 ) -> anyhow::Result<Option<String>> {
     // The OpenCode call runs per model request: a marker that fails its check writes no line there (D6).
     let log = matches!(view.agent, Agent::ClaudeCode);
     let Some(c) = ctx_of("session-start", dir, view.clone(), paths, log) else { return Ok(Some(text.to_string())) };
     let inputs = view.workspace.as_ref().and_then(|w| w.resume_note.as_ref());
-    let output = match inputs.and_then(note) {
-        Some(n) if text.is_empty() => n,
-        Some(n) => format!("{text}\n\n{n}"),
-        None => text.to_string(),
+    // M§8a item 1: item 8 after the mechanics text, before the resume note, from `workspace.json` read at this start,
+    // with the S§10.4 clause when sync is on and the member cache is not empty.
+    // A read error or no state gives no item and no line of its own (record_session's read writes the one line, C6).
+    let item = if view.mail { c.store.read().ok().flatten().and_then(|ws| crate::mail::session_item_with(&ws, &c.pane, &crate::mail::remote_addresses(c.paths, &c.ws_id, &ws.name))) } else { None };
+    // M§7.2, ML-10 D5: the mail delivery line comes after the resume note while `new/` holds mail.
+    let line = match unread_mail(&c) {
+        0 => None,
+        n => Some(crate::mail::delivery_line(n)),
     };
+    let output = [Some(text.to_string()), item, inputs.and_then(note), line]
+        .into_iter()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
     match view.agent {
         Agent::ClaudeCode => {
             let rendered = HookOutput::Json(
@@ -637,6 +775,11 @@ pub fn session_start(
             record_session(&c, payload_id(payload, "session_id"), zygo);
             if inputs.is_some() {
                 clear_note(&c);
+            }
+            // S§8.1 row 2, S§10.2 item 2: this is the member `session` event of Claude Code (W§9.1); the main loop
+            // starts the sync child by the gap, after the output is written (S-C1).
+            if main_loop(payload) {
+                start_sync(&c, sync);
             }
             Ok(None)
         }

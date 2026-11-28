@@ -182,10 +182,12 @@ export const ZygoPlugin = async ({ directory }) => {
       }
       await run("work", { input, output });
     },
+    // T§7.2 item 1: every `zygo/` model; the main role as today, any other role (or no main role) `--event subagent`.
     "experimental.chat.system.transform": async (input, output) => {
+      if (!input.model || input.model.providerID !== "zygo" || !output || !Array.isArray(output.system)) return;
       const role = process.env.ZYGO_MAIN_ROLE;
-      if (!role || !input.model || input.model.providerID !== "zygo" || input.model.id !== role) return;
-      const text = await run("session-start", { input, output });
+      const extra = role && input.model.id === role ? [] : ["--event", "subagent"];
+      const text = await run("session-start", { input, output }, extra);
       if (text) output.system.push(text);
     },
     "experimental.session.compacting": async (input, output) => {

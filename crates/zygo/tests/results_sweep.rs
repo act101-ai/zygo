@@ -38,7 +38,7 @@ fn stale(home: &Path, name: &str, hours: u64) -> PathBuf {
 }
 
 fn zygo_env(home: &Path, args: &[&str], stdin: &[u8], extra: &[(&str, &OsStr)]) -> std::process::Output {
-    std::fs::write(home.join("config.toml"), "").unwrap();
+    std::fs::write(home.join("config.toml"), common::NO_MARKETPLACE).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
     cmd.args(args)
         .env("HOME", home).env("LOCALAPPDATA", home).env("APPDATA", home)
@@ -78,6 +78,7 @@ fn zygo_claude_sweeps_before_it_looks_for_the_agent() {
     let o = zygo_env(h.path(), &["claude"], b"", &[("PATH", empty.as_os_str())]);
     assert_eq!(o.status.code(), Some(13), "{}", stderr_of(&o));
     assert!(!old.exists());
+    common::assert_no_marketplace_sync(h.path());
 }
 
 #[test] // only the lock on `pid` keeps a live session: token present, every entry 25 h old

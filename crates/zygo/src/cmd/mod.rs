@@ -13,6 +13,7 @@ pub mod claude;
 pub mod compact;
 pub mod compact_tool;
 pub mod config;
+pub mod decision;
 pub mod doctor;
 pub mod down;
 pub mod guards;
@@ -21,6 +22,7 @@ pub mod hook;
 pub mod keys;
 pub mod loadout;
 pub mod ls;
+pub mod mail;
 pub mod marketplace;
 pub mod mcp;
 pub mod member;
@@ -40,6 +42,8 @@ pub mod usage;
 pub mod verbs;
 pub mod work;
 pub mod workspace;
+mod workspace_approve;
+mod workspace_files;
 pub mod ws;
 
 pub use zygo_config::display::EscapedLines;
@@ -118,17 +122,27 @@ pub(crate) fn usable_session_id(env: &dyn Fn(&str) -> Option<std::ffi::OsString>
     env("ZYGO_SESSION").filter(|v| !v.is_empty())
 }
 
+/// The merged user config only (D3, AU10, AU22): no repository and no team layer.
+pub(crate) fn user_merged(paths: &Paths) -> Result<zygo_config::Merged, zygo_config::ConfigError> {
+    zygo_config::load(&zygo_config::LoadContext { paths: paths.clone(), repo: None, team: None })
+}
+
+/// `user_merged` for a CLI arm (D3): a load error prints `zygo <verb>: <error escaped>` and gives exit 11.
+pub(crate) fn user_merged_or_exit(paths: &Paths, verb: &str) -> Result<zygo_config::Merged, i32> {
+    user_merged(paths).map_err(|e| {
+        print_err(&format!("zygo {verb}: {}\n", zygo_core::esc(&e.to_string())));
+        ExitCode::ConfigInvalid as i32
+    })
+}
+
 /// The user config only (D3, AU10, AU22): no repository and no team layer.
 pub(crate) fn user_config(paths: &Paths) -> Result<zygo_config::Config, zygo_config::ConfigError> {
-    zygo_config::load(&zygo_config::LoadContext { paths: paths.clone(), repo: None, team: None }).map(|m| m.config)
+    user_merged(paths).map(|m| m.config)
 }
 
 /// `user_config` for a CLI arm (D3): a load error prints `zygo <verb>: <error escaped>` and gives exit 11.
 pub(crate) fn user_config_or_exit(paths: &Paths, verb: &str) -> Result<zygo_config::Config, i32> {
-    user_config(paths).map_err(|e| {
-        print_err(&format!("zygo {verb}: {}\n", zygo_core::esc(&e.to_string())));
-        ExitCode::ConfigInvalid as i32
-    })
+    user_merged_or_exit(paths, verb).map(|m| m.config)
 }
 
 /// The D10 text of a failed `std::env::current_dir()`, without the `zygo: ` prefix.
@@ -224,6 +238,12 @@ pub(crate) struct Launch {
     /// Claude Code config directory (sets CLAUDE_CONFIG_DIR)
     #[arg(long)]
     pub(crate) config_dir: Option<String>,
+    /// Member name in a workspace pane (M§6)
+    #[arg(long)]
+    pub(crate) name: Option<String>,
+    /// R§7.4: the saved pin of a `ws run` start; never a flag.
+    #[arg(skip)]
+    pub(crate) definition: Option<zygo_config::repo_def::Pin>,
     /// Arguments passed to the agent
     #[arg(last = true)]
     pub(crate) rest: Vec<String>,
@@ -239,6 +259,11 @@ pub(crate) struct LaunchOpenCode {
     pub(crate) compact: Option<String>,
     #[arg(long)]
     pub(crate) yolo: bool,
+    #[arg(long)]
+    pub(crate) name: Option<String>,
+    /// R§7.4: the saved pin of a `ws run` start; never a flag.
+    #[arg(skip)]
+    pub(crate) definition: Option<zygo_config::repo_def::Pin>,
     #[arg(last = true)]
     pub(crate) rest: Vec<String>,
 }
@@ -357,10 +382,19 @@ enum Cmd {
     Attach(attach::AttachArgs),
     /// Loadouts and their source
     Loadout(loadout::LoadoutArgs),
-    /// Status of this session's or this folder's workspace
-    Workspace,
+    /// Decision records: new, ls, show, deps, check
+    // `-h`/`--help` reach `decision::run_in` in any position, which prints the usage line.
+    #[command(disable_help_flag = true)]
+    Decision {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Status of this session's or this folder's workspace; approve: approve this repository's workspace files
+    Workspace(VerbArgs),
     /// Workspace tools: forget, forget-pane
     Ws(ws::WsArgs),
+    /// Workspace mail: send, read, ls, watch, sync
+    Mail(mail::MailArgs),
     /// Internal: MCP server started by the agents
     Mcp {
         #[arg(long)]
@@ -492,13 +526,14 @@ fn verb_tokens(raw: Vec<String>) -> (bool, Vec<String>) {
     (save, args)
 }
 
-/// Runs a verb: `args` are the raw tokens after the verb, split by `verb_tokens`.
+/// Runs a verb: `args` are the raw tokens after the verb, split by `verb_tokens` (not for `decision`).
 fn run_verb(name: &str, raw: Vec<String>, slash: bool) -> anyhow::Result<String> {
     let verb = VERBS
         .iter()
         .find(|v| v.spec.name == name)
         .ok_or_else(|| anyhow::anyhow!("unknown verb `{name}`; try help"))?;
-    let (save, args) = verb_tokens(raw);
+    // D§10.1: the `decision` reply carries `<args>` as given, so its tokens are not split.
+    let (save, args) = if name == "decision" { (false, raw) } else { verb_tokens(raw) };
     let ctx = VerbCtx { slash, save, session_dir: SessionDir::from_env(), paths: Paths::from_env() };
     (verb.handler)(&ctx, &args)
 }
@@ -528,6 +563,16 @@ fn start_check(rest: &[String]) -> Option<i32> {
     }
 }
 
+/// The commands that run no results sweep and no mail sweep at their start: hooks and `zygo mcp` (time-bounded; C6),
+/// `zygo ws` (AU71) and the sync child `zygo mail sync --background` (AU71; mail sync design S§17 row `cmd/mod.rs`).
+fn skips_sweep(c: &Cmd) -> bool {
+    match c {
+        Cmd::Hook { .. } | Cmd::Mcp { .. } | Cmd::Ws(_) => true,
+        Cmd::Mail(mail::MailArgs { sub: Some(mail::MailCmd::Sync(s)) }) => s.background,
+        _ => false,
+    }
+}
+
 /// Entry point of the binary; returns the process exit code.
 pub fn run() -> i32 {
     set_slash_dispatch(slash);
@@ -545,13 +590,19 @@ pub fn run() -> i32 {
         }
     };
     // §10.1 and its N71 note: results of ended sessions are swept at the next `zygo` command, except hooks,
-    // `zygo mcp` (time-bounded; C6) and `zygo ws` (AU71). I/O errors are ignored.
-    if !matches!(cli.command, Cmd::Hook { .. } | Cmd::Mcp { .. } | Cmd::Ws(_)) {
+    // `zygo mcp` (time-bounded; C6), `zygo ws` and `zygo mail sync --background` (AU71; mail sync design S§17).
+    // I/O errors are ignored; the mail sweep (M§5) runs under the same rule.
+    if !skips_sweep(&cli.command) {
         let p = Paths::from_env();
         zygo_results::sweep(&p.cache_dir, &p.workspace_cache_dir(), SystemTime::now());
+        // OP5: native Windows has no workspace features, so it has no mail sweep (the cfg of `op5`).
+        if !cfg!(windows) {
+            mail::sweep(&p, SystemTime::now());
+        }
     }
     let command = match cli.command {
         Cmd::Ws(a) => return ws::dispatch(a),
+        Cmd::Mail(a) => return mail::run(a),
         c => c,
     };
     let verb = match &command {
@@ -570,8 +621,10 @@ pub fn run() -> i32 {
         Cmd::Ls => return finish(ls::verb(&cli_ctx(), &[])),
         Cmd::Attach(a) => return attach::run(a),
         Cmd::Loadout(a) => return loadout::run(a),
-        Cmd::Workspace => return finish(workspace::verb(&cli_ctx(), &[])),
+        Cmd::Decision { args } => return decision::run(args),
         Cmd::Ws(_) => unreachable!("taken above"),
+        Cmd::Mail(_) => unreachable!("taken above"),
+        Cmd::Workspace(_) => "workspace",
         Cmd::Status => "status",
         Cmd::Compact { .. } => "compact",
         Cmd::Profile { .. } => "profile",
@@ -593,8 +646,8 @@ pub fn run() -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{verb_tokens, Cli};
-    use clap::Parser;
+    use super::{verb_tokens, Cli, Cmd};
+    use clap::{CommandFactory, Parser};
 
     fn v(s: &[&str]) -> Vec<String> {
         s.iter().map(|t| t.to_string()).collect()
@@ -607,6 +660,15 @@ mod tests {
         assert_eq!(verb_tokens(v(&["on"])), (false, v(&["on"])));
         assert_eq!(verb_tokens(v(&["--", "--save"])), (false, v(&["--save"])));
         assert_eq!(verb_tokens(v(&["a", "--save", "--", "b", "--save", "--"])), (true, v(&["a", "b", "--save", "--"])));
+    }
+
+    /// D§10.1: the `/zygo:decision` reply carries `<args>` as given, `--` and `--save` included.
+    #[test]
+    fn slash_decision_keeps_its_args() {
+        let r = super::slash("decision", "show -- X").unwrap();
+        assert_eq!(r, "run in your shell: zygo decision show -- X");
+        let r = super::slash("decision", "ls --save -- --save").unwrap();
+        assert_eq!(r, "run in your shell: zygo decision ls --save -- --save");
     }
 
     #[test]
@@ -636,5 +698,86 @@ mod tests {
         assert!(Cli::try_parse_from(["zygo", "compact", "600k", "--session", "S1"]).is_ok());
         assert!(Cli::try_parse_from(["zygo", "compact", "600k", "--session", "S1", "--save"]).is_err());
         assert!(Cli::try_parse_from(["zygo", "compact", "600k", "--session"]).is_err());
+    }
+
+    #[test] // M§6: `--name <n>` on both launch verbs; DR-4 carried item: the help names `new`
+    fn launch_name_parses_for_both_agents_and_help_lists_decision_new() {
+        let Cmd::Claude(l) = Cli::try_parse_from(["zygo", "claude", "--name", "elena", "--", "-p"]).unwrap().command else { panic!() };
+        assert_eq!((l.name.as_deref(), l.rest.clone()), (Some("elena"), vec!["-p".to_string()]));
+        let Cmd::Opencode(a) = Cli::try_parse_from(["zygo", "opencode", "--name", "elena"]).unwrap().command else { panic!() };
+        assert_eq!(a.name.as_deref(), Some("elena"));
+        let Cmd::Claude(l) = Cli::try_parse_from(["zygo", "claude"]).unwrap().command else { panic!() };
+        assert_eq!(l.name, None);
+        assert!(Cli::command().render_help().to_string().contains("Decision records: new, ls, show, deps, check"));
+    }
+
+    #[test] // M§8 CLI rows send, read, ls
+    fn mail_args_parse() {
+        use super::mail::{MailArgs, MailCmd};
+        use std::path::PathBuf;
+        let mail = |a: &[&str]| -> Result<MailArgs, clap::Error> {
+            let argv: Vec<&str> = ["zygo", "mail"].iter().chain(a).copied().collect();
+            Cli::try_parse_from(argv).map(|c| match c.command {
+                Cmd::Mail(m) => m,
+                _ => panic!("not mail"),
+            })
+        };
+        let Some(MailCmd::Send { to, subject, file, stdin }) = mail(&["send", "bob", "--subject", "s", "--file", "f"]).unwrap().sub else { panic!() };
+        assert_eq!((to.as_str(), subject.as_deref(), file, stdin), ("bob", Some("s"), Some(PathBuf::from("f")), None));
+        let Some(MailCmd::Send { stdin, .. }) = mail(&["send", "bob", "-"]).unwrap().sub else { panic!() };
+        assert_eq!(stdin.as_deref(), Some("-"));
+        assert!(mail(&["send", "bob", "--file", "f", "-"]).is_err());
+        assert!(mail(&["send", "bob", "x"]).is_err());
+        let Some(MailCmd::Read { name, max }) = mail(&["read", "--name", "n", "--max", "3"]).unwrap().sub else { panic!() };
+        assert_eq!((name.as_deref(), max), (Some("n"), 3));
+        let Some(MailCmd::Read { max, .. }) = mail(&["read"]).unwrap().sub else { panic!() };
+        assert_eq!(max, 10);
+        let Some(MailCmd::Ls { name }) = mail(&["ls", "bob"]).unwrap().sub else { panic!() };
+        assert_eq!(name.as_deref(), Some("bob"));
+        assert!(mail(&[]).unwrap().sub.is_none());
+    }
+
+    #[test] // AU71, S§17 row cmd/mod.rs: the sweep rule
+    fn sweep_skips_hooks_mcp_ws_and_mail_sync_background() { // U2
+        let cmd = |a: &[&str]| Cli::try_parse_from(a).unwrap().command;
+        assert!(super::skips_sweep(&cmd(&["zygo", "mail", "sync", "--ws-id", "0123456789abcdef", "--background"])));
+        assert!(super::skips_sweep(&cmd(&["zygo", "ws", "forget", "app"])));
+        assert!(super::skips_sweep(&cmd(&["zygo", "mcp"])));
+        assert!(!super::skips_sweep(&cmd(&["zygo", "mail", "sync"])));
+        assert!(!super::skips_sweep(&cmd(&["zygo", "mail", "ls"])));
+        assert!(!super::skips_sweep(&cmd(&["zygo", "status"])));
+    }
+
+    #[test] // S§8.1 row 4, AU44: the options of zygo mail sync and the hidden child form
+    fn mail_sync_args_parse() { // U1
+        use super::mail::{MailArgs, MailCmd, SyncArgs};
+        let sync = |a: &[&str]| -> Result<SyncArgs, clap::Error> {
+            let argv: Vec<&str> = ["zygo", "mail", "sync"].iter().chain(a).copied().collect();
+            match Cli::try_parse_from(argv)?.command {
+                Cmd::Mail(MailArgs { sub: Some(MailCmd::Sync(s)) }) => Ok(s),
+                _ => panic!("not mail sync"),
+            }
+        };
+        let s = sync(&[]).unwrap();
+        assert!(s.name.is_none() && !s.prune && !s.take_host && !s.new_identity && s.drop_host.is_none() && !s.yes);
+        assert!(s.ws_id.is_none() && !s.background);
+        let s = sync(&["--name", "app", "--prune"]).unwrap();
+        assert_eq!((s.name.as_deref(), s.prune), (Some("app"), true));
+        let s = sync(&["--drop-host", "b", "--yes"]).unwrap();
+        assert_eq!((s.drop_host.as_deref(), s.yes), (Some("b"), true));
+        assert!(sync(&["--take-host"]).unwrap().take_host);
+        assert!(sync(&["--new-identity"]).unwrap().new_identity);
+        let s = sync(&["--ws-id", "0123456789abcdef", "--background"]).unwrap();
+        assert_eq!((s.ws_id.as_deref(), s.background), (Some("0123456789abcdef"), true));
+        for bad in [
+            &["--yes"][..], &["--prune", "--take-host"], &["--take-host", "--new-identity"],
+            &["--new-identity", "--drop-host", "b"], &["--prune", "--drop-host", "b"],
+            &["--ws-id", "0123456789abcdef"], &["--background"],
+            &["--ws-id", "0123456789abcdef", "--background", "--name", "app"],
+            &["--ws-id", "0123456789abcdef", "--background", "--take-host"],
+            &["--ws-id", "0123456789abcdef", "--background", "--drop-host", "b"],
+        ] {
+            assert!(sync(bad).is_err(), "{bad:?}");
+        }
     }
 }

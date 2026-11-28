@@ -3,5 +3,5 @@
 name = "act101"
 source = "github:act101-ai/act101"
 ref = "v2.9.2"
-commit = "409b9dad5da85a9857e8d584d1c6a9fe4136c3e3"
+commit = "9d82bd9714927ac713212c07b60d87fd73a7500f"
 default_on = ["act-lite"]

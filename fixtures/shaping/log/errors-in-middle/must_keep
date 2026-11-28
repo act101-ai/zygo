@@ -1,0 +1,6 @@
+2026-11-25 05:27:06,203 ERROR queue.worker: job 4175 failed: upstream returned 503 after 3 retries
+2026-11-25 05:27:06,203 ERROR queue.worker: job 4190 failed: upstream returned 503 after 3 retries
+2026-11-25 05:27:06,204 ERROR queue.worker: job 4205 failed: upstream returned 503 after 3 retries
+2026-11-25 05:27:06,204 ERROR queue.worker: job 4220 failed: upstream returned 503 after 3 retries
+2026-11-25 05:27:06,204 ERROR queue.worker: job 4235 failed: upstream returned 503 after 3 retries
+2026-11-25 05:27:06,204 ERROR queue.worker: job 4250 failed: upstream returned 503 after 3 retries

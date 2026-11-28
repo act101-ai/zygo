@@ -91,6 +91,16 @@
     ]
    }
   ],
+  "SubagentStart": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "<ZYGO> hook session-start"
+     }
+    ]
+   }
+  ],
   "SessionStart": [
    {
     "hooks": [

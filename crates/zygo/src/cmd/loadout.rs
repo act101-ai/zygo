@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use regex::Regex;
+use zygo_config::repo_def::REPOSITORY_LOADOUT;
 use zygo_config::{Loadout, LoadoutPane, BUILTIN_LOADOUT};
 use zygo_core::paths::Paths;
 use zygo_core::{esc, Agent};
@@ -12,7 +13,8 @@ use zygo_workspace::identity::Worktree;
 use zygo_workspace::loadout::{self, pane_cwd, LoadoutError, Source};
 use zygo_workspace::up::{find_checkout, GIT_BOUND};
 
-use super::{op5_exit, print_err, print_out, user_config_or_exit};
+use super::workspace_files::{here, State};
+use super::{op5_exit, print_err, print_out, user_merged_or_exit};
 
 const USER_INFO_REMOVED: &str = "<user info removed>";
 const INLINE_JSON_HIDDEN: &str = "<inline JSON not shown>";
@@ -291,8 +293,8 @@ pub(crate) struct PaneBase {
 impl PaneBase {
     /// The base of the repository of `here`, by `zygo up`'s own lookup (`find_checkout`). When it fails: `here` with no
     /// worktree, and the reason.
-    pub(crate) fn from_folder(here: &Path) -> (PaneBase, Option<String>) {
-        match find_checkout(here, GIT_BOUND) {
+    pub(crate) fn from_folder(here: &Path, cache: &Path) -> (PaneBase, Option<String>) {
+        match find_checkout(here, GIT_BOUND, cache) {
             Ok((_, list, main)) => (PaneBase { main_root: main, worktrees: list }, None),
             Err(e) => (PaneBase { main_root: here.to_path_buf(), worktrees: vec![] }, Some(e.message)),
         }
@@ -336,6 +338,8 @@ pub(crate) fn hide_secrets(l: &mut Loadout, base: &PaneBase) {
             scrub(&mut p.profile);
             scrub(&mut p.compact);
             scrub(&mut p.config_dir);
+            scrub(&mut p.name);
+            scrub(&mut p.job);
             if let Some(t) = p.cwd.as_mut() {
                 *t = match t.strip_prefix("branch:") {
                     Some(branch) => format!("branch:{}", shown_field(branch)),
@@ -374,36 +378,74 @@ pub enum LoadoutCmd {
     Show { name: String },
 }
 
-/// The OP5 check, the user config (D3), then D7: `<name escaped>  built-in` or `<name escaped>  user` per line, in the
-/// order of `loadout::list`.
+/// The OP5 check, the user config (D3), then D7: `<name escaped>  built-in`, `user` or `workspace-files` per line, in
+/// the order of `loadout::list`, with the R§10 row of the workspace files of the current folder's repository.
 pub fn run(a: &LoadoutArgs) -> i32 {
     if let Some(code) = op5_exit() {
         return code;
     }
-    let cfg = match user_config_or_exit(&Paths::from_env(), "loadout") {
-        Ok(c) => c,
+    let paths = Paths::from_env();
+    let m = match user_merged_or_exit(&paths, "loadout") {
+        Ok(m) => m,
         Err(code) => return code,
     };
     match &a.sub {
         LoadoutCmd::List => {
-            let text: String = loadout::list(&cfg)
+            // R§10 `zygo loadout list`: the approved files add `repository` (source `workspace-files`); a not-approved,
+            // invalid or shadowed repository loadout is one more `repository` row after the others of that name, only
+            // when the read has `.zygo/workspace.toml` (review F4: a profile-only read gives no row). Only an unread
+            // read prints its line; the other states are the text of that row.
+            let v = here(&m, &paths.approvals_file, &paths.workspace_cache_dir(), false);
+            if let (State::Unread, Some(line)) = (&v.state, &v.line) {
+                print_err(&format!("{line}\n"));
+            }
+            let from_files = v.merged.definition_file_of(&format!("loadout.{REPOSITORY_LOADOUT}")).is_some();
+            let mut rows: Vec<(String, &str)> = loadout::list(&v.merged.config, from_files)
                 .into_iter()
                 .map(|(name, source)| {
                     let source = match source {
                         Source::Builtin => "built-in",
                         Source::User => "user",
+                        Source::Repository => "workspace-files",
                     };
-                    format!("{}  {source}\n", esc(&name))
+                    (name, source)
                 })
                 .collect();
+            let extra = match &v.state {
+                State::NotApproved { workspace: true } => Some("workspace-files, not approved"),
+                State::Invalid { workspace: true, .. } => Some("workspace-files, invalid"),
+                State::Approved { workspace: true } if !from_files => Some("workspace-files, shadowed"),
+                _ => None,
+            };
+            if let Some(text) = extra {
+                rows.push((REPOSITORY_LOADOUT.to_string(), text));
+                // Stable: the extra row stays after the rows of its name.
+                rows.sort_by(|a, b| a.0.cmp(&b.0));
+            }
+            let text: String = rows.iter().map(|(name, source)| format!("{}  {source}\n", esc(name))).collect();
             print_out(&text);
             0
         }
         LoadoutCmd::Show { name } => {
-            // D7: the user's `[loadout.<name>]` first, then the built-in `solo`
-            let l = match cfg.loadout.get(name) {
+            // D7: the user's `[loadout.<name>]` first, then the built-in `solo`; R§10: `repository` with no user
+            // `[loadout.repository]` is the loadout of the approved workspace files, else their line.
+            let l = match m.config.loadout.get(name) {
                 Some(l) => l.clone(),
                 None if name == BUILTIN_LOADOUT => loadout::builtin_solo(),
+                None if name == REPOSITORY_LOADOUT => {
+                    let v = here(&m, &paths.approvals_file, &paths.workspace_cache_dir(), false);
+                    match (v.merged.config.loadout.get(name), &v.line) {
+                        (Some(l), _) => l.clone(),
+                        (None, Some(line)) => {
+                            print_err(&format!("{line}\n"));
+                            return 1;
+                        }
+                        (None, None) => {
+                            print_err(&format!("zygo: {}\n", LoadoutError::Unknown { name: name.clone() }));
+                            return 1;
+                        }
+                    }
+                }
                 None => {
                     print_err(&format!("zygo: {}\n", LoadoutError::Unknown { name: name.clone() }));
                     return 1;
@@ -417,7 +459,7 @@ pub fn run(a: &LoadoutArgs) -> i32 {
                 }
             };
             // D6: the same lookup as `config show` and `config check`
-            let (base, warning) = PaneBase::from_folder(&here);
+            let (base, warning) = PaneBase::from_folder(&here, &paths.workspace_cache_dir());
             if let Some(m) = warning {
                 print_folder_warning(&m);
             }
@@ -650,18 +692,38 @@ mod tests {
         assert!(!text.contains("SECRET"), "{text}");
     }
 
-    #[test] // F15; kills: a field left out of the scrub (round 3, finding 5: a field is one token of the argument rule,
-    // so a URL with user info is `<user info removed>` as an argument is)
+    #[test] // F15; kills: a field left out of the scrub, `job` included (WD-24) (round 3, finding 5: a field is one token
+    // of the argument rule, so a URL with user info is `<user info removed>` as an argument is)
     fn hide_secrets_scrubs_every_other_text_field() {
         let t = tempfile::tempdir().unwrap();
         let u = |n: u32| Some(format!("https://u:SECRET{n}@h.example.invalid/x"));
-        let p = LoadoutPane { profile: u(3), compact: u(4), config_dir: u(5), cwd: u(6), ..pane(&[]) };
+        let p = LoadoutPane {
+            profile: u(3),
+            compact: u(4),
+            config_dir: u(5),
+            cwd: u(6),
+            name: u(7),
+            job: u(8),
+            ..pane(&[])
+        };
         let mut l = Loadout { window: vec![LoadoutWindow { name: u(1), layout: u(2), pane: vec![p] }] };
         hide_secrets(&mut l, &base(t.path()));
         let clean = Some(G.to_string());
         let w = &l.window[0];
         let p = &w.pane[0];
-        assert_eq!([&w.name, &w.layout, &p.profile, &p.compact, &p.config_dir, &p.cwd], [&clean; 6]);
+        assert_eq!(
+            [
+                &w.name,
+                &w.layout,
+                &p.profile,
+                &p.compact,
+                &p.config_dir,
+                &p.cwd,
+                &p.name,
+                &p.job
+            ],
+            [&clean; 8]
+        );
     }
 
     // ---- diff review round 2 ----
@@ -746,6 +808,7 @@ mod tests {
         let u = |n: u32| Some(format!("u:SECRET{n}@h.example.invalid"));
         let p = LoadoutPane {
             kind: "u:SECRET0@h.example.invalid".into(), profile: u(3), server: u(7), compact: u(4), config_dir: u(5), cwd: u(6),
+            name: u(8), job: u(9),
             ..pane(&[])
         };
         let mut l = Loadout { window: vec![LoadoutWindow { name: u(1), layout: u(2), pane: vec![p] }] };
@@ -754,7 +817,10 @@ mod tests {
         let w = &l.window[0];
         let p = &w.pane[0];
         assert_eq!(p.kind, G);
-        assert_eq!([&w.name, &w.layout, &p.profile, &p.server, &p.compact, &p.config_dir, &p.cwd], [&g; 7]);
+        assert_eq!(
+            [&w.name, &w.layout, &p.profile, &p.server, &p.compact, &p.config_dir, &p.cwd, &p.name, &p.job],
+            [&g; 9]
+        );
         // a profile name with an `@` and no `:` before it stays
         assert_eq!(shown_field("me@work"), "me@work");
     }
@@ -821,14 +887,15 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let p = LoadoutPane {
             cwd: Some("https://u:pa SECRET1@h.example.invalid".into()), profile: Some("x https://u:SECRET2@h".into()),
-            compact: Some("https://u:pa SECRET3@h".into()), config_dir: Some("API_KEY=SECRET4".into()), ..pane(&[])
+            compact: Some("https://u:pa SECRET3@h".into()), config_dir: Some("API_KEY=SECRET4".into()),
+            name: Some("u:pa SECRET10@h".into()), job: Some("x https://u:SECRET11@h".into()), ..pane(&[])
         };
         let mut l = Loadout { window: vec![LoadoutWindow { name: Some("u:pa SECRET5@h".into()), layout: Some("{\"k\":\"SECRET6\"}".into()), pane: vec![p] }] };
         hide_secrets(&mut l, &base(t.path()));
         let w = &l.window[0];
         let p = &w.pane[0];
         let g = Some(G.to_string());
-        assert_eq!([&w.name, &p.cwd, &p.profile, &p.compact], [&g; 4]);
+        assert_eq!([&w.name, &p.cwd, &p.profile, &p.compact, &p.name, &p.job], [&g; 6]);
         assert_eq!(p.config_dir.as_deref(), Some("API_KEY=<value not shown>"));
         assert_eq!(w.layout.as_deref(), Some(H));
         // the same function for an argument and a field

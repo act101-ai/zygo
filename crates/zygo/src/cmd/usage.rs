@@ -4,10 +4,11 @@ use anyhow::anyhow;
 use zygo_core::tokens::BYTES_PER_TOKEN;
 use zygo_hooks::statusline::pct;
 use zygo_plugins::check::esc;
-use zygo_usage::{Filter, Store, Summary};
+use zygo_usage::{Filter, Rates, Savings, Store, Summary};
 use zygo_work::report::parse_since;
 
 use zygo_config::keys::default_store;
+use zygo_config::Catalog;
 use zygo_launch::serve_client::{from_config, sync_pending, Unreachable};
 
 use super::verbs::{base, VerbCtx};
@@ -69,6 +70,55 @@ fn sync(ctx: &VerbCtx) -> anyhow::Result<String> {
     Ok(o)
 }
 
+/// O§6.3 step 3 and rule "Prices": the served provider's price, else the model row's first price (a team row has
+/// no provider; a passthrough provider has no price); the `long_context` tier when the prompt is over its `above`.
+fn rates(catalog: &Catalog, model: &str, provider: &str, prompt: u64) -> Option<Rates> {
+    let row = catalog.get(model)?;
+    let p = row.provider.iter().find(|p| p.name == provider).and_then(|p| p.price_usd_per_mtok.as_ref())
+        .or_else(|| row.provider.iter().find_map(|p| p.price_usd_per_mtok.as_ref()))?;
+    Some(match &p.long_context {
+        Some(l) if prompt > l.above => Rates { input: l.input, cache_read: l.cache_read, write: l.cache_write_5m.unwrap_or(l.cache_write) },
+        _ => Rates { input: p.input, cache_read: p.cache_read, write: p.cache_write_5m.unwrap_or(p.cache_write) },
+    })
+}
+
+/// O§6.6: `≈$` and four decimals; a negative amount puts the sign before `$`, only when it is below zero at four
+/// decimals (`-0.00004` prints `≈$0.0000`).
+fn usd(v: f64) -> String {
+    let a = format!("{:.4}", v.abs());
+    if v < 0.0 && a != "0.0000" { format!("≈-${a}") } else { format!("≈${a}") }
+}
+
+/// O§6.6: the net figures, the ratio and the breakdown; `priced` is false when the config does not load, and every
+/// amount (the total and each key's) is then `unknown` (O§10).
+fn savings_lines(o: &mut String, v: &Savings, priced: bool) {
+    let n = |k: u64, one: &str| if k == 1 { format!("1 {one}") } else { format!("{k} {one}s") };
+    let _ = writeln!(o, "bytes read back: {}\ntokens kept out of context (estimate): {}", v.bytes_read_back, v.kept_out_tokens);
+    let spend = if !priced {
+        "unknown (config does not load)".to_string()
+    } else if v.unpriced > 0 {
+        format!("{} ({} requests had no price)", usd(v.spend_usd), v.unpriced)
+    } else {
+        usd(v.spend_usd)
+    };
+    let _ = writeln!(o, "estimated spend avoided: {spend}");
+    let ratio = if v.readbacks == 0 { "-".to_string() } else { format!("{:.2}", v.views as f64 / v.readbacks as f64) };
+    let _ = writeln!(o, "views: {}, read-backs: {}, view to read-back ratio: {ratio}", v.views, v.readbacks);
+    if v.by_key.is_empty() {
+        o.push_str("by tool and command: none\n");
+        return;
+    }
+    o.push_str("by tool and command:\n");
+    for k in &v.by_key {
+        let amount = if priced { usd(k.spend_usd) } else { "unknown".to_string() };
+        let _ = writeln!(
+            o,
+            "  {} {} {}: {}, {}, {} bytes kept out, {}",
+            esc(&k.tool), esc(&k.command), esc(&k.shaper), n(k.views, "view"), n(k.readbacks, "read-back"), k.kept_out_bytes, amount
+        );
+    }
+}
+
 pub fn run(ctx: &VerbCtx, args: &[String], env_session: Option<&str>) -> anyhow::Result<String> {
     let a = parse(args)?;
     let since = match &a.since {
@@ -87,11 +137,14 @@ pub fn run(ctx: &VerbCtx, args: &[String], env_session: Option<&str>) -> anyhow:
         (None, Some(d)) => format!("since {}", esc(d)),
         (Some(s), Some(d)) => format!("session {} since {}", esc(s), esc(d)),
     };
+    let catalog = base(ctx, "usage", None, None).ok().map(|m| m.config.catalog);
+    let price = |m: &str, pv: &str, n: u64| catalog.as_ref().and_then(|c| rates(c, m, pv, n));
     let fail = |e: anyhow::Error| anyhow!("zygo usage: {}", esc(&e.to_string()));
-    let s = if ctx.paths.usage_db.exists() {
-        Store::open_read_only(&ctx.paths.usage_db).and_then(|st| st.summary(&Filter { session, since })).map_err(fail)?
+    let f = Filter { session, since };
+    let (s, v) = if ctx.paths.usage_db.exists() {
+        Store::open_read_only(&ctx.paths.usage_db).and_then(|st| st.report(&f, &price)).map_err(fail)?
     } else {
-        Summary::default()
+        (Summary::default(), Savings::default())
     };
     let mut o = String::new();
     let share = if s.input_tokens + s.cache_read_tokens + s.cache_write_tokens > 0 { Some(s.cache_read_share) } else { None };
@@ -102,6 +155,7 @@ pub fn run(ctx: &VerbCtx, args: &[String], env_session: Option<&str>) -> anyhow:
     let _ = writeln!(o, "cache read share: {}\nestimated cost: ${:.4}", pct(share), s.estimated_usd);
     // AU26: the exact byte count stays; the estimate is `ceil(bytes ÷ BYTES_PER_TOKEN)` (H§6.6), as the status line shows it.
     let _ = writeln!(o, "bytes trimmed: {}\ntokens trimmed (estimate): {}", s.bytes_trimmed, s.bytes_trimmed.div_ceil(BYTES_PER_TOKEN));
+    savings_lines(&mut o, &v, catalog.is_some());
     let _ = writeln!(o, "compaction signals: {}\ncompactions observed: {}", s.compaction_signals, s.compactions_observed);
     let _ = writeln!(o, "guard events: {}", if events.is_empty() { "none".into() } else { events.join(", ") });
     if s.by_role_model.is_empty() {

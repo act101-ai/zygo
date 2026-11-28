@@ -1,0 +1,2 @@
+general-purpose transcript canary:attachment,attachment,api-request-blob
+p315:probe transcript canary:attachment,attachment,api-request-blob

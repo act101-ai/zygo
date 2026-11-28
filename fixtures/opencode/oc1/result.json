@@ -1,5 +1,5 @@
 {
-  "PO1": {
+  "POC1": {
     "session key differs from the vendor dummy key": true,
     "inline config holds a key": false,
     "inline apiKey": "{file:/tmp/run/sess dir/token}",
@@ -43,7 +43,7 @@
     "of them, files other than the token file": [],
     "pass": true
   },
-  "PO2": {
+  "POC2": {
     "user config.json disabled_providers": [
       "amazon-bedrock",
       "zygo"
@@ -60,7 +60,7 @@
       "zygo/lead"
     ],
     "ON: every model is zygo/": true,
-    "ON: zygo/lead answered (the PO1 run, same ON config)": true,
+    "ON: zygo/lead answered (the POC1 run, same ON config)": true,
     "ON: requests to the vendor mock": [],
     "ON: anthropic/probe-model run output (first 300 chars)": "\u001b[91m\u001b[1mError: \u001b[0m{\n  \"name\": \"UnknownError\",\n  \"data\": {\n    \"message\": \"Unexpected server error. Check server logs for details.\",\n    \"ref\": \"err_57d7be83\"\n  }\n}\n",
     "control: user config.json [\"amazon-bedrock\",\"zygo\"], project sets none, no inline disabled_providers: models": [],

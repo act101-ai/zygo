@@ -1,0 +1,9 @@
+{
+   "agent" : "claude-code",
+   "captured_on" : "2026-11-25",
+   "command" : "python3 service.py",
+   "event" : "PostToolUse",
+   "exit" : 0,
+   "source" : "scratch Python script: logging.Formatter.converter = time.gmtime (UTC); logging.basicConfig(stream=sys.stdout, level=logging.INFO, format=\"%(asctime)s %(levelname)s %(name)s: %(message)s\"); logger \"queue.worker\"; for i in 1 to 420 with job = 4000 + i: i in 175, 190, 205, 220, 235, 250 logs error \"job %d failed: upstream returned 503 after 3 retries\" % job; i in 180, 230 logs warning \"job %d slow: 2.4 s over budget\" % job; every other i logs info \"job %d done in %d ms, %d bytes written\" % (job, 20 + i % 37, 1024 + 13 * i), run by capture-shaping.sh in /repo",
+   "tool" : "python3 3.9.6"
+}

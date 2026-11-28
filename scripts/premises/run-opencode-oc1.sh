@@ -1,11 +1,11 @@
 #!/bin/sh
-# PO1 and PO2 (node OC-1), OpenCode 1.18.16.
-# PO1: a provider's options.apiKey given as {file:<absolute path>} in OPENCODE_CONFIG_CONTENT is read
+# POC1 and POC2 (node OC-1), OpenCode 1.18.16.
+# POC1: a provider's options.apiKey given as {file:<absolute path>} in OPENCODE_CONFIG_CONTENT is read
 #      from that file; the inline config text holds no key; after all runs no file under the run folder
 #      (the scratch HOME and TMPDIR are in it) holds the session key, except the token file itself.
 #      The session key is made at run time, differs from the vendor dummy key, and is written only to
 #      the token file; the zygo mock accepts only it, so an accepted x-api-key came from the {file:} read.
-# PO2: with enabled_providers = ["zygo"] only zygo/ models list and no request goes to the vendor mock,
+# POC2: with enabled_providers = ["zygo"] only zygo/ models list and no request goes to the vendor mock,
 #      while the control (no enabled_providers) lists catalog, env-key/stored-login and config providers.
 #      The user config.json and the project opencode.json both disable zygo and one more provider. The
 #      script plants the inline disabled_providers that zygo computes for them (crates/zygo-launch/src/
@@ -43,7 +43,7 @@ tmp_state() { if [ -e /tmp/opencode ]; then echo "present, mtime $(stat -c %Y /t
 tmp_state >"$RUN/tmp-opencode-before.txt"
 touch "$RUN/start-mark"
 
-# The mocks. zygo (rec/): a text reply to the PO1 run's main request (it has tools), every other request the
+# The mocks. zygo (rec/): a text reply to the POC1 run's main request (it has tools), every other request the
 # default reply, only the session key. vendor (rec-vendor/): the user config's provider, only the dummy key.
 mkdir -p "$RUN/sse" "$RUN/rec-vendor"
 echo '{"trigger": "tracer-po1", "extra": {"body": "\"tools\""}, "steps": [{"text": "po1 done"}]}' >"$RUN/steps.json"
@@ -201,7 +201,7 @@ po2 = {"user config.json disabled_providers": json.loads(os.environ["USER_DIS"])
        "project opencode.json disabled_providers": json.loads(os.environ["PROJ_DIS"]),
        "inline disabled_providers (the value zygo computes for these files, planted by the script)": json.loads(on_inline)["disabled_providers"],
        "ON: models": on, "ON: every model is zygo/": bool(on) and all(l.startswith("zygo/") for l in on),
-       "ON: zygo/lead answered (the PO1 run, same ON config)": po1["run output has the scripted reply text"],
+       "ON: zygo/lead answered (the POC1 run, same ON config)": po1["run output has the scripted reply text"],
        "ON: requests to the vendor mock": [view(r) for r in on_vendor],
        "ON: anthropic/probe-model run output (first 300 chars)": open(run + "/run-po2-on.out").read()[:300],
        "control: user config.json [\"amazon-bedrock\",\"zygo\"], project sets none, no inline disabled_providers: models": nodis_user,
@@ -211,10 +211,10 @@ po2 = {"user config.json disabled_providers": json.loads(os.environ["USER_DIS"])
        "OFF: lists an openai/ model": any(l.startswith("openai/") for l in off),
        "OFF: model count": len(off),
        "OFF: requests to the vendor mock": [view(r) for r in off_vendor]}
-po2["pass"] = (po2["ON: every model is zygo/"] and "zygo/lead" in on and po2["ON: zygo/lead answered (the PO1 run, same ON config)"]
+po2["pass"] = (po2["ON: every model is zygo/"] and "zygo/lead" in on and po2["ON: zygo/lead answered (the POC1 run, same ON config)"]
                and not on_vendor and not nodis_user and not nodis_project and "zygo/lead" in nodis_replace
                and po2["OFF: lists anthropic/probe-model"] and po2["OFF: lists an openai/ model"] and bool(off_vendor))
-print(json.dumps({"PO1": po1, "PO2": po2}, indent=1))
+print(json.dumps({"POC1": po1, "POC2": po2}, indent=1))
 PY
 omit() { scrub "$1" | sed -e "s/$DUMMY_KEY/[omitted]/g" -e "s/$SESSION_KEY/[session key omitted]/g"; }
 rm -rf "$FX"; mkdir -p "$FX"
@@ -229,9 +229,9 @@ for f in "$RUN"/rec/[0-9]*.json; do
     omit "$f" >"$FX/po1-request.json"; break
   fi
 done
-for id in PO1 PO2; do
+for id in POC1 POC2; do
   if jq -e ".$id.pass" "$RUN/result.json" >/dev/null; then echo "$id: pass"
   else echo "$id: fail $(jq -c ".$id" "$FX/result.json" | cut -c1-600)"; fails=1; fi
 done
-jq -c '.PO1 | {"key files": .["files holding the session key after all runs (search of the run folder and TMPDIR, no exclusion)"], "tmp before": .["/tmp/opencode before"], "tmp after": .["/tmp/opencode after"], "tmp changed": .["/tmp/opencode entries changed during the run"]}' "$FX/result.json"
+jq -c '.POC1 | {"key files": .["files holding the session key after all runs (search of the run folder and TMPDIR, no exclusion)"], "tmp before": .["/tmp/opencode before"], "tmp after": .["/tmp/opencode after"], "tmp changed": .["/tmp/opencode entries changed during the run"]}' "$FX/result.json"
 exit $fails

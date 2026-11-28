@@ -3514,11 +3514,13 @@ dependencies = [
  "regex",
  "reqwest",
  "rpassword",
+ "rusqlite",
  "rustls",
  "semver",
  "serde_json",
  "sha2",
  "tempfile",
+ "time",
  "tokio",
  "toml",
  "ulid",
@@ -3529,6 +3531,7 @@ dependencies = [
  "zygo-core",
  "zygo-hooks",
  "zygo-launch",
+ "zygo-mail-sync",
  "zygo-mcp",
  "zygo-plugins",
  "zygo-proxy",
@@ -3584,6 +3587,7 @@ dependencies = [
  "anyhow",
  "libc",
  "regex",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
@@ -3592,6 +3596,7 @@ dependencies = [
  "zygo-config",
  "zygo-core",
  "zygo-hooks",
+ "zygo-mail-sync",
  "zygo-proxy",
  "zygo-results",
  "zygo-usage",
@@ -3631,17 +3636,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "zygo-mail-sync"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "fs4",
+ "hex",
+ "libc",
+ "rand",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "ulid",
+ "zygo-config",
+ "zygo-core",
+ "zygo-mail-sync",
+ "zygo-plugins",
+ "zygo-redact",
+ "zygo-work",
+ "zygo-workspace",
+]
+
+[[package]]
 name = "zygo-mcp"
 version = "0.2.1"
 dependencies = [
  "anyhow",
  "libc",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "zygo-config",
  "zygo-core",
+ "zygo-mail-sync",
+ "zygo-redact",
  "zygo-results",
  "zygo-usage",
  "zygo-work",
@@ -3772,6 +3803,7 @@ dependencies = [
  "tempfile",
  "time",
  "toml",
+ "toml_edit",
  "ulid",
  "walkdir",
  "which",
@@ -3794,6 +3826,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "time",
+ "ulid",
  "zygo-config",
  "zygo-core",
  "zygo-proxy",

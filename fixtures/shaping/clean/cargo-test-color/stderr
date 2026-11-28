@@ -1,0 +1,4 @@
+[1m[92m   Compiling[0m scratch v0.1.0 (/repo)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`test` profile [unoptimized + debuginfo]]8;;\ target(s) in 0.23s
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/scratch-8a410b8008eed53d)
+[1m[92m   Doc-tests[0m scratch

@@ -235,7 +235,9 @@ impl std::error::Error for FileCondition {}
 /// a link (`<activity.json path>: is a link`; it is not followed, so nothing is written through it), or the entry is
 /// not a regular file (`<activity.json path>: is not a regular file`; a FIFO does not make the call wait) — both
 /// are refused before the lock is taken or waited for, and again by the check of the opened handle under the lock;
-/// the lock file cannot be opened or locked (`<activity.lock path>: open lock file: <error>`), the lock is not taken
+/// the lock file cannot be opened or locked (`<activity.lock path>: open lock file: <error>`; a lock file that is a link
+/// or not a regular file, a folder included, names its path once: `<activity.lock path>: is a link; it is not
+/// followed`, `<activity.lock path>: is not a regular file`; FX-28), the lock is not taken
 /// within `bound` (`<activity.lock path>: lock not taken within <ms> ms`), the file cannot be read or
 /// parsed or is not a JSON object (`<activity.json path>: <error>`), the file is larger than 1 MiB
 /// (`<activity.json path>: activity.json larger than 1 MiB`), the file is a JSON object whose `version` is present
@@ -258,7 +260,16 @@ pub fn update(dir: &SessionDir, bound: Duration, f: &mut dyn FnMut(&mut Activity
     }
     let lock = dir.activity_lock();
     let opened = crate::state::lock_file(&lock, bound)
-        .map_err(|e| FileCondition(format!("{}: open lock file: {e}", lock.display())))?;
+        .map_err(|e| {
+            // The store's open names the path itself for a link or an entry that is not a regular file (FX-28): the
+            // line names it once.
+            let (text, shown) = (e.to_string(), lock.display().to_string());
+            if text.starts_with(&format!("{shown}: ")) {
+                FileCondition(text)
+            } else {
+                FileCondition(format!("{shown}: open lock file: {text}"))
+            }
+        })?;
     let Some(_lock) = opened else {
         anyhow::bail!("{}: lock not taken within {} ms", lock.display(), bound.as_millis());
     };
