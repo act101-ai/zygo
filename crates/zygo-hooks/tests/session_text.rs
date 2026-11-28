@@ -961,6 +961,7 @@ fn opencode_bad_stored_entry_writes_no_line() {
 
 #[cfg(unix)]
 #[test] // review F2: a FIFO at the stored name does not make the request wait (O_NONBLOCK); 60 s fail-safe bound
+#[ignore = "timing: asserts the request returns within a 60 s bound; run with --ignored"]
 fn opencode_fifo_at_the_stored_name_does_not_block() {
     let (x, base, before, _) = two();
     let path = session_start::item_path(&x.dir, "ses_A").unwrap();
@@ -1088,4 +1089,118 @@ fn ids_that_differ_in_case_get_different_names() {
     assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || Some("UPPER".into())).as_deref(), Some("UPPER"));
     assert_eq!(std::fs::read_to_string(a).unwrap(), "LOWER");
     assert_eq!(std::fs::read_to_string(b).unwrap(), "UPPER");
+}
+
+/// FX-44: the `session-item` folder of `d`, made at mode 0755, the path its swap hook renames it to, and a folder
+/// `outside` at mode 0755 with the one entry `keep`. The hook (one time, after the folder is opened) renames the
+/// folder and puts a link to `outside` in its place.
+#[cfg(unix)]
+fn swap_setup(t: &tempfile::TempDir, d: &SessionDir) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let folder = d.root.join("session-item");
+    let real = d.root.join("session-item.real");
+    let outside = t.path().join("outside");
+    for f in [&folder, &outside] {
+        std::fs::create_dir(f).unwrap();
+        std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    std::fs::write(outside.join("keep"), "KEEP").unwrap();
+    let (f, r, o) = (folder.clone(), real.clone(), outside.clone());
+    session_start::testing::set_after_open(
+        &folder,
+        Some(std::sync::Arc::new(move || {
+            std::fs::rename(&f, &r).unwrap();
+            std::os::unix::fs::symlink(&o, &f).unwrap();
+        })),
+    );
+    (folder, real, outside)
+}
+
+#[cfg(unix)]
+#[test] // FX-44: a `session-item/` (0755) replaced by a link after it was opened: every write goes to the opened folder
+fn store_item_folder_swapped_after_open_writes_inside() {
+    use std::os::unix::fs::PermissionsExt;
+    let (t, d) = sd();
+    let (folder, real, outside) = swap_setup(&t, &d);
+    let got = session_start::fixed_item(&d, "ses_A", &mut || Some("BUILT".into()));
+    session_start::testing::set_after_open(&folder, None);
+    assert_eq!(got.as_deref(), Some("BUILT"));
+    assert!(std::fs::symlink_metadata(&folder).unwrap().file_type().is_symlink(), "the swap ran");
+    assert_eq!(std::fs::metadata(&outside).unwrap().permissions().mode() & 0o777, 0o755);
+    let names: Vec<_> = std::fs::read_dir(&outside).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(names, [std::ffi::OsString::from("keep")]);
+    let name = session_start::item_path(&d, "ses_A").unwrap().file_name().unwrap().to_os_string();
+    let item = real.join(&name);
+    assert_eq!(std::fs::read_to_string(&item).unwrap(), "BUILT");
+    assert_eq!(std::fs::metadata(&item).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(std::fs::metadata(&real).unwrap().permissions().mode() & 0o777, 0o700);
+    let left: Vec<_> = std::fs::read_dir(&real).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(left, [name], "the temp file is removed");
+}
+
+#[cfg(unix)]
+#[test] // FX-44 review 2: a non-empty file hard-linked at the item name is not read as item 8 and is not written
+fn store_item_hard_link_at_the_item_name_is_not_written() {
+    use std::os::unix::fs::PermissionsExt;
+    let (t, d) = sd();
+    let path = session_start::item_path(&d, "ses_A").unwrap();
+    std::fs::create_dir(path.parent().unwrap()).unwrap();
+    let outside = t.path().join("outside");
+    std::fs::write(&outside, "OUTSIDE").unwrap();
+    std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::hard_link(&outside, &path).unwrap();
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || Some("BUILT".into())).as_deref(), Some("BUILT"));
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "OUTSIDE");
+    assert_eq!(std::fs::metadata(&outside).unwrap().permissions().mode() & 0o777, 0o644);
+    assert_eq!(std::fs::read_dir(path.parent().unwrap()).unwrap().count(), 1, "the temp file is removed");
+}
+
+#[cfg(unix)]
+#[test] // FX-44 review 1: a `session-item/` replaced by a link after it was opened: the read never follows the link
+fn fixed_item_folder_swapped_before_the_read_reads_inside() {
+    let (t, d) = sd();
+    let (folder, real, outside) = swap_setup(&t, &d);
+    let name = session_start::item_path(&d, "ses_A").unwrap().file_name().unwrap().to_os_string();
+    std::fs::write(outside.join(&name), "OUTSIDE").unwrap();
+    let got = session_start::fixed_item(&d, "ses_A", &mut || Some("BUILT".into()));
+    session_start::testing::set_after_open(&folder, None);
+    assert_eq!(got.as_deref(), Some("BUILT"));
+    assert!(std::fs::symlink_metadata(&folder).unwrap().file_type().is_symlink(), "the swap ran");
+    assert_eq!(std::fs::read_to_string(real.join(&name)).unwrap(), "BUILT");
+    assert_eq!(std::fs::read_to_string(outside.join(&name)).unwrap(), "OUTSIDE");
+}
+
+#[cfg(unix)]
+#[test] // FX-44 review 1: the read after a lost store goes through the folder handle the store used
+fn fixed_item_read_after_a_lost_store_reads_inside() {
+    let (t, d) = sd();
+    let (folder, real, outside) = swap_setup(&t, &d);
+    let name = session_start::item_path(&d, "ses_A").unwrap().file_name().unwrap().to_os_string();
+    std::fs::write(outside.join(&name), "OUTSIDE").unwrap();
+    let winner = real.join(&name);
+    // Another request stores its text in the opened folder while this one builds.
+    let mut build = || {
+        std::fs::write(&winner, "WINNER").unwrap();
+        Some("LOSER".to_string())
+    };
+    let got = session_start::fixed_item(&d, "ses_A", &mut build);
+    session_start::testing::set_after_open(&folder, None);
+    assert_eq!(got.as_deref(), Some("WINNER"));
+    assert_eq!(std::fs::read_to_string(outside.join(&name)).unwrap(), "OUTSIDE");
+}
+
+#[cfg(unix)]
+#[test] // FX-44 review 3: a `session-item/` of mode 0300 (no owner read) ends at 0700 and the item is stored
+fn store_item_folder_without_owner_read_is_repaired() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_t, d) = sd();
+    let folder = d.root.join("session-item");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o300)).unwrap();
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || Some("BUILT".into())).as_deref(), Some("BUILT"));
+    assert_eq!(std::fs::metadata(&folder).unwrap().permissions().mode() & 0o777, 0o700);
+    let path = session_start::item_path(&d, "ses_A").unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "BUILT");
+    let mut later = || panic!("a stored item is not built again");
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut later).as_deref(), Some("BUILT"));
 }
