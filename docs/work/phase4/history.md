@@ -26,6 +26,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | RS-9 | Codex namespace tools: flatten into function tools for Anthropic and chat upstreams, map their calls back | RS-1, RS-2, PC-5 | DONE | judgment | PR #161 merged 01d4b522; acceptance pass on merged tree (responses_request 59, responses_stream 34; workspace: only the 2 known guard_hook failures) |
 | RS-8 | `GET /openai/v1/models` in the PC7 shape, other PC1 paths, chat route stays 404 | RS-3 | DONE | implementation | PR #164 merged 62740dc2; acceptance exit 0 on merged tree (responses_models 7); CI run 45744874257 green (ubuntu, macos, windows) |
 | PC-12 | Codex premise: the Responses event sequence zygo's encoder emits (empty terminal output, extra item and delta events) is accepted | PC-10, RS-2 | DONE | judgment | PR #163 merged 59b43e33; acceptance exit 0 on merged tree (real codex 0.172.0 run @ cdabba5b, PC17 PC18 verified; no PC-12 path changed since; check-premises ok; zygo-proxy tests pass); CI run 45756027133 green (ubuntu, macos, windows) |
+| RS-4 | Response side for Anthropic and chat upstreams: stream order with the encoder after the tee, non-streaming path, errors after the first event | RS-2, RS-3, PC-12 | DONE | judgment | PR #165 merged da0c0387; acceptance exit 0 on merged tree (responses_forward 23; zygo-proxy 521 passed, 0 failed); CI run 45758838881 green (ubuntu, macos, windows); DDR-01M8B3A7JCGK6YAE2VZ7P6QZ3C |
 
 ## Log
 
