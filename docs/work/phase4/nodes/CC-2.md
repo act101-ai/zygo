@@ -143,7 +143,7 @@ Other probe results with no change: `entry-reason-with-emdash` exits 1 only for 
 
 ## Round 2 review
 
-Reviewer probes: `r2/c1.sh` … `r2/c10.sh` with `r2/lib.sh` (session scratchpad), unchanged. After D1 each probe repository has no `tools/test-edits` at `<parent>`, so the probes stop at `no checker at <parent>` (exit 2), as D1 decides. They were run again with `ZYGO_TEST_EDITS_IN_TREE=1` (the bootstrap) to test the rules, and `c5.sh` (which holds a checker) was run without it. Each fixed probe is a case in `scripts/test-check-test-edits.sh` or a unit test, and was seen to fail first: 23 of the 29 new shell cases failed before the fix (the other six passed already, or exited 1 only because a removal was unlisted), and the new unit tests did not compile against the round 1 helper. After: 81/81 shell cases ok, 31/31 unit tests ok.
+Reviewer probes: `r2/c1.sh` … `r2/c10.sh` with `r2/lib.sh` (session scratchpad), unchanged. After D1 each probe repository has no `tools/test-edits` at `<parent>`, so the probes stop at `no checker at <parent>` (exit 2), as D1 decides. They were run again with `ZYGO_TEST_EDITS_IN_TREE=1` (the bootstrap) to test the rules, and `c5.sh` (which holds a checker) was run without it. Each fixed probe is a case in `scripts/test-check-test-edits.sh` or a unit test, and was seen to fail first: 24 of the 29 new shell cases failed before the fix (`checker-own-tests-edited` among them; the other five exited 1 already, only because a removal was unlisted, or passed already), and the new unit tests did not compile against the round 1 helper. After: 81/81 shell cases ok, 31/31 unit tests ok.
 
 | # | Finding | Disposition | Evidence |
 |---|---------|-------------|----------|
