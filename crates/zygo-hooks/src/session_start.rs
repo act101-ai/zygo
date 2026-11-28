@@ -198,6 +198,8 @@ fn store_item(folder: &Path, path: &Path, text: &str) -> Result<bool, ()> {
     if !matches!(folder_state(folder), Folder::Usable) {
         return Err(());
     }
+    #[cfg(all(unix, feature = "test-hooks"))]
+    testing::fire(folder);
     #[cfg(unix)]
     std::fs::set_permissions(folder, std::os::unix::fs::PermissionsExt::from_mode(0o700)).map_err(|_| ())?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -235,6 +237,37 @@ fn store_item(folder: &Path, path: &Path, text: &str) -> Result<bool, ()> {
     // The temp file is this call's own; the stored text stays under `path`.
     let _ = std::fs::remove_file(&tmp);
     linked.map_err(|_| ())
+}
+
+/// Test hooks of `store_item` (FX-44). Only the `test-hooks` feature builds them.
+#[cfg(all(unix, feature = "test-hooks"))]
+pub mod testing {
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+
+    type Hook = Arc<dyn Fn() + Send + Sync>;
+
+    /// The hooks by `session-item` folder path, so parallel tests do not meet.
+    static HOOKS: Mutex<BTreeMap<PathBuf, Hook>> = Mutex::new(BTreeMap::new());
+
+    /// Sets (`Some`) or clears (`None`) the hook of the `session-item` folder `folder`. The hook runs in `store_item`
+    /// after the folder is opened and checked, before the first step on it (a test replaces the folder there).
+    pub fn set_after_open(folder: &Path, hook: Option<Hook>) {
+        let mut hooks = HOOKS.lock().unwrap_or_else(|e| e.into_inner());
+        match hook {
+            Some(h) => hooks.insert(folder.to_path_buf(), h),
+            None => hooks.remove(folder),
+        };
+    }
+
+    /// Runs the hook of `folder`, if one is set.
+    pub(crate) fn fire(folder: &Path) {
+        let hook = HOOKS.lock().unwrap_or_else(|e| e.into_inner()).get(folder).cloned();
+        if let Some(h) = hook {
+            h();
+        }
+    }
 }
 
 /// `run_in` with the member part (H1 D3, D11). The view is loaded as `run_in` loads it. A launch that is not a member

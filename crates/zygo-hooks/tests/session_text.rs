@@ -1089,3 +1089,55 @@ fn ids_that_differ_in_case_get_different_names() {
     assert_eq!(std::fs::read_to_string(a).unwrap(), "LOWER");
     assert_eq!(std::fs::read_to_string(b).unwrap(), "UPPER");
 }
+
+#[cfg(unix)]
+#[test] // FX-44: a `session-item/` replaced by a link after `store_item` opened it: every write goes to the opened folder
+fn store_item_folder_swapped_after_open_writes_inside() {
+    use std::os::unix::fs::PermissionsExt;
+    let (t, d) = sd();
+    let folder = d.root.join("session-item");
+    let real = d.root.join("session-item.real");
+    let outside = t.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("keep"), "KEEP").unwrap();
+    std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (f, r, o) = (folder.clone(), real.clone(), outside.clone());
+    session_start::testing::set_after_open(
+        &folder,
+        Some(std::sync::Arc::new(move || {
+            std::fs::rename(&f, &r).unwrap();
+            std::os::unix::fs::symlink(&o, &f).unwrap();
+        })),
+    );
+    let got = session_start::fixed_item(&d, "ses_A", &mut || Some("BUILT".into()));
+    session_start::testing::set_after_open(&folder, None);
+    assert_eq!(got.as_deref(), Some("BUILT"));
+    assert!(std::fs::symlink_metadata(&folder).unwrap().file_type().is_symlink(), "the swap ran");
+    assert_eq!(std::fs::metadata(&outside).unwrap().permissions().mode() & 0o777, 0o755);
+    let names: Vec<_> = std::fs::read_dir(&outside).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(names, [std::ffi::OsString::from("keep")]);
+    let name = session_start::item_path(&d, "ses_A").unwrap().file_name().unwrap().to_os_string();
+    let item = real.join(&name);
+    assert_eq!(std::fs::read_to_string(&item).unwrap(), "BUILT");
+    assert_eq!(std::fs::metadata(&item).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(std::fs::metadata(&real).unwrap().permissions().mode() & 0o777, 0o700);
+    let left: Vec<_> = std::fs::read_dir(&real).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(left, [name], "the temp file is removed");
+}
+
+#[cfg(unix)]
+#[test] // FX-44: an empty file hard-linked at the item name is not usable and the store does not write into it
+fn store_item_hard_link_at_the_item_name_is_not_written() {
+    use std::os::unix::fs::PermissionsExt;
+    let (t, d) = sd();
+    let path = session_start::item_path(&d, "ses_A").unwrap();
+    std::fs::create_dir(path.parent().unwrap()).unwrap();
+    let outside = t.path().join("outside");
+    std::fs::write(&outside, "").unwrap();
+    std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::hard_link(&outside, &path).unwrap();
+    assert_eq!(session_start::fixed_item(&d, "ses_A", &mut || Some("BUILT".into())).as_deref(), Some("BUILT"));
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "");
+    assert_eq!(std::fs::metadata(&outside).unwrap().permissions().mode() & 0o777, 0o644);
+    assert_eq!(std::fs::read_dir(path.parent().unwrap()).unwrap().count(), 1, "the temp file is removed");
+}
