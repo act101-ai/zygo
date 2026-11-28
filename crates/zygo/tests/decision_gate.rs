@@ -473,7 +473,7 @@ fn hook(fx: &Fx, args: &[&str], payload: &Value) -> (Option<i32>, String, String
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    common::feed_stdin(child.stdin.take().unwrap(), payload.to_string().as_bytes());
+    common::write_stdin(child.stdin.take().unwrap(), payload.to_string().as_bytes());
     let out = child.wait_with_output().unwrap();
     (
         out.status.code(),
@@ -516,7 +516,7 @@ impl Driver for Bin {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        common::feed_stdin(child.stdin.take().unwrap(), input.as_bytes());
+        common::write_stdin(child.stdin.take().unwrap(), input.as_bytes());
         let out = child.wait_with_output().unwrap();
         let (stdout, stderr) = (
             String::from_utf8(out.stdout).unwrap(),

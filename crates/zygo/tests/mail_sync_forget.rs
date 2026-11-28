@@ -24,7 +24,7 @@ use zygo_redact::secret::DeadlinePolicy;
 use zygo_workspace::state::{MemberRecord, Phase};
 use zygo_workspace::up::testing::hook;
 
-use common::feed_stdin;
+use common::write_stdin;
 use common::workspace::{ready_exe, Harness, WS_ID};
 
 const ALICE: &str = "kaaaaaaaa";
@@ -90,7 +90,7 @@ fn zygo(h: &Harness, args: &[&str], input: Option<&[u8]>) -> Output {
     let Some(bytes) = input else { return c.output().unwrap() };
     c.stdin(std::process::Stdio::piped());
     let mut child = c.spawn().unwrap();
-    feed_stdin(child.stdin.take().unwrap(), bytes);
+    write_stdin(child.stdin.take().unwrap(), bytes);
     child.wait_with_output().unwrap()
 }
 fn out(o: &Output) -> String { String::from_utf8_lossy(&o.stdout).into_owned() }
