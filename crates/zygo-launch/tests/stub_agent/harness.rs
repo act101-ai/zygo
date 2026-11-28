@@ -18,7 +18,7 @@ use zygo_launch::launcher::LaunchOutcome;
 use zygo_launch::opencode::OpenCode;
 use zygo_launch::{AgentAdapter, LaunchOpts, Launcher};
 
-/// The minimum versions pinned in `crates/zygo-config/data/agents.toml` (`min_version`) and the `docs/premises.md` header.
+/// The minimum versions in each client's descriptor (`Agent::spec().min_version`) and the `docs/premises.md` header.
 pub const CLAUDE_VERSION: &str = "2.1.328";
 pub const OPENCODE_VERSION: &str = "1.18.16";
 

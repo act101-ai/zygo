@@ -16,8 +16,6 @@ struct RolesFile { main_role: String, role: BTreeMap<String, Role> }
 struct RulesFile { schema_rule: Vec<SchemaRule> }
 #[derive(Deserialize)]
 struct MarketplaceFile { marketplace: Vec<Marketplace> }
-#[derive(Deserialize)]
-struct AgentRow { min_version: String }
 
 /// The built-in layer as a `Config`: `Config::default()` with the catalog, `main_role`, roles, the built-in marketplace (§15.9), `redaction.pattern = builtin_patterns()` and `schema_rule = schema_rules()` from the data files.
 pub fn defaults() -> Config {
@@ -46,10 +44,7 @@ pub fn schema_rules() -> Vec<SchemaRule> {
     f.schema_rule
 }
 
-/// The minimum supported version of `agent` from `data/agents.toml` (key `agent.as_str()`), parsed with `Version::parse`.
+/// The minimum supported version of `agent` from its descriptor (`Agent::spec().min_version`), parsed with `Version::parse`.
 pub fn min_agent_version(agent: Agent) -> Version {
-    let mut t: BTreeMap<String, AgentRow> = toml::from_str(include_str!("../data/agents.toml"))
-        .expect("built-in agent minimums are valid TOML");
-    let row = t.remove(agent.as_str()).expect("every agent has a minimum version");
-    Version::parse(&row.min_version).expect("minimum version is semver")
+    Version::parse(agent.spec().min_version).expect("minimum version is semver")
 }

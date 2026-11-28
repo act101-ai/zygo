@@ -226,8 +226,9 @@ fn minimum_agent_versions_match_premises() {
         let l = p.lines().find_map(|l| l.strip_prefix(name)).unwrap();
         Version::parse(l.trim()).unwrap()
     };
-    assert_eq!(min_agent_version(Agent::ClaudeCode), pin("Claude Code: "));
-    assert_eq!(min_agent_version(Agent::OpenCode), pin("OpenCode: "));
+    for a in Agent::ALL {
+        assert_eq!(min_agent_version(a), pin(&format!("{}: ", a.spec().name)), "{a}");
+    }
     assert!(min_agent_version(Agent::ClaudeCode) >= Version::new(2, 1, 323));
 }
 

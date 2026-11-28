@@ -816,15 +816,14 @@ fn check_9_fixtures_folder_missing_or_empty() {
 
 #[test]
 fn check_clients_from_agent_all() {
-    let c = clients(&repo()).unwrap();
+    let c = clients();
     assert_eq!(
         c,
         vec![
-            Client { id: "claude-code".into(), name: "Claude Code".into(), version: "9.1.0".into(), supported: true },
-            Client { id: "opencode".into(), name: "OpenCode".into(), version: "9.2.0".into(), supported: true },
+            Client { id: "claude-code".into(), name: "Claude Code".into(), version: "2.1.328".into(), supported: true },
+            Client { id: "opencode".into(), name: "OpenCode".into(), version: "1.18.16".into(), supported: true },
         ]
     );
-    assert!(clients(tempfile::tempdir().unwrap().path()).is_err());
 }
 
 #[test]
@@ -1802,7 +1801,7 @@ fn render_compare_write_mode_writes_both() {
 fn tree_check(root: &Path, dir: &Path) -> (Registry, Vec<GradeFile>, Vec<Client>, Resolved) {
     let reg = Registry::load(&dir.join("capabilities.toml")).unwrap_or_else(|e| panic!("capabilities.toml: {e}"));
     let grades = grade_files(dir).unwrap_or_else(|e| panic!("{e}"));
-    let clients = clients(root).unwrap();
+    let clients = clients();
     let resolved = resolve(root, &grades);
     let faults = check(root, &reg, &grades, &clients, &resolved);
     assert!(
@@ -1868,7 +1867,7 @@ fn tree_item_1(dir: &Path) -> Vec<String> {
     let reg = Registry::load(&dir.join("capabilities.toml")).unwrap();
     let grades = grade_files(dir).unwrap_or_else(|e| panic!("{e}"));
     let resolved = resolve(&root, &grades);
-    let faults = check(&root, &reg, &grades, &clients(&root).unwrap(), &resolved);
+    let faults = check(&root, &reg, &grades, &clients(), &resolved);
     faults.into_iter().filter(|f| f.item == 1).map(|f| f.text).collect()
 }
 
