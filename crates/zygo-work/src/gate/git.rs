@@ -179,6 +179,17 @@ impl ProcessGit {
         Ok((now + GIT_STEP).min(end))
     }
 
+    /// The deadline of the next object read of the running `--batch` process: `min(now + GIT_STEP, first start +
+    /// GIT_TOTAL)`, from the read's own request (D§9.4: each read has its own bound); refused at or past the total.
+    fn read_deadline(&mut self) -> Result<Instant, GitFail> {
+        let now = self.runner.now();
+        let end = *self.first.get_or_insert(now) + GIT_TOTAL;
+        if now >= end {
+            return Err(fail(CAT_FILE, "over 10 s in all"));
+        }
+        Ok((now + GIT_STEP).min(end))
+    }
+
     /// `git <args>` in `root`, with no promisor fetch.
     fn cmd(&self, args: &[&str]) -> Command {
         let mut c = crate::repo::git_cmd(OsStr::new("git"), &self.root, args);
@@ -186,8 +197,8 @@ impl ProcessGit {
         c
     }
 
-    /// The one `--batch` process: spawned at the first object read, with the deadline it got then. Its first failure
-    /// is kept, and every later read gives it with no new process.
+    /// The one `--batch` process, spawned at the first object read. Each read sets its own deadline
+    /// ([`ProcessGit::read_deadline`]). Its first failure is kept, and every later read gives it with no new process.
     fn batch_io(&mut self) -> Result<&mut Box<dyn BatchIo>, GitFail> {
         if self.batch.is_none() {
             let spawned = self.deadline(CAT_FILE).and_then(|deadline| {
@@ -220,8 +231,10 @@ impl ProcessGit {
         if self.objects == BATCH_OBJECTS {
             return Err(GitFail::TooMuch);
         }
+        let deadline = self.read_deadline()?;
         self.objects += 1;
         let Some(Ok(io)) = self.batch.as_mut() else { unreachable!("batch_io gave a process") };
+        io.set_deadline(deadline);
         let run = |e: RunError| fail(CAT_FILE, e.reason());
         let bad = || fail(CAT_FILE, "bad output");
         io.send(format!("{object}\n").as_bytes()).map_err(run)?;
