@@ -200,7 +200,8 @@ fn open_item_folder(folder: &Path) -> Result<Option<std::fs::File>, ()> {
 }
 
 /// The stored text `name` in the opened folder `folder`, read as `read_item` reads, through the handle (`openat` with
-/// `O_NOFOLLOW | O_NONBLOCK`); only a regular file with one link is used (FX-44 review 2, the rule of the FX-37 flag).
+/// `O_NOFOLLOW | O_NONBLOCK`). Only a regular file with no name outside the folder is used (FX-44 review 2, the rule of
+/// the FX-37 flag): one link, or two while a store is in progress (`store_in_progress`).
 #[cfg(unix)]
 fn read_item_in(folder: &std::fs::File, name: &str) -> Result<Option<String>, ()> {
     use std::os::unix::fs::MetadataExt;
@@ -210,10 +211,28 @@ fn read_item_in(folder: &std::fs::File, name: &str) -> Result<Option<String>, ()
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err(()),
     };
-    if f.metadata().map_err(|_| ())?.nlink() != 1 {
+    let m = f.metadata().map_err(|_| ())?;
+    if m.nlink() != 1 && !store_in_progress(folder, name, &f, &m) {
         return Err(());
     }
     read_opened(f)
+}
+
+/// Whether the opened item `f` (`name` in `folder`, metadata `m`) has two links because a store is in progress
+/// (`store_item_in` links its temp file to `name`, then removes the temp name): the other link is a temp name of `name`
+/// (`.<name>.….tmp`, `temp_name`) in the same folder, so the file has no name outside it. When no such temp name is
+/// found, the store may have removed it since `m` was read: the file is read again and must then have one link.
+#[cfg(unix)]
+fn store_in_progress(folder: &std::fs::File, name: &str, f: &std::fs::File, m: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    if m.nlink() != 2 {
+        return false;
+    }
+    let prefix = format!(".{name}.");
+    if crate::pre_compact::at::has_link(folder, &prefix, ".tmp", m.dev(), m.ino()).unwrap_or(false) {
+        return true;
+    }
+    f.metadata().is_ok_and(|m| m.nlink() == 1)
 }
 
 /// The text of the opened entry `f`: only a regular, non-empty file of at most `MAX_ITEM` bytes of UTF-8 is used

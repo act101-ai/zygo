@@ -202,6 +202,53 @@ pub(crate) mod at {
         Ok(())
     }
 
+    /// Whether `folder` has an entry whose name starts with `prefix` and ends with `suffix` and that is the file
+    /// `(dev, ino)` (`fstatat(…, AT_SYMLINK_NOFOLLOW)`, a link is not followed). The entries are read through a copy of
+    /// the folder handle (`fdopendir`), from the start. A read error ends the search (`false`).
+    pub(crate) fn has_link(folder: &File, prefix: &str, suffix: &str, dev: u64, ino: u64) -> io::Result<bool> {
+        // SAFETY: the folder descriptor is open for the call; the copy is new and owned by `d` below.
+        let fd = unsafe { libc::fcntl(folder.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `fd` is an open folder descriptor that nothing else owns; on success `d` owns it.
+        let d = unsafe { libc::fdopendir(fd) };
+        if d.is_null() {
+            let e = io::Error::last_os_error();
+            // SAFETY: `fdopendir` failed, so `fd` is still this call's own.
+            unsafe { libc::close(fd) };
+            return Err(e);
+        }
+        // SAFETY: `d` is a valid stream; the copy shares its offset with `folder`, so the read starts from the start.
+        unsafe { libc::rewinddir(d) };
+        let mut found = false;
+        loop {
+            // SAFETY: `d` is a valid stream; the entry is valid until the next `readdir` or `closedir`.
+            let ent = unsafe { libc::readdir(d) };
+            if ent.is_null() {
+                break;
+            }
+            // SAFETY: `d_name` of a valid entry is a NUL-terminated name.
+            let name = unsafe { std::ffi::CStr::from_ptr((*ent).d_name.as_ptr()) };
+            let Ok(n) = name.to_str() else { continue };
+            if !(n.starts_with(prefix) && n.ends_with(suffix)) {
+                continue;
+            }
+            // SAFETY: `stat` is plain data; an all-zero value is valid and is overwritten by the call.
+            let mut st: libc::stat = unsafe { std::mem::zeroed() };
+            // SAFETY: the folder descriptor is open, `name` is NUL-terminated and `st` is a valid out pointer.
+            let ok = unsafe { libc::fstatat(folder.as_raw_fd(), name.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) } == 0;
+            #[allow(clippy::unnecessary_cast)]
+            if ok && st.st_dev as u64 == dev && st.st_ino as u64 == ino {
+                found = true;
+                break;
+            }
+        }
+        // SAFETY: `d` is a valid stream, closed once; this also closes `fd`.
+        unsafe { libc::closedir(d) };
+        Ok(found)
+    }
+
     /// `unlinkat(folder, name, 0)`.
     pub(crate) fn unlink(folder: &File, name: &str) -> io::Result<()> {
         let c = CString::new(name)?;
