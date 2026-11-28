@@ -5,7 +5,7 @@ use zygo_core::ids::{reserved_member_name, valid_member_name};
 
 use crate::layers::{join, seg};
 use crate::profile::valid_name;
-use crate::schema::{parse_duration, parse_sync_gap, valid_mail_host, valid_sync_branch, BUILTIN_LOADOUT, Config, KeyRef, JOBS, LOADOUT_KINDS, Reasoning, STATUSLINE_STYLES};
+use crate::schema::{parse_duration, parse_sync_gap, valid_mail_host, valid_sync_branch, BUILTIN_LOADOUT, Config, KeyRef, JOBS, LOADOUT_KINDS, Reasoning, REPOSITORY_LOADOUT, STATUSLINE_STYLES};
 
 const MAIL_HOST_FORM: &str = "must match ^[a-z0-9][a-z0-9-]{0,31}$";
 const MAIL_SYNC_FORM: &str = "must match ^zygo/[a-z0-9][a-z0-9-]{0,31}$";
@@ -41,8 +41,31 @@ fn bad_rates(input: f64, output: f64, cache_read: f64, cache_write: f64, cache_w
     rates.into_iter().filter(|(_, r)| r.is_some_and(|r| !r.is_finite() || r < 0.0)).map(|(k, _)| k)
 }
 
-/// `zygo config check` (§6.3, §7.5, §7.6, §16; prices: H§6.1 AU32).
+/// What the R§10 read of the workspace files gave for their `repository` loadout (workspace definition design R§10
+/// `zygo config check` row; node FX-29). It decides `[workspace] default_loadout = "repository"` when the user config
+/// has no `[loadout.repository]`, as `zygo up` decides it (`zygo-workspace` `up.rs` `choose`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepositoryLoadout {
+    /// The read found approved files that hold `.zygo/workspace.toml`: `zygo up` plans their loadout.
+    Added,
+    /// The read was made and adds no loadout (absent, not approved, invalid, or profiles only): `zygo up` refuses.
+    NotAdded,
+    /// No read: no checkout at the folder, or the read failed. The files that `zygo up` will find are not known.
+    NotRead,
+}
+
+/// The warning for `default_loadout = "repository"` when no workspace files were read (FX-29 author's call).
+const REPOSITORY_NOT_READ: &str =
+    "no workspace files were read here; zygo up uses \"repository\" only from approved files that hold .zygo/workspace.toml";
+
+/// `zygo config check` (§6.3, §7.5, §7.6, §16; prices: H§6.1 AU32), for a caller that makes no read of the workspace
+/// files: [`check_with`] and [`RepositoryLoadout::NotAdded`].
 pub fn check(cfg: &Config) -> Vec<Violation> {
+    check_with(cfg, RepositoryLoadout::NotAdded)
+}
+
+/// `zygo config check` with what the read of the workspace files gave for their `repository` loadout (R§10).
+pub fn check_with(cfg: &Config, repository: RepositoryLoadout) -> Vec<Violation> {
     let mut v = Vec::new();
     let mut e = |path: String, message: String| v.push((Severity::Error, path, message));
     for (mi, m) in cfg.catalog.0.iter().enumerate() {
@@ -159,7 +182,7 @@ pub fn check(cfg: &Config) -> Vec<Violation> {
             e(format!("{rp}.limit"), "must be > 0".into());
         }
     }
-    v.extend(loadout_violations(cfg));
+    v.extend(loadout_violations(cfg, repository));
     for (mi, m) in cfg.catalog.0.iter().enumerate() {
         for (pi, p) in m.provider.iter().enumerate() {
             for k in p.flags.other.keys() {
@@ -194,13 +217,21 @@ pub fn check(cfg: &Config) -> Vec<Violation> {
 /// The structural rules of `[workspace]` and `[loadout.<name>]` (workspaces design W§11). The rules that need the
 /// launch-argument filter or the compact-window parser are not here: this crate depends on neither (AU103).
 /// `job` only on an agent pane (`claude-code`, `opencode`) and a refused `job` takes no orchestrator slot (R§9.1).
-fn loadout_violations(cfg: &Config) -> Vec<(Severity, String, String)> {
+/// `default_loadout = "repository"` with no user table follows `repository` (R§10 `zygo config check` row, FX-29).
+fn loadout_violations(cfg: &Config, repository: RepositoryLoadout) -> Vec<(Severity, String, String)> {
     const CLAUDE_ONLY: &str = "only with kind = \"claude-code\"";
     const AGENT_ONLY: &str = "only with kind = \"claude-code\" or \"opencode\"";
     let mut v = Vec::new();
     let default = cfg.workspace.default_loadout.as_str();
     if default != BUILTIN_LOADOUT && !cfg.loadout.contains_key(default) {
-        v.push((Severity::Error, "workspace.default_loadout".into(), "unknown loadout".into()));
+        let path = "workspace.default_loadout".to_string();
+        match repository {
+            RepositoryLoadout::Added if default == REPOSITORY_LOADOUT => {}
+            RepositoryLoadout::NotRead if default == REPOSITORY_LOADOUT => {
+                v.push((Severity::Warning, path, REPOSITORY_NOT_READ.into()));
+            }
+            _ => v.push((Severity::Error, path, "unknown loadout".into())),
+        }
     }
     if cfg.workspace.pool.as_deref().is_some_and(|p| !absolute_after_tilde(p)) {
         v.push((Severity::Error, "workspace.pool".into(), "must be absolute after ~ expansion".into()));

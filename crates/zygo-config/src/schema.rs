@@ -801,6 +801,10 @@ pub fn sync_for(cfg: &Config, ws_name: &str) -> Result<SyncSettings, SyncOff> {
 /// The loadout that needs no config (workspaces design W§11, AU45): one `claude-code` pane in the main worktree.
 pub const BUILTIN_LOADOUT: &str = "solo";
 
+/// The name of the loadout that the workspace definition gives (R§9.1). `config check` decides
+/// `default_loadout = "repository"` by this name (R§10, FX-29) and does not depend on the definition read.
+pub const REPOSITORY_LOADOUT: &str = "repository";
+
 /// The values of `loadout.<name>.window.pane.kind` (W§11); `config check` refuses any other value.
 pub const LOADOUT_KINDS: [&str; 3] = ["claude-code", "opencode", "shell"];
 

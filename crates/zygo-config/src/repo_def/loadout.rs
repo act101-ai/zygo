@@ -5,8 +5,9 @@ use std::collections::BTreeMap;
 use super::{Definition, MemberDef};
 use crate::{Loadout, LoadoutPane, LoadoutWindow};
 
-/// The name of the loadout that the workspace definition gives.
-pub const REPOSITORY_LOADOUT: &str = "repository";
+/// The name of the loadout that the workspace definition gives (defined in `schema`, so `config check` uses it
+/// without this module).
+pub use crate::schema::REPOSITORY_LOADOUT;
 
 /// The repository loadout: one unnamed window, one pane per member, or `None` with no `workspace.toml`.
 pub fn repository_loadout(def: &Definition) -> Option<Loadout> {

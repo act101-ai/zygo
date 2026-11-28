@@ -17,7 +17,8 @@ use axum_server::AddrListener;
 use fs4::TryLockError;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use zygo_config::{check, Merged, Severity};
+use zygo_config::check::{check_with, RepositoryLoadout};
+use zygo_config::{Merged, Severity};
 use zygo_usage::Store;
 
 use crate::routes;
@@ -100,11 +101,13 @@ pub struct ServeHandle {
     reloads: (Mutex<u64>, Condvar),
 }
 
-/// The config from `load`, refused on a load error or a `config check` error.
+/// The config from `load`, refused on a load error or a `config check` error. Serve reads no workspace files, so it
+/// checks as `zygo config check` does with no read ([`RepositoryLoadout::NotRead`]; workspace definition design R§10,
+/// FX-29): at start and at reload, a serve agrees with the `config check` that its refusal names.
 fn checked(load: &(dyn Fn() -> anyhow::Result<Merged> + Send + Sync), file: &Path) -> Result<Merged, ConfigInvalid> {
     let invalid = || ConfigInvalid { file: file.to_path_buf() };
     let m = load().map_err(|_| invalid())?;
-    if check(&m.config).iter().any(|v| v.severity == Severity::Error) {
+    if check_with(&m.config, RepositoryLoadout::NotRead).iter().any(|v| v.severity == Severity::Error) {
         return Err(invalid());
     }
     Ok(m)
