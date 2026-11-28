@@ -94,6 +94,10 @@ url = "https://opencode.ai/docs/cli/"
 capability = "WA-2"
 url = "https://opencode.ai/docs/plugins/"
 
+[[cell]]
+capability = "WA-3"
+url = "https://opencode.ai/docs/plugins/"
+
 [[grade]]
 criterion = "A-1.1"
 status = "met"
@@ -191,22 +195,32 @@ reason = "The live OpenCode docs describe a newer plugin API than 1.18.16 and do
 [[grade]]
 criterion = "A-7.2"
 status = "not-met"
-reason = "The plugin trims bash output only: hook_opencode::normalize gives a tool_response only for bash, so read output reaches the model whole"
+reason = "The plugin trims bash output only: client::opencode::normalize (reached through Agent::spec().hook_input) gives a tool_response only for bash, so read output reaches the model whole"
 
 [[grade]]
 criterion = "A-7.3"
 status = "not-met"
-reason = "The plugin trims bash output only: hook_opencode::normalize gives a tool_response only for bash, so grep, glob and list output reaches the model whole"
+reason = "The plugin trims bash output only: client::opencode::normalize (reached through Agent::spec().hook_input) gives a tool_response only for bash, so grep, glob and list output reaches the model whole"
 
 [[grade]]
 criterion = "A-7.4"
 status = "not-met"
-reason = "OpenCode has a webfetch tool (live check OC-SHAPES), but hook_opencode::normalize gives a tool_response only for bash, so webfetch output is never trimmed"
+reason = "OpenCode has a webfetch tool (live check OC-SHAPES), but client::opencode::normalize (reached through Agent::spec().hook_input) gives a tool_response only for bash, so webfetch output is never trimmed"
 
 [[grade]]
 criterion = "A-7.5"
 status = "met"
 evidence = ["test:crates/zygo-launch/tests/opencode.rs::plugin_text_matches_the_fixtures", "fixture:fixtures/opencode/plugin-hooks/tool.execute.after-bash.json", "premise:docs/premises.md#Q2"]
+
+[[grade]]
+criterion = "A-7.6"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/shaping_hook.rs::opencode_shaped_output_gains_no_stderr_key", "test:crates/zygo-hooks/tests/shaping.rs::case_views_meet_floors_and_keep_lines", "test:crates/zygo-hooks/tests/shaping_hook.rs::file_printers_get_the_size_view_of_stdout_only", "test:crates/zygo-hooks/tests/shaping_hook.rs::reuse_text_loses_only_escapes", "test:crates/zygo-results/tests/shape_pipeline.rs::kind_view_runs_over_the_threshold", "test:crates/zygo-results/tests/shape_pipeline.rs::kind_view_not_run_at_the_threshold", "test:crates/zygo-hooks/tests/shaping_hook.rs::over_4_mib_gets_only_the_size_view", "test:crates/zygo-hooks/tests/shaping_hook.rs::saving_of_255_gives_nothing_and_256_is_used", "test:crates/zygo-hooks/tests/shaping_hook.rs::size_view_use_rule_boundary", "test:crates/zygo-hooks/tests/shaping_hook.rs::shaper_panic_gives_size_view_of_raw_text", "test:crates/zygo-hooks/tests/shaping_off_unchanged.rs::shape_off_output_below_the_threshold_passes_unchanged_on_each_client", "premise:docs/premises.md#PO3"]
+
+[[grade]]
+criterion = "A-7.7"
+status = "not-met"
+reason = "No capture shows OpenCode tool.execute.after for a bash call that exits non-zero (the plugin-hook fixtures and PO3 cover exit 0 only); the shaping tests put failing output into that exit-0 capture form, so no test shows what OpenCode sends for a failed call (O 7.12 states it with no capture)"
 
 [[grade]]
 criterion = "A-8.1"
@@ -248,6 +262,11 @@ evidence = ["test:crates/zygo/src/cmd/status.rs::inside_a_session", "test:crates
 criterion = "A-9.6"
 status = "n/a"
 reason = "zygo writes no status command for OpenCode: the OpenCode launch has no status-line setting, and the A-9 values show in zygo status"
+
+[[grade]]
+criterion = "A-9.7"
+status = "met"
+evidence = ["test:crates/zygo/src/cmd/status.rs::runtime_line_follows_the_session_line", "test:crates/zygo/src/cmd/status.rs::runtime_line_of_a_member_uses_first_started_at", "test:crates/zygo/src/cmd/status.rs::runtime_line_absent_outside_a_session_or_with_no_start"]
 
 [[grade]]
 criterion = "A-10.1"
@@ -415,3 +434,23 @@ reason = "The pinned OpenCode plugin API has no subagent end event; a child sess
 criterion = "WA-2.5"
 status = "met"
 evidence = ["premise:docs/premises.md#PW4", "premise:docs/live-checks.md#OC-THROW", "fixture:fixtures/opencode/workspace/tool.execute.before-task.json", "test:crates/zygo-launch/tests/opencode.rs::plugin_workspace_events_match_pw4_fixtures"]
+
+[[grade]]
+criterion = "WA-3.1"
+status = "not-met"
+reason = "OpenCode has no Stop block: the plugin sends its idle event as stop and does not read the hook output (opencode-plugin.js:75-78), and the hook blocks only a Claude Code Stop (workspace.rs:347-358); mail that comes after the last model request of a turn waits for the next turn or start"
+
+[[grade]]
+criterion = "WA-3.2"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/workspace.rs::mail_opencode_request_text_holds_the_line_while_new_is_not_empty", "premise:docs/premises.md#PM3"]
+
+[[grade]]
+criterion = "WA-3.3"
+status = "met"
+evidence = ["test:crates/zygo-workspace/tests/mail_wake.rs::after_send_with_wakes_the_target_once", "test:crates/zygo-workspace/tests/mail_wake.rs::second_wake_inside_the_gap_is_skipped", "test:crates/zygo-hooks/tests/workspace.rs::opencode_turn_signals", "test:crates/zygo-workspace/tests/mail_wake.rs::pane_whose_zygo_pane_differs_is_refused", "test:crates/zygo-workspace/tests/mail_wake.rs::session_whose_zygo_ws_differs_is_refused", "premise:docs/premises.md#PM2"]
+
+[[grade]]
+criterion = "WA-3.4"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/mail_sync_trigger.rs::session_prompt_and_stop_start_a_child_by_the_same_gap", "test:crates/zygo-launch/tests/opencode.rs::plugin_workspace_events_match_pw4_fixtures", "test:crates/zygo-mail-sync/tests/sync_pass.rs::import_delivers_and_wakes_by_the_read_under_the_lock"]

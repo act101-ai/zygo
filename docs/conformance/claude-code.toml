@@ -94,6 +94,10 @@ url = "https://code.claude.com/docs/en/cli-reference"
 capability = "WA-2"
 url = "https://code.claude.com/docs/en/hooks"
 
+[[cell]]
+capability = "WA-3"
+url = "https://code.claude.com/docs/en/hooks"
+
 [[grade]]
 criterion = "A-1.1"
 status = "met"
@@ -206,6 +210,16 @@ status = "met"
 evidence = ["test:crates/zygo-hooks/tests/hooks_basic.rs::trim_other_events_pass", "premise:docs/premises.md#Q4"]
 
 [[grade]]
+criterion = "A-7.6"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/shaping.rs::case_views_meet_floors_and_keep_lines", "test:crates/zygo-hooks/tests/shaping_hook.rs::po1_same_text_after_a_passing_call_is_shaped", "test:crates/zygo-hooks/tests/shaping_hook.rs::stderr_cleared_branch_counts_both_streams", "test:crates/zygo-hooks/tests/shaping_hook.rs::file_printers_get_the_size_view_of_stdout_only", "test:crates/zygo-hooks/tests/shaping_hook.rs::reuse_text_loses_only_escapes", "test:crates/zygo-results/tests/shape_pipeline.rs::kind_view_runs_over_the_threshold", "test:crates/zygo-results/tests/shape_pipeline.rs::kind_view_not_run_at_the_threshold", "test:crates/zygo-hooks/tests/shaping_hook.rs::over_4_mib_gets_only_the_size_view", "test:crates/zygo-hooks/tests/shaping_hook.rs::saving_of_255_gives_nothing_and_256_is_used", "test:crates/zygo-hooks/tests/shaping_hook.rs::size_view_use_rule_boundary", "test:crates/zygo-hooks/tests/shaping_hook.rs::shaper_panic_gives_size_view_of_raw_text", "test:crates/zygo-hooks/tests/shaping_off_unchanged.rs::shape_off_output_below_the_threshold_passes_unchanged_on_each_client", "test:crates/zygo-hooks/tests/hooks_basic.rs::trim_bash_image_flag_passes", "premise:docs/premises.md#PO2"]
+
+[[grade]]
+criterion = "A-7.7"
+status = "not-met"
+reason = "PO1 failed: on Claude Code 2.1.332 a failed Bash call fires PostToolUseFailure and no hook output replaces the text the model sees, so zygo registers no trim hook there and the output passes unshaped (base spec 10.1 Failed Bash call)"
+
+[[grade]]
 criterion = "A-8.1"
 status = "met"
 evidence = ["test:crates/zygo-hooks/tests/session_text.rs::session_start_json_envelope_claude_code", "test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec", "premise:docs/premises.md#PW10", "premise:docs/premises.md#PW2", "fixture:fixtures/claude-code/hooks/SessionStart-main.json"]
@@ -244,6 +258,11 @@ evidence = ["test:crates/zygo-hooks/tests/statusline_render.rs::tokens_spend_cac
 criterion = "A-9.6"
 status = "not-met"
 reason = "Windows without Git Bash runs the statusLine command in PowerShell, which needs & before a quoted path; zygo writes the double-quoted path, and CI runs the command only in Git Bash"
+
+[[grade]]
+criterion = "A-9.7"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/statusline_render.rs::run_time_segment_op13_compact_bytes", "test:crates/zygo-hooks/tests/statusline_render.rs::run_time_segment_op13_verbose_bytes", "test:crates/zygo-hooks/tests/statusline_phase.rs::collect_run_time_and_phase_come_from_one_member_read", "test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec", "test:crates/zygo-hooks/tests/statusline_phase.rs::start_rule_no_start_when_workspace_json_fails_a_read_check"]
 
 [[grade]]
 criterion = "A-10.1"
@@ -410,3 +429,23 @@ evidence = ["test:crates/zygo-hooks/tests/workspace.rs::claude_code_events_chang
 criterion = "WA-2.5"
 status = "met"
 evidence = ["premise:docs/premises.md#PW5", "fixture:fixtures/claude-code/workspace/PreToolUse-Agent-denied.json"]
+
+[[grade]]
+criterion = "WA-3.1"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/workspace.rs::mail_stop_blocks_once_and_keeps_busy", "test:crates/zygo-hooks/tests/workspace.rs::mail_stop_does_not_block_while_draining", "test:crates/zygo-hooks/tests/workspace.rs::mail_stop_without_the_active_key_does_not_block", "test:crates/zygo-hooks/tests/workspace.rs::mail_stop_does_not_block_while_stopping", "premise:docs/premises.md#PM1"]
+
+[[grade]]
+criterion = "WA-3.2"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/workspace.rs::mail_prompt_adds_the_line_and_the_stopping_block_wins", "test:crates/zygo-hooks/tests/workspace.rs::mail_session_start_line_follows_the_resume_note", "premise:docs/premises.md#PM3"]
+
+[[grade]]
+criterion = "WA-3.3"
+status = "met"
+evidence = ["test:crates/zygo-workspace/tests/mail_wake.rs::after_send_with_wakes_the_target_once", "test:crates/zygo-workspace/tests/mail_wake.rs::second_wake_inside_the_gap_is_skipped", "test:crates/zygo-workspace/tests/mail_wake.rs::wake_text_is_fixed", "test:crates/zygo-workspace/tests/mail_wake.rs::pane_whose_zygo_pane_differs_is_refused", "test:crates/zygo-workspace/tests/mail_wake.rs::session_whose_zygo_ws_differs_is_refused", "premise:docs/premises.md#PM2"]
+
+[[grade]]
+criterion = "WA-3.4"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/mail_sync_trigger.rs::claude_code_session_start_starts_a_child_by_the_gap", "test:crates/zygo-hooks/tests/mail_sync_trigger.rs::session_prompt_and_stop_start_a_child_by_the_same_gap", "test:crates/zygo-hooks/tests/mail_sync_trigger.rs::ten_tool_end_events_start_one_child", "test:crates/zygo-mail-sync/tests/sync_pass.rs::import_delivers_and_wakes_by_the_read_under_the_lock"]

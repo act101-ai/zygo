@@ -128,6 +128,14 @@ text = "Web-fetch output, the same (`n/a` for a client with no such tool)."
 id = "A-7.5"
 text = "The view takes the place of the tool's output in the tool's own result, not of an error or a feedback message."
 
+[[capability.criterion]]
+id = "A-7.6"
+text = "Bash tool output reaches the model through output shaping as §10.1 Shaping and O§7.1, O§7.3 and O§7.10 define it, with their exceptions (size view only, view not used, file printer, unsure parse, reuse text, shape = false, isImage, the panic fallback), where §10.1's rules for those cases apply."
+
+[[capability.criterion]]
+id = "A-7.7"
+text = "A Bash call that exits with a code that is not 0 reaches the model through output shaping too, with the client's exit-code line, when it sends one, kept first and not counted (output shaping design O§7.12, O§7.13 If PO1 holds)."
+
 [[capability]]
 id = "A-8"
 name = "Session context"
@@ -171,6 +179,10 @@ text = "The session savings show on the client's status surface, or in `zygo sta
 [[capability.criterion]]
 id = "A-9.6"
 text = "Each status command that zygo writes runs in each shell the client uses."
+
+[[capability.criterion]]
+id = "A-9.7"
+text = "When T§2.2 gives a start (the member's first start, the pending start, or the session's own start), the session run time shows on the client's status surface, or in `zygo status` when the client has no surface; with no start it is not shown (T§2.1, T§2.2, T§2.4, T§2.5; §17 `zygo status`)."
 
 [[capability]]
 id = "A-10"
@@ -387,6 +399,28 @@ text = "Subagent end, for each subagent."
 [[capability.criterion]]
 id = "WA-2.5"
 text = "A dispatch block can refuse a subagent call."
+
+[[capability]]
+id = "WA-3"
+name = "Mail wake and delivery"
+tier = "standard"
+standard = "Workspace mail reaches the member it is sent to: a busy member reads it before its turn ends, a new turn or start names the unread count, an idle member is woken, and the member's hooks fetch mail from other machines (workspace mail design M§7, mail sync design S§8.1, S§10)."
+
+[[capability.criterion]]
+id = "WA-3.1"
+text = "A member with mail on ([features] mail) that is busy in a turn reads mail delivered during the turn before the turn ends: its Stop hook blocks with the unread count only when the input's stop_hook_active is false and the phase is not draining or stopping (M§7.1)."
+
+[[capability.criterion]]
+id = "WA-3.2"
+text = "While a member with mail on ([features] mail) has unread mail, the main loop gets the line `zygo: <n> new messages; read them with mail_read` at each new turn and at each session start (M§7.2)."
+
+[[capability.criterion]]
+id = "WA-3.3"
+text = "After a send, an idle member whose launcher is live and whose pane and workspace match (M§7.3) is woken with the fixed wake text, at most once in the wake gap."
+
+[[capability.criterion]]
+id = "WA-3.4"
+text = "When mail sync is set up for the workspace, the member's hook events (main-loop start, prompt, turn end, tool end) start the mail sync by the sync gap, and mail that the sync imports from another machine wakes its member as WA-3.3 does (S§8.1, S§10.1, S§11)."
 
 [[bar_exception]]
 client = "claude-code"
