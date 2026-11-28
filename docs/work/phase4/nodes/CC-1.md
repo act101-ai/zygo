@@ -17,7 +17,267 @@
 
 ## Observed
 
-Written when the node runs.
+Base: b324e1dc7f00b38d410d577a307c05c80068b353
+
+| File | Line | Concern | Node |
+|---|---|---|---|
+| crates/zygo-config/src/check.rs | 253 | 8 | CC-8 |
+| crates/zygo-config/src/check.rs | 254 | 8 | CC-8 |
+| crates/zygo-config/src/repo_def/loadout.rs | 19 | 8 | CC-8 |
+| crates/zygo-config/src/repo_def/loadout.rs | 38 | 8 | CC-8 |
+| crates/zygo-config/src/repo_def/shape.rs | 123 | 8 | CC-8 |
+| crates/zygo-config/src/repo_def/shape.rs | 139 | 8 | CC-8 |
+| crates/zygo-config/src/schema.rs | 470 | 9 | CC-4 |
+| crates/zygo-config/src/schema.rs | 809 | 8 | CC-8 |
+| crates/zygo-config/src/schema.rs | 879 | — | stays: comment |
+| crates/zygo-config/src/schema.rs | 885 | — | stays: comment |
+| crates/zygo-config/src/schema.rs | 888 | — | stays: comment |
+| crates/zygo-core/src/hook.rs | 23 | 2 | CC-3 |
+| crates/zygo-core/src/lib.rs | 38 | 1 | CC-3 |
+| crates/zygo-core/src/lib.rs | 40 | 1 | CC-3 |
+| crates/zygo-core/src/lib.rs | 49 | 1 | CC-3 |
+| crates/zygo-core/src/lib.rs | 50 | 1 | CC-3 |
+| crates/zygo-core/src/lib.rs | 56 | 1 | CC-3 |
+| crates/zygo-core/src/lib.rs | 57 | 1 | CC-3 |
+| crates/zygo-core/src/lib.rs | 81 | 1 | CC-3 |
+| crates/zygo-core/src/lib.rs | 82 | 1 | CC-3 |
+| crates/zygo-core/src/session_view.rs | 61 | 1 | CC-3 |
+| crates/zygo-hooks/src/prompt.rs | 173 | — | stays: test |
+| crates/zygo-hooks/src/prompt.rs | 449 | — | stays: test |
+| crates/zygo-hooks/src/session_start.rs | 79 | 3 | CC-6 |
+| crates/zygo-hooks/src/session_text.rs | 83 | 4 | CC-6 |
+| crates/zygo-hooks/src/workspace.rs | 325 | 4 | CC-6 |
+| crates/zygo-hooks/src/workspace.rs | 335 | 4 | CC-6 |
+| crates/zygo-hooks/src/workspace.rs | 749 | 4 | CC-6 |
+| crates/zygo-hooks/src/workspace.rs | 768 | 3 | CC-6 |
+| crates/zygo-hooks/src/workspace.rs | 786 | 3 | CC-6 |
+| crates/zygo-launch/src/claude_code.rs | 70 | 1 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 90 | 7 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 95 | 7 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 101 | 7 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 573 | 1 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 578 | 1 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 587 | 1 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 619 | 1 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 630 | 6 | CC-9 |
+| crates/zygo-launch/src/claude_code.rs | 701 | 7 | CC-9 |
+| crates/zygo-launch/src/launcher.rs | 592 | 6 | CC-9 |
+| crates/zygo-launch/src/launcher.rs | 593 | 6 | CC-9 |
+| crates/zygo-launch/src/launcher.rs | 606 | 6 | CC-9 |
+| crates/zygo-launch/src/launcher.rs | 608 | 6 | CC-9 |
+| crates/zygo-launch/src/launcher.rs | 616 | 6 | CC-9 |
+| crates/zygo-launch/src/launcher.rs | 809 | 7 | CC-7 |
+| crates/zygo-launch/src/launcher.rs | 810 | 7 | CC-7 |
+| crates/zygo-launch/src/opencode.rs | 78 | 6 | CC-9 |
+| crates/zygo-launch/src/opencode.rs | 172 | 1 | CC-9 |
+| crates/zygo-launch/src/opencode.rs | 286 | 6 | CC-9 |
+| crates/zygo-launch/src/opencode.rs | 430 | 1 | CC-9 |
+| crates/zygo-launch/src/opencode.rs | 433 | 1 | CC-9 |
+| crates/zygo-launch/src/opencode.rs | 465 | 1 | CC-9 |
+| crates/zygo-launch/src/opencode.rs | 470 | 6 | CC-9 |
+| crates/zygo-launch/src/opencode.rs | 496 | 11 | CC-9 |
+| crates/zygo-launch/src/opencode.rs | 512 | 7 | CC-9 |
+| crates/zygo-launch/src/opencode.rs | 572 | 1 | CC-9 |
+| crates/zygo-launch/src/opencode.rs | 591 | 1 | CC-9 |
+| crates/zygo-mcp/src/tools/mod.rs | 22 | 5 | CC-5 |
+| crates/zygo-mcp/src/tools/work.rs | 322 | — | stays: test |
+| crates/zygo-plugins/src/snapshot.rs | 264 | 6 | CC-9 |
+| crates/zygo-proxy/src/passthrough.rs | 35 | 9 | CC-4 |
+| crates/zygo-proxy/src/window.rs | 132 | 9 | CC-4 |
+| crates/zygo-redact/src/content.rs | 262 | 9 | CC-4 |
+| crates/zygo-redact/src/harness.rs | 45 | 9 | CC-4 |
+| crates/zygo-usage/src/savings.rs | 77 | 9 | CC-4 |
+| crates/zygo-work/src/guards.rs | 1047 | — | stays: exception list (CC-15, K§6.1.4) |
+| crates/zygo-work/src/guards.rs | 1059 | — | stays: exception list (CC-15, K§6.1.4) |
+| crates/zygo-work/src/hooks.rs | 371 | 5 | CC-5 |
+| crates/zygo-work/src/hooks.rs | 372 | 5 | CC-5 |
+| crates/zygo-work/src/join.rs | 16 | 9 | CC-4 |
+| crates/zygo-workspace/src/args.rs | 358 | 7 | CC-7 |
+| crates/zygo-workspace/src/args.rs | 359 | 7 | CC-7 |
+| crates/zygo-workspace/src/args.rs | 402 | 7 | CC-7 |
+| crates/zygo-workspace/src/args.rs | 406 | 7 | CC-7 |
+| crates/zygo-workspace/src/args.rs | 507 | 7 | CC-7 |
+| crates/zygo-workspace/src/args.rs | 597 | 7 | CC-7 |
+| crates/zygo-workspace/src/args.rs | 598 | 7 | CC-7 |
+| crates/zygo-workspace/src/args.rs | 654 | 7 | CC-7 |
+| crates/zygo-workspace/src/args.rs | 655 | 7 | CC-7 |
+| crates/zygo-workspace/src/env.rs | 43 | 11 | CC-9 |
+| crates/zygo-workspace/src/loadout.rs | 113 | 8 | CC-8 |
+| crates/zygo-workspace/src/snapshot.rs | 263 | 8 | CC-8 |
+| crates/zygo-workspace/src/snapshot.rs | 264 | 8 | CC-8 |
+| crates/zygo-workspace/src/state.rs | 242 | 8 | CC-8 |
+| crates/zygo-workspace/src/state.rs | 244 | 8 | CC-8 |
+| crates/zygo-workspace/src/up.rs | 932 | 8 | CC-8 |
+| crates/zygo-workspace/src/up.rs | 933 | 8 | CC-8 |
+| crates/zygo-workspace/src/up.rs | 1014 | 8 | CC-8 |
+| crates/zygo-workspace/src/up.rs | 1039 | 8 | CC-8 |
+| crates/zygo/src/cmd/claude.rs | 34 | 1 | CC-10 |
+| crates/zygo/src/cmd/claude.rs | 61 | 1 | CC-10 |
+| crates/zygo/src/cmd/claude.rs | 68 | 1 | CC-10 |
+| crates/zygo/src/cmd/claude.rs | 140 | — | stays: test |
+| crates/zygo/src/cmd/claude.rs | 207 | — | stays: test |
+| crates/zygo/src/cmd/claude.rs | 209 | — | stays: test |
+| crates/zygo/src/cmd/claude.rs | 234 | — | stays: test |
+| crates/zygo/src/cmd/compact.rs | 61 | 10 | CC-10 |
+| crates/zygo/src/cmd/compact.rs | 173 | — | stays: test |
+| crates/zygo/src/cmd/compact.rs | 269 | — | stays: test |
+| crates/zygo/src/cmd/config.rs | 131 | 1 | CC-10 |
+| crates/zygo/src/cmd/config.rs | 132 | 1 | CC-10 |
+| crates/zygo/src/cmd/doctor.rs | 200 | 1 | CC-10 |
+| crates/zygo/src/cmd/doctor.rs | 352 | 8 | CC-10 |
+| crates/zygo/src/cmd/doctor.rs | 459 | 1 | CC-10 |
+| crates/zygo/src/cmd/doctor.rs | 460 | 1 | CC-10 |
+| crates/zygo/src/cmd/hook.rs | 106 | 1 | CC-10 |
+| crates/zygo/src/cmd/loadout.rs | 330 | 8 | CC-10 |
+| crates/zygo/src/cmd/loadout.rs | 590 | — | stays: test |
+| crates/zygo/src/cmd/loadout.rs | 624 | — | stays: test |
+| crates/zygo/src/cmd/loadout.rs | 648 | — | stays: test |
+| crates/zygo/src/cmd/loadout.rs | 733 | — | stays: test |
+| crates/zygo/src/cmd/loadout.rs | 851 | — | stays: test |
+| crates/zygo/src/cmd/mail.rs | 893 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 95 | 7 | CC-10 |
+| crates/zygo/src/cmd/member.rs | 107 | 8 | CC-10 |
+| crates/zygo/src/cmd/member.rs | 108 | 8 | CC-10 |
+| crates/zygo/src/cmd/member.rs | 236 | 7 | CC-10 |
+| crates/zygo/src/cmd/member.rs | 573 | 8 | CC-10 |
+| crates/zygo/src/cmd/member.rs | 581 | 1 | CC-10 |
+| crates/zygo/src/cmd/member.rs | 582 | 1 | CC-10 |
+| crates/zygo/src/cmd/member.rs | 645 | 8 | CC-10 |
+| crates/zygo/src/cmd/member.rs | 664 | 8 | CC-10 |
+| crates/zygo/src/cmd/member.rs | 691 | 1 | CC-10 |
+| crates/zygo/src/cmd/member.rs | 692 | 1 | CC-10 |
+| crates/zygo/src/cmd/member.rs | 693 | 1 | CC-10 |
+| crates/zygo/src/cmd/member.rs | 759 | 7 | CC-10 |
+| crates/zygo/src/cmd/member.rs | 760 | 7 | CC-10 |
+| crates/zygo/src/cmd/member.rs | 1173 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1175 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1204 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1307 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1318 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1322 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1326 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1330 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1335 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1339 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1341 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1344 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1347 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1357 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1360 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1361 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1363 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1367 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1372 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1431 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1432 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1433 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1434 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1435 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1436 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1437 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1438 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1439 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1440 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1466 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1493 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1523 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1543 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1544 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1545 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1546 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1547 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1557 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1558 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1559 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1560 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1561 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1562 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1563 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1565 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1569 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1573 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1575 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1579 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1616 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1626 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1654 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1674 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1721 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1738 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1745 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1754 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1762 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1775 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1785 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1791 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1796 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1823 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1824 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1827 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1832 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1846 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1861 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1862 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1873 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1881 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1909 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1923 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1936 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1941 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 1968 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 2000 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 2012 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 2029 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 2030 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 2031 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 2032 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 2033 | — | stays: test |
+| crates/zygo/src/cmd/member.rs | 2039 | — | stays: test |
+| crates/zygo/src/cmd/mod.rs | 705 | — | stays: test |
+| crates/zygo/src/cmd/mod.rs | 707 | — | stays: test |
+| crates/zygo/src/cmd/mod.rs | 709 | — | stays: test |
+| crates/zygo/src/cmd/opencode.rs | 34 | 1 | CC-10 |
+| crates/zygo/src/cmd/opencode.rs | 55 | 1 | CC-10 |
+| crates/zygo/src/cmd/opencode.rs | 108 | — | stays: test |
+| crates/zygo/src/cmd/opencode.rs | 115 | — | stays: test |
+| crates/zygo/src/cmd/opencode.rs | 123 | — | stays: test |
+| crates/zygo/src/cmd/verbs.rs | 451 | — | stays: test |
+| crates/zygo/src/cmd/workspace_approve.rs | 180 | 8 | CC-8 |
+| crates/zygo/src/cmd/ws.rs | 406 | 8 | CC-10 |
+| crates/zygo/src/cmd/ws.rs | 417 | 8 | CC-10 |
+| crates/zygo/src/cmd/ws.rs | 471 | 8 | CC-10 |
+| crates/zygo/src/cmd/ws.rs | 612 | 8 | CC-10 |
+| crates/zygo/src/cmd/ws.rs | 613 | 8 | CC-10 |
+| crates/zygo/src/cmd/ws.rs | 651 | 8 | CC-10 |
+| crates/zygo/src/cmd/ws.rs | 673 | 8 | CC-10 |
+| crates/zygo/src/cmd/ws.rs | 708 | — | stays: test |
+| crates/zygo/src/cmd/ws.rs | 725 | — | stays: test |
+| crates/zygo/src/cmd/ws.rs | 737 | — | stays: test |
+| crates/zygo/src/cmd/ws.rs | 751 | — | stays: test |
+| crates/zygo/src/cmd/ws.rs | 776 | — | stays: test |
+| crates/zygo/src/cmd/ws.rs | 778 | — | stays: test |
+| crates/zygo/src/cmd/ws.rs | 780 | — | stays: test |
+| crates/zygo/src/cmd/ws.rs | 781 | — | stays: test |
+| crates/zygo/src/cmd/ws.rs | 792 | — | stays: test |
+| crates/zygo/src/cmd/ws.rs | 801 | — | stays: test |
+| crates/zygo/src/cmd/ws.rs | 803 | — | stays: test |
+| crates/zygo/src/cmd/ws.rs | 804 | — | stays: test |
+| crates/zygo/src/cmd/ws.rs | 805 | — | stays: test |
+| crates/zygo/src/cmd/ws.rs | 820 | — | stays: test |
+| crates/zygo/src/cmd/ws.rs | 821 | — | stays: test |
+| crates/zygo/src/cmd/ws.rs | 875 | — | stays: test |
+
+Counts: 245 sites in 44 files (the acceptance grep at the base). By node: CC-3 10, CC-4 7, CC-5 3, CC-6 7, CC-7 11, CC-8 17, CC-9 28, CC-10 35, stays: comment 3, stays: exception list 2, stays: test 122. By concern (CC rows only): 1 36, 2 1, 3 3, 4 4, 5 3, 6 10, 7 20, 8 31, 9 7, 10 1, 11 2. No row goes to CC-15 as a new exception.
+
+Test items at the base (each site in one of these ranges is stays: test): `crates/zygo-hooks/src/prompt.rs` 147-469; `crates/zygo-mcp/src/tools/work.rs` 263-328; `crates/zygo/src/cmd/claude.rs` 88-239; `cmd/compact.rs` 132-333; `cmd/loadout.rs` 480-1003; `cmd/mail.rs` 763-934 (`all(test, unix)`); `cmd/member.rs` 1117-2047; `cmd/mod.rs` 647-783; `cmd/opencode.rs` 59-128; `cmd/verbs.rs` 338-766; `cmd/ws.rs` 683-1034. The other test items in the 44 files hold no site.
+
+Adapter rows (author's call at the node run): the rows of `crates/zygo-launch/src/claude_code.rs` and `opencode.rs` go to CC-9, which moves the two adapters whole into `crates/zygo-launch/src/client/`. Their concern is the one each line serves, not 6 for each as the Assignment table said at planning: the program name, the client id, `agent()` and the config folder names (`.claude`, `CLAUDE_CONFIG_DIR`, the `opencode` folders) are 1; the argument walk and `has_session_arg` are 7; `Plugins` is 6; the `OPENCODE_CONFIG_DIR` row that the adapter sets is 11.
+
+Phase 3 client features (for CC-12), at the base:
+
+- Output shaping: `crates/zygo-results/src/shape/` (`mod.rs`, `clean.rs`, `command.rs`, `dedup.rs`, `kind_view.rs`, `runner.rs`). Tests: `crates/zygo-results/tests/shape_*.rs` (9 files), `crates/zygo-hooks/tests/shaping.rs`, `shaping_hook.rs`, `shaping_off.rs`, `shaping_fixtures.rs`, `shaping_latency.rs`, and the golden folders `crates/zygo-hooks/tests/golden/shape_off/claude-code/` (5 files) and `.../opencode/` (1 file).
+- Mail wake and delivery: `crates/zygo-workspace/src/mail/` (`mod.rs`, `names.rs`, `store.rs`, `wake.rs`), `crates/zygo-hooks/src/mail.rs`, the delivery sites `crates/zygo-hooks/src/workspace.rs:335` and `:749`-`:786`, `crates/zygo-mcp/src/tools/mail.rs`, `crates/zygo/src/cmd/mail.rs`, `crates/zygo-mail-sync/src/` (16 files). Tests: `crates/zygo-workspace/tests/mail_*.rs` (4 files), `crates/zygo-hooks/tests/mail_sync_text.rs`, `mail_sync_trigger.rs`, `crates/zygo-mcp/tests/mail_tools.rs`, `mail_remote.rs`, `crates/zygo/tests/mail_*.rs` (5 files), `workspace_mail.rs`, `crates/zygo-mail-sync/tests/` (15 entries).
+- Run-time status line: `crates/zygo-hooks/src/statusline/` (`mod.rs`, `data.rs`, `mail.rs`, `phase.rs`, `render.rs`, `width.rs`), `crates/zygo/src/cmd/statusline.rs`, `status.rs`. Tests: `crates/zygo-hooks/tests/statusline_*.rs` (5 files), `crates/zygo/tests/statusline_cmd.rs`, `statusline_git.rs`.
 
 ## Test logic edits
 
@@ -67,8 +327,13 @@ Assignment (the planning notes' node-per-concern rule applied to each file at th
 | `crates/zygo-workspace/src/snapshot.rs` | 263, 264 | 8 | CC-8 |
 | `crates/zygo-workspace/src/up.rs` | 932, 933, 1014 (`claude_code: bool` of `pool_member`), 1039 | 8 | CC-8 |
 | `crates/zygo/src/cmd/workspace_approve.rs` | 180 (calls `up::pool_member`, which CC-8 changes) | 8 | CC-8 |
-| `crates/zygo-launch/src/claude_code.rs` | 70, 90, 95, 101, 573, 578, 587, 619, 630, 701 | 6 | CC-9 |
-| `crates/zygo-launch/src/opencode.rs` | 78, 172, 286, 430, 433, 465, 470, 496, 512, 572, 591 | 6 | CC-9 |
+| `crates/zygo-launch/src/claude_code.rs` | 70, 573, 578, 587, 619 (program, id, config folder) | 1 | CC-9 |
+| `crates/zygo-launch/src/claude_code.rs` | 90, 95, 101, 701 (argument walk) | 7 | CC-9 |
+| `crates/zygo-launch/src/claude_code.rs` | 630 (`Plugins`) | 6 | CC-9 |
+| `crates/zygo-launch/src/opencode.rs` | 172, 430, 433, 465, 572, 591 (program, id, config folder) | 1 | CC-9 |
+| `crates/zygo-launch/src/opencode.rs` | 78, 286, 470 (`Plugins`) | 6 | CC-9 |
+| `crates/zygo-launch/src/opencode.rs` | 496 (`OPENCODE_CONFIG_DIR` set row) | 11 | CC-9 |
+| `crates/zygo-launch/src/opencode.rs` | 512 (argument walk) | 7 | CC-9 |
 | `crates/zygo-launch/src/launcher.rs` | 592, 593, 606, 608, 616 (plugin delivery, `Plugins`) | 6 | CC-9 |
 | `crates/zygo-plugins/src/snapshot.rs` | 264 | 6 | CC-9 |
 | `crates/zygo-workspace/src/env.rs` | 43 (`OPENCODE_CONFIG_DIR` row) | 11 | CC-9 |
@@ -87,18 +352,20 @@ Assignment (the planning notes' node-per-concern rule applied to each file at th
 
 Expected counts: CC-3 10, CC-4 7, CC-5 3, CC-6 7, CC-7 11, CC-8 17, CC-9 28, CC-10 35, stays: comment 3, stays: exception list 2, stays: test 122; total 245. No row goes to CC-15 as a new exception (every non-branching literal at the base is either the guard or a test or comment site).
 
+Plan fix at the node run (2026-11-27): the planning table gave concern 6 to each adapter line of `claude_code.rs` and `opencode.rs`. At the base only 5 of those 21 lines touch `Plugins`; the others hold the program name, the client id, the config folder names, the argument walk or a set environment row. Each row now names the concern its line serves (see `## Observed`). The node of each row (CC-9) and every node count are unchanged.
+
 Steps:
 
-- [ ] 1. Check the base. Run `git merge-base --is-ancestor b7e9d45d b324e1dc7f00b38d410d577a307c05c80068b353 && git merge-base --is-ancestor 74748ae7 b324e1dc7f00b38d410d577a307c05c80068b353 && git merge-base --is-ancestor b324e1dc7f00b38d410d577a307c05c80068b353 origin/phase-4` → exit 0. Run `git diff --stat b324e1dc HEAD -- crates` → no output. If a later merge layer on `phase-4` changed `crates/` before this node starts, the base stays `b324e1dc` (the contract), and each site that the grep finds at the new head and not at the base is a found issue (§5.4): write it into K§6.9 and add a node for it.
-- [ ] 2. In `docs/work/phase4/nodes/CC-1.md`, replace the line `Written when the node runs.` under `## Observed` with `Base: b324e1dc7f00b38d410d577a307c05c80068b353`, a blank line, then the table header `| File | Line | Concern | Node |` and `|---|---|---|---|`.
-- [ ] 3. Run the acceptance grep alone with the base, its output to a file in a temporary directory outside the checkout: `T=$(mktemp -d) && git grep -nE 'Agent::(ClaudeCode|OpenCode|\{|\*)|PaneKind::(ClaudeCode|OpenCode)|Plugins::|"(claude-code|claude|opencode|\.claude|\.opencode|CLAUDE_CONFIG_DIR|OPENCODE_CONFIG_DIR)"|(^|[^A-Za-z0-9_])(claude|opencode|claude_code|open_code)[a-z_]*: bool' b324e1dc7f00b38d410d577a307c05c80068b353 -- 'crates/*/src/**' > "$T/sites"` (the pattern of **Acceptance**, unchanged). Check: `wc -l < "$T/sites"` prints `245`.
-- [ ] 4. Find the test items. For each of the 44 files, read it at the base (`git show b324e1dc:<file>`) and take the line range of each item whose `cfg` predicate requires `test` (`test`, or `all(…)` with `test` in it). Check: the ranges agree with the last row of the Assignment table; a site inside a range is `stays: test`, with concern `—`.
-- [ ] 5. Write one row per site, sorted by file and then line, as the Assignment table says. A site on a `///` or `//!` line is `stays: comment`. Where the code at a line differs from its Assignment note, the code decides, by the planning notes' node-per-concern rule. Check: each `crates/zygo/src/cmd/member.rs` row before line 1117 names concern 1 (program name and CLI verb: 581, 582, 691, 692, 693), 7 (session flags and the bare rule: 95, 236, 759, 760) or 8 (resume command and the config folder saved for resume: 107, 108, 573, 645, 664).
-- [ ] 6. Add the files that rows give to a node whose **Files** line does not list them: append `` `crates/zygo-config/src/repo_def/loadout.rs` `` and `` `crates/zygo/src/cmd/workspace_approve.rs` `` to the **Files** line of `docs/work/phase4/nodes/CC-8.md` (CC-8 changes `up::pool_member`, which `workspace_approve.rs:180` calls). Every other file in a CC-n row is already on that node's **Files** line (checked at planning). Check: `python3 /home/kagemartin/.cache/zygo/sessions/01M8CKYAD9C5W51MRT0M1T8299/plugins/act101/skills/work-graph/scripts/work_graph.py check docs/work/phase4/graph.md` (the act101 plugin's `skills/work-graph/scripts/work_graph.py`) → exit 0.
-- [ ] 7. Under the table, write `Phase 3 client features (for CC-12), at the base:` and one bullet for each feature, with its files and tests at the base:
+- [x] 1. Check the base. Run `git merge-base --is-ancestor b7e9d45d b324e1dc7f00b38d410d577a307c05c80068b353 && git merge-base --is-ancestor 74748ae7 b324e1dc7f00b38d410d577a307c05c80068b353 && git merge-base --is-ancestor b324e1dc7f00b38d410d577a307c05c80068b353 origin/phase-4` → exit 0. Run `git diff --stat b324e1dc HEAD -- crates` → no output. If a later merge layer on `phase-4` changed `crates/` before this node starts, the base stays `b324e1dc` (the contract), and each site that the grep finds at the new head and not at the base is a found issue (§5.4): write it into K§6.9 and add a node for it.
+- [x] 2. In `docs/work/phase4/nodes/CC-1.md`, replace the line `Written when the node runs.` under `## Observed` with `Base: b324e1dc7f00b38d410d577a307c05c80068b353`, a blank line, then the table header `| File | Line | Concern | Node |` and `|---|---|---|---|`.
+- [x] 3. Run the acceptance grep alone with the base, its output to a file in a temporary directory outside the checkout: `T=$(mktemp -d) && git grep -nE 'Agent::(ClaudeCode|OpenCode|\{|\*)|PaneKind::(ClaudeCode|OpenCode)|Plugins::|"(claude-code|claude|opencode|\.claude|\.opencode|CLAUDE_CONFIG_DIR|OPENCODE_CONFIG_DIR)"|(^|[^A-Za-z0-9_])(claude|opencode|claude_code|open_code)[a-z_]*: bool' b324e1dc7f00b38d410d577a307c05c80068b353 -- 'crates/*/src/**' > "$T/sites"` (the pattern of **Acceptance**, unchanged). Check: `wc -l < "$T/sites"` prints `245`.
+- [x] 4. Find the test items. For each of the 44 files, read it at the base (`git show b324e1dc:<file>`) and take the line range of each item whose `cfg` predicate requires `test` (`test`, or `all(…)` with `test` in it). Check: the ranges agree with the last row of the Assignment table; a site inside a range is `stays: test`, with concern `—`.
+- [x] 5. Write one row per site, sorted by file and then line, as the Assignment table says. A site on a `///` or `//!` line is `stays: comment`. Where the code at a line differs from its Assignment note, the code decides, by the planning notes' node-per-concern rule. Check: each `crates/zygo/src/cmd/member.rs` row before line 1117 names concern 1 (program name and CLI verb: 581, 582, 691, 692, 693), 7 (session flags and the bare rule: 95, 236, 759, 760) or 8 (resume command and the config folder saved for resume: 107, 108, 573, 645, 664).
+- [x] 6. Add the files that rows give to a node whose **Files** line does not list them: append `` `crates/zygo-config/src/repo_def/loadout.rs` `` and `` `crates/zygo/src/cmd/workspace_approve.rs` `` to the **Files** line of `docs/work/phase4/nodes/CC-8.md` (CC-8 changes `up::pool_member`, which `workspace_approve.rs:180` calls). Every other file in a CC-n row is already on that node's **Files** line (checked at planning). Check: `python3 /home/kagemartin/.cache/zygo/sessions/01M8CKYAD9C5W51MRT0M1T8299/plugins/act101/skills/work-graph/scripts/work_graph.py check docs/work/phase4/graph.md` (the act101 plugin's `skills/work-graph/scripts/work_graph.py`) → exit 0.
+- [x] 7. Under the table, write `Phase 3 client features (for CC-12), at the base:` and one bullet for each feature, with its files and tests at the base:
   - output shaping: `crates/zygo-results/src/shape/` (`mod.rs`, `clean.rs`, `command.rs`, `dedup.rs`, `kind_view.rs`, `runner.rs`); tests `crates/zygo-results/tests/shape_*.rs` (9 files), `crates/zygo-hooks/tests/shaping.rs`, `shaping_hook.rs`, `shaping_off.rs`, `shaping_fixtures.rs`, `shaping_latency.rs`, the golden folders `crates/zygo-hooks/tests/golden/shape_off/claude-code/` and `.../opencode/`;
   - mail wake and delivery: `crates/zygo-workspace/src/mail/` (`mod.rs`, `names.rs`, `store.rs`, `wake.rs`), `crates/zygo-hooks/src/mail.rs`, the delivery sites `crates/zygo-hooks/src/workspace.rs:335` and `:749`-`:786`, `crates/zygo-mcp/src/tools/mail.rs`, `crates/zygo/src/cmd/mail.rs`, `crates/zygo-mail-sync/src/`; tests `crates/zygo-workspace/tests/mail_*.rs` (4 files), `crates/zygo-hooks/tests/mail_sync_text.rs`, `mail_sync_trigger.rs`, `crates/zygo-mcp/tests/mail_tools.rs`, `mail_remote.rs`, `crates/zygo/tests/mail_*.rs` (5 files), `workspace_mail.rs`, `crates/zygo-mail-sync/tests/`;
   - run-time status line: `crates/zygo-hooks/src/statusline/` (`mod.rs`, `data.rs`, `mail.rs`, `phase.rs`, `render.rs`, `width.rs`), `crates/zygo/src/cmd/statusline.rs`, `status.rs`; tests `crates/zygo-hooks/tests/statusline_*.rs` (5 files), `crates/zygo/tests/statusline_cmd.rs`, `statusline_git.rs`.
   Check: `git ls-tree -r --name-only b324e1dc -- <each path>` lists each named path.
-- [ ] 8. Run the **Acceptance** command alone, as one command → exit 0 (`cmp` silent).
-- [ ] 9. Commit `docs/work/phase4/nodes/CC-1.md` and `CC-8.md` on the node branch: `docs(work): CC-1 inventory at b324e1dc`, with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:CC-1`.
+- [x] 8. Run the **Acceptance** command alone, as one command → exit 0 (`cmp` silent).
+- [x] 9. Commit `docs/work/phase4/nodes/CC-1.md` and `CC-8.md` on the node branch: `docs(work): CC-1 inventory at b324e1dc`, with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:CC-1`.
