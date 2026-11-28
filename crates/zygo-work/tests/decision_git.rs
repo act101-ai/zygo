@@ -120,6 +120,8 @@ struct Calls {
     sent: Vec<Vec<u8>>,
     /// The `--batch` processes dropped.
     drops: usize,
+    /// Each deadline set on the `--batch` process after its spawn.
+    deadlines: Vec<Instant>,
 }
 
 struct Stub {
@@ -182,6 +184,7 @@ impl BatchIo for Canned {
         self.at += n;
         Ok(rest[..n].to_vec())
     }
+    fn set_deadline(&mut self, deadline: Instant) { self.log.borrow_mut().deadlines.push(deadline); }
 }
 
 struct Rig {
@@ -469,6 +472,15 @@ fn piped_send_then_read_fails_with_a_foreign_reader() {
     assert_eq!(p.read_line(16).unwrap(), b"closed");
     let r = p.send(b"x\n").and_then(|()| p.read_line(16).map(drop));
     assert!(matches!(r, Err(RunError::Failed)));
+}
+
+#[cfg(unix)]
+#[test]
+fn piped_set_deadline_bounds_the_next_read() {
+    // Spawned with a deadline an hour away; the deadline set later is already past, so the read ends at once.
+    let mut p = sh("exec sleep 1000000");
+    p.set_deadline(Instant::now());
+    assert!(matches!(p.read_line(16), Err(RunError::TimedOut)));
 }
 
 // ---- real git: PD1 and the tree entry modes (D§6.8) ----

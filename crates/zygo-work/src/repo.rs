@@ -292,8 +292,8 @@ const PIPED_CHUNK: usize = 64 * 1024;
 
 /// A running process that answers requests on stdin (a request-and-reply form of [`run_whole`]), in its own process
 /// group on unix (its tree on Windows). A reader thread hands stdout over in 64 KiB chunks through a channel that holds
-/// one chunk, so stdout that is not asked for stays in the pipe. Every wait ends at `deadline` (the group is killed,
-/// `TimedOut`). Dropping it kills the group (unix) or the tree (Windows) and reaps the process.
+/// one chunk, so stdout that is not asked for stays in the pipe. Every wait ends at the deadline, the one given at
+/// spawn or the last one [`Piped::set_deadline`] gave (the group is killed, `TimedOut`). Dropping it kills the group (unix) or the tree (Windows) and reaps the process.
 pub struct Piped {
     run: Running,
     stdin: ChildStdin,
@@ -358,6 +358,11 @@ impl Piped {
             self.fill()?;
         }
         Ok(self.buf.drain(..n).collect())
+    }
+
+    /// Sets the deadline of every later wait for stdout; the process keeps running.
+    pub fn set_deadline(&mut self, deadline: Instant) {
+        self.deadline = deadline;
     }
 
     /// Adds the next stdout chunk to `buf`: `TimedOut` at the deadline (the group is killed), `Failed` at the end of

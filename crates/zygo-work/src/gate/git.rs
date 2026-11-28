@@ -91,6 +91,8 @@ pub trait BatchIo {
     fn send(&mut self, line: &[u8]) -> Result<(), RunError>;
     fn read_line(&mut self, max: usize) -> Result<Vec<u8>, RunError>;
     fn read_exact(&mut self, n: usize) -> Result<Vec<u8>, RunError>;
+    /// The deadline of every later wait for stdout (D§9.4: each object read has its own bound).
+    fn set_deadline(&mut self, deadline: Instant);
 }
 
 impl BatchIo for crate::repo::Piped {
@@ -102,6 +104,9 @@ impl BatchIo for crate::repo::Piped {
     }
     fn read_exact(&mut self, n: usize) -> Result<Vec<u8>, RunError> {
         crate::repo::Piped::read_exact(self, n)
+    }
+    fn set_deadline(&mut self, deadline: Instant) {
+        crate::repo::Piped::set_deadline(self, deadline)
     }
 }
 
