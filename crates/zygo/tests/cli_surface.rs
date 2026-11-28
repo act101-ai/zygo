@@ -559,7 +559,7 @@ fn session_start_opencode_event_subagent_prints_mechanics_only() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(&serde_json::to_vec(&req).unwrap()).unwrap();
+    common::write_stdin(child.stdin.take().unwrap(), &serde_json::to_vec(&req).unwrap());
     let o = child.wait_with_output().unwrap();
     assert_eq!(o.status.code(), Some(0), "stderr: {}", String::from_utf8_lossy(&o.stderr));
     let stdout = String::from_utf8(o.stdout).unwrap();
