@@ -25,7 +25,7 @@ Phase 2 constraints that still bind code Phase 3 touches:
 - State dir `0700`, files `0600` (also `mail/`, `reinject/`, the results directory) — `docs/specs/2026-11-20-workspaces-design.md` AU2; `docs/specs/2026-11-22-workspace-mail-design.md` M§4 M-C4; `docs/specs/2026-11-24-output-shaping-design.md` O§4 O-C3; `docs/specs/2026-11-24-session-text-design.md` T§9.2 item 1
 - Crate graph: `zygo-workspace` depends on `zygo-core`, `zygo-config`, `zygo-work`, `zygo-proxy` only (the mail store lives in `zygo-workspace::mail`; sync, which needs `zygo-redact` and git, lives in the new crate `zygo-mail-sync`, which `zygo-workspace` never depends on); `zygo-hooks` depends on `zygo-workspace`; the status-line module does not depend on `zygo-workspace`; `zygo-config` does not depend on `zygo-workspace` — `docs/specs/2026-11-20-workspaces-design.md` AU103, AU102, AU45; `docs/specs/2026-11-21-statusline-hud-design.md` H§7.6; `docs/specs/2026-11-22-workspace-mail-design.md` M§9a
 - No wall-clock or deadline test runs in CI; such checks are `#[ignore = "timing: …"]` and run on demand; time rules are tested with an injected clock or `now` — operator (PR #15, commits `cb7d13c`, `96c1cbc`)
-- CI and harness tests never run a real `claude` or `opencode` binary or a real agent config directory; they use the stub agents (`crates/zygo-launch/tests/stub_agent/`) and recorded fixtures; live checks run real agents only by the operator — operator instruction (owner login risk), held in the lead's session memory before 2026-11-24; applied in Phase 2 by the stub agent `crates/zygo-launch/tests/stub_agent/` (node L3, `docs/work/phase2/history.md:31`); `docs/live-checks.md` "Method"
+- CI and harness tests never run a real `claude` or `opencode` binary or a real agent config directory; they use the stub agents (`crates/zygo-launch/tests/stub_agent/`) and recorded fixtures — author's call (test design: CI has no agent login); applied in Phase 2 by the stub agent `crates/zygo-launch/tests/stub_agent/` (node L3, `docs/work/phase2/history.md:31`); `docs/live-checks.md` "Method"
 - No Claude attribution in commits, pull requests, tags, release notes or files; commit trailers `Zygo-Session: <session>` and, when a unit is named, `Zygo-Work: <unit>` — `docs/specs/2026-11-18-zygo-design.md` §8.5 ("operator, 2026-11-22: there is never Claude attribution"); the session rule of each zygo session (the mechanics text, §8.6 item 7)
 
 Decision records (D):
@@ -107,7 +107,7 @@ Session text (T, SX nodes):
 - HUD reference bytes: `cargo test --locked -p zygo-hooks --test statusline_render -- h14_01_golden_files_hold_each_render_byte_for_byte h14_04_emission_examples_1_and_3_are_golden --exact` → both pass with the reference files in `crates/zygo-hooks/tests/golden/` unchanged by RT-3 (other nodes' new golden files, such as OS-27's `shape_off/`, are not in these tests) — `docs/specs/2026-11-24-session-runtime-design.md` T§3.1 last row; `crates/zygo-hooks/tests/statusline_render.rs:249`, `:345`
 - Fixture bless, by hand, reviewed in the diff: `ZYGO_BLESS=1 cargo test -p zygo-hooks --test shaping` (OS-35) and `ZYGO_BLESS=1 cargo test -p zygo-hooks --test shaping_off` (OS-27, before OS-28 only) — O§8.1
 - On demand, not CI, operator's machine, release build: `cargo test -p zygo-hooks --release --test shaping_latency -- --ignored` (OS-38); the numbers go in OS-38's pull request — O§8.5, O§16 item 17
-- Live checks (manual, recorded by the operator, never in CI, never by an agent): PD2, PD3 (DR-15); PM1-PM3 (ML-17), M12 (ML-19); SP1 (MS-23), SP2 (MS-24); PO1-PO4 (OS-23 to OS-26); PR1, PR2 (WD-21, WD-22); ST1-ST4 (SX-9) — D§18; M§13 #12, M§14; S§20; O§17; R§19; T§12.2 (SX)
+- Live checks (run and recorded by the executor on the operator's machine, never in CI): PD2, PD3 (DR-15); PM1-PM3 (ML-17), M12 (ML-19); SP1 (MS-23), SP2 (MS-24); PO1-PO4 (OS-23 to OS-26); PR1, PR2 (WD-21, WD-22); ST1-ST4 (SX-9) — D§18; M§13 #12, M§14; S§20; O§17; R§19; T§12.2 (SX)
 
 ## Review focus
 
@@ -199,8 +199,8 @@ Session text (T, SX nodes):
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | TODO | mechanical | — |
 | OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45, OS-47 | DONE | lookup | 5 passed, release, 01855abf · PR #239 |
 | WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | DONE | implementation | 15ea1e5b^..9a264b0a · acceptance pass (definition_hooks 11 passed) · PR #218 |
-| WD-21 | PR1 live check (operator): two pool members send two logins | WD-14, ML-19 | TODO | mechanical | — |
-| WD-22 | PR2 live check (operator): per-session settings act the same on a pool directory | WD-14, WD-21 | TODO | mechanical | — |
+| WD-21 | PR1 live check: two pool members send two logins | WD-14, ML-19 | TODO | mechanical | — |
+| WD-22 | PR2 live check: per-session settings act the same on a pool directory | WD-14, WD-21 | TODO | mechanical | — |
 | MS-22 | No mail content in logs, state, usage rows, commits or refs | MS-18, MS-19, MS-21 | DONE | judgment | e2b744fe^..91edeada · acceptance pass (mail_sync_no_content 2 passed) · PR #222 |
 | WD-15 | `zygo workspace approve [--yes] [--digest <hex>]` | WD-14, DR-3, MS-21 | DONE | judgment | a923b915^..fe86a15d · acceptance pass (workspace_approve 28 passed) · PR #223 |
 | WD-16 | `config show/check`, `profile list/show`, `loadout list/show` show the repository files | WD-15, WD-24 | DONE | implementation | 4e0686e5^..b5991ee0 · acceptance pass (definition_surfaces 22 passed) · PR #225 |
@@ -474,3 +474,4 @@ Session text (T, SX nodes):
 | 2026-11-27 | FX-28 DONE: rule B (send holds mail/lock shared; forget counts again under it and refuses on a higher count); review round 4 F1-F4 fixed; author's calls: step 10 fixed at the source line (workspace_of), N42 kept; F4 recorded as the FX-24 same-user limit · PR #234 |
 | 2026-11-27 | OS-38 DONE: 5 passed, release 01855abf, operator machine; p95 vs O§8.5: hook on 13.20/off 13.10 ms (+50); 4 MiB max json/cargo-metadata 54.03 ms (≤ 100); write lock 105.71 ms (≤ 150; 159.27 before OS-45); 64 KiB max gotest/passing-verbose 1.16 ms (≤ 5); OS-46 row archived · PR #239 |
 | 2026-11-27 | FX-30 DONE: pending-wake record in state.json; review F1-F4 fixed; author's calls: count `cur/` but wake only `new/`; clear at the step-10 write; recorded limit: one state write (a crash between wake and write wakes again). PR #240 |
+| 2026-11-27 | operator: "never by an agent" live-check rule never made (false citation, graph line 28); deleted from graph, specs R§19 etc., open nodes; executor runs MS-23, WD-21, WD-22 |

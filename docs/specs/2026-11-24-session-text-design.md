@@ -21,7 +21,7 @@ zygo changes what an agent sees: the trim hook puts a marker in place of large t
 1. **P3-14.** Only the `zygo-<role>` subagents get the mechanics text (§8.6 item 7). The built-in, plugin and user subagents get the markers and the guards, but not the sentences that explain them.
 2. **P3-15.** No premise, fixture or test records which zygo text is in the context after a compaction.
 
-This spec closes both gaps. The Claude Code behavior after a compaction comes from the documentation (T§9). A short live check, run by hand by the operator, covers only what the documentation does not answer (T§12).
+This spec closes both gaps. The Claude Code behavior after a compaction comes from the documentation (T§9). A short live check, run by hand by the executor on the operator's machine, covers only what the documentation does not answer (T§12).
 
 ## 2. Goals
 
@@ -254,7 +254,7 @@ Checked by hand (T§12.2), one result per id:
 | ST3 | OpenCode calls `experimental.chat.system.transform` on the first main-model request after a compaction. | No change. | F3 (T§9.3). |
 | ST4 | OpenCode calls the transform for a subagent request (the `task` tool), with the subagent's model in `input.model`. | `zygo-<role>` prompts lose the mechanics text (T§7.2 item 3). | The `--event subagent` branch is removed (T§7.2 item 3). |
 
-**How a result enters the repository (author).** The lead, after the operator sends the files of T§12.2:
+**How a result enters the repository (author).** The lead, after the executor writes the files of T§12.2:
 
 1. Commits the fixtures, after `N2_FORBIDDEN_NAMES='<operator user name> <other names>' sh scripts/check-premises.sh` passes on them.
 2. Adds one row per id to the `docs/premises.md` "Results" table, in its existing columns: `| STn | <premise> | Claude Code or OpenCode | <version> | <date> | verified or failed | <evidence paths> |`.
@@ -264,7 +264,7 @@ Checked by hand (T§12.2), one result per id:
 
 Tests do not read `docs/premises.md`. A test reads the recorded fixtures and checks the code as built for the recorded result. Before the rows exist, the code is built for "no row yet" (ST3: no change; ST4: prompts keep the text and the transform branch exists), and the script has no `SIDS`.
 
-### 12.2 Live check P3-15 (operator, by hand)
+### 12.2 Live check P3-15 (executor, by hand, on the operator's machine)
 
 Run on your own machine with your normal Claude Code and OpenCode logins. It runs no zygo and no CI job; from this repository it uses only `scripts/premises/scrub.py`. Claude Code runs once in print mode on Haiku with no compaction: about 5 model requests, about 80,000 input tokens in all (each request sends the whole context again; most of it is a cache read). OpenCode runs three short turns and one compaction on the models you pick.
 
@@ -455,3 +455,4 @@ Each check is decided by a test with the stub agents and recorded fixtures, or b
 - 2026-11-24 · T§12.2 · author's call (SX-8 review round 1) · step 1 mktemp works on GNU; step 7 sends MAIN, SUB and the step-5 answer; step 8 says when to delete the backup.
 - 2026-11-26 · T§13 (bullets §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6) · author's call (SX-7 premise check) · the merged code of SX-3 to SX-6 wins: the OpenCode `zygo-<role>` prompt keeps the text until ST4; `zygo hook trim`, not `session-start`, gives the copy after a subagent's compaction; with no main role every `zygo/` request gets the mechanics text; the flag skips `zygo-` types and ids that fail the agent-name rule; `SessionStart` is the Claude Code main loop's channel. The §8.5 bullet matches the code and does not change.
 - 2026-11-26 · T§13 (bullets §8.6 item 7, §8.7 Agents row (new), §8.7 N33, and the citations of every bullet) · author's call (SX-7 review round 1) · the transform selects by model: the effective role's model gets the full text, so does the title agent on it; OpenCode subagent and title delivery depends on ST4; item 7 states the `zygo-` `--agents` entry and the trim-call limits; §8.7 Agents states the `zygo-<role>` prompt; citations name the function, not the line.
+- 2026-11-27 · T§1, T§12.1, T§12.2 · operator · the operator never made the "never by an agent" rule; the executor runs and records live checks, the operator approves the result.
