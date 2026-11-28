@@ -641,7 +641,7 @@ fn listing_past_the_cap_refuses_the_definition() {
         commit_many(w, &extra(256, ".zygo", ""), b"x");
     });
     let s = Sizes::default();
-    assert_eq!(repo_def::read_default(&f.c, &s), invalid(&f, ".zygo lists more than 256 entries", false), "(a)");
+    assert_eq!(repo_def::read_default(&f.c, &s), invalid(&f, ".zygo lists more than 256 entries", true), "(a)");
     s.assert_capped("(a)");
     // (b) `.zygo/profiles/` with 257 `.md` entries.
     let f = fx_with(|w| {
@@ -666,7 +666,7 @@ fn listing_past_the_cap_refuses_the_definition() {
         git(w, &["update-ref", "refs/heads/main", &c]);
     });
     let s = Sizes::default();
-    assert_eq!(repo_def::read_default(&f.c, &s), invalid(&f, ".zygo: the listing is larger than 131072 bytes", false), "(c)");
+    assert_eq!(repo_def::read_default(&f.c, &s), invalid(&f, ".zygo: the listing is larger than 131072 bytes", true), "(c)");
     s.assert_capped("(c)");
     // (d) 255 more entries: 256 in all, at the cap, is read.
     let f = fx_with(|w| {
