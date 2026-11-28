@@ -29,10 +29,16 @@
 # - SSH: a run-local ssh-agent (-d, debug log in the scratch folder) holds the key file that ~/.ssh/config names
 #   for github.com, loaded with ssh-add with no prompt; ~/.ssh/config is read, never changed. One line
 #   "[ssh.github.com]:443 ssh-ed25519 ..." is added to ~/.ssh/known_hosts after its key and fingerprint match
-#   `gh api meta`; a copy of the file is saved first; at the end only that line is removed (exact match) and the
-#   file is compared with the saved copy.
-# - The members run on the real HOME (git, ssh and gh need it; the acceptance command reads
-#   ~/.local/state/zygo/workspaces): zygo writes its state, session folders and usage rows there and stops and
+#   `gh api meta` (sp1_kh.sh, sp1_watch.py kh-add): when ~/.ssh/known_hosts is a link, the file it names is read and
+#   changed and the link stays; a copy of the file's bytes and a run state (the resolved path, the copy's size and
+#   hash) are written first; the line counts as added only after the append was written, flushed and fsync'd (a
+#   failed append is recorded as not added and the run stops). At the end, whenever the run state exists (kh-remove:
+#   also after a partial or failed append or a signal), only that line, or the part of it that was written, is
+#   removed from the recorded file: the new text goes to a temporary file in its folder with its mode and is renamed
+#   onto it (a link stays a link; redone once when the file changed meanwhile, else no write), and that file is
+#   compared with the saved copy.
+# - The members run on the real HOME (git, ssh and gh need it; the acceptance command reads only this run's
+#   workspaces under ~/.local/state/zygo/workspaces, by id): zygo writes its state, session folders and usage rows there and stops and
 #   forgets the three workspaces at the end. Claude Code gets a fresh CLAUDE_CONFIG_DIR (no login file in it) with
 #   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 and the official marketplace auto-install off (environment and the
 #   config's own "attempted, policy_blocked" state). OpenCode gets fresh XDG config, data, state and cache folders
@@ -56,10 +62,11 @@ esac
 . "$(dirname "$0")/lib.sh"
 . "$PREMISES_DIR/live.sh"
 . "$PREMISES_DIR/workspace_lib.sh"   # clean, sub, note, rest, pw_ticks, jv, finish
+. "$PREMISES_DIR/sp1_kh.sh"          # sp1_kh_add, sp1_kh_restore (node FX-38)
 live_traps
 set +e   # a failed command is a result here; every wait and every test handles its own status
 SP1_CC_MIN=2.1.328 SP1_OC_MIN=1.19.6   # S§20 SP1
-PRIV="" SOCK="" TMUX_BIN="" BASE="" STARTED="" SP="" AGENT_PID="" WATCH_PID="" KH_ADDED=0 CONF="" WSIDS=""
+PRIV="" SOCK="" TMUX_BIN="" BASE="" STARTED="" SP="" AGENT_PID="" WATCH_PID="" CONF="" WSIDS=""
 GHU="" MADE_REPOS="" TD=0 PW_TICKS=10
 WS_LIST="sp1ssh sp1key sp1https"
 tm() { LC_ALL=C "$TMUX_BIN" -S "$SOCK" -f /dev/null "$@"; }
@@ -90,30 +97,14 @@ teardown() {
   fi
   [ -z "${MOCK_PID:-}" ] || { kill "$MOCK_PID" 2>/dev/null; wait_for 5 gone "$MOCK_PID"; }
   tp cleanup-1
-  # 2. the added known_hosts line only (exact match, the last one), then the file against the copy saved at the start
-  if [ "$KH_ADDED" -eq 1 ]; then
-    _r=$(python3 -I - "$HOME/.ssh/known_hosts" "$PRIV/kh443" <<'PY'
-import os, sys
-p, add = sys.argv[1], open(sys.argv[2]).read().rstrip("\n")
-text = open(p).read()
-lines = text.split("\n")
-idx = [i for i, l in enumerate(lines) if l == add]
-if not idx:
-    print("the added line is not in the file")
-    sys.exit(1)
-del lines[idx[-1]]
-tmp = p + ".sp1-tmp"
-with open(tmp, "w") as f:
-    f.write("\n".join(lines))
-os.chmod(tmp, os.stat(p).st_mode & 0o7777)
-os.replace(tmp, p)
-print("removed")
-PY
-)
-    diff "$PRIV/known_hosts.start" "$HOME/.ssh/known_hosts" >"$PRIV/kh.diff" 2>&1
-    _miss=$(awk '/^</ { n++ } END { print n + 0 }' "$PRIV/kh.diff"); _more=$(awk '/^>/ { n++ } END { print n + 0 }' "$PRIV/kh.diff")
-    say_clean "known_hosts: added line $_r; against the copy saved before the line was added: lines missing $_miss, lines added by other processes $_more"
-    if [ "$_r" = removed ] && [ "$_miss" -eq 0 ]; then KH_ADDED=0; else echo "live: the saved known_hosts copy is kept in $PRIV"; PRIV_KEEP=1; fi
+  # 2. known_hosts, whenever kh-add wrote its run state (whatever its outcome: added, a partial append, an fsync
+  # error, killed): the run's line or partial line only, on the target recorded at the add (a link stays a link;
+  # temporary file in its folder, renamed onto it), then that file against the copy saved before the append
+  # (sp1_kh_restore, sp1_kh.sh)
+  if [ -n "$PRIV" ] && [ -f "$PRIV/kh.state" ]; then
+    if sp1_kh_restore "$PRIV"; then _k=0; else _k=1; fi
+    say_clean "known_hosts: added line $KH_R; against the copy saved before the line was added: lines missing $KH_MISS, lines added by other processes $KH_MORE"
+    [ "$_k" -eq 0 ] || { echo "live: the saved known_hosts copy and the run state are kept in $PRIV"; PRIV_KEEP=1; }
     tp cleanup-2
   fi
   # 3. the repositories this run created (only those)
@@ -217,15 +208,19 @@ KB=$(awk '{ print $2 " " $3; exit }' "$PRIV/kh443")
 gh api meta --jq '.ssh_keys[]' 2>/dev/null >"$PRIV/meta-keys"
 t=1; [ -n "$FA" ] && [ "$FA" = "SHA256:$FB" ] && grep -qxF "$KB" "$PRIV/meta-keys" && t=0
 [ "$t" -eq 0 ] || stop "the ssh.github.com:443 host key does not match gh api meta"
-[ ! -s "$HOME/.ssh/known_hosts" ] || [ "$(tail -c 1 "$HOME/.ssh/known_hosts" | od -An -tx1 | tr -d ' ')" = 0a ] ||
-  stop "~/.ssh/known_hosts does not end in a line end; the run does not change it"
-KHN="added"
-if grep -qxF "$(cat "$PRIV/kh443")" "$HOME/.ssh/known_hosts" 2>/dev/null; then KHN="already present before the run (not added, not removed)"
-else
-  cp -p "$HOME/.ssh/known_hosts" "$PRIV/known_hosts.start" || stop "~/.ssh/known_hosts could not be copied"
-  cat "$PRIV/kh443" >>"$HOME/.ssh/known_hosts" && KH_ADDED=1
-fi
+# kh-add (sp1_kh_add, sp1_kh.sh): on the file that ~/.ssh/known_hosts names (through a link); the bytes saved and the
+# run state (resolved target, saved size and hash) written before the append; "added" only after the append was
+# written, flushed and fsync'd; "present" changes nothing. The teardown restores from the run state, not from KHR,
+# so a signal at any point of this step, or a failed or partial append, still has the line removed. A failure is
+# recorded as not added and stops the run.
+sp1_kh_add "$HOME/.ssh/known_hosts" "$PRIV"
+case "$KHR" in
+  added) KHN="added" ;;
+  present) KHN="already present before the run (not added, not removed)" ;;
+  *) KHN="not added: ${KHR#failed: }" ;;
+esac
 note SP1 2.2 "[ssh.github.com]:443 ed25519 host key: fingerprint equals gh api meta SHA256_ED25519 and the key is in gh api meta ssh_keys: yes; the line: $KHN"
+case "$KHR" in added | present) ;; *) stop "~/.ssh/known_hosts: the line was not added (${KHR#failed: })" ;; esac
 
 # --- 2.3 run-local agent with the github.com key file; 2.4 controls ------------------------------------------------
 KEY=$(ssh -G github.com 2>/dev/null | awk '$1 == "identityfile" { print $2; exit }')
@@ -513,8 +508,13 @@ EOF
 done
 : >"$BASE/watch.stop"; wait_for 5 gone "$WATCH_PID"; WATCH_PID=""
 
-# --- acceptance command (node MS-23, verbatim) ----------------------------------------------------------------------
-for f in "$HOME"/.local/state/zygo/workspaces/*/mail/sync/state.json; do printf '%s\n' "$f"; cat "$f"; printf '\n'; done >"$BASE/acceptance.txt"
+# --- acceptance command (node MS-23), only this run's workspaces (node FX-38: no other workspace's state is read) ---
+# acc (sp1_watch.py): <state>/<id>/mail/sync/state.json of each id of $WSIDS into acceptance.txt; prints note 3.4
+# (set -f: the ids are split on spaces but never expanded as a glob)
+set -f
+$W acc --state "$HOME/.local/state/zygo/workspaces" --out "$BASE/acceptance.txt" $WSIDS >"$BASE/acc-note.txt" 2>"$BASE/acc-err.txt" ||
+  echo "the acc step failed (exit $?)" >"$BASE/acc-note.txt"
+set +f
 
 # --- 1.7 remote: the run's branch is there with ZYGO-MAIL = 1, author zygo, message (every branch is named) ---------
 ZE="zygo@""zygo.invalid"
@@ -543,32 +543,8 @@ $W side --watch "$BASE/watch.jsonl" --trace "$BASE/trace2.jsonl" --files "{\"kno
   --lo "${LO:-0}" --hi "${HI:-0}" >"$BASE/side.tsv" 2>"$BASE/side-err.txt"
 IFS="$(printf '\t')" read -r _v _x <"$BASE/side.tsv"
 sub SP1 1.8 "${_v:-1}" "side traffic (rounds' window: first round T to last round end, $((${HI:-0} - ${LO:-0})) s; git: trace2 events of every git started under the private tmux server or by zygo up, from the server start; processes and TCP connections: watcher scans of the tmux server's descendants and of the sync children's sessions, from the server start): ${_x:-the side check failed}"
-# 3.4: the acceptance output, one line per workspace (id shortened; URL hashes and blob ids left out)
-python3 -I - "$BASE/acceptance.txt" $WSIDS >"$BASE/acc-note.txt" <<'PY'
-import json, os, sys
-txt, mine = open(sys.argv[1]).read().split("\n"), sys.argv[2:]
-out, i = [], 0
-while i < len(txt):
-    p = txt[i]
-    if p.endswith("/mail/sync/state.json"):
-        ws = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(p))))
-        j, buf = i + 1, []
-        while j < len(txt) and not txt[j].endswith("/mail/sync/state.json"):
-            buf.append(txt[j]); j += 1
-        try:
-            s = json.loads("\n".join(buf))
-        except ValueError:
-            s = None
-        tag = "this run" if ws in mine else "not this run"
-        if s is None:
-            out.append("%s… (%s): unreadable" % (ws[:8], tag))
-        else:
-            out.append("%s… (%s): last_ok %s, last_error %s, public %s, pushed %s" % (
-                ws[:8], tag, s.get("last_ok"), "absent" if s.get("last_error") is None else s["last_error"],
-                (s.get("public") or {}).get("verdict"), " ".join(sorted((s.get("pushed") or {}).keys())) or "none"))
-    i += 1
-print("; ".join(out) or "no state.json")
-PY
+# 3.4: the acceptance output (written by acc above), one entry per workspace of this run (id shortened; URL hashes
+# and blob ids left out)
 note SP1 3.4 "acceptance command output: $(cat "$BASE/acc-note.txt")"
 teardown
 note SP1 3.8 "cleanup: $(tr '\n' ';' <"$BASE/cleanup.txt" | sed 's/;$//; s/;/; /g')"
