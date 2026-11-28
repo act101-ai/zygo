@@ -449,3 +449,100 @@ fn opencode_subagent_unparseable_view_is_an_error() {
     assert!(out.is_empty());
     assert!(!d.log().exists());
 }
+
+// FX-37 SX-F2: a FIFO at `overrides.json` does not make the hook wait; the overrides are the default.
+
+/// The bound of one child run: a hook that waits on a FIFO fails the test instead of hanging the suite. It is not a
+/// timing check: a hook that does not wait returns far within it.
+#[cfg(unix)]
+const BOUND: Duration = Duration::from_secs(60);
+const CASE: &str = "ZYGO_SX1_CASE";
+
+/// The output of `cmd` (stdin null), which must exit within `BOUND`; else the child is killed and the test fails.
+#[cfg(unix)]
+fn bounded(mut cmd: Command) -> std::process::Output {
+    let c = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    let pid = c.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(c.wait_with_output());
+    });
+    match rx.recv_timeout(BOUND) {
+        Ok(o) => o.unwrap(),
+        Err(_) => {
+            // SAFETY: `kill` takes a plain pid and signal; `pid` is this test's own child.
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGKILL);
+            }
+            panic!("the hook did not return within {} s", BOUND.as_secs());
+        }
+    }
+}
+
+/// A FIFO at `path`, mode 0600.
+#[cfg(unix)]
+fn mkfifo(path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `c` is a valid NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo {}", path.display());
+}
+
+/// Runs `case` of `c6_child_overrides_fifo` against `<t>/s` (a FIFO at `overrides.json`) within `BOUND`; asserts
+/// that the child test passed and wrote nothing to stderr.
+#[cfg(unix)]
+fn overrides_fifo_case(agent: Agent, case: &str) {
+    let (t, d) = sd();
+    SessionView { agent, ..view() }.save(&d).unwrap();
+    mkfifo(&d.overrides_json());
+    let mut cmd = Command::new(std::env::current_exe().unwrap());
+    cmd.args(["--ignored", "--exact", "c6_child_overrides_fifo", "--nocapture", "--test-threads=1"])
+        .env(CHILD, t.path())
+        .env(CASE, case);
+    let o = bounded(cmd);
+    assert!(o.status.success(), "{o:?}");
+    assert!(String::from_utf8(o.stdout).unwrap().contains("c6_child_overrides_fifo ... ok"));
+    assert_eq!(String::from_utf8(o.stderr).unwrap(), "");
+}
+
+#[cfg(unix)]
+#[test]
+fn subagent_start_overrides_fifo_does_not_block() {
+    overrides_fifo_case(Agent::ClaudeCode, "subagent");
+}
+
+#[cfg(unix)]
+#[test]
+fn opencode_subagent_event_overrides_fifo_does_not_block() {
+    overrides_fifo_case(Agent::OpenCode, "opencode");
+}
+
+/// Child half of the overrides FIFO tests; returns at once without `CHILD`. `subagent`: the C6 wrapper over
+/// `run_member` with `SubagentStart-sub` gives the default text M in the `SubagentStart` envelope and exit 0.
+/// `opencode`: `run_member` and `run_in` with `--event subagent` give M as plain text.
+#[test]
+#[ignore]
+fn c6_child_overrides_fifo() {
+    let (Some(root), Ok(case)) = (std::env::var_os(CHILD), std::env::var(CASE)) else { return };
+    let t = Path::new(&root);
+    let d = SessionDir::new(t.join("s"));
+    let m = [REDACT, ATTRIBUTION, STORE, NAV, TRAILER].join(" ");
+    assert_eq!(m.len(), 721);
+    match case.as_str() {
+        "subagent" => {
+            let stdin = serde_json::to_vec(&fixture("SubagentStart-sub")).unwrap();
+            let out = RefCell::new(Vec::new());
+            let got = guarded(
+                &|b| {
+                    session_start::run_member(&HookInput::parse(Agent::ClaudeCode, b)?, &d, &paths(t),
+                        &t.join("no-zygo"), &mut *out.borrow_mut())
+                },
+                &stdin,
+            );
+            assert_eq!(got, (envelope(&m), 0));
+            assert!(out.borrow().is_empty());
+        }
+        "opencode" => assert_eq!(oc_text(t, &d, &paths(t), &oc_subagent()), m),
+        other => panic!("unknown case {other}"),
+    }
+}

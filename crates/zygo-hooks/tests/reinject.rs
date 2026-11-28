@@ -3,7 +3,9 @@
 //! test binary.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 use zygo_core::{
@@ -139,15 +141,38 @@ fn child_flag_blocked() {
     assert_eq!(got, (KEEP_NO_UNIT.to_string(), 0));
 }
 
-/// Runs `case` of `child_case` in a child process with `CHILD` = `root`; returns its stderr.
+/// The bound of one child run (FX-37): a hook that waits, as on a FIFO, fails the test instead of hanging the suite.
+/// It is not a timing check: a hook that does not wait returns far within it.
+const BOUND: Duration = Duration::from_secs(60);
+
+/// The output of `cmd` (stdin null), which must exit within `BOUND`; else the child is killed and the test fails.
+fn bounded(mut cmd: Command) -> Output {
+    let c = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    let pid = c.id();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(c.wait_with_output());
+    });
+    match rx.recv_timeout(BOUND) {
+        Ok(o) => o.unwrap(),
+        Err(_) => {
+            #[cfg(unix)]
+            // SAFETY: `kill` takes a plain pid and signal; `pid` is this test's own child.
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGKILL);
+            }
+            #[cfg(not(unix))]
+            let _ = pid;
+            panic!("the hook did not return within {} s", BOUND.as_secs());
+        }
+    }
+}
+
+/// Runs `case` of `child_case` in a child process with `CHILD` = `root`, within `BOUND`; returns its stderr.
 fn child(root: &Path, case: &str) -> String {
-    let o = Command::new(std::env::current_exe().unwrap())
-        .args(["--ignored", "--exact", "child_case", "--nocapture", "--test-threads=1"])
-        .env(CHILD, root)
-        .env(CASE, case)
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
+    let mut cmd = Command::new(std::env::current_exe().unwrap());
+    cmd.args(["--ignored", "--exact", "child_case", "--nocapture", "--test-threads=1"]).env(CHILD, root).env(CASE, case);
+    let o = bounded(cmd);
     assert!(o.status.success(), "{case}: {o:?}");
     assert!(String::from_utf8(o.stdout).unwrap().contains("child_case ... ok"), "{case}");
     String::from_utf8(o.stderr).unwrap()
@@ -207,6 +232,107 @@ fn pre_compact_missing_root_is_not_created() {
     let flag = d.reinject().join(ID);
     assert!(err.starts_with(&format!("zygo hook: pre-compact: cannot create {}: ", flag.display())), "{err:?}");
     assert!(err.ends_with('\n') && err.lines().count() == 1, "{err:?}");
+}
+
+/// A FIFO at `path`, mode 0600.
+#[cfg(unix)]
+fn mkfifo(path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `c` is a valid NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo {}", path.display());
+}
+
+#[cfg(unix)]
+fn mode(p: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).unwrap().permissions().mode() & 0o777
+}
+
+/// Asserts that `err` is the one stderr line of a flag of `ID` that cannot be created.
+#[cfg(unix)]
+fn one_flag_error(d: &SessionDir, err: &str) {
+    let flag = d.reinject().join(ID);
+    assert!(err.starts_with(&format!("zygo hook: pre-compact: cannot create {}: ", flag.display())), "{err:?}");
+    assert!(err.ends_with('\n') && err.lines().count() == 1, "{err:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_compact_reinject_link_is_not_followed() {
+    // FX-37 SX-F1: `reinject` a link to another folder: that folder keeps its mode and gets no flag.
+    use std::os::unix::fs::PermissionsExt;
+    let (t, d) = sd();
+    let other = t.path().join("other");
+    std::fs::create_dir(&other).unwrap();
+    std::fs::set_permissions(&other, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::os::unix::fs::symlink(&other, d.reinject()).unwrap();
+    assert_eq!(run(&d, &fixture("PreCompact-sub")), KEEP_NO_UNIT);
+    assert_eq!(mode(&other), 0o755);
+    assert!(!other.join(ID).exists());
+    one_flag_error(&d, &child(t.path(), "sub"));
+    assert_eq!(mode(&other), 0o755);
+    assert_eq!(std::fs::read_dir(&other).unwrap().count(), 0);
+    assert!(std::fs::symlink_metadata(d.reinject()).unwrap().file_type().is_symlink());
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_compact_flag_link_is_not_followed() {
+    // FX-37 SX-F1: the flag name a link to a file of mode 0644: the file keeps its mode and its bytes.
+    use std::os::unix::fs::PermissionsExt;
+    let (t, d) = sd();
+    let target = t.path().join("target");
+    std::fs::write(&target, "kept").unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::create_dir(d.reinject()).unwrap();
+    let flag = d.reinject().join(ID);
+    std::os::unix::fs::symlink(&target, &flag).unwrap();
+    assert_eq!(run(&d, &fixture("PreCompact-sub")), KEEP_NO_UNIT);
+    assert_eq!(mode(&target), 0o644);
+    one_flag_error(&d, &child(t.path(), "sub"));
+    assert_eq!(mode(&target), 0o644);
+    assert_eq!(std::fs::read(&target).unwrap(), b"kept");
+    assert!(std::fs::symlink_metadata(&flag).unwrap().file_type().is_symlink());
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_compact_flag_fifo_does_not_block() {
+    // FX-37 SX-F1: a FIFO at the flag name: the hook returns within `BOUND` with the text (the child asserts
+    // `(KEEP_NO_UNIT, 0)`) and one stderr line; the FIFO is left as it is.
+    use std::os::unix::fs::FileTypeExt;
+    let (t, d) = sd();
+    std::fs::create_dir(d.reinject()).unwrap();
+    let flag = d.reinject().join(ID);
+    mkfifo(&flag);
+    one_flag_error(&d, &child(t.path(), "sub"));
+    assert!(std::fs::symlink_metadata(&flag).unwrap().file_type().is_fifo());
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_compact_unreadable_work_folder_still_creates_the_flag() {
+    // FX-37 SX-F3: the flag does not depend on the read of the work folder (T§9.2 item 1, T§14 item 2).
+    use std::os::unix::fs::PermissionsExt;
+    let (_t, d) = sd();
+    let work = d.work();
+    std::fs::create_dir_all(&work).unwrap();
+    std::fs::set_permissions(&work, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_dir(&work).is_ok() {
+        std::fs::set_permissions(&work, std::fs::Permissions::from_mode(0o700)).unwrap();
+        eprintln!("skipped: a work folder of mode 000 can still be read by this user");
+        return;
+    }
+    let got = pre_compact::run_with(&input(&fixture("PreCompact-sub")), Some(&d));
+    std::fs::set_permissions(&work, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(got.is_err(), "the read of the work folder did not fail");
+    let flag = d.reinject().join(ID);
+    let m = std::fs::symlink_metadata(&flag).unwrap();
+    assert!(m.is_file());
+    assert_eq!(m.len(), 0);
+    assert_eq!(mode(&flag), 0o600);
+    assert_eq!(mode(&d.reinject()), 0o700);
 }
 
 #[test]

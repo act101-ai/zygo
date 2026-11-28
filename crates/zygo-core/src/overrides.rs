@@ -66,4 +66,39 @@ mod tests {
         assert_eq!(Overrides::load(&sd), want);
         assert_eq!(Overrides::parse(Some(valid)), want);
     }
+
+    /// FX-37 SX-F2: only a regular file is read. A folder, and on unix a link to valid overrides and a FIFO, give the
+    /// default; the FIFO load does not wait (it returns within the 60 s bound of the test, not a timing check).
+    #[test]
+    fn load_uses_only_a_regular_file() {
+        let d = tempfile::tempdir().unwrap();
+        let sd = SessionDir::new(d.path().join("s"));
+        sd.create().unwrap();
+        let valid = br#"{"results":false}"#;
+        std::fs::create_dir(sd.overrides_json()).unwrap();
+        assert_eq!(Overrides::load(&sd), Overrides::default());
+        std::fs::remove_dir(sd.overrides_json()).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let target = d.path().join("target.json");
+            std::fs::write(&target, valid).unwrap();
+            std::os::unix::fs::symlink(&target, sd.overrides_json()).unwrap();
+            assert_eq!(Overrides::load(&sd), Overrides::default());
+            std::fs::remove_file(sd.overrides_json()).unwrap();
+            let c = std::ffi::CString::new(sd.overrides_json().as_os_str().as_bytes()).unwrap();
+            // SAFETY: `c` is a valid NUL-terminated path.
+            assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+            let (tx, rx) = std::sync::mpsc::channel();
+            let fifo = sd.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(Overrides::load(&fifo));
+            });
+            let got = rx.recv_timeout(std::time::Duration::from_secs(60)).expect("Overrides::load waited on a FIFO");
+            assert_eq!(got, Overrides::default());
+            std::fs::remove_file(sd.overrides_json()).unwrap();
+        }
+        std::fs::write(sd.overrides_json(), valid).unwrap();
+        assert_eq!(Overrides::load(&sd).results, Some(false));
+    }
 }
