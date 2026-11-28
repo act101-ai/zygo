@@ -294,6 +294,101 @@ fn config_check_warns_on_an_invalid_definition_and_keeps_its_exit_status() { // 
     assert_eq!(out(&o), format!("error: role.x.model: unknown model\n{warning}\n"));
 }
 
+/// A user config that chooses the repository loadout (R§10 `zygo up` row: an explicit choice).
+const DEFAULT_REPOSITORY: &str = "[workspace]\ndefault_loadout = \"repository\"\n";
+const UNKNOWN_DEFAULT: &str = "error: workspace.default_loadout: unknown loadout";
+/// FX-29 author's call: the line of `config check` when it read no workspace files.
+const NOT_READ_DEFAULT: &str = "warning: workspace.default_loadout: no workspace files were read here; zygo up uses \"repository\" only from approved files that hold .zygo/workspace.toml";
+
+/// The stdout lines of `config check` that name `workspace.default_loadout`.
+fn default_lines(so: &str) -> Vec<&str> {
+    so.lines().filter(|l| l.contains("workspace.default_loadout")).collect()
+}
+
+/// FX-29, R§10 `zygo config check` row: `default_loadout = "repository"` is accepted exactly where `zygo up` plans it
+/// (`up.rs` `choose`): approved files that hold `.zygo/workspace.toml`, or a user `[loadout.repository]`. Files that are
+/// not approved, and approved files with profiles only, make `up` refuse: the error and exit 11 stay.
+#[test]
+fn config_check_default_loadout_repository_follows_zygo_up() {
+    let f = fx(&[(WS, MIN)]);
+    let h = home(&f, DEFAULT_REPOSITORY);
+    let o = zygo(&h, &f.c, &["config", "check"]);
+    let so = out(&o);
+    assert_eq!(o.status.code(), Some(11), "not approved: {so}{}", err(&o));
+    assert_eq!(default_lines(&so), [UNKNOWN_DEFAULT], "not approved: {so}");
+    appr(&f, &h);
+    let o = zygo(&h, &f.c, &["config", "check"]);
+    let so = out(&o);
+    assert_eq!(o.status.code(), Some(0), "approved: {so}{}", err(&o));
+    assert!(default_lines(&so).is_empty(), "approved: {so}");
+    assert_eq!(so, "config ok\n");
+    let p = fx(&[(PROF, RUST)]);
+    let hp = home(&p, DEFAULT_REPOSITORY);
+    appr(&p, &hp);
+    let o = zygo(&hp, &p.c, &["config", "check"]);
+    let so = out(&o);
+    assert_eq!(o.status.code(), Some(11), "profiles only: {so}{}", err(&o));
+    assert_eq!(default_lines(&so), [UNKNOWN_DEFAULT], "profiles only: {so}");
+    // Control: a user `[loadout.repository]` is the user's loadout; the files do not matter.
+    let n = fx(&[(WS, MIN)]);
+    let hn = home(&n, &user_repository_table());
+    let o = zygo(&hn, &n.c, &["config", "check"]);
+    let so = out(&o);
+    assert_eq!(o.status.code(), Some(0), "user table: {so}{}", err(&o));
+    assert!(default_lines(&so).is_empty(), "user table: {so}");
+}
+
+/// [`DEFAULT_REPOSITORY`] with a user `[loadout.repository]` of one shell pane.
+fn user_repository_table() -> String {
+    format!("{DEFAULT_REPOSITORY}[loadout.repository]\n[[loadout.repository.window]]\n[[loadout.repository.window.pane]]\nkind = \"shell\"\n")
+}
+
+/// FX-29 review F2: the other states of the read. Invalid files, no files, and files with profiles only that are not
+/// approved make `zygo up` refuse, so `config check` keeps the error and exit 11. A user `[loadout.repository]` with
+/// approved files is the user's loadout: `config ok`, exit 0.
+#[test]
+fn config_check_default_loadout_repository_refuses_where_zygo_up_refuses() {
+    let f = fx(&[(WS, INVALID)]);
+    let h = home(&f, DEFAULT_REPOSITORY);
+    let o = zygo(&h, &f.c, &["config", "check"]);
+    assert_eq!(o.status.code(), Some(11), "invalid: {}{}", out(&o), err(&o));
+    assert_eq!(out(&o), format!("{UNKNOWN_DEFAULT}\nwarning: workspace files: {WHY}\n"), "invalid");
+    let a = fx(&[]);
+    let ha = home(&a, DEFAULT_REPOSITORY);
+    let o = zygo(&ha, &a.c, &["config", "check"]);
+    assert_eq!(o.status.code(), Some(11), "absent: {}{}", out(&o), err(&o));
+    assert_eq!(out(&o), format!("{UNKNOWN_DEFAULT}\n"), "absent");
+    let p = fx(&[(PROF, RUST)]);
+    let hp = home(&p, DEFAULT_REPOSITORY);
+    let o = zygo(&hp, &p.c, &["config", "check"]);
+    assert_eq!(o.status.code(), Some(11), "profiles only, not approved: {}{}", out(&o), err(&o));
+    assert_eq!(out(&o), format!("{UNKNOWN_DEFAULT}\n"), "profiles only, not approved");
+    let u = fx(&[(WS, MIN)]);
+    let hu = home(&u, &user_repository_table());
+    appr(&u, &hu);
+    let o = zygo(&hu, &u.c, &["config", "check"]);
+    assert_eq!(o.status.code(), Some(0), "user table, approved: {}{}", out(&o), err(&o));
+    assert_eq!(out(&o), "config ok\n", "user table, approved");
+}
+
+/// FX-29 author's call: with no read (an unread read; outside a checkout) `config check` cannot see the files that
+/// `zygo up` will find, so `default_loadout = "repository"` is one warning and the exit status stays that of the config.
+#[test]
+fn config_check_default_loadout_repository_warns_when_no_files_are_read() {
+    let f = unread_fx();
+    let h = home(&f, DEFAULT_REPOSITORY);
+    let o = zygo(&h, &f.c, &["config", "check"]);
+    assert_eq!(o.status.code(), Some(0), "unread: {}{}", out(&o), err(&o));
+    assert_eq!(out(&o), format!("{NOT_READ_DEFAULT}\n"));
+    assert_eq!(def_lines(&err(&o)), [unread_line(REFUSED)]);
+    // Review F5 of WD-16: git looks for no repository above the temp folder, wherever `TMPDIR` is (child only).
+    let env = [("GIT_CEILING_DIRECTORIES", f.t.path().as_os_str())];
+    let o = zygo_env(&h, &h, &["config", "check"], &env);
+    assert_eq!(o.status.code(), Some(0), "outside: {}{}", out(&o), err(&o));
+    assert_eq!(out(&o), format!("{NOT_READ_DEFAULT}\n"));
+    assert!(def_lines(&err(&o)).is_empty(), "outside: {}", err(&o));
+}
+
 #[test]
 fn profile_list_shows_an_approved_repository_profile() { // R§18 item 9
     let f = fx(&[(WS, MIN), (PROF, RUST)]);

@@ -194,12 +194,10 @@ Session text (T, SX nodes):
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | DONE | implementation | 0167648d..826c59f6 · acceptance pass (mail_sync_cli 14 passed, cli_surface 21 passed) · PR #210 |
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | DONE | implementation | 37139e44^..e21d5e0b · acceptance pass (mail_remote 16 passed) · PR #212 |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
-| OS-37 | On-demand latency test, ignored in CI | OS-35 | DONE | implementation | 98d82be5 · b5c27cbd · 77c6726f · acceptance pass (shaping_latency 5 ignored) · PR #200 |
 | WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | DONE | judgment | 1324716e^..e1276ac2 · acceptance pass (workspace_definition 23 passed with tmux) · PR #214 |
 | MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17, FX-15 | DONE | implementation | 5e2be987^..1de15e3e · acceptance pass (mail_remote_cli 20 passed) · PR #215 |
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | DONE | implementation | e887478a^..a9ed0c7b · acceptance pass (mail_sync_forget 9 passed, admin 31 passed) · PR #217 |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | TODO | mechanical | — |
-| OS-45 | Bound the usage-store wait in elapsed time | — | DONE | judgment | fb717aba · aecf74d2 · a0378951 · acceptance pass (busy_wait 7, zygo-usage, zygo-hooks, readbacks) · PR #203 |
 | OS-47 | Runner view cost on large inputs, output unchanged | — | DONE | judgment | f1d69ae0 · d56988df · c37c66d4 · acceptance pass (runner_fast_path 5, zygo-results, shaping 36, shaping_fixtures 22, shaping_hook 29) · PR #206 |
 | OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45, OS-47 | TODO | lookup | — |
 | WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | DONE | implementation | 15ea1e5b^..9a264b0a · acceptance pass (definition_hooks 11 passed) · PR #218 |
@@ -224,9 +222,9 @@ Session text (T, SX nodes):
 | FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | DONE | judgment | ccb3aaec^..336d5654 · acceptance pass (mail_sync_no_content 5 passed) · PR #236 |
 | FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | DONE | judgment | 343897e2^..a9b6f61c · acceptance pass (renamed_host_ack_goes_with_only_acked_link_and_gitlink_entries 1 passed) · PR #231 |
 | FX-28 | A remote send during `ws forget` is lost uncounted | FX-24, FX-26 | PLANNED | judgment | PR #234 |
-| FX-29 | config check rejects default_loadout = "repository" that zygo up accepts | WD-20 | TODO | implementation | — |
+| FX-29 | config check rejects default_loadout = "repository" that zygo up accepts | WD-20 | DONE | implementation | cf92636c^..2f28c271 · acceptance pass (config_check_default_loadout_repository_follows_zygo_up 1 passed, zygo-config all pass) · PR #237 |
 | FX-30 | A crash-recovered delivery gets no wake and no count | FX-26, FX-28 | TODO | judgment | — |
-| FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | TODO | judgment | — |
+| FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | DONE | judgment | 3279f092^..4bae96ba · acceptance pass (pin_gone_stops_exactly_the_r11_members 1 passed, workspace_definition 17 passed + 9 ignored passed) · PR #238 |
 
 ## Log
 
@@ -470,4 +468,9 @@ Session text (T, SX nodes):
 | 2026-11-27 | FX-26 DONE: the walk covers S§19 except the SP2 premise and FX-30 (the #14 count and wake); author's calls: no marked name anywhere (S§6.3 no-checkout), the test-hooks pass-deadline seam (S-C9); round 3 fixed F1-F8 · PR #236 |
 | 2026-11-27 | Author's correction: execute-work §4: a stage passes once every confirmed finding is fixed; earlier re-plans of FX-27/FX-28/FX-26 counted a re-review after the fixes as a failed round (author's error, recorded for operator review) |
 | 2026-11-27 | WD-20 DONE: user docs for workspace files, approval, members, pool, passthrough; R1 fixed H1-H2, M1-M4, L1-L9; C6 (L9 split into docs/workspace-files.md); FX-29 and FX-31 created from the found issues; MS-15 row archived · PR #228 |
+| 2026-11-27 | FX-29 PLANNED: config check reads as up does; check_with(cfg, RepositoryLoadout); approved files with workspace.toml accept, other read states keep the error; author's call: no read (outside, unread) is a warning, not an error; R§10, W§11, workspace-files.md rewritten |
+| 2026-11-27 | FX-29 DONE: config check decides default_loadout = "repository" from the read, as up does; review F1-F4 fixed; author's calls: no read (outside, unread) is a warning, not an error; zygo serve reads no files and checks with NotRead at start and reload; FX-20 row archived · PR #237 |
+| 2026-11-27 | FX-31 PLANNED: author's call: R§11 names the R§7.4 conditions; a gone, withdrawn or unread pin stops only a launch that makes the pinned read; no profile, user or team profile, passthrough start; launcher unchanged; R§11, R§7.4, R§18 item 16, workspace-files.md rewritten |
+| 2026-11-27 | FX-31 IN-PROGRESS: plan steps 1-4 done; pin_gone_stops_exactly_the_r11_members 1 passed; mutations Gone→NotFound and passthrough pinned read each fail it; floor green; waits for review · PR #238 |
+| 2026-11-27 | FX-31 DONE; author's call: a withdrawal stops every pinned member, and a gone or unread pin stops only a launch that does the pinned read; review F1-F6 fixed; OS-45 row archived · PR #238 |
 | 2026-11-27 | Correction of the FX-28 re-plan line ("CLI lines start with zygo:"): only the two no-workspace lines of mail workspace_of get the prefix, at their source; finish and the other verbs do not change, so N42 holds (FX-28 review round 4 F3, author's call) |
