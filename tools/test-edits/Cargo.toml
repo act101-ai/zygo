@@ -8,3 +8,4 @@ publish = false
 [dependencies]
 syn.workspace = true
 proc-macro2 = "1.0.107"
+toml.workspace = true

@@ -16,9 +16,13 @@ export GIT_AUTHOR_NAME=test
 export GIT_AUTHOR_EMAIL=test@example.invalid
 export GIT_COMMITTER_NAME=test
 export GIT_COMMITTER_EMAIL=test@example.invalid
-# The bootstrap (D1): CC-2's own tests run the in-tree helper; the cases that test the
-# parent-built helper clear this for their run.
+# The bootstrap (D1): CC-2's own tests run the in-tree helper of this checkout (the throw-away
+# repositories have no tools/test-edits at their parent); the cases that test the parent-built
+# helper clear this for their run.
 export ZYGO_TEST_EDITS_IN_TREE=1
+export ZYGO_TEST_EDITS_ROOT="$ROOT"
+# Round 3 F2: the suite never writes the real build cache.
+export ZYGO_TEST_EDITS_CACHE="$T/cache"
 
 cargo build -q --locked --manifest-path "$ROOT/Cargo.toml" -p zygo-test-edits || {
     printf '%s\n' "test-check-test-edits: cargo build failed"
@@ -590,6 +594,114 @@ sub crates/a/Cargo.toml 's/0\.1\.0/0.2.0/'
 commit_change
 expect 0
 
+# Round 3 F5: include! names a fixture; so does concat!(env!("CARGO_MANIFEST_DIR"), "…").
+mk include-bang-data-changed
+wf crates/a/src/lib.rs 'pub fn f(x: i32) -> i32 { x }' '#[cfg(test)]' 'mod tests {' '    #[test]' '    fn g() { for (i, o) in include!("cases.in") { assert_eq!(super::f(i), o); } }' '}'
+wf crates/a/src/cases.in '[(1, 1), (2, 2)]'
+par
+wf crates/a/src/cases.in '[(0i32, 0i32); 0]'
+commit_change
+expect 1
+
+mk include-manifest-dir-changed
+wf crates/a/Cargo.toml '[package]' 'name = "a"' 'version = "0.1.0"'
+wf crates/a/src/lib.rs 'pub fn f() {}' '#[cfg(test)]' 'mod tests {' '    #[test]' '    fn g() { assert_eq!(include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/data/g.txt")), "one"); }' '}'
+wf crates/a/src/data/g.txt 'one'
+par
+wf crates/a/src/data/g.txt 'two'
+commit_change
+expect 1
+
+mk include-manifest-dir-root-crate
+wf Cargo.toml '[package]' 'name = "r"' 'version = "0.1.0"' '[[test]]' 'name = "t"' 'path = "tests/t.rs"'
+wf tests/t.rs '#[test]' 'fn g() { assert_eq!(include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", "data/g.txt")), "one"); }'
+wf data/g.txt 'one'
+par
+wf data/g.txt 'two'
+commit_change
+expect 1
+
+# Round 3 F6: the manifest is read as TOML; dotted keys, the features that required-features
+# needs, required-features itself, the test profile and the workspace members count.
+mk manifest-dotted-lib-test
+wf crates/a/Cargo.toml '[package]' 'name = "a"' 'version = "0.1.0"'
+wf crates/a/src/lib.rs 'pub fn f() {}' '#[cfg(test)]' 'mod tests {' '    #[test]' '    fn a() { assert_eq!(1, 1); }' '}'
+par
+wf crates/a/Cargo.toml 'lib.test = false' '[package]' 'name = "a"' 'version = "0.1.0"'
+commit_change
+expect 1
+
+mk manifest-features-default
+wf crates/a/Cargo.toml '[package]' 'name = "a"' 'version = "0.1.0"' '[features]' 'default = ["slow"]' 'slow = []' '[[test]]' 'name = "t"' 'required-features = ["slow"]'
+wf crates/a/src/lib.rs 'pub fn f() {}'
+wf crates/a/tests/t.rs '#[test]' 'fn t() { assert_eq!(1, 1); }'
+par
+sub crates/a/Cargo.toml 's/default = \["slow"\]/default = []/'
+commit_change
+expect 1
+
+mk manifest-features-no-required
+wf crates/a/Cargo.toml '[package]' 'name = "a"' 'version = "0.1.0"' '[features]' 'default = ["slow"]' 'slow = []'
+wf crates/a/src/lib.rs 'pub fn f() {}'
+par
+sub crates/a/Cargo.toml 's/default = \["slow"\]/default = []/'
+commit_change
+expect 0
+
+mk manifest-bin-required-features
+wf crates/a/Cargo.toml '[package]' 'name = "a"' 'version = "0.1.0"' '[features]' 'cli = []' '[[bin]]' 'name = "b"' 'path = "src/main.rs"'
+wf crates/a/src/main.rs 'fn main() {}' '#[cfg(test)]' 'mod tests {' '    #[test]' '    fn t() { assert_eq!(1, 1); }' '}'
+par
+printf 'required-features = ["cli"]\n' >> "$R/crates/a/Cargo.toml"
+commit_change
+expect 1
+
+mk manifest-profile-test
+wf Cargo.toml '[workspace]' 'members = ["crates/a"]' 'resolver = "2"'
+wf crates/a/Cargo.toml '[package]' 'name = "a"' 'version = "0.1.0"'
+wf crates/a/src/lib.rs 'pub fn f(x: u8) -> u8 { debug_assert!(x < 10); x }'
+wf crates/a/tests/t.rs '#[test]' '#[should_panic]' 'fn t() { a::f(11); }'
+par
+printf '\n[profile.test]\ndebug-assertions = false\n' >> "$R/Cargo.toml"
+commit_change
+expect 1
+
+mk manifest-workspace-member-dropped
+wf Cargo.toml '[workspace]' 'members = ["crates/a", "crates/b"]' 'resolver = "2"'
+wf crates/a/Cargo.toml '[package]' 'name = "a"' 'version = "0.1.0"'
+wf crates/a/src/lib.rs 'pub fn f() {}'
+wf crates/a/tests/t.rs '#[test]' 'fn t() { assert_eq!(1, 1); }'
+wf crates/b/Cargo.toml '[package]' 'name = "b"' 'version = "0.1.0"'
+wf crates/b/src/lib.rs 'pub fn g() {}'
+par
+wf Cargo.toml '[workspace]' 'members = ["crates/b"]' 'exclude = ["crates/a"]' 'resolver = "2"'
+commit_change
+expect 1
+
+mk manifest-workspace-glob-same
+wf Cargo.toml '[workspace]' 'members = ["crates/*"]' 'resolver = "2"'
+wf crates/a/Cargo.toml '[package]' 'name = "a"' 'version = "0.1.0"'
+wf crates/a/src/lib.rs 'pub fn f() {}'
+wf crates/b/Cargo.toml '[package]' 'name = "b"' 'version = "0.1.0"'
+wf crates/b/src/lib.rs 'pub fn g() {}'
+par
+wf Cargo.toml '[workspace]' 'members = ["crates/a", "crates/b", "crates/c"]' 'resolver = "2"'
+wf crates/c/Cargo.toml '[package]' 'name = "c"' 'version = "0.1.0"'
+wf crates/c/src/lib.rs 'pub fn h() {}'
+commit_change
+expect 0
+
+mk manifest-workspace-default-dropped
+wf Cargo.toml '[workspace]' 'members = ["crates/a", "crates/b"]' 'default-members = ["crates/a", "crates/b"]' 'resolver = "2"'
+wf crates/a/Cargo.toml '[package]' 'name = "a"' 'version = "0.1.0"'
+wf crates/a/src/lib.rs 'pub fn f() {}'
+wf crates/b/Cargo.toml '[package]' 'name = "b"' 'version = "0.1.0"'
+wf crates/b/src/lib.rs 'pub fn g() {}'
+par
+sub Cargo.toml 's/default-members = \["crates\/a", "crates\/b"\]/default-members = ["crates\/b"]/'
+commit_change
+expect 1
+
 # D4: attribute order and layout do not matter.
 mk reorder-cfg-should-panic
 wf crates/a/src/lib.rs '#[cfg(test)]' 'mod tests {' '    #[test]' '    #[cfg(unix)]' '    #[should_panic]' '    fn a() { panic!(); }' '}'
@@ -712,19 +824,8 @@ sub "$TF" 's/1 \+ 1, 2\)/1 + 1, 3)/'
 commit_change
 expect_out 1 "warning: <parent> is not git merge-base HEAD origin/phase-4"
 
-# The checker's own files are not units: a `checker` entry lists a change to them, its unit tests
-# included.
-mk checker-own-tests-edited
-wf crates/a/src/lib.rs 'pub fn f() {}'
-wf tools/test-edits/src/main.rs 'fn main() {}' '#[cfg(test)]' 'mod tests {' '    #[test]' '    fn t() { assert_eq!(1, 1); }' '}'
-par
-sub tools/test-edits/src/main.rs 's/1, 1/1, 2/'
-commit_change
-entry '- checker tools/test-edits/src/main.rs — K-C7 review of the check'
-expect 0
-
 # D1: the checker is built from <parent>, so a node's edit to the checker does not judge the
-# node. These two cases run the wrapper without the bootstrap.
+# node. These cases run the wrapper without the bootstrap.
 new_repo no-checker-at-parent
 sub "$LIB" 's/    7\n/    3 + 4\n/'
 commit_change
@@ -742,34 +843,132 @@ else
     FAILED=1
 fi
 
-mk self-judging-checker
-wf Cargo.toml '[workspace]' 'resolver = "3"' 'members = ["tools/test-edits"]' '[workspace.package]' 'version = "0.2.1"' 'edition = "2024"' 'license = "MIT"' '[workspace.dependencies]' 'syn = { version = "3.0.10", features = ["full", "visit"] }'
-mkdir -p "$R/tools/test-edits/src" "$R/scripts"
-cp "$ROOT/tools/test-edits/Cargo.toml" "$R/tools/test-edits/Cargo.toml"
-cp "$ROOT/tools/test-edits/src/main.rs" "$R/tools/test-edits/src/main.rs"
-cp "$ROOT/scripts/check-test-edits.sh" "$R/scripts/check-test-edits.sh"
-cp "$ROOT/Cargo.lock" "$R/Cargo.lock"
-(cd "$R" && cargo generate-lockfile --offline -q)
-wf crates/a/src/lib.rs 'pub fn f() {}'
-wf crates/a/tests/t.rs '#[test]' 'fn t() { assert_eq!(1, 1); }'
-par
-# The node turns the helper into a pass-all and edits a test literal.
-sub tools/test-edits/src/main.rs 's/fn main\(\) -> ExitCode \{/fn main() -> ExitCode {\n    if std::env::args().count() > 0 {\n        return ExitCode::SUCCESS;\n    }/'
-sub crates/a/tests/t.rs 's/1, 1/1, 2/'
+# judge <want exit> <text>: $got must be <want exit> and $out must hold <text>.
+judge() {
+    case $out in
+        *"$2"*) has=1 ;;
+        *) has=0 ;;
+    esac
+    if [ "$got" -eq "$1" ] && [ "$has" -eq 1 ]; then
+        printf '%s\n' "ok $CASE"
+    else
+        printf '%s\n' "FAIL $CASE: exit $got, want $1 with '$2' (found: $has)"
+        printf '%s\n' "$out"
+        FAILED=1
+    fi
+}
+
+# Round 3 F3: the bootstrap finds the repository from the current folder (the piped form has no
+# script path), and it is refused when <parent> has a checker.
+new_repo in-tree-root-from-cwd
+sub "$LIB" 's/    7\n/    3 + 4\n/'
 commit_change
-out=$(cd "$R" && ZYGO_TEST_EDITS_IN_TREE= sh "$R/scripts/check-test-edits.sh" "$PARENT" node.md 2>&1)
+out=$(cd "$R/crates/a/src" && ZYGO_TEST_EDITS_ROOT= sh -s -- "$PARENT" ../../../node.md < "$ROOT/scripts/check-test-edits.sh" 2>&1)
 got=$?
-case $out in
-    *"literals crates/a/tests/t.rs"*) has=1 ;;
-    *) has=0 ;;
-esac
-if [ "$got" -eq 1 ] && [ "$has" -eq 1 ]; then
-    printf '%s\n' "ok $CASE"
-else
-    printf '%s\n' "FAIL $CASE: exit $got, want 1 with the literal offence"
-    printf '%s\n' "$out"
-    FAILED=1
+judge 2 "ZYGO_TEST_EDITS_IN_TREE=1: no tools/test-edits in $(cd "$R" && pwd -P)"
+
+# Round 3 F1, F2, F3: the parent-built checker in a copy of this repository (the tree of HEAD,
+# with the working copies of the check's files and of Cargo.toml and Cargo.lock), so it builds
+# with this repository's Cargo.lock. Commits A (the checker of this tree), B (A's checker turned
+# into a pass-all that prints "I AM CHECKER B") and N (a node that edits a test literal) are made
+# in one second: equal mtimes once extracted, as in the round 3 stale probe.
+CASE=parent-built-setup
+R="$T/big"
+mkdir -p "$R"
+git -C "$ROOT" archive --format=tar HEAD | (cd "$R" && tar -xf -)
+rm -rf "$R/tools/test-edits"
+cp -R "$ROOT/tools/test-edits" "$R/tools/test-edits"
+for f in scripts/check-test-edits.sh scripts/test-check-test-edits.sh Cargo.toml Cargo.lock; do
+    cp "$ROOT/$f" "$R/$f"
+done
+PROBE=crates/zygo-core/tests/core_basics.rs
+printf '\n#[test]\nfn k_c7_probe() {\n    assert_eq!(1, 1);\n}\n' >> "$R/$PROBE"
+write_node "None."
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" add -A
+git -C "$R" commit -q -m A
+A=$(git -C "$R" rev-parse HEAD)
+sub tools/test-edits/src/main.rs 's/fn main\(\) -> ExitCode \{/fn main() -> ExitCode {\n    println!("I AM CHECKER B");\n    if std::env::args().count() > 0 {\n        return ExitCode::SUCCESS;\n    }/'
+commit_change
+B=$(git -C "$R" rev-parse HEAD)
+sub "$PROBE" 's/assert_eq!\(1, 1\);\n\}\n\z/assert_eq!(2, 2);\n}\n/'
+commit_change
+N=$(git -C "$R" rev-parse HEAD)
+
+# The node turns the helper into a pass-all and edits a test literal: the checker of A judges it.
+CASE=self-judging-checker
+out=$(cd "$R" && ZYGO_TEST_EDITS_IN_TREE= sh scripts/check-test-edits.sh "$A" node.md 2>&1)
+got=$?
+judge 1 "literals $PROBE"
+
+# F1: after A, parent B runs B's checker (per-key target folder; no stale binary of A).
+CASE=parent-key-own-build
+out=$(cd "$R" && ZYGO_TEST_EDITS_IN_TREE= sh scripts/check-test-edits.sh "$B" node.md 2>&1)
+got=$?
+judge 0 "I AM CHECKER B"
+
+# The lock of an exited process is removed.
+CASE=stale-lock-removed
+sh -c 'exit 0' &
+dead=$!
+wait "$dead"
+for k in "$ZYGO_TEST_EDITS_CACHE/target"/*; do
+    mkdir -p "$ZYGO_TEST_EDITS_CACHE/lock/${k##*/}"
+    printf '%s\n' "$dead" > "$ZYGO_TEST_EDITS_CACHE/lock/${k##*/}/pid"
+done
+out=$(cd "$R" && ZYGO_TEST_EDITS_IN_TREE= sh scripts/check-test-edits.sh "$B" node.md 2>&1)
+got=$?
+judge 0 "removing the lock of exited process $dead"
+
+# The round 3 race probe: with an empty cache, while the run with parent A is in its cargo
+# build, a run with parent B builds and runs; the run of A then runs A's checker.
+CASE=interleaved-parents
+mkdir -p "$T/shim"
+REAL_CARGO=$(command -v cargo)
+cat > "$T/shim/cargo" <<EOF
+#!/bin/sh
+"$REAL_CARGO" "\$@"
+rc=\$?
+if [ ! -e "$T/shim/done" ]; then
+    : > "$T/shim/done"
+    (cd "$R" && ZYGO_TEST_EDITS_CACHE="$T/cache-race" ZYGO_TEST_EDITS_IN_TREE= sh scripts/check-test-edits.sh "$B" node.md > "$T/shim/b.out" 2>&1; echo "b exit \$?" >> "$T/shim/b.out")
 fi
+exit \$rc
+EOF
+chmod +x "$T/shim/cargo"
+out=$(cd "$R" && PATH="$T/shim:$PATH" ZYGO_TEST_EDITS_CACHE="$T/cache-race" ZYGO_TEST_EDITS_IN_TREE= sh scripts/check-test-edits.sh "$A" node.md 2>&1)
+got=$?
+judge 1 "literals $PROBE"
+out=$(cat "$T/shim/b.out")
+got=0
+judge 0 "I AM CHECKER B
+b exit 0"
+
+# F3: the bootstrap is refused when <parent> has a checker.
+CASE=in-tree-refused
+out=$(cd "$R" && sh scripts/check-test-edits.sh "$A" node.md 2>&1)
+got=$?
+judge 2 "ZYGO_TEST_EDITS_IN_TREE=1 is refused"
+
+# The checker's own files are not units: a `checker` entry lists a change to them, its unit tests
+# included. The parent's script runs piped, from the top folder and from a subfolder.
+CASE=checker-own-tests-edited
+git -C "$R" checkout -q -b own "$A"
+sub tools/test-edits/src/main.rs 's/fn includes_are_recorded\(\)/fn includes_are_recorded_renamed()/'
+commit_change
+entry '- checker tools/test-edits/src/main.rs — K-C7 review of the check'
+out=$(git -C "$R" show "$A:scripts/check-test-edits.sh" | (cd "$R" && ZYGO_TEST_EDITS_IN_TREE= sh -s -- "$A" node.md) 2>&1)
+got=$?
+judge 0 "check-test-edits: parent $A"
+CASE=piped-from-subfolder
+out=$(git -C "$R" show "$A:scripts/check-test-edits.sh" | (cd "$R/crates/zygo/src" && ZYGO_TEST_EDITS_IN_TREE= sh -s -- "$A" ../../../node.md) 2>&1)
+got=$?
+judge 0 "check-test-edits: parent $A"
+CASE=piped-from-subfolder-offence
+git -C "$R" checkout -q main
+out=$(git -C "$R" show "$A:scripts/check-test-edits.sh" | (cd "$R/crates/zygo/src" && ZYGO_TEST_EDITS_IN_TREE= sh -s -- "$A" ../../../node.md) 2>&1)
+got=$?
+judge 1 "literals $PROBE"
 
 # The wrapper maps an exit other than 0 and 1 (here cargo's 101) to 2.
 new_repo wrapper-maps-exit

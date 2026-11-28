@@ -79,8 +79,19 @@ struct Unit {
     outline: Option<Decl>,
     /// The out-of-line modules declared inside the unit (D8).
     decls: Vec<Decl>,
-    /// The files named by `include_str!` and `include_bytes!` in the unit (D2).
-    includes: BTreeSet<String>,
+    /// The files named by `include_str!`, `include_bytes!` and `include!` in the unit (D2,
+    /// round 3 F5).
+    includes: BTreeSet<Inc>,
+}
+
+/// A file that an include macro names.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Inc {
+    /// A literal path, resolved against the folder of the file that holds the macro.
+    File(String),
+    /// `concat!(env!("CARGO_MANIFEST_DIR"), "<lit>"…)`: `rel` below the folder of the manifest of
+    /// `file`, known when the revision's manifests are read.
+    ManifestDir { file: String, rel: String },
 }
 
 /// An entry under `## Test logic edits`.
@@ -336,17 +347,69 @@ fn is_number(l: &proc_macro2::Literal) -> bool {
     l.to_string().starts_with(|c: char| c.is_ascii_digit())
 }
 
+/// The string value of a string literal token.
+fn str_value(tt: &TokenTree) -> Option<String> {
+    match tt {
+        TokenTree::Literal(l) => syn::parse_str::<syn::LitStr>(&l.to_string())
+            .ok()
+            .map(|s| s.value()),
+        _ => None,
+    }
+}
+
+/// True when `tts[i]` is the identifier `name` followed by `!` and a group; gives the group.
+fn macro_call<'a>(tts: &'a [TokenTree], i: usize, name: &str) -> Option<&'a proc_macro2::Group> {
+    match (tts.get(i), tts.get(i + 1), tts.get(i + 2)) {
+        (Some(TokenTree::Ident(id)), Some(TokenTree::Punct(p)), Some(TokenTree::Group(g)))
+            if id == name && p.as_char() == '!' =>
+        {
+            Some(g)
+        }
+        _ => None,
+    }
+}
+
+/// The file that the arguments `args` of an include macro in `file` name: a string literal, or
+/// `concat!(env!("CARGO_MANIFEST_DIR"), "<lit>", …)` (round 3 F5). A path built another way
+/// (another macro, `OUT_DIR`) gives `None`.
+fn include_arg(file: &str, args: TokenStream) -> Option<Inc> {
+    let tts: Vec<TokenTree> = args.into_iter().collect();
+    if let Some(s) = tts.first().and_then(str_value) {
+        return Some(Inc::File(resolve(file, &s)));
+    }
+    let parts: Vec<TokenTree> = macro_call(&tts, 0, "concat")?
+        .stream()
+        .into_iter()
+        .collect();
+    let env = macro_call(&parts, 0, "env")?;
+    let var: Vec<TokenTree> = env.stream().into_iter().collect();
+    if var.len() != 1 || str_value(&var[0])? != "CARGO_MANIFEST_DIR" {
+        return None;
+    }
+    let mut rel = String::new();
+    for tt in &parts[3..] {
+        match tt {
+            TokenTree::Punct(p) if p.as_char() == ',' => {}
+            _ => rel.push_str(&str_value(tt)?),
+        }
+    }
+    Some(Inc::ManifestDir {
+        file: file.to_string(),
+        rel,
+    })
+}
+
 /// The literals and included files of a token list.
 struct Walk<'a> {
     file: &'a str,
     literals: Multiset,
-    includes: BTreeSet<String>,
+    includes: BTreeSet<Inc>,
 }
 
 impl Walk<'_> {
     /// Counts each literal token, also inside groups (macro calls, attribute lists); skips each
     /// `doc` attribute. A `-` directly before a number literal is part of it (F2). Records the
-    /// file of each `include_str!("…")` and `include_bytes!("…")` (D2).
+    /// file of each `include_str!`, `include_bytes!` and `include!` (D2, round 3 F5).
     fn walk(&mut self, tts: &[TokenTree]) {
         let mut i = 0;
         while i < tts.len() {
@@ -370,13 +433,13 @@ impl Walk<'_> {
                         continue;
                     }
                 }
-                TokenTree::Ident(id) if id == "include_str" || id == "include_bytes" => {
-                    if matches!(tts.get(i + 1), Some(TokenTree::Punct(q)) if q.as_char() == '!')
-                        && let Some(TokenTree::Group(g)) = tts.get(i + 2)
-                        && let Some(TokenTree::Literal(l)) = g.stream().into_iter().next()
-                        && let Ok(s) = syn::parse_str::<syn::LitStr>(&l.to_string())
+                TokenTree::Ident(id)
+                    if id == "include_str" || id == "include_bytes" || id == "include" =>
+                {
+                    if let Some(g) = macro_call(tts, i, &id.to_string())
+                        && let Some(inc) = include_arg(self.file, g.stream())
                     {
-                        self.includes.insert(resolve(self.file, &s.value()));
+                        self.includes.insert(inc);
                     }
                 }
                 _ => {}
@@ -394,7 +457,7 @@ impl Walk<'_> {
     }
 }
 
-fn walk_tokens(file: &str, tts: &[TokenTree]) -> (Multiset, BTreeSet<String>) {
+fn walk_tokens(file: &str, tts: &[TokenTree]) -> (Multiset, BTreeSet<Inc>) {
     let mut w = Walk {
         file,
         literals: Multiset::new(),
@@ -1238,61 +1301,91 @@ fn doctest_offences(
     out
 }
 
-/// The tables of a Cargo manifest: each `[x]` or `[[x]]` header with its `key = value` lines.
-/// A subset of TOML: one key per line, full-line comments; a value that spans lines keeps its
-/// first line.
-fn manifest_tables(text: &str) -> Vec<(String, Vec<(String, String)>)> {
-    let mut out: Vec<(String, Vec<(String, String)>)> = vec![(String::new(), Vec::new())];
-    for raw in text.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if line.starts_with('[') {
-            let h = line.trim_start_matches('[');
-            let h = h.split(']').next().unwrap_or("").trim().to_string();
-            let h = if line.starts_with("[[") {
-                format!("[[{h}]]")
-            } else {
-                h
-            };
-            out.push((h, Vec::new()));
-            continue;
-        }
-        if let Some((k, v)) = line.split_once('=')
-            && let Some(last) = out.last_mut()
-        {
-            last.1.push((k.trim().to_string(), v.trim().to_string()));
+/// A Cargo manifest read as TOML (round 3 F6: dotted keys, inline tables and values over several
+/// lines count as Cargo reads them).
+fn manifest_table(text: &str) -> Option<toml::Table> {
+    text.parse::<toml::Table>().ok()
+}
+
+/// The target kinds of a manifest: `[lib]` and the arrays `[[bin]]`, `[[test]]`, `[[bench]]`,
+/// `[[example]]`.
+const TARGET_KINDS: [&str; 5] = ["lib", "bin", "test", "bench", "example"];
+
+/// The targets of a manifest, each with its kind.
+fn targets(t: &toml::Table) -> Vec<(&'static str, &toml::Table)> {
+    let mut out = Vec::new();
+    for kind in TARGET_KINDS {
+        match t.get(kind) {
+            Some(toml::Value::Table(x)) => out.push((kind, x)),
+            Some(toml::Value::Array(a)) => {
+                for v in a {
+                    if let toml::Value::Table(x) = v {
+                        out.push((kind, x));
+                    }
+                }
+            }
+            _ => {}
         }
     }
     out
 }
 
-fn unquote(v: &str) -> &str {
-    v.trim().trim_matches('"').trim_matches('\'')
+/// Each leaf of `v` as one `<key path> = <value>` line.
+fn flat(prefix: &str, v: &toml::Value, out: &mut Vec<String>) {
+    match v {
+        toml::Value::Table(t) => {
+            for (k, x) in t {
+                flat(&format!("{prefix}.{k}"), x, out);
+            }
+        }
+        _ => out.push(format!("{prefix} = {v}")),
+    }
 }
 
-const TARGETS: [&str; 5] = ["lib", "[[bin]]", "[[test]]", "[[bench]]", "[[example]]"];
-
-/// The test-relevant settings of a manifest (D3): `package.autotests`, every `[[test]]` key, and
-/// the `test`, `doctest` and `harness` keys of each target, as sorted text.
+/// The test-relevant settings of a manifest (D3, round 3 F6), as sorted text: the `auto*` keys of
+/// `[package]`; every key of each `[[test]]`; the `test`, `doctest`, `harness` and
+/// `required-features` keys of each other target; the whole `[features]` table when a target has
+/// `required-features`; `[profile.test]` and `[profile.dev]` (the test profile inherits from dev).
+/// A manifest that does not parse gives its whole text, so any change to it counts.
 fn manifest_settings(text: &str) -> Vec<String> {
+    let Some(t) = manifest_table(text) else {
+        return vec![format!("unreadable manifest: {text}")];
+    };
     let mut out = Vec::new();
-    for (h, kvs) in manifest_tables(text) {
-        let name = kvs
-            .iter()
-            .find(|(k, _)| k == "name" || k == "path")
-            .map_or("", |(_, v)| unquote(v));
-        for (k, v) in &kvs {
-            let keep = (h == "package" && k == "autotests")
-                || h == "[[test]]"
-                || (TARGETS.contains(&h.as_str())
-                    && matches!(k.as_str(), "test" | "doctest" | "harness"));
+    if let Some(toml::Value::Table(p)) = t.get("package") {
+        for (k, v) in p.iter().filter(|(k, _)| k.starts_with("auto")) {
+            flat(&format!("package.{k}"), v, &mut out);
+        }
+    }
+    let ts = targets(&t);
+    for (kind, tt) in &ts {
+        let name = tt
+            .get("name")
+            .or_else(|| tt.get("path"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        for (k, v) in tt.iter() {
+            let keep = *kind == "test"
+                || matches!(
+                    k.as_str(),
+                    "test" | "doctest" | "harness" | "required-features"
+                );
             if keep {
-                out.push(format!(
-                    "{h}{{{name}}}.{k} = {}",
-                    v.split_whitespace().collect::<Vec<_>>().join(" ")
-                ));
+                flat(&format!("{kind}{{{name}}}.{k}"), v, &mut out);
+            }
+        }
+    }
+    if ts
+        .iter()
+        .any(|(_, tt)| tt.contains_key("required-features"))
+        && let Some(f) = t.get("features")
+    {
+        flat("features", f, &mut out);
+    }
+    if let Some(toml::Value::Table(p)) = t.get("profile") {
+        for name in ["test", "dev"] {
+            if let Some(v) = p.get(name) {
+                flat(&format!("profile.{name}"), v, &mut out);
             }
         }
     }
@@ -1302,18 +1395,96 @@ fn manifest_settings(text: &str) -> Vec<String> {
 
 /// The crate roots and test targets that a manifest at `path` names (D2, D7).
 fn manifest_paths(path: &str, text: &str, ctx: &mut Ctx) {
-    for (h, kvs) in manifest_tables(text) {
-        if !TARGETS.contains(&h.as_str()) {
-            continue;
-        }
-        if let Some((_, v)) = kvs.iter().find(|(k, _)| k == "path") {
-            let file = resolve(path, unquote(v));
-            if h == "[[test]]" {
+    let Some(t) = manifest_table(text) else {
+        return;
+    };
+    for (kind, tt) in targets(&t) {
+        if let Some(p) = tt.get("path").and_then(|v| v.as_str()) {
+            let file = resolve(path, p);
+            if kind == "test" {
                 ctx.test_targets.insert(file.clone());
             }
             ctx.roots.insert(file);
         }
     }
+}
+
+/// True when the glob `pat` (`*` and `?` within one path segment) matches the path `s`.
+fn glob_match(pat: &str, s: &str) -> bool {
+    fn seg(p: &[char], s: &[char]) -> bool {
+        match (p.first(), s.first()) {
+            (None, None) => true,
+            (Some('*'), _) => seg(&p[1..], s) || (!s.is_empty() && seg(p, &s[1..])),
+            (Some('?'), Some(_)) => seg(&p[1..], &s[1..]),
+            (Some(a), Some(b)) if a == b => seg(&p[1..], &s[1..]),
+            _ => false,
+        }
+    }
+    let ps: Vec<&str> = pat.split('/').collect();
+    let ss: Vec<&str> = s.split('/').collect();
+    ps.len() == ss.len()
+        && ps.iter().zip(&ss).all(|(p, s)| {
+            seg(
+                &p.chars().collect::<Vec<_>>(),
+                &s.chars().collect::<Vec<_>>(),
+            )
+        })
+}
+
+/// The members and the default members of the workspace that the manifest at `path` declares
+/// (round 3 F6): the folders of `crate_dirs` that a `members` glob names and no `exclude` entry
+/// covers (with the manifest's own folder when it is also a package); the default members are
+/// those that `default-members` names, else all members. A manifest with no `[workspace]` gives
+/// two empty sets.
+fn workspace_sets(
+    path: &str,
+    text: &str,
+    crate_dirs: &BTreeSet<String>,
+) -> (BTreeSet<String>, BTreeSet<String>) {
+    let none = (BTreeSet::new(), BTreeSet::new());
+    let Some(t) = manifest_table(text) else {
+        return none;
+    };
+    let Some(toml::Value::Table(ws)) = t.get("workspace") else {
+        return none;
+    };
+    let list = |k: &str| -> Vec<String> {
+        ws.get(k)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|p| resolve(path, p))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let exclude = list("exclude");
+    let members_pat = list("members");
+    let mut members: BTreeSet<String> = crate_dirs
+        .iter()
+        .filter(|d| members_pat.iter().any(|p| glob_match(p, d)))
+        .filter(|d| {
+            !exclude
+                .iter()
+                .any(|e| *d == e || d.starts_with(&format!("{e}/")))
+        })
+        .cloned()
+        .collect();
+    if t.contains_key("package") {
+        members.insert(manifest_dir(path).to_string());
+    }
+    let default = if ws.contains_key("default-members") {
+        let pats = list("default-members");
+        members
+            .iter()
+            .filter(|d| pats.iter().any(|p| glob_match(p, d)))
+            .cloned()
+            .collect()
+    } else {
+        members.clone()
+    };
+    (members, default)
 }
 
 /// Runs git in the repository's top folder (F1: the check works from any subfolder).
@@ -1412,8 +1583,10 @@ struct Rev {
     docs: BTreeMap<String, Docs>,
     /// `.rs` files in scope that do not parse: fixtures (D6).
     unparsed: BTreeSet<String>,
-    /// Files named by `include_str!`/`include_bytes!` in a unit (D2).
+    /// Files named by `include_str!`, `include_bytes!` or `include!` in a unit (D2, round 3 F5).
     includes: BTreeSet<String>,
+    /// The folders that hold a `Cargo.toml` (`""` for the top folder).
+    crate_dirs: BTreeSet<String>,
     bad: Vec<String>,
 }
 
@@ -1533,7 +1706,13 @@ fn read_rev(git: &Git, rev: &str) -> Result<Rev, String> {
         let text = String::from_utf8_lossy(&raw.unwrap_or_default()).into_owned();
         manifest_paths(m, &text, &mut ctx);
     }
-    let mut out = Rev::default();
+    let mut out = Rev {
+        crate_dirs: manifests
+            .iter()
+            .map(|m| manifest_dir(m).to_string())
+            .collect(),
+        ..Rev::default()
+    };
     let mut parsed: BTreeMap<String, Parsed> = BTreeMap::new();
     let exists: BTreeSet<String> = all.iter().filter(|p| p.ends_with(".rs")).cloned().collect();
     let files: Vec<String> = all.iter().filter(|f| in_scope(f, &ctx)).cloned().collect();
@@ -1650,9 +1829,41 @@ fn read_rev(git: &Git, rev: &str) -> Result<Rev, String> {
         .filter(|u| !consumed.contains(&u.file))
         .collect();
     for u in &out.units {
-        out.includes.extend(u.includes.iter().cloned());
+        out.includes
+            .extend(u.includes.iter().map(|i| inc_path(i, &out.crate_dirs)));
     }
     Ok(out)
+}
+
+/// The path of an included file. `CARGO_MANIFEST_DIR` is the nearest folder above the file that
+/// holds a `Cargo.toml` (the top folder at the latest).
+fn inc_path(inc: &Inc, crate_dirs: &BTreeSet<String>) -> String {
+    match inc {
+        Inc::File(p) => p.clone(),
+        Inc::ManifestDir { file, rel } => {
+            let mut dir = file.rsplit_once('/').map_or("", |(d, _)| d);
+            while !dir.is_empty() && !crate_dirs.contains(dir) {
+                dir = dir.rsplit_once('/').map_or("", |(d, _)| d);
+            }
+            resolve(&manifest_in(dir), rel)
+        }
+    }
+}
+
+/// The path of the `Cargo.toml` of folder `dir` (`""` for the top folder).
+fn manifest_in(dir: &str) -> String {
+    if dir.is_empty() {
+        "Cargo.toml".to_string()
+    } else {
+        format!("{dir}/Cargo.toml")
+    }
+}
+
+/// The folder of the manifest at `path` (`""` for the top folder).
+fn manifest_dir(path: &str) -> &str {
+    path.strip_suffix("Cargo.toml")
+        .unwrap_or("")
+        .trim_end_matches('/')
 }
 
 /// Old path → new path for each rename from `parent` to `HEAD`.
@@ -1696,12 +1907,23 @@ fn changed_files(git: &Git, parent: &str, p: &Rev, h: &Rev) -> Result<Vec<String
             out.push(format!("fixture {c}"));
         }
         if c == "Cargo.toml" || c.ends_with("/Cargo.toml") {
-            let read = |rev: &str| {
+            let text = |rev: &str| {
                 git.show(rev, c)
-                    .map(|b| manifest_settings(&String::from_utf8_lossy(&b)))
+                    .map(|b| String::from_utf8_lossy(&b).into_owned())
+                    .ok()
+            };
+            let (pt, ht) = (text(parent), text("HEAD"));
+            let settings =
+                |t: &Option<String>| t.as_deref().map(manifest_settings).unwrap_or_default();
+            let sets = |t: &Option<String>, r: &Rev| {
+                t.as_deref()
+                    .map(|t| workspace_sets(c, t, &r.crate_dirs))
                     .unwrap_or_default()
             };
-            if read(parent) != read("HEAD") {
+            let ((pm, pd), (hm, hd)) = (sets(&pt, p), sets(&ht, h));
+            // A crate that leaves the members or the default members drops its tests from
+            // `cargo test --workspace` or `cargo test` (round 3 F6).
+            if settings(&pt) != settings(&ht) || !pm.is_subset(&hm) || !pd.is_subset(&hd) {
                 out.push(format!("manifest {c}"));
             }
         }
@@ -1966,10 +2188,35 @@ mod tests {
         assert_eq!(
             u[0].includes,
             BTreeSet::from([
-                "crates/a/src/testdata/g.txt".to_string(),
-                "crates/a/data.bin".to_string()
+                Inc::File("crates/a/src/testdata/g.txt".to_string()),
+                Inc::File("crates/a/data.bin".to_string())
             ])
         );
+    }
+
+    #[test]
+    fn include_bang_and_manifest_dir_are_recorded() {
+        let src = "#[cfg(test)] mod tests { #[test] fn g() { \
+                   let _ = include!(\"cases.in\"); \
+                   let _ = include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/data/\", \"g.txt\")); \
+                   let _ = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/gen.bin\")); \
+                   let include = 1; let _ = include; } }";
+        let u = units("crates/a/src/x/lib.rs", src).expect("units");
+        let m = Inc::ManifestDir {
+            file: "crates/a/src/x/lib.rs".to_string(),
+            rel: "/data/g.txt".to_string(),
+        };
+        assert_eq!(
+            u[0].includes,
+            BTreeSet::from([Inc::File("crates/a/src/x/cases.in".to_string()), m.clone()])
+        );
+        let dirs = BTreeSet::from(["".to_string(), "crates/a".to_string()]);
+        assert_eq!(inc_path(&m, &dirs), "crates/a/data/g.txt");
+        assert_eq!(
+            inc_path(&m, &BTreeSet::from(["".to_string()])),
+            "data/g.txt"
+        );
+        assert_eq!(inc_path(&m, &BTreeSet::new()), "data/g.txt");
     }
 
     #[test]
@@ -2194,11 +2441,11 @@ mod tests {
         assert_eq!(
             manifest_settings(m),
             vec![
-                "[[bin]]{stub}.test = false",
-                "[[test]]{fc}.name = \"fc\"",
-                "[[test]]{fc}.path = \"../../tests/fc.rs\"",
+                "bin{stub}.test = false",
                 "lib{}.doctest = false",
-                "package{a}.autotests = false",
+                "package.autotests = false",
+                "test{fc}.name = \"fc\"",
+                "test{fc}.path = \"../../tests/fc.rs\"",
             ]
         );
         let mut c = Ctx::default();
@@ -2209,6 +2456,82 @@ mod tests {
             manifest_settings("[package]\nname = \"a\"\nversion = \"0.2.0\"\n"),
             Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn manifest_reading_round_3() {
+        // Dotted keys and inline tables count.
+        let dotted = "lib.test = false\npackage = { name = \"a\", autotests = false }\n";
+        assert_eq!(
+            manifest_settings(dotted),
+            vec!["lib{}.test = false", "package.autotests = false"]
+        );
+        // [features] counts when a target has required-features; profile.test and profile.dev.
+        let f = "[package]\nname = \"a\"\n[features]\ndefault = [\"slow\"]\nslow = []\n\
+                 [[bin]]\nname = \"b\"\nrequired-features = [\"slow\"]\n\
+                 [profile.test]\ndebug-assertions = false\n[profile.release]\nlto = true\n";
+        assert_eq!(
+            manifest_settings(f),
+            vec![
+                "bin{b}.required-features = [\"slow\"]",
+                "features.default = [\"slow\"]",
+                "features.slow = []",
+                "profile.test.debug-assertions = false",
+            ]
+        );
+        assert_eq!(
+            manifest_settings("[features]\ndefault = [\"slow\"]\nslow = []\n"),
+            Vec::<String>::new()
+        );
+        // A manifest that does not parse counts as a whole.
+        assert_eq!(
+            manifest_settings("[package"),
+            vec!["unreadable manifest: [package"]
+        );
+    }
+
+    #[test]
+    fn workspace_members() {
+        let dirs = BTreeSet::from([
+            "".to_string(),
+            "crates/a".to_string(),
+            "crates/b".to_string(),
+            "tools/x".to_string(),
+        ]);
+        let s = |m: &str| workspace_sets("Cargo.toml", m, &dirs);
+        let all = BTreeSet::from(["crates/a".to_string(), "crates/b".to_string()]);
+        assert_eq!(
+            s("[workspace]\nmembers = [\"crates/*\"]\n"),
+            (all.clone(), all.clone())
+        );
+        assert_eq!(
+            s("[workspace]\nmembers = [\"crates/*\"]\nexclude = [\"crates/a\"]\n").0,
+            BTreeSet::from(["crates/b".to_string()])
+        );
+        assert_eq!(
+            s("[workspace]\nmembers = [\"crates/*\"]\ndefault-members = [\"crates/b\"]\n").1,
+            BTreeSet::from(["crates/b".to_string()])
+        );
+        assert!(
+            s("[package]\nname = \"r\"\n[workspace]\nmembers = [\"tools/?\"]\n")
+                .0
+                .contains("")
+        );
+        assert_eq!(
+            s("[package]\nname = \"r\"\n"),
+            (BTreeSet::new(), BTreeSet::new())
+        );
+        assert!(glob_match("crates/*", "crates/a"));
+        assert!(!glob_match("crates/*", "crates/a/b"));
+        assert!(glob_match("c?ates/a*", "crates/abc"));
+    }
+
+    #[test]
+    fn checker_files_are_not_in_scope() {
+        let c = Ctx::default();
+        assert!(!in_scope("tools/test-edits/src/main.rs", &c));
+        assert!(in_scope("tools/other/src/lib.rs", &c));
+        assert!(in_scope("crates/a/tests/t.rs", &c));
     }
 
     #[test]

@@ -13,23 +13,34 @@
 # the node file lists that exact change; so is a changed doc-test block, test-relevant manifest
 # key, fixture, or file of the check itself.
 # The checker does not judge itself: the helper (crate zygo-test-edits, tools/test-edits) is
-# built from <parent>, cached by the tree id of tools/test-edits at <parent>, and run against
-# this repository. The review gate runs the parent's copy of this script too:
+# built from <parent> and run against this repository. The review gate runs the parent's copy of
+# this script too, from the top folder or a subfolder:
 #   git show <parent>:scripts/check-test-edits.sh | sh -s -- <parent> <node file>
-# ZYGO_TEST_EDITS_IN_TREE=1 runs the helper of this working tree instead: the bootstrap, used only
-# by node CC-2's own tests. ZYGO_TEST_EDITS_CACHE sets the cache folder (default
-# ${XDG_CACHE_HOME:-$HOME/.cache}/zygo-test-edits).
-# Exit 0: pass; 1: one offence per line on stdout; 2: usage, no checker at <parent>, uncommitted
-# changes, or the helper did not build or run (any exit other than 0, 1 and 2 is mapped to 2).
+# Build cache: ZYGO_TEST_EDITS_CACHE (default ${XDG_CACHE_HOME:-$HOME/.cache}/zygo-test-edits).
+# The key is a hash of the tree of tools/test-edits, the root Cargo.toml and Cargo.lock, the
+# rust-toolchain file (if any) at <parent>, and "rustc -V". Each key has its own sources
+# (src/<key>), its own cargo target folder (target/<key>) and its own lock (lock/<key>); each run
+# does "cargo build --release --locked" there and runs the binary of that target folder.
+# ZYGO_TEST_EDITS_IN_TREE=1 runs the helper of this working tree instead (cargo run in the top
+# folder of the current repository, or in ZYGO_TEST_EDITS_ROOT if set). It is the bootstrap of
+# node CC-2 only: it is refused when <parent> has a tools/test-edits.
+# Exit 0: pass; 1: one offence per line on stdout; 2: usage, no checker at <parent>, a refused
+# bootstrap, uncommitted changes, or the helper did not build or run (any exit other than 0, 1
+# and 2 is mapped to 2).
 
 usage() {
     printf '%s\n' "check-test-edits: $1" "usage: sh scripts/check-test-edits.sh <parent> <node file>" >&2
     exit 2
 }
 
+fail() {
+    printf '%s\n' "check-test-edits: $1" >&2
+    exit 2
+}
+
 [ "$#" -eq 2 ] || usage "two arguments are required"
 [ -n "$1" ] || usage "<parent> is empty"
-git rev-parse --show-toplevel > /dev/null 2>&1 || usage "not inside a git repository"
+TOP=$(git rev-parse --show-toplevel 2> /dev/null) || usage "not inside a git repository"
 PSHA=$(git rev-parse --verify --quiet "$1^{commit}") || usage "<parent> is not a commit: $1"
 
 printf '%s\n' "check-test-edits: parent $PSHA" >&2
@@ -47,32 +58,72 @@ run_helper() {
     case $rc in
         0 | 1 | 2) exit "$rc" ;;
     esac
-    printf '%s\n' "check-test-edits: the helper exited $rc (build or run failure); exit 2" >&2
-    exit 2
+    fail "the helper exited $rc (build or run failure); exit 2"
 }
 
+TREE=$(git rev-parse --verify --quiet "$PSHA:tools/test-edits")
+
 if [ "${ZYGO_TEST_EDITS_IN_TREE:-}" = 1 ]; then
-    ROOT=$(cd "$(dirname "$0")/.." && pwd)
+    [ -z "$TREE" ] || fail "ZYGO_TEST_EDITS_IN_TREE=1 is refused: <parent> $PSHA has a checker (tools/test-edits); run the checker of <parent>"
+    ROOT=${ZYGO_TEST_EDITS_ROOT:-$TOP}
+    [ -f "$ROOT/tools/test-edits/Cargo.toml" ] || fail "ZYGO_TEST_EDITS_IN_TREE=1: no tools/test-edits in $ROOT"
     run_helper cargo run -q --locked --manifest-path "$ROOT/Cargo.toml" -p zygo-test-edits -- "$@"
 fi
 
-TREE=$(git rev-parse --verify --quiet "$PSHA:tools/test-edits") || usage "no checker at <parent>: $PSHA has no tools/test-edits"
+[ -n "$TREE" ] || fail "no checker at <parent>: $PSHA has no tools/test-edits"
 CACHE=${ZYGO_TEST_EDITS_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/zygo-test-edits}
-BIN="$CACHE/bin/$TREE/zygo-test-edits"
-if [ ! -x "$BIN" ]; then
-    mkdir -p "$CACHE/bin/$TREE" || usage "cannot write the cache $CACHE"
-    SRC=$(mktemp -d) || usage "mktemp failed"
-    trap 'rm -rf "$SRC"' EXIT
-    git archive --format=tar "$PSHA" | (cd "$SRC" && tar -xf -) || usage "git archive of $PSHA failed"
-    printf '%s\n' "check-test-edits: building the checker of <parent> (tree $TREE)" >&2
-    CARGO_TARGET_DIR="$CACHE/target" cargo build -q --release --locked --manifest-path "$SRC/Cargo.toml" -p zygo-test-edits || {
-        printf '%s\n' "check-test-edits: the checker of <parent> does not build; exit 2" >&2
-        exit 2
-    }
-    OUT="$CACHE/target/release/zygo-test-edits"
-    [ -f "$OUT" ] || OUT="$OUT.exe"
-    cp "$OUT" "$BIN.tmp.$$" && mv "$BIN.tmp.$$" "$BIN" || usage "cannot store the checker in $CACHE"
-    rm -rf "$SRC"
-    trap - EXIT
-fi
+mkdir -p "$CACHE/src" "$CACHE/target" "$CACHE/lock" || fail "cannot write the cache $CACHE"
+
+# The sources of <parent>, extracted to a new folder; "rustc -V" runs there, so a rust-toolchain
+# file of <parent> selects the toolchain as it does for the build.
+NEW=$(mktemp -d "$CACHE/src/new.XXXXXX") || fail "cannot write the cache $CACHE"
+LOCK=""
+cleanup() {
+    [ -z "$NEW" ] || rm -rf "$NEW"
+    [ -z "$LOCK" ] || rm -rf "$LOCK"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# (git archive in a subfolder archives only that subfolder: run it in the top folder.)
+git -C "$TOP" archive --format=tar "$PSHA" | (cd "$NEW" && tar -xf -) || fail "git archive of $PSHA failed"
+RUSTC=$(cd "$NEW" && rustc -V) || fail "rustc -V failed"
+KEY=$(
+    {
+        printf 'tools/test-edits %s\n' "$TREE"
+        for f in Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml; do
+            printf '%s %s\n' "$f" "$(git rev-parse --verify --quiet "$PSHA:$f")"
+        done
+        printf 'rustc %s\n' "$RUSTC"
+    } | git hash-object --stdin
+) || fail "cannot hash the cache key"
+
+# The lock of the key: mkdir is atomic. A lock whose owner is gone is removed.
+L="$CACHE/lock/$KEY"
+said=0
+while ! mkdir "$L" 2> /dev/null; do
+    owner=$(cat "$L/pid" 2> /dev/null)
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2> /dev/null; then
+        printf '%s\n' "check-test-edits: removing the lock of exited process $owner" >&2
+        rm -rf "$L"
+        continue
+    fi
+    if [ "$said" -eq 0 ]; then
+        printf '%s\n' "check-test-edits: waiting for the lock $L (process ${owner:-unknown})" >&2
+        said=1
+    fi
+    sleep 1
+done
+LOCK=$L
+printf '%s\n' "$$" > "$LOCK/pid"
+
+SRC="$CACHE/src/$KEY"
+rm -rf "$SRC" && mv "$NEW" "$SRC" || fail "cannot store the sources in $SRC"
+NEW=""
+TARGET="$CACHE/target/$KEY"
+printf '%s\n' "check-test-edits: building the checker of <parent> (key $KEY)" >&2
+(cd "$SRC" && CARGO_TARGET_DIR="$TARGET" cargo build -q --release --locked -p zygo-test-edits) ||
+    fail "the checker of <parent> does not build; exit 2"
+BIN="$TARGET/release/zygo-test-edits"
+[ -f "$BIN" ] || BIN="$BIN.exe"
 run_helper "$BIN" "$@"
