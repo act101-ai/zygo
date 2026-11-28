@@ -66,7 +66,9 @@ pub fn builtin_classifier_calls() -> u64 {
     BUILTIN_CALLS.with(Cell::get)
 }
 
-/// The gate: `x-claude-code-request-class` is `main`, `compaction`, `auxiliary` or absent.
+/// The gate: the request class is `main`, `compaction`, `auxiliary` or absent. The class is the value of the
+/// client's `ClientSpec::request_class_header` (for Claude Code `x-claude-code-request-class`); a client without
+/// that header has no class, so the gate admits.
 pub fn admits(request_class: Option<&str>) -> bool {
     matches!(request_class, None | Some("main" | "compaction" | "auxiliary"))
 }
