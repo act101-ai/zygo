@@ -519,6 +519,19 @@ fn mail_lock_is_held(dir: &Path) -> bool {
     matches!(fs4::FileExt::try_lock(&lock), Err(fs4::TryLockError::WouldBlock))
 }
 
+/// Whether an exclusive taker of `mail/lock` of `dir` gets it within [`STEP_BOUND`]. A blocking lock in a helper
+/// thread, not one `try_lock`: a child process that another test of this binary starts in the same moment holds a
+/// copy of the send's lock handle from its fork until its exec (the handle is close-on-exec), so the lock can stay
+/// held for that short time after the send released it. A lock that the send never releases fails at the bound.
+fn mail_lock_frees(dir: &Path) -> bool {
+    let lock = std::fs::OpenOptions::new().read(true).write(true).open(dir.join("mail/lock")).unwrap();
+    let (tx, rx) = mpsc::channel::<std::io::Result<()>>();
+    std::thread::spawn(move || {
+        let _ = tx.send(fs4::FileExt::lock(&lock));
+    });
+    matches!(rx.recv_timeout(STEP_BOUND), Ok(Ok(())))
+}
+
 #[test] // S§7.6 step 4, S§8.1 (FX-28, re-plan R3-F1): the remote send holds mail/lock shared on both sides of its link:
         // at remote_send_before_link and at remote_send_after_link an exclusive taker is refused; no timing
 fn remote_send_holds_mail_lock_across_its_link() {
@@ -552,7 +565,7 @@ fn remote_send_holds_mail_lock_across_its_link() {
     };
     threads.join_all();
     assert!(sp(&h).outbox.join(format!("{id}.json")).is_file());
-    assert!(!mail_lock_is_held(&dir), "the send left mail/lock held");
+    assert!(mail_lock_frees(&dir), "the send left mail/lock held");
 }
 
 #[test] // S§7.6 step 4, S§8.1 (FX-28, re-plan R3-F2): a send under mail/lock and a forget that comes to its lock meanwhile:
