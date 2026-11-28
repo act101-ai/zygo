@@ -52,8 +52,9 @@ new_run() {
   mkdir -p "$RUN/home/.claude" "$RUN/home/.config" "$RUN/home/.local/share" "$RUN/home/.cache" "$RUN/repo" "$RUN/rec"
   H="$RUN/home"
   R="$RUN/repo"
-  git -C "$R" init -q
-  git -C "$R" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+  # No global or system git config (the real HOME's ~/.gitconfig is not read): identity from -c only.
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "$R" init -q
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "$R" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
   # Skip onboarding, approve the dummy key and trust the repo (interactive runs only need it).
   RR=$(cd "$R" && pwd -P)
   python3 -I - "$H/.claude/.claude.json" "$DUMMY_KEY" "$RR" "$R" <<'PY'

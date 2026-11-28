@@ -1,0 +1,75 @@
+== ctl: status line rows (below the prompt box)
+  ▌▌▌ 𝘇𝘆𝗴𝗼 ctl  master  ctx -/-  ↑0 ↓0  ≈$0.00  ✂ 9k  󰅐 0m
+  ⏵⏵ auto mode on (shift+tab to cycle)
+== ctl: lines with /zygo: after typing /zygo:
+❯ /zygo:
+  ❯ /zygo:ls                    (zygo) One line per workspace with its state
+    /zygo:down                  (zygo) zygo down: stop the workspace of this folder or of &lt;name&gt;, in the foreground (detached from an agent or from a pane of that workspace). /zygo:down takes
+    /zygo:help                  (zygo) Every verb with its arguments and current value; with a verb, its details
+    /zygo:mail                  (zygo) Unread mail of this workspace's members; /zygo:mail lists only
+    /zygo:work                  (zygo) Current work item
+    /zygo:units                 (zygo) Work units
+    /zygo:usage                 (zygo) The session's savings
+    /zygo:guards                (zygo) Levels with their sources; sets one guard's level, never below its floor
+    /zygo:status                (zygo) As `zygo status`
+    /zygo:compact               (zygo) Set the compaction window for the session
+    /zygo:plugins               (zygo) Plugins, act-lite navigation included
+    /zygo:profile               (zygo) Default profile
+    /zygo:results               (zygo) Result trimming
+    /zygo:zygo-cli              (zygo) How to run the zygo commands that report and change this session. Use it when the user asks about the context window, compaction, savings, work items,
+    /zygo:decision              (zygo) Decision records; /zygo:decision replies with the shell command
+    /zygo:redaction             (zygo) Shows both passes; switches the content pass; the secret pass is status only
+    /zygo:workspace             (zygo) Status of this session's or this folder's workspace; approve: approve this repository's workspace files on this machine
+    /zygo:statusline            (zygo) Status line style
+    /zygo:marketplace           (zygo) Plugin marketplaces
+    /zygo:compact-tool          (zygo) The `compact` MCP tool
+== ana: status line rows (below the prompt box)
+  ▌▌▌ 𝘇𝘆𝗴𝗼 ana  master  ctx -/-  ↑0 ↓0  ≈$0.00  ✂ 3k  󰅐 0m
+  ⏵⏵ auto mode on (shift+tab to cycle)
+== ana: lines with /zygo: after typing /zygo:
+❯ /zygo:
+  ❯ /zygo:ls                    (zygo) One line per workspace with its state
+    /zygo:down                  (zygo) zygo down: stop the workspace of this folder or of &lt;name&gt;, in the foreground (detached from an agent or from a pane of that workspace). /zygo:down takes
+    /zygo:help                  (zygo) Every verb with its arguments and current value; with a verb, its details
+    /zygo:mail                  (zygo) Unread mail of this workspace's members; /zygo:mail lists only
+    /zygo:work                  (zygo) Current work item
+    /zygo:units                 (zygo) Work units
+    /zygo:usage                 (zygo) The session's savings
+    /zygo:guards                (zygo) Levels with their sources; sets one guard's level, never below its floor
+    /zygo:status                (zygo) As `zygo status`
+    /zygo:compact               (zygo) Set the compaction window for the session
+    /zygo:plugins               (zygo) Plugins, act-lite navigation included
+    /zygo:profile               (zygo) Default profile
+    /zygo:results               (zygo) Result trimming
+    /zygo:zygo-cli              (zygo) How to run the zygo commands that report and change this session. Use it when the user asks about the context window, compaction, savings, work items,
+    /zygo:decision              (zygo) Decision records; /zygo:decision replies with the shell command
+    /zygo:redaction             (zygo) Shows both passes; switches the content pass; the secret pass is status only
+    /zygo:workspace             (zygo) Status of this session's or this folder's workspace; approve: approve this repository's workspace files on this machine
+    /zygo:statusline            (zygo) Status line style
+    /zygo:marketplace           (zygo) Plugin marketplaces
+    /zygo:compact-tool          (zygo) The `compact` MCP tool
+== ben: status line rows (below the prompt box)
+  ▌▌▌ 𝘇𝘆𝗴𝗼 ben  master  ctx -/-  ↑0 ↓0  ≈$0.00  ✂ 6k  󰅐 0m
+  ⏵⏵ auto mode on (shift+tab to cycle)
+== ben: lines with /zygo: after typing /zygo:
+❯ /zygo:
+  ❯ /zygo:ls                    (zygo) One line per workspace with its state
+    /zygo:down                  (zygo) zygo down: stop the workspace of this folder or of &lt;name&gt;, in the foreground (detached from an agent or from a pane of that workspace). /zygo:down takes
+    /zygo:help                  (zygo) Every verb with its arguments and current value; with a verb, its details
+    /zygo:mail                  (zygo) Unread mail of this workspace's members; /zygo:mail lists only
+    /zygo:work                  (zygo) Current work item
+    /zygo:units                 (zygo) Work units
+    /zygo:usage                 (zygo) The session's savings
+    /zygo:guards                (zygo) Levels with their sources; sets one guard's level, never below its floor
+    /zygo:status                (zygo) As `zygo status`
+    /zygo:compact               (zygo) Set the compaction window for the session
+    /zygo:plugins               (zygo) Plugins, act-lite navigation included
+    /zygo:profile               (zygo) Default profile
+    /zygo:results               (zygo) Result trimming
+    /zygo:zygo-cli              (zygo) How to run the zygo commands that report and change this session. Use it when the user asks about the context window, compaction, savings, work items,
+    /zygo:decision              (zygo) Decision records; /zygo:decision replies with the shell command
+    /zygo:redaction             (zygo) Shows both passes; switches the content pass; the secret pass is status only
+    /zygo:workspace             (zygo) Status of this session's or this folder's workspace; approve: approve this repository's workspace files on this machine
+    /zygo:statusline            (zygo) Status line style
+    /zygo:marketplace           (zygo) Plugin marketplaces
+    /zygo:compact-tool          (zygo) The `compact` MCP tool
