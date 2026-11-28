@@ -21,7 +21,7 @@ use common::workspace::{no_marketplace_line, ready_exe, Guarded, Harness, WS_ID}
 use e2e::*;
 use serde_json::{json, Value};
 use zygo_config::profile::Profile;
-use zygo_config::repo_def::{approve_workspace_in, check_default, GitRunner, Pin, SystemGit, Use};
+use zygo_config::repo_def::{approve_workspace_in, check_default, is_workspace_approved_in, GitRunner, Pin, SystemGit, Use};
 use zygo_core::paths::Paths;
 use zygo_core::session_view::SessionView;
 use zygo_core::Agent;
@@ -930,12 +930,71 @@ fn fx23_the_stderr_check_matches_only_sync_lines() {
 }
 
 /// How a pin stops being usable in [`pin_gone_stops_exactly_the_r11_members`] (the R§11 row).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Gone {
-    /// The pinned commit is made unreachable and pruned (R§18 item 16).
+    /// The pinned commit is made unreachable and pruned (R§18 item 16); the approval stays.
     Pruned,
-    /// The user deletes the approval entry (R§7.2).
+    /// The user deletes the approval entry of the pin (R§7.2); the commit stays.
     Withdrawn,
+}
+
+/// The R§7.4 line of a launch that asks for no repository-only profile, for `pin`, with `which` after "which".
+fn member_line(pin: &Pin, which: &str) -> String {
+    format!(
+        "zygo: this member comes from the workspace files at commit {} (digest {}), which {which}; the agent was not started; to start from the current files: zygo down, then zygo up --reset",
+        &pin.commit[..12],
+        &pin.digest[..12]
+    )
+}
+
+/// Another approved digest of the same workspace: the withdrawal of the pin must keep its entry (FX-31 review F6).
+const OTHER_DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+/// R§7.2: the user deletes the one `[[workspace]]` entry `(id, digest)` from `approvals`; every other entry stays.
+fn withdraw(approvals: &Path, id: &str, digest: &str) {
+    let mut t: toml::Table = std::fs::read_to_string(approvals).unwrap().parse().unwrap();
+    let entries = t.get_mut("workspace").and_then(toml::Value::as_array_mut).expect("[[workspace]] entries");
+    let n = entries.len();
+    entries.retain(|e| {
+        !(e.get("id").and_then(toml::Value::as_str) == Some(id) && e.get("digest").and_then(toml::Value::as_str) == Some(digest))
+    });
+    assert_eq!(entries.len(), n - 1, "exactly one entry is the pin's");
+    std::fs::write(approvals, toml::to_string(&t).unwrap()).unwrap();
+    assert!(!is_workspace_approved_in(approvals, id, digest), "the pin is still approved");
+    assert!(is_workspace_approved_in(approvals, id, OTHER_DIGEST), "the withdrawal removed another entry");
+}
+
+/// A team server on 127.0.0.1:0 with one token and `extra` (as `zygo-launch/tests/repo_profile.rs` `team_server`);
+/// the token.
+fn serve_team(root: &Path, extra: &str) -> (zygo_proxy::serve::ServeHandle, String) {
+    let (token, hash) = zygo_proxy::team::new_token();
+    let dir = root.join("server");
+    let config_file = dir.join("config.toml");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(&config_file, format!("[serve]\ntokens = [{{ label = \"t\", sha256 = \"{hash}\" }}]\n{extra}")).unwrap();
+    let paths = Paths {
+        config_file: config_file.clone(),
+        cache_dir: dir.join("cache"),
+        data_dir: dir.join("data"),
+        sessions_dir: dir.join("cache/sessions"),
+        marketplaces_dir: dir.join("cache/marketplaces"),
+        plugin_store: dir.join("data/plugins"),
+        approvals_file: dir.join("data/approvals.toml"),
+        usage_db: dir.join("data/usage.db"),
+    };
+    let ctx = zygo_config::LoadContext { paths, repo: None, team: None };
+    let h = zygo_proxy::serve::start(zygo_proxy::serve::ServeOpts {
+        listen: "127.0.0.1:0".into(),
+        tls: None,
+        config_file,
+        load: Arc::new(move || Ok(zygo_config::load_with_builtin(&ctx, builtin())?)),
+        report: Arc::new(|_: &str| {}),
+        pid_file: None,
+        signals: false,
+        start: zygo_proxy::server::StartOpts { usage_db: Some(dir.join("data/usage.db")), ..Default::default() },
+    })
+    .unwrap();
+    (h, token)
 }
 
 /// What one in-process member launch through the real member wrapper gave (FX-31).
@@ -953,30 +1012,31 @@ struct Wrapped {
 }
 
 /// Seeds `m` as the member of pane KEY in `app`, then runs `zygo::cmd::member::run_wrapped` (the `ws run` path,
-/// W§8.2 steps 4-7) in process with the stub adapter: the saved launch of `m` gives `--profile`, the pin and
-/// passthrough; its agent session is resumed; the store of `h` takes the real AU92 start write; `Rec` records each
-/// git call of the definition read. The stub's preflight refuses after `build`, so a launch that reaches the agent
-/// exits 2 and no child starts.
-fn wrapped(h: &Harness, app: &Path, m: &MemberRecord) -> Wrapped {
+/// W§8.2 steps 2-7) in process with the stub adapter. The launch options come from the saved launch of `m` by the
+/// real mapping of `ws run` and a restore (`zygo::cmd::ws::member_launch_opts`: `ws::launch_of`, then
+/// `claude::launch_opts`), so its profile, pin, passthrough and server are those of the record; its agent session
+/// is resumed; `env` is added to the launch environment; the store of `h` takes the real AU92 start write; `Rec`
+/// records each git call of the definition read. The stub's preflight refuses after `build`, so a launch that
+/// reaches the agent exits 2 and no child starts.
+fn wrapped(h: &Harness, app: &Path, m: &MemberRecord, env: &[(OsString, OsString)]) -> Wrapped {
     seed_member(h, app, m);
     let results = h.paths.workspace_cache_dir().join(WS_ID).join("results").join(KEY);
     let _ = std::fs::remove_dir_all(&results);
     let before = state_bytes(h);
     let bin = h.root().join("nobin");
     std::fs::create_dir_all(&bin).unwrap();
-    let env = vec![
+    let mut vars = vec![
         (OsString::from("PATH"), OsString::from(&bin)),
         (OsString::from("ACT_CONFIG_DIR"), OsString::from(h.root().join("act"))),
     ];
-    let mut o = LaunchOpts::new(Env(env), app.to_path_buf(), h.paths.clone());
+    vars.extend(env.iter().cloned());
+    let mut o = zygo::cmd::ws::member_launch_opts(m, m.agent_session.is_some(), Env(vars), app.to_path_buf(), h.paths.clone())
+        .expect("the saved launch maps");
     o.builtin = Some(builtin());
     let buf: Arc<Mutex<Vec<u8>>> = Arc::default();
     o.stderr = Some(buf.clone());
     let rec = Arc::new(Rec::default());
     o.definition_git = Some(rec.clone());
-    o.profile = m.launch.profile.clone();
-    o.definition = m.launch.definition.clone();
-    o.passthrough = m.launch.passthrough;
     o.agent_session = m.agent_session.clone().map(zygo_launch::launcher::AgentSession::Resume);
     let stub = Stub {
         program: std::env::current_exe().unwrap().display().to_string(),
@@ -997,43 +1057,103 @@ fn wrapped(h: &Harness, app: &Path, m: &MemberRecord) -> Wrapped {
     Wrapped { code, err, built, wrote: results.is_dir(), calls: rec.calls(), before, after: state_bytes(h) }
 }
 
+/// One member of [`pin_gone_stops_exactly_the_r11_members`].
+struct Case {
+    what: &'static str,
+    /// `launch.profile` of the record.
+    profile: Option<&'static str>,
+    passthrough: bool,
+    /// The user config file.
+    user: &'static str,
+    /// The member runs in serve mode against the team server, whose config has the preset `rust`.
+    team: bool,
+    /// The launch makes the pinned read (R§7.4): it asks for a profile that only the workspace files define, and it
+    /// is not in passthrough.
+    pinned_read: bool,
+}
+
 #[test]
-fn pin_gone_stops_exactly_the_r11_members() { // R§11 row "A pinned commit or object is gone …" (FX-31); R§7.4 bullets 4, 6, 7; R§18 item 16
+fn pin_gone_stops_exactly_the_r11_members() { // R§11 row "A pinned commit or object is gone …" (FX-31 review F1-F6); R§7.4; R§18 item 16
+    let cases = [
+        Case { what: "a repository-only profile", profile: Some("rust"), passthrough: false, user: "", team: false, pinned_read: true },
+        Case { what: "no profile", profile: None, passthrough: false, user: "", team: false, pinned_read: false },
+        Case {
+            what: "a user default_profile of a repository profile",
+            profile: None,
+            passthrough: false,
+            user: "[user]\ndefault_profile = \"rust\"\n",
+            team: false,
+            pinned_read: true,
+        },
+        Case {
+            what: "a user profile of the name",
+            profile: Some("rust"),
+            passthrough: false,
+            user: "[profile.rust]\ndisabled = [\"review\"]\n",
+            team: false,
+            pinned_read: false,
+        },
+        Case {
+            what: "a team preset of the name",
+            profile: Some("rust"),
+            passthrough: false,
+            user: "[server]\ntoken = \"env:ZYGO_TEAM_TOKEN\"\n",
+            team: true,
+            pinned_read: false,
+        },
+        Case { what: "a pool member in passthrough", profile: Some("rust"), passthrough: true, user: "", team: false, pinned_read: false },
+    ];
     for gone in [Gone::Pruned, Gone::Withdrawn] {
         let h = Harness::no_tmux();
         let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
+        let id = ws_id(&app);
+        approve_workspace_in(&h.paths.approvals_file, &id, OTHER_DIGEST).unwrap();
         let pin = approve(&app, &h.paths.approvals_file);
         match gone {
             Gone::Pruned => prune(&app, &pin.commit),
-            Gone::Withdrawn => std::fs::write(&h.paths.approvals_file, "").unwrap(),
+            Gone::Withdrawn => withdraw(&h.paths.approvals_file, &id, &pin.digest),
         }
-
-        // A member whose profile only the workspace files define: the pinned read is made and stops the launch.
-        let r = wrapped(&h, &app, &pinned(Some(&pin)));
-        assert_eq!(r.code, 1, "{gone:?}: a repository-only profile did not stop: {}", r.err);
-        assert_eq!(count(&r.err, &pin_line(&pin, NO_LONGER)), 1, "{gone:?}: {}", r.err);
-        assert!(!r.built && !r.wrote, "{gone:?}: the launch went on: {}", r.err);
-        assert!(r.calls.iter().any(|c| c[0] == "ls-tree" && c.contains(&pin.commit)), "{gone:?}: no pinned read: {:?}", r.calls);
-        assert_eq!(r.after, r.before, "{gone:?}: the record changed");
-
-        // A member with no profile: no pinned read; it starts and its start write keeps the pin.
-        let mut m = pinned(Some(&pin));
-        m.launch.profile = None;
-        let r = wrapped(&h, &app, &m);
-        assert_eq!(r.code, 2, "{gone:?}: a member with no profile did not start: {}", r.err);
-        assert!(r.built && r.wrote, "{gone:?}: a member with no profile was not built or not recorded: {}", r.err);
-        assert!(r.calls.is_empty(), "{gone:?}: a member with no profile read: {:?}", r.calls);
-        assert!(!r.err.contains("zygo: profile"), "{gone:?}: {}", r.err);
-        assert_eq!(member_of(&h).launch.definition.as_ref(), Some(&pin), "{gone:?}: the pin was not kept");
-
-        // A pool member in passthrough with a repository profile: no pinned read; it starts without the profile.
-        let mut m = pinned(Some(&pin));
-        m.launch.passthrough = true;
-        let r = wrapped(&h, &app, &m);
-        assert_eq!(r.code, 2, "{gone:?}: a pool member in passthrough did not start: {}", r.err);
-        assert!(r.built && r.wrote, "{gone:?}: a pool member in passthrough was not built or not recorded: {}", r.err);
-        assert!(r.calls.is_empty(), "{gone:?}: a pool member in passthrough read: {:?}", r.calls);
-        assert_eq!(count(&r.err, "zygo: profile rust does not apply in passthrough"), 1, "{gone:?}: {}", r.err);
-        assert_eq!(member_of(&h).launch.definition.as_ref(), Some(&pin), "{gone:?}: the pin was not kept");
+        let (server, token) = serve_team(h.root(), "[profile.rust]\ndisabled = [\"review\"]\n");
+        for c in &cases {
+            let what = format!("{gone:?}, {}", c.what);
+            std::fs::write(&h.paths.config_file, c.user).unwrap();
+            let mut m = pinned(Some(&pin));
+            m.launch.profile = c.profile.map(String::from);
+            m.launch.passthrough = c.passthrough;
+            let mut env = Vec::new();
+            if c.team {
+                m.launch.server = Some(server.url().to_string());
+                env.push((OsString::from("ZYGO_TEAM_TOKEN"), OsString::from(&token)));
+            }
+            let r = wrapped(&h, &app, &m, &env);
+            let pinned_call = r.calls.iter().any(|call| call[0] == "ls-tree" && call.contains(&pin.commit));
+            if gone == Gone::Withdrawn || c.pinned_read {
+                // R§7.4 and R§11: the launch stops before the session; the record does not change.
+                let line = if c.pinned_read { pin_line(&pin, NO_LONGER) } else { member_line(&pin, NO_LONGER) };
+                assert_eq!(r.code, 1, "{what}: did not stop: {}", r.err);
+                assert_eq!(count(&r.err, &line), 1, "{what}: {}", r.err);
+                assert!(!r.built && !r.wrote, "{what}: the launch went on: {}", r.err);
+                assert_eq!(r.after, r.before, "{what}: the record changed");
+                if gone == Gone::Withdrawn {
+                    // The approval check reads approvals.toml only.
+                    assert!(r.calls.is_empty(), "{what}: a withdrawal made a git read: {:?}", r.calls);
+                } else {
+                    assert!(pinned_call, "{what}: no pinned read: {:?}", r.calls);
+                }
+            } else {
+                // A gone pin with a valid approval: a launch that reads nothing from the commit starts.
+                assert_eq!(r.code, 2, "{what}: did not start: {}", r.err);
+                assert!(r.built && r.wrote, "{what}: not built or not recorded: {}", r.err);
+                assert!(r.calls.is_empty(), "{what}: read: {:?}", r.calls);
+                assert_eq!(member_of(&h).launch.definition.as_ref(), Some(&pin), "{what}: the pin was not kept");
+                if c.passthrough {
+                    assert_eq!(count(&r.err, "zygo: profile rust does not apply in passthrough"), 1, "{what}: {}", r.err);
+                } else {
+                    assert!(!r.err.contains("zygo: profile"), "{what}: {}", r.err);
+                }
+            }
+        }
+        server.shutdown();
+        assert!(is_workspace_approved_in(&h.paths.approvals_file, &id, OTHER_DIGEST), "{gone:?}: the other entry is gone");
     }
 }
