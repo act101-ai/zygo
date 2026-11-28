@@ -194,7 +194,6 @@ Session text (T, SX nodes):
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | DONE | lookup | SP1 verified 8/8, run c, claude 2.1.332, opencode 1.19.6 · PR #247 |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | DONE | mechanical | check-premises ok SP1-SP6, git: 2.50.1 · PR #253 |
 | OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45, OS-47 | DONE | lookup | 5 passed, release, 01855abf · PR #239 |
-| WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | DONE | implementation | 15ea1e5b^..9a264b0a · acceptance pass (definition_hooks 11 passed) · PR #218 |
 | WD-21 | PR1 live check: two pool members send two logins | WD-14, ML-19 | DONE | mechanical | PR1 6/6, PR2 8/8, two runs, claude 2.1.332 · PR #244 |
 | WD-22 | PR2 live check: per-session settings act the same on a pool directory | WD-14, WD-21 | DONE | mechanical | PR1 6/6, PR2 8/8, two runs, claude 2.1.332 · PR #244 |
 | MS-22 | No mail content in logs, state, usage rows, commits or refs | MS-18, MS-19, MS-21 | DONE | judgment | e2b744fe^..91edeada · acceptance pass (mail_sync_no_content 2 passed) · PR #222 |
@@ -204,7 +203,7 @@ Session text (T, SX nodes):
 | SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | DONE | implementation | 1b49483c^..7b96c5b5 · acceptance pass (builtin 13, check-premises ok) · PR #227 |
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | DONE | mechanical | fc991ad1^..7018a2f3 · acceptance pass (builtin 13, check-premises ok) · PR #229 |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | DONE | judgment | check-premises ok ST1-ST4 verified; workspace 4131 passed · PR #254 |
-| FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
+| FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | DONE | judgment | 0715e396^..213355f7 · acceptance pass (session_text 70 passed; opencode 52 passed, end-to-end item 8 test) · PR #256 |
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | DONE | judgment | 87a292d6^..da0207f1 · acceptance pass (mail_lifecycle 23 passed) · PR #219 |
 | FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
 | FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | DONE | implementation | bb21eadf^..c99eeb95 · acceptance pass (offline: 7 test files, 0 failed) · PR #220 |
@@ -217,6 +216,7 @@ Session text (T, SX nodes):
 | FX-30 | A crash-recovered delivery gets no wake and no count | FX-26, FX-28 | DONE | judgment | 1f871269^..c0675e47 · acceptance pass (crash_recovery_wake 11 passed, mail_sync_no_content 5 passed) · PR #240 |
 | FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | DONE | judgment | 3279f092^..4bae96ba · acceptance pass (pin_gone_stops_exactly_the_r11_members 1 passed, workspace_definition 17 passed + 9 ignored passed) · PR #238 |
 | FX-32 | The P and Q arms of `check-premises.sh` refuse a dated note whose text holds `)` | SX-10 | DONE | mechanical | e6d86033^..ae1f7beb · acceptance pass (ver tests: ok (92), check-premises ok) · PR #255 |
+| FX-33 | OpenCode system text: the unread line and a foreign resume note break the prompt cache | FX-9 | TODO | judgment | — |
 
 ## Log
 
@@ -475,3 +475,4 @@ Session text (T, SX nodes):
 | 2026-11-27 | MS-25 DONE: SP1-SP6 recorded; git: 2.50.1 is the pin (a minimum; S§18 rewritten, author's call); SP3-SP6 run on 2.50.1; one review, 9 findings, all fixed (an SP6 control step, uncited checks deleted). |
 | 2026-11-28 | SX-10 DONE: ST1-ST4 verified (SX-9 record); ST4 change: OpenCode zygo-<role> prompt is the role prompt only; one review, 6 findings, all fixed (7 subagent tests now in CI); FX-32 added for the P/Q note `)` limit (pre-existing); MS-18 row archived · PR #254 |
 | 2026-11-28 | FX-32 DONE; P/Q/PW/ST note text may hold `)` up to its own `)*`, real date shape; one review, 5 findings fixed, F4 refuted (no §19 rule against code spans); MS-21 row archived · PR #255 |
+| 2026-11-28 | FX-9 DONE; OpenCode item 8 stored per session id at the first main request; one review, F1-F2 and F5-F8 fixed, F9 author's call (an in-launch switch is not a resume); FX-33 added (unread line and foreign resume note break the OpenCode cache); WD-19 row archived · PR #256 |
