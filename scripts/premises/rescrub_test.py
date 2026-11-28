@@ -14,6 +14,7 @@ import os
 import sys
 import tempfile
 
+sys.dont_write_bytecode = True   # TF-4: loading rescrub_codex.py writes no __pycache__
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location("rescrub_codex", os.path.join(HERE, "rescrub_codex.py"))
 R = importlib.util.module_from_spec(spec)
