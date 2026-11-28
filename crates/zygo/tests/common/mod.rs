@@ -86,11 +86,3 @@ pub fn write_stdin(mut w: impl std::io::Write, bytes: &[u8]) {
 /// The workspace test harness (M2, W§18 preamble).
 #[cfg(unix)]
 pub mod workspace;
-
-/// Writes `bytes` to a child's stdin and closes it. A child may exit before it reads stdin (statusline: H§6.8, AU24, PH11), so a broken pipe is not an error.
-pub fn feed_stdin(mut stdin: std::process::ChildStdin, bytes: &[u8]) {
-    use std::io::Write;
-    if let Err(e) = stdin.write_all(bytes) {
-        assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "write to child stdin: {e}");
-    }
-}

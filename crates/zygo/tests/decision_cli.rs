@@ -311,7 +311,7 @@ fn slash_reply_carries_the_args_as_given() { // D§10.1: `--` and `--save` are t
         let mut child = c.args(["hook", "prompt"]).current_dir(h.path()).env_remove("ZYGO_SESSION").env_remove("ZYGO_SESSION_DIR")
             .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap();
         let line = serde_json::json!({ "hook_event_name": "UserPromptSubmit", "prompt": format!("/zygo:decision {a}") }).to_string();
-        std::io::Write::write_all(&mut child.stdin.take().unwrap(), line.as_bytes()).unwrap();
+        common::write_stdin(child.stdin.take().unwrap(), line.as_bytes());
         let o = child.wait_with_output().unwrap();
         let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
         assert_eq!(v["reason"].as_str(), Some(want), "{a}");

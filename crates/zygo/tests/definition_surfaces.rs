@@ -7,7 +7,6 @@
 //! No agent starts, so no stub agent. Every test git call has no user or system config and no template.
 mod common;
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -77,7 +76,7 @@ fn blob(dir: &Path, bytes: &[u8]) -> String {
         .stderr(Stdio::piped())
         .spawn()
         .expect("git on PATH");
-    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    common::write_stdin(child.stdin.take().unwrap(), bytes);
     let o = child.wait_with_output().unwrap();
     assert!(o.status.success(), "hash-object: {}", String::from_utf8_lossy(&o.stderr));
     String::from_utf8(o.stdout).unwrap().trim().to_string()

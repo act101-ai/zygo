@@ -18,7 +18,7 @@ mod unix {
     use zygo_workspace::mail::{mail_dir, store, BODY_MAX};
     use zygo_workspace::state::{MemberRecord, Workspace};
 
-    use crate::common::feed_stdin;
+    use crate::common::write_stdin;
     use crate::common::workspace::{Harness, WS_ID};
     use crate::e2e::set_mtime;
 
@@ -65,7 +65,7 @@ mod unix {
         let mut c = h.zygo(args, &env);
         c.stdin(Stdio::piped());
         let mut child = c.spawn().unwrap();
-        feed_stdin(child.stdin.take().unwrap(), input);
+        write_stdin(child.stdin.take().unwrap(), input);
         child.wait_with_output().unwrap()
     }
 

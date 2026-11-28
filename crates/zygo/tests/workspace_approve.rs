@@ -7,7 +7,6 @@
 mod common;
 
 use std::ffi::OsStr;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -80,7 +79,7 @@ fn blob(dir: &Path, bytes: &[u8]) -> String {
         .stderr(Stdio::piped())
         .spawn()
         .expect("git on PATH");
-    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    common::write_stdin(child.stdin.take().unwrap(), bytes);
     let o = child.wait_with_output().unwrap();
     assert!(o.status.success(), "hash-object: {}", String::from_utf8_lossy(&o.stderr));
     String::from_utf8(o.stdout).unwrap().trim().to_string()
@@ -170,7 +169,7 @@ fn run_in(home: &Path, dir: &Path, args: &[&str], stdin: Option<&[u8]>, extra: &
     c.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
     let mut child = c.spawn().expect("zygo binary");
     if let Some(b) = stdin {
-        common::feed_stdin(child.stdin.take().unwrap(), b);
+        common::write_stdin(child.stdin.take().unwrap(), b);
     }
     let o = child.wait_with_output().unwrap();
     common::assert_no_marketplace_sync(home);
