@@ -33,7 +33,14 @@ pub(super) static SPEC: ClientSpec = ClientSpec {
         "SubagentStop hook feedback:",
     ],
     redact_harness_spans: &["command-name"],
+    mcp_server,
+    lists_compact_tool: true,
 };
+
+/// The server of `name` when it is the MCP tool `tool` in Claude Code's form `mcp__<server>__<tool>`.
+pub(super) fn mcp_server<'a>(name: &'a str, tool: &str) -> Option<&'a str> {
+    name.strip_suffix(tool)?.strip_prefix("mcp__")?.strip_suffix("__")
+}
 
 /// Claude Code's hook JSON is the common form: it is returned unchanged.
 pub(super) fn hook_input(v: Value) -> Value {

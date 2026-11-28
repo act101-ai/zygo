@@ -34,7 +34,14 @@ pub(super) static SPEC: ClientSpec = ClientSpec {
         "SubagentStop hook feedback:",
     ],
     redact_harness_spans: &["command-name"],
+    mcp_server,
+    lists_compact_tool: false,
 };
+
+/// The server of `name` when it is the MCP tool `tool` in OpenCode's form `<server>_<tool>`.
+pub(super) fn mcp_server<'a>(name: &'a str, tool: &str) -> Option<&'a str> {
+    name.strip_suffix(tool)?.strip_suffix('_')
+}
 
 /// The Claude Code name of an OpenCode tool; any other name is unchanged.
 fn tool_name(t: &str) -> &str {

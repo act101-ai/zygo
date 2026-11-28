@@ -46,8 +46,8 @@ static IDS: [&str; Agent::COUNT] = {
 };
 
 /// The facts of one client that do not need a behavior (K§6.1.2): concern 1 (identity and updates),
-/// concern 2 (hook input) and concern 9 (proxy, redaction, usage and work-join policy). Each client's value is in
-/// its own file of this module.
+/// concern 2 (hook input), concern 5 (MCP tool naming) and concern 9 (proxy, redaction, usage and work-join policy).
+/// Each client's value is in its own file of this module.
 #[derive(Debug, Clone)]
 pub struct ClientSpec {
     /// The client id: the serde name, the `ZYGO_AGENT` value and the grade file name.
@@ -92,6 +92,11 @@ pub struct ClientSpec {
     pub redact_harness_prefixes: &'static [&'static str],
     /// The element names whose spans the content pass skips inside a `<command-message>` block (§16.2).
     pub redact_harness_spans: &'static [&'static str],
+    /// The MCP server of a model-visible tool name (first argument) when it names the MCP tool (second argument) in
+    /// the client's form; `None` when it does not.
+    pub mcp_server: for<'a> fn(&'a str, &str) -> Option<&'a str>,
+    /// zygo's MCP server lists its `compact` tool to the client (when `features.compact_tool` is on, §10.2.3).
+    pub lists_compact_tool: bool,
 }
 
 impl Agent {
