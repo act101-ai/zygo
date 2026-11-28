@@ -673,7 +673,7 @@ fn plugin_text_matches_the_fixtures() {
     assert!(cm["output"]["message"]["model"]["providerID"].is_string());
     assert!(cm["output"]["message"]["model"]["modelID"].is_string());
     assert!(cm["output"]["parts"].is_array());
-    for t in ["\"message\"", "synthetic: true", "model.modelID !== role", "output.parts.push", "randomBytes"] {
+    for t in ["\"message\"", "\"message-seen\"", "synthetic: true", "model.modelID !== role", "output.parts.push", "randomBytes"] {
         assert!(TEMPLATE.contains(t), "{t}");
     }
     for t in [
@@ -1250,6 +1250,8 @@ const output = JSON.parse(process.env.OUTPUT);
 const res = { threw: null };
 try { await h["chat.message"](JSON.parse(process.env.INPUT), output); } catch (e) { res.threw = e.message; }
 res.parts = output.parts;
+// A `task` call waits for its queued `pre-tool` answer, so every member call queued before it has run.
+await h["tool.execute.before"]({ tool: "task", sessionID: "drain", callID: "drain" }, { args: {} });
 process.stdout.write(JSON.stringify(res) + "\n", () => process.exit(0));
 "#,
     )
@@ -1287,6 +1289,12 @@ fn message_calls(r: &NodeRun) -> Vec<&str> {
     r.calls.lines().filter(|l| l.starts_with("hook workspace") && l.ends_with("--event message")).collect()
 }
 
+/// The `hook workspace ... --event message-seen` calls of a run (M§7.2; FX-35).
+#[cfg(unix)]
+fn seen_calls(r: &NodeRun) -> Vec<&str> {
+    r.calls.lines().filter(|l| l.starts_with("hook workspace") && l.ends_with("--event message-seen")).collect()
+}
+
 // M§7.2 (FX-33): the plugin's `chat.message` asks for the mail line only for a user message of the main session (the
 // member gate, the main role's `zygo/` model, not a known child), adds it as one synthetic text part, and never
 // throws or changes the message when `zygo` gives nothing, fails or is missing (C6, T-C1).
@@ -1317,6 +1325,13 @@ fn plugin_chat_message_sends_message_only_for_the_main_session() {
     let id = parts[1]["id"].as_str().unwrap();
     assert!(part_id_form(id), "{id}");
     assert_eq!(parts[1], json!({"id": id, "sessionID": "A", "messageID": "msg_1", "type": "text", "text": "LINE", "synthetic": true}));
+    // FX-35 (M§7.2): after the part is added, one `message-seen` call for the same session, after the `message` call.
+    assert_eq!(seen_calls(&r), ["hook workspace --agent opencode --event message-seen"]);
+    let lines: Vec<&str> = r.calls.lines().collect();
+    let at = |e: &str| lines.iter().position(|l| l.ends_with(&format!("--event {e}"))).unwrap();
+    assert!(at("message") < at("message-seen"), "{}", r.calls);
+    let stdin: Value = serde_json::from_slice(&std::fs::read(r.dir.join("stdin-workspace-message-seen.json")).unwrap()).unwrap();
+    assert_eq!(stdin, json!({"sessionID": "A", "cwd": "/r"}));
 
     let unchanged = chat_output("A", "zygo", "lead")["parts"].clone();
     let cases = [
@@ -1337,6 +1352,7 @@ fn plugin_chat_message_sends_message_only_for_the_main_session() {
         assert_eq!(v["threw"], Value::Null, "{name}");
         assert_eq!(v["parts"], unchanged, "{name}");
         assert!(message_calls(&r).is_empty(), "{name}: {}", r.calls);
+        assert!(seen_calls(&r).is_empty(), "{name}: {}", r.calls);
     }
     // `parts` that is not an array: no call, no throw.
     let mut no_parts = chat_output("A", "zygo", "lead");
@@ -1345,12 +1361,14 @@ fn plugin_chat_message_sends_message_only_for_the_main_session() {
     assert_eq!(r.result.clone().unwrap()["threw"], Value::Null);
     assert_eq!(r.result.clone().unwrap()["parts"], json!({}));
     assert!(message_calls(&r).is_empty(), "{}", r.calls);
-    // `zygo` prints nothing, fails or is missing: the message is unchanged.
+    // `zygo` prints nothing, fails or is missing: the message is unchanged, and no `message-seen` call follows, so the
+    // ids stay unannounced (M§7.2; FX-35).
     for (mode, name) in [("empty", "cm-empty"), ("fail", "cm-fail"), ("missing", "cm-missing")] {
         let r = chat_node(&fx, Chat { mode, ..base(name) });
         let v = r.result.clone().unwrap();
         assert_eq!(v["threw"], Value::Null, "{mode}");
         assert_eq!(v["parts"], unchanged, "{mode}");
+        assert!(seen_calls(&r).is_empty(), "{mode}: {}", r.calls);
     }
 }
 

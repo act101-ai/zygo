@@ -206,6 +206,11 @@ impl Tmux {
 
     pub fn socket(&self) -> Option<&Path> { self.socket.as_deref() }
 
+    /// `run-shell -b <command>` with the call bound (M§7.3 deferred wake, FX-35): the server runs `command` through
+    /// its shell as its own child and the call returns at once. tmux expands formats in `command`, so the caller
+    /// passes it with each `#` doubled (AU55).
+    pub fn run_shell_background(&self, command: &str) -> Result<(), MuxError> { self.run(&["run-shell", "-b", command]) }
+
     /// The program, then `-S <socket>` when set, then `-u` when `utf8`, with `LC_ALL=C` when `c_locale`.
     fn command(&self, c_locale: bool, utf8: bool) -> Command {
         let mut c = Command::new(&self.program);

@@ -9,8 +9,11 @@
 //! writes one line, to the session log for the session folder's files and to `errors.log` for the state folder's,
 //! and the hook exits 0 (AU56, D14). The `session` event never changes `activity.json`: an open turn stays busy until
 //! its stop, the agent exit, the drain timeout or `down --now` (D5). `session` (main loop), `prompt`, `stop` and
-//! `tool-end` start the rate-limited mail sync child (mail sync design S§8.1, S§8.4, S-C1). No wait here is longer than the 1 s lock bounds
-//! of AU56 and W§7.3, and nothing here ends or removes a session, pane, member, turn or file (D19).
+//! `tool-end` start the rate-limited mail sync child (mail sync design S§8.1, S§8.4, S-C1). Each lock wait here, and
+//! the proxy status read of the mail wake, is at most 1 s (AU56, W§7.3, M§7.3 "Waits"; the wake's
+//! `mail_wake::HOOK_BOUND`), and each tmux call of the mail wake is at most `mux::BOUND` (2 s). The OpenCode `stop`
+//! only schedules its mail wake with one tmux call, so the wake's waits run in the `mail-wake` job that tmux starts
+//! (FX-35 F4). Nothing here ends or removes a session, pane, member, turn or file (D19).
 
 use std::ffi::OsString;
 use std::fs;
@@ -35,16 +38,28 @@ use zygo_workspace::activity::{self, Activity};
 use zygo_workspace::identity::{valid_pane_key, valid_ws_id};
 use std::time::SystemTime;
 use zygo_config::MailConfig;
-use zygo_workspace::mail::wake::{self as mail_wake, Outcome, Probe, RealProbe};
+use zygo_workspace::mail::wake::{self as mail_wake, Defer, Outcome, Probe, Ready, TmuxDefer};
 use zygo_workspace::mail::{mail_dir, store};
 use zygo_workspace::mux::tmux::Tmux;
+use zygo_workspace::mux::Multiplexer;
 use zygo_workspace::state::Workspace;
 use zygo_workspace::snapshot;
 use zygo_workspace::state::{MemberRecord, MemberState, Phase, StateError, Store};
 
 /// The `--event` values of `zygo hook workspace`.
-pub const EVENTS: [&str; 9] =
-    ["session", "prompt", "stop", "pre-tool", "tool-end", "session-end", "subagent-start", "subagent-stop", "message"];
+pub const EVENTS: [&str; 11] = [
+    "session",
+    "prompt",
+    "stop",
+    "pre-tool",
+    "tool-end",
+    "session-end",
+    "subagent-start",
+    "subagent-stop",
+    "message",
+    "message-seen",
+    "mail-wake",
+];
 
 /// The deny reason of an `Agent` call while `down` drains (W§9.2).
 pub const DRAINING: &str = "zygo: workspace is draining for down; finish your turn";
@@ -269,10 +284,14 @@ fn unread_ids(c: &Ctx) -> Vec<String> {
 /// OpenCode member: by the `message` line or by a turn-end wake (M§7.2, M§7.3; FX-33 review F1). A JSON array of ids.
 const MAIL_SEEN: &str = "mail-seen.json";
 
-/// The announced ids of `MAIL_SEEN`; a missing file, or one that cannot be read or parsed, holds none (the next turn
-/// end then wakes at most once more, C6).
-fn mail_seen(c: &Ctx) -> Vec<String> {
-    match read_session_file(&c.dir.root.join(MAIL_SEEN)) {
+/// The file of the session folder that holds the ids that the last `message` line named, until the plugin's
+/// `message-seen` call says that the line reached it (M§7.2; FX-35). A JSON array of ids.
+const MAIL_OFFERED: &str = "mail-offered.json";
+
+/// The ids of the id file `name` of the session folder; a missing file, or one that cannot be read or parsed, holds
+/// none (the next turn end then wakes at most once more, C6). A read error writes one session-log line.
+fn id_file(c: &Ctx, name: &str) -> Vec<String> {
+    match read_session_file(&c.dir.root.join(name)) {
         Ok(Some(b)) => serde_json::from_slice(&b).unwrap_or_default(),
         Ok(None) => Vec::new(),
         Err(e) => {
@@ -282,13 +301,42 @@ fn mail_seen(c: &Ctx) -> Vec<String> {
     }
 }
 
-/// Writes `ids` as the announced ids (temporary file, then rename; `0600`); a failure writes one session-log line.
-fn set_mail_seen(c: &Ctx, ids: &[String]) {
+/// Writes `ids` to the id file `name` of the session folder (temporary file, then rename; `0600`); a failure writes
+/// one session-log line.
+fn set_id_file(c: &Ctx, name: &str, ids: &[String]) {
     let written = serde_json::to_vec(ids)
         .map_err(anyhow::Error::from)
-        .and_then(|b| zygo_core::session_dir::write_atomic(&c.dir.root.join(MAIL_SEEN), &b));
+        .and_then(|b| zygo_core::session_dir::write_atomic(&c.dir.root.join(name), &b));
     if let Err(e) = written {
-        slog(c.dir, c.event, &format!("{MAIL_SEEN} not written: {e:#}"));
+        slog(c.dir, c.event, &format!("{name} not written: {e:#}"));
+    }
+}
+
+/// The announced ids of `MAIL_SEEN`.
+fn mail_seen(c: &Ctx) -> Vec<String> {
+    id_file(c, MAIL_SEEN)
+}
+
+/// Writes `ids` as the announced ids.
+fn set_mail_seen(c: &Ctx, ids: &[String]) {
+    set_id_file(c, MAIL_SEEN, ids);
+}
+
+/// The plugin's `message-seen` call (M§7.2; FX-35): the line of the last `message` call reached the plugin, so the
+/// offered ids that are still in `new/` join the announced ones (`MAIL_SEEN` := (announced ∪ offered) ∩ `new/`), and
+/// `MAIL_OFFERED` is removed. No offered file: nothing changes.
+fn ack_offered(c: &Ctx) {
+    let path = c.dir.root.join(MAIL_OFFERED);
+    if !fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
+        return;
+    }
+    let offered = id_file(c, MAIL_OFFERED);
+    let mut seen = mail_seen(c);
+    seen.extend(offered);
+    let ids: Vec<String> = unread_ids(c).into_iter().filter(|i| seen.contains(i)).collect();
+    set_mail_seen(c, &ids);
+    if let Err(e) = fs::remove_file(&path) {
+        slog(c.dir, c.event, &format!("{MAIL_OFFERED} not removed: {e}"));
     }
 }
 
@@ -300,65 +348,156 @@ fn main_session(c: &Ctx, id: Option<&str>) -> bool {
     matches!(c.store.read(), Ok(Some(ws)) if ws.members.get(&c.pane).and_then(|m| m.agent_session.as_deref()) == Some(id))
 }
 
-/// M§7.3 at the end of an OpenCode turn (the plugin's `stop` call, AU27; FX-33 review F1): a member that was busy when
-/// mail came was not woken (M§7.3) and OpenCode has no Stop block (ML-10 D1), so when `new/` holds an id that this
-/// launch has not announced, the hook wakes the member's own pane by the M§7.3 steps (idle rule, `wake_gap`, pane
-/// checks) and, when the wake typed its text, records the ids as announced, so one arrival gives at most one wake. Not in phase `draining` or
-/// `stopping` (M§9). The wake text is fixed (M-C5); its prompt then gets the `message` line.
-fn wake_after_turn(c: &Ctx, sync: &Env, turn_wake: &dyn TurnWake) {
-    if matches!(c.store.phase_unlocked(), Some(Phase::Draining | Phase::Stopping)) {
-        return;
-    }
-    let ids = unread_ids(c);
-    let seen = mail_seen(c);
-    if !ids.iter().any(|i| !seen.contains(i)) {
-        return;
-    }
-    let Ok(Some(ws)) = c.store.read() else { return };
+/// True in phase `draining`, `stopping` or `down`, when no wake is sent (M§9; FX-35 F3: a queued job can run after
+/// `zygo down`).
+fn wake_stopped(c: &Ctx) -> bool {
+    matches!(c.store.phase_unlocked(), Some(Phase::Draining | Phase::Stopping | Phase::Down))
+}
+
+/// Try `try_no` of the wake of the member's own pane (M§7.3) through `turn_wake`, with the `[mail]` config of the user
+/// config (the default when it does not load) and the clock of `sync`. No `workspace.json`: `None`.
+fn own_wake(c: &Ctx, sync: &Env, turn_wake: &dyn TurnWake, try_no: u8) -> Option<Outcome> {
+    let Ok(Some(ws)) = c.store.read() else { return None };
     let cfg = zygo_config::load(&zygo_config::LoadContext { paths: c.paths.clone(), repo: None, team: None })
         .map(|m| m.config.mail)
         .unwrap_or_default();
-    // Only a sent wake announces: after `Gap`, `Busy`, `NoPane`, `Mismatch`, `NotLive` or `Failed` no prompt was typed,
-    // so the ids stay unannounced and a later turn end tries again (FX-33 review).
-    if turn_wake.wake(c.paths, &ws, &c.pane, &cfg, sync.clock.now()) == Outcome::Woken {
+    Some(turn_wake.wake(c.paths, &ws, &c.pane, &cfg, sync.clock.now(), try_no))
+}
+
+/// True when `new/` holds an id that this launch has not announced (`MAIL_SEEN`); also the unread ids.
+fn unannounced(c: &Ctx) -> Option<Vec<String>> {
+    let ids = unread_ids(c);
+    let seen = mail_seen(c);
+    ids.iter().any(|i| !seen.contains(i)).then_some(ids)
+}
+
+/// The end of an OpenCode turn (the plugin's `stop` call, AU27; FX-33 review F1, FX-35 F4): when the phase allows a
+/// wake and `new/` holds an id that this launch has not announced, the hook only schedules try 1 of the wake with
+/// tmux (one `run-shell -b`, no delay), so the wake's status read, lock wait and tmux calls run in the tmux job and
+/// not under the plugin's 10 s timer. A schedule that fails writes one `errors.log` line.
+fn schedule_after_turn(c: &Ctx, turn_wake: &dyn TurnWake) {
+    if wake_stopped(c) || unannounced(c).is_none() {
+        return;
+    }
+    let Ok(Some(ws)) = c.store.read() else { return };
+    if let Err(e) = turn_wake.schedule(&ws, &c.dir.root) {
+        elog(c, &format!("mail wake not scheduled: {e:#}"));
+    }
+}
+
+/// M§7.3 for an OpenCode member, try `try_no` of a `mail-wake` job (try 1 from the turn end, 2 to 4 from a retry;
+/// FX-35). A member that was busy when mail came was not woken (M§7.3) and OpenCode has no Stop block (ML-10 D1), so
+/// when `new/` holds an id that this launch has not announced, the hook wakes the member's own pane by the M§7.3
+/// steps (idle rule with the quiet-window and gap deferral, `wake_gap`, pane checks) and, when the wake typed its
+/// text, records the ids as announced, so one arrival gives at most one wake. The wake text is fixed (M-C5); its
+/// prompt then gets the `message` line.
+fn wake_after_turn(c: &Ctx, sync: &Env, turn_wake: &dyn TurnWake, try_no: u8) {
+    let Some(ids) = unannounced(c) else { return };
+    // Only a sent wake announces: after `Deferred`, `Quiet`, `Gap`, `Busy`, `NoPane`, `Mismatch`, `NotLive` or `Failed`
+    // no prompt was typed, so the ids stay unannounced and a retry or a later turn end tries again (FX-33 review).
+    if own_wake(c, sync, turn_wake, try_no) == Some(Outcome::Woken) {
         set_mail_seen(c, &ids);
     }
 }
 
-/// The turn-end wake of one member (M§7.3; FX-33 review): its [`Outcome`] says whether the text was typed. Tests
-/// replace it.
-pub trait TurnWake {
-    fn wake(&self, paths: &Paths, ws: &Workspace, key: &str, cfg: &MailConfig, now: SystemTime) -> Outcome;
+/// The `mail-wake` event (M§7.3; FX-35): the job that a turn end scheduled (try 1) or a deferred wake queued (tries 2
+/// to `MAX_TRIES`) with tmux. The payload's `try` must be 1 to `MAX_TRIES`, else one session-log line and nothing.
+/// Nothing in phase `draining`, `stopping` or `down`, with no `workspace.json` (`zygo down` cannot cancel a queued job,
+/// and `zygo ws forget` removes the state), or when the session folder of the job is not the member's live one: the
+/// member started again, and that start's M§7.2 line delivers the mail (FX-35 F3). An OpenCode member: the wake of
+/// `wake_after_turn` with that try; a Claude Code member: a wake of that try only when `new/` is not empty.
+fn mail_wake_event(c: &Ctx, payload: &Value, sync: &Env, turn_wake: &dyn TurnWake) {
+    let try_no = match payload.get("try").and_then(Value::as_u64) {
+        Some(n) if (1..=u64::from(mail_wake::MAX_TRIES)).contains(&n) => n as u8,
+        _ => {
+            let shown = payload.get("try").map_or_else(|| "none".to_string(), |v| esc(&v.to_string()));
+            slog(c.dir, c.event, &format!("try {shown} is not 1 to {}; no wake", mail_wake::MAX_TRIES));
+            return;
+        }
+    };
+    if wake_stopped(c) {
+        return;
+    }
+    let Ok(Some(ws)) = c.store.read() else { return };
+    let live = ws.members.get(&c.pane).and_then(|m| c.store.live_session(m));
+    if live.as_deref() != Some(c.dir.root.as_path()) {
+        return;
+    }
+    match c.view.agent {
+        Agent::OpenCode => wake_after_turn(c, sync, turn_wake, try_no),
+        Agent::ClaudeCode => {
+            if unread_mail(c) > 0 {
+                own_wake(c, sync, turn_wake, try_no);
+            }
+        }
+    }
 }
 
-/// The production turn-end wake: [`zygo_workspace::mail::wake::wake`] through the tmux program `tmux`, with the AU26
-/// idle rule of [`RealProbe`] and the clock `now`. A `wake_gap` that does not parse is 30 s, with one `errors.log`
-/// line, as the wake after a send (`after_send_with`, A7).
+/// The wake of one member's own pane from a hook (M§7.3; FX-33 review, FX-35): try `try_no` at the time `now`; its
+/// [`Outcome`] says whether the text was typed. Tests replace it.
+pub trait TurnWake {
+    fn wake(&self, paths: &Paths, ws: &Workspace, key: &str, cfg: &MailConfig, now: SystemTime, try_no: u8) -> Outcome;
+    /// Queues try 1 of the wake of the member of the live session folder `session_dir` with no delay, so the wake's
+    /// waits and tmux calls run outside the calling hook (FX-35 F4).
+    fn schedule(&self, ws: &Workspace, session_dir: &Path) -> anyhow::Result<()>;
+}
+
+/// The production hook wake: [`turn_wake_with`] through the tmux program `tmux`, with [`TmuxDefer`] for the zygo
+/// program `zygo`.
 pub struct TmuxTurnWake {
     pub tmux: PathBuf,
+    pub zygo: PathBuf,
 }
 
-/// [`RealProbe`]'s idle rule with a fixed clock.
-struct ProbeAt(SystemTime);
-
-impl Probe for ProbeAt {
-    fn idle(&self, session_dir: &Path) -> bool { RealProbe.idle(session_dir) }
-    fn now(&self) -> SystemTime { self.0 }
+impl TmuxTurnWake {
+    fn defer(&self) -> TmuxDefer {
+        TmuxDefer { tmux: self.tmux.clone(), zygo: self.zygo.clone() }
+    }
 }
 
 impl TurnWake for TmuxTurnWake {
-    fn wake(&self, paths: &Paths, ws: &Workspace, key: &str, cfg: &MailConfig, now: SystemTime) -> Outcome {
-        let store = Store::open(paths, &ws.id);
-        let gap = zygo_config::parse_duration(&cfg.wake_gap).unwrap_or_else(|| {
-            store.log_error(&format!(
-                "mail wake: [mail] wake_gap \"{}\" is not <n>s, <n>m, <n>h or <n>d; using 30s",
-                esc(&cfg.wake_gap)
-            ));
-            Duration::from_secs(30)
-        });
+    fn wake(&self, paths: &Paths, ws: &Workspace, key: &str, cfg: &MailConfig, now: SystemTime, try_no: u8) -> Outcome {
         let mux = Tmux::new(self.tmux.clone(), ws.tmux_socket.clone());
-        mail_wake::wake(&store, ws, &mux, key, gap, &ProbeAt(now))
+        turn_wake_with(paths, ws, key, cfg, now, &mux, &self.defer(), try_no)
     }
+
+    /// One `run-shell -b` of try 1 with `sleep 0` on the workspace's tmux server: one tmux call, at most `mux::BOUND`.
+    fn schedule(&self, ws: &Workspace, session_dir: &Path) -> anyhow::Result<()> {
+        self.defer().defer(ws, session_dir, Duration::ZERO, 1)
+    }
+}
+
+/// The AU26 rule of a hook wake ([`mail_wake::ready_at`] with the status bound [`mail_wake::HOOK_BOUND`]) at the
+/// fixed clock `.0`.
+struct HookProbe(SystemTime);
+
+impl Probe for HookProbe {
+    fn idle(&self, session_dir: &Path) -> bool { self.ready(session_dir, self.0) == Ready::Idle }
+    fn now(&self) -> SystemTime { self.0 }
+    fn ready(&self, session_dir: &Path, now: SystemTime) -> Ready {
+        mail_wake::ready_at(session_dir, now, mail_wake::HOOK_BOUND)
+    }
+}
+
+/// Try `try_no` of the wake of the member `key` from a hook at `now` (M§7.3; FX-35): [`mail_wake::wake`] through
+/// `mux` with the AU26 rule at `now`, the status read and the wake lock each bounded by [`mail_wake::HOOK_BOUND`]
+/// (M§7.3 "Waits"), then [`mail_wake::settle`] with `defer`, so a wake in the quiet window queues the next try. A
+/// `wake_gap` that does not parse is 30 s, with one `errors.log` line, as the wake after a send (A7).
+#[allow(clippy::too_many_arguments)]
+pub fn turn_wake_with(
+    paths: &Paths, ws: &Workspace, key: &str, cfg: &MailConfig, now: SystemTime, mux: &dyn Multiplexer,
+    defer: &dyn Defer, try_no: u8,
+) -> Outcome {
+    let store = Store::open(paths, &ws.id);
+    let gap = zygo_config::parse_duration(&cfg.wake_gap).unwrap_or_else(|| {
+        store.log_error(&format!(
+            "mail wake: [mail] wake_gap \"{}\" is not <n>s, <n>m, <n>h or <n>d; using 30s",
+            esc(&cfg.wake_gap)
+        ));
+        Duration::from_secs(30)
+    });
+    let out = mail_wake::wake(&store, ws, mux, key, gap, &HookProbe(now), mail_wake::HOOK_BOUND);
+    mail_wake::settle(&store, ws, key, out, defer, try_no, gap, now)
 }
 
 /// The main loop: the input object has no `agent_id` key (W§9.1, the test of W§8.3; D5).
@@ -393,7 +532,16 @@ pub fn run_with_sync(
     event: &str, stdin: &[u8], paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, zygo: &Path,
     dispatch: Option<SlashDispatch>, sync: &Env,
 ) -> anyhow::Result<Option<String>> {
-    run_with_wake(event, stdin, paths, env, zygo, dispatch, sync, &TmuxTurnWake { tmux: tmux_program() })
+    run_with_wake(
+        event,
+        stdin,
+        paths,
+        env,
+        zygo,
+        dispatch,
+        sync,
+        &TmuxTurnWake { tmux: tmux_program(), zygo: zygo.to_path_buf() },
+    )
 }
 
 /// `run_with_sync` with the OpenCode turn-end wake `turn_wake` (M§7.3; FX-33 review).
@@ -477,24 +625,35 @@ pub fn run_with_wake(
                 a.busy = false;
                 a.tools_running = 0;
             });
-            // M§7.3 (FX-33 review F1): after the clear, so the wake sees an idle member.
+            // M§7.3 (FX-33 review F1, FX-35 F4): after the clear, so the wake sees an idle member; the turn end
+            // schedules try 1 with tmux and does not wake here.
             if matches!(c.view.agent, Agent::OpenCode) {
-                wake_after_turn(&c, sync, turn_wake);
+                schedule_after_turn(&c, turn_wake);
             }
         }
-        // M§7.2 (FX-33): the OpenCode plugin's `chat.message` call for a user message. Only for the recorded main
-        // session (`main_session`), it gives the delivery line, which the plugin adds to that message, so the
-        // per-request session text holds no mail line, and records the ids as announced (`MAIL_SEEN`). It changes
-        // nothing in `activity.json` and starts no sync child (the turn's `prompt` does). A mail read error is ML-10 D4.
+        // M§7.2 (FX-33, FX-35): the OpenCode plugin's `chat.message` call for a user message. Only for the recorded
+        // main session (`main_session`), it gives the delivery line, which the plugin adds to that message, so the
+        // per-request session text holds no mail line, and records the ids as offered (`MAIL_OFFERED`); they count as
+        // announced only at the plugin's `message-seen` call. It changes nothing in `activity.json` and starts no
+        // sync child (the turn's `prompt` does). A mail read error is ML-10 D4.
         "message" if main => {
             if main_session(&c, payload_id(&payload, "sessionID")) {
                 let ids = unread_ids(&c);
                 if !ids.is_empty() {
-                    set_mail_seen(&c, &ids);
+                    set_id_file(&c, MAIL_OFFERED, &ids);
                     return Ok(Some(crate::mail::delivery_line(ids.len())));
                 }
             }
         }
+        // M§7.2 (FX-35): the plugin added the `message` line to the user message; only for the recorded main session.
+        "message-seen" if main => {
+            if main_session(&c, payload_id(&payload, "sessionID")) {
+                ack_offered(&c);
+            }
+        }
+        // M§7.3 (FX-35): the retry of a deferred wake, run by tmux. It changes nothing in `activity.json` and starts
+        // no sync child.
+        "mail-wake" if main => mail_wake_event(&c, &payload, sync, turn_wake),
         // W§9.1 names no `busy` change for `SessionEnd`.
         "session-end" if main => change(&c, &mut |a| a.tools_running = 0),
         // D5, D8-D10: `session` changes nothing in `activity.json`; it commits and records (one write), then applies

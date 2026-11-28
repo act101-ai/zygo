@@ -214,6 +214,9 @@ export const ZygoPlugin = async ({ directory }) => {
       const line = await ws("message", { sessionID: input.sessionID });
       if (line) {
         output.parts.push({ id: partId(), sessionID: input.sessionID, messageID: m.id, type: "text", text: line, synthetic: true });
+        // M§7.2 (FX-35): the line reached the message, so its ids count as announced; queued, not awaited. A lost line
+        // sends no call, and the ids stay unannounced for the next message.
+        ws("message-seen", { sessionID: input.sessionID });
       }
     },
     "experimental.session.compacting": async (input, output) => {
