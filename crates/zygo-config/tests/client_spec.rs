@@ -12,8 +12,8 @@ fn min_agent_version_reads_the_descriptor() {
     for a in Agent::ALL {
         assert_eq!(min_agent_version(a), Version::parse(a.spec().min_version).unwrap(), "{a}");
     }
-    assert_eq!(min_agent_version(Agent::ALL[0]), Version::new(2, 1, 328));
-    assert_eq!(min_agent_version(Agent::ALL[1]), Version::new(1, 18, 16));
+    assert_eq!(min_agent_version("claude-code".parse().unwrap()), Version::new(2, 1, 328));
+    assert_eq!(min_agent_version("opencode".parse().unwrap()), Version::new(1, 18, 16));
 }
 
 /// A user config file with each dialect name, read by the config loader, gives the `zygo_core::Dialect` values; the

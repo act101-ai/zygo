@@ -11,7 +11,7 @@ use zygo_core::Agent;
 #[test]
 fn client_specs_hold_the_concern_1_values() {
     assert_eq!(Agent::ALL.len(), 2);
-    let c = Agent::ALL[0].spec();
+    let c = "claude-code".parse::<Agent>().unwrap().spec();
     assert_eq!(c.id, "claude-code");
     assert_eq!(c.name, "Claude Code");
     assert_eq!(c.program, "claude");
@@ -21,7 +21,7 @@ fn client_specs_hold_the_concern_1_values() {
     assert_eq!(c.min_version, "2.1.328");
     assert!(c.supported);
     assert!(c.status_line);
-    let o = Agent::ALL[1].spec();
+    let o = "opencode".parse::<Agent>().unwrap().spec();
     assert_eq!(o.id, "opencode");
     assert_eq!(o.name, "OpenCode");
     assert_eq!(o.program, "opencode");
