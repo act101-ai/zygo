@@ -390,17 +390,17 @@
             {
               "criterion": "A-7.2",
               "text": "File-read text output over the threshold, the same.",
-              "reason": "The plugin trims bash output only: hook_opencode::normalize gives a tool_response only for bash, so read output reaches the model whole"
+              "reason": "The plugin trims bash output only: client::opencode::normalize (reached through Agent::spec().hook_input) gives a tool_response only for bash, so read output reaches the model whole"
             },
             {
               "criterion": "A-7.3",
               "text": "Search and listing tool output, the same.",
-              "reason": "The plugin trims bash output only: hook_opencode::normalize gives a tool_response only for bash, so grep, glob and list output reaches the model whole"
+              "reason": "The plugin trims bash output only: client::opencode::normalize (reached through Agent::spec().hook_input) gives a tool_response only for bash, so grep, glob and list output reaches the model whole"
             },
             {
               "criterion": "A-7.4",
               "text": "Web-fetch output, the same (`n/a` for a client with no such tool).",
-              "reason": "OpenCode has a webfetch tool (live check OC-SHAPES), but hook_opencode::normalize gives a tool_response only for bash, so webfetch output is never trimmed"
+              "reason": "OpenCode has a webfetch tool (live check OC-SHAPES), but client::opencode::normalize (reached through Agent::spec().hook_input) gives a tool_response only for bash, so webfetch output is never trimmed"
             },
             {
               "criterion": "A-7.7",

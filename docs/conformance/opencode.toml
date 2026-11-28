@@ -195,17 +195,17 @@ reason = "The live OpenCode docs describe a newer plugin API than 1.18.16 and do
 [[grade]]
 criterion = "A-7.2"
 status = "not-met"
-reason = "The plugin trims bash output only: hook_opencode::normalize gives a tool_response only for bash, so read output reaches the model whole"
+reason = "The plugin trims bash output only: client::opencode::normalize (reached through Agent::spec().hook_input) gives a tool_response only for bash, so read output reaches the model whole"
 
 [[grade]]
 criterion = "A-7.3"
 status = "not-met"
-reason = "The plugin trims bash output only: hook_opencode::normalize gives a tool_response only for bash, so grep, glob and list output reaches the model whole"
+reason = "The plugin trims bash output only: client::opencode::normalize (reached through Agent::spec().hook_input) gives a tool_response only for bash, so grep, glob and list output reaches the model whole"
 
 [[grade]]
 criterion = "A-7.4"
 status = "not-met"
-reason = "OpenCode has a webfetch tool (live check OC-SHAPES), but hook_opencode::normalize gives a tool_response only for bash, so webfetch output is never trimmed"
+reason = "OpenCode has a webfetch tool (live check OC-SHAPES), but client::opencode::normalize (reached through Agent::spec().hook_input) gives a tool_response only for bash, so webfetch output is never trimmed"
 
 [[grade]]
 criterion = "A-7.5"
