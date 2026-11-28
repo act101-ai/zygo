@@ -41,6 +41,17 @@
     offsets from the round's prompt second T, with 3 decimals; no path, URL, user or host name is printed.
   sp1_watch.py side --watch <jsonl> --trace <file> --files <json> --lo <unix s> --hi <unix s>
     One line: <0 | 1> TAB <text>: the side-traffic check (side_traffic) for the rounds' window [lo, hi].
+  sp1_watch.py kh-add --file <known_hosts> --line <file with the run's line> --save <copy>   (node FX-38)
+    One word or reason (kh_add): "added" (exit 0) only after the bytes of the file that <known_hosts> names (through
+    a link) were saved to <copy> and the line was appended, flushed and fsync'd; "present" (exit 0, not changed);
+    "failed: <reason>" (exit 1; an errno name, no path).
+  sp1_watch.py kh-remove --file <known_hosts> --line <file with the run's line> --start <copy>   (node FX-38)
+    One line: <result> TAB <lines missing> TAB <lines added by other processes> (kh_remove, then kh_compare of
+    <copy> against the file that <known_hosts> names). The last exact copy of the line is deleted in place: a link
+    stays a link, its target keeps its inode, mode and every other byte. Exit 0 for "removed" with 0 lines missing.
+  sp1_watch.py acc --state <workspaces folder> --out <file> <id>...   (node FX-38)
+    The acceptance command of MS-23 for this run's ids only: <state>/<id>/mail/sync/state.json of each id into
+    <file> (acceptance_text); prints note 3.4 (acc_note), one entry per id. No other workspace is read.
 
 Rounds file, one JSON object per round: {"id": "R1", "sub": "1.1", "acc": true, "ws": <id>, "member": "cc",
 "member_label": <the busy label>, "arm": "ssh-agent" | "ssh-key" | "https", "T": <int>, "end": <float>, "state":
@@ -49,7 +60,9 @@ Rounds file, one JSON object per round: {"id": "R1", "sub": "1.1", "acc": true, 
 an earlier attempt becomes note 3.6.
 """
 import argparse
+import collections
 import datetime
+import errno
 import json
 import os
 import re
@@ -436,6 +449,163 @@ def side_traffic(events, trace_lines, files, lo, hi):
     return ok, text
 
 
+# --- known_hosts: the run's one line, added and removed through a link (node FX-38) -----------------------------
+
+def ename(e):
+    """The errno name of an OSError (no path: the text can reach the fixture)."""
+    return errno.errorcode.get(e.errno, "errno %s" % e.errno)
+
+
+def kh_line(line_file):
+    with open(line_file, "rb") as f:
+        return f.read().rstrip(b"\n")
+
+
+def kh_add(path, line_file, save):
+    """Append the run's line (the one line of <line_file>) to the file that <path> names (through a link).
+
+    "present": the file already holds the line (not changed); "added": the bytes of the file were saved to <save>,
+    then the line was appended, flushed and fsync'd; "failed: <reason>": else (no file, not a regular file, no line
+    end at its end, the copy or the append failed). "added" is returned only after the append succeeded.
+    """
+    try:
+        add = kh_line(line_file)
+    except OSError as e:
+        return "failed: the run's line could not be read (%s)" % ename(e)
+    if not add or b"\n" in add:
+        return "failed: the run's line file does not hold one line"
+    real = os.path.realpath(path)
+    if not os.path.isfile(real):
+        return "failed: known_hosts is not a regular file"
+    try:
+        with open(real, "rb") as f:
+            text = f.read()
+    except OSError as e:
+        return "failed: known_hosts could not be read (%s)" % ename(e)
+    if text and not text.endswith(b"\n"):
+        return "failed: known_hosts does not end in a line end; the run does not change it"
+    if add in text.split(b"\n"):
+        return "present"
+    try:
+        fd = os.open(save, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(text)
+    except OSError as e:
+        return "failed: the copy of known_hosts could not be saved (%s)" % ename(e)
+    try:
+        with open(real, "ab") as f:
+            f.write(add + b"\n")
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError as e:
+        try:
+            with open(real, "rb") as f:
+                same = f.read() == text
+        except OSError:
+            same = False
+        return "failed: the append failed (%s)%s" % (
+            ename(e), "" if same else "; known_hosts is not equal to the saved copy")
+    return "added"
+
+
+def kh_remove(path, line_file):
+    """Delete the last exact copy of the run's line from the file that <path> names, in place, through a link.
+
+    The link stays a link; the target keeps its inode and mode; every other byte is unchanged. "removed"; "the
+    added line is not in the file" (nothing changed); "failed: <reason>".
+    """
+    try:
+        add = kh_line(line_file)
+    except OSError as e:
+        return "failed: the run's line could not be read (%s)" % ename(e)
+    real = os.path.realpath(path)
+    if not os.path.isfile(real):
+        return "failed: known_hosts is not a regular file"
+    try:
+        with open(real, "rb") as f:
+            if add not in f.read().split(b"\n"):
+                return "the added line is not in the file"
+        with open(real, "r+b") as f:
+            lines = f.read().split(b"\n")
+            idx = [i for i, x in enumerate(lines) if x == add]
+            if not idx:
+                return "the added line is not in the file"
+            del lines[idx[-1]]
+            f.seek(0)
+            f.write(b"\n".join(lines))
+            f.truncate()
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError as e:
+        return "failed: known_hosts could not be rewritten (%s)" % ename(e)
+    return "removed"
+
+
+def kh_compare(start, path):
+    """(lines missing, lines added by other processes): the saved copy against the file that <path> names."""
+    def lines(p):
+        with open(p, "rb") as f:
+            x = f.read().split(b"\n")
+        return collections.Counter(x[:-1] if x and x[-1] == b"" else x)
+    a, b = lines(start), lines(os.path.realpath(path))
+    return sum((a - b).values()), sum((b - a).values())
+
+
+# --- note 3.4: the acceptance command, only this run's workspaces (node FX-38) ---------------------------------
+
+WSID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def acceptance_text(state, ids):
+    """For each id of this run (sorted): the path of <state>/<id>/mail/sync/state.json, its text, a blank line.
+
+    Only these ids are read; an id that is not a plain name or has no state.json gives no entry.
+    """
+    out = []
+    for i in sorted(set(ids)):
+        if not WSID.match(i):
+            continue
+        p = os.path.join(state, i, "mail", "sync", "state.json")
+        t = read(p)
+        if t is None:
+            continue
+        out.append("%s\n%s\n" % (p, t))
+    return "\n".join(out)
+
+
+def acc_note(text, mine):
+    """Note 3.4: one entry per id of <mine> (sorted; id shortened; URL hashes and blob ids left out)."""
+    txt, got, i = text.split("\n"), {}, 0
+    while i < len(txt):
+        p = txt[i]
+        if p.endswith("/mail/sync/state.json"):
+            ws = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(p))))
+            j, buf = i + 1, []
+            while j < len(txt) and not txt[j].endswith("/mail/sync/state.json"):
+                buf.append(txt[j])
+                j += 1
+            got[ws] = "\n".join(buf)
+            i = j
+        else:
+            i += 1
+    out = []
+    for ws in sorted(set(mine)):
+        if ws not in got:
+            out.append("%s… (this run): no state.json" % ws[:8])
+            continue
+        try:
+            s = json.loads(got[ws])
+        except ValueError:
+            s = None
+        if not isinstance(s, dict):
+            out.append("%s… (this run): unreadable" % ws[:8])
+        else:
+            out.append("%s… (this run): last_ok %s, last_error %s, public %s, pushed %s" % (
+                ws[:8], s.get("last_ok"), "absent" if s.get("last_error") is None else s["last_error"],
+                (s.get("public") or {}).get("verdict"), " ".join(sorted((s.get("pushed") or {}).keys())) or "none"))
+    return "; ".join(out) or "no state.json"
+
+
 # --- the watcher ------------------------------------------------------------------------------------------------
 
 def read(path, mode="r"):
@@ -788,7 +958,37 @@ def main():
     s.add_argument("--files", required=True, help="JSON: {known_marketplaces: bool, git_dirs: int}")
     s.add_argument("--lo", type=float, required=True)
     s.add_argument("--hi", type=float, required=True)
+    ka = sp.add_parser("kh-add")
+    ka.add_argument("--file", required=True)
+    ka.add_argument("--line", required=True)
+    ka.add_argument("--save", required=True)
+    kr = sp.add_parser("kh-remove")
+    kr.add_argument("--file", required=True)
+    kr.add_argument("--line", required=True)
+    kr.add_argument("--start", required=True)
+    ac = sp.add_parser("acc")
+    ac.add_argument("--state", required=True)
+    ac.add_argument("--out", required=True)
+    ac.add_argument("ids", nargs="*")
     a = p.parse_args()
+    if a.cmd == "kh-add":
+        r = kh_add(a.file, a.line, a.save)
+        sys.stdout.write(r + "\n")
+        sys.exit(0 if r in ("added", "present") else 1)
+    if a.cmd == "kh-remove":
+        r = kh_remove(a.file, a.line)
+        try:
+            miss, more = kh_compare(a.start, a.file)
+        except OSError:
+            miss, more = "?", "?"
+        sys.stdout.write("%s\t%s\t%s\n" % (r, miss, more))
+        sys.exit(0 if r == "removed" and miss == 0 else 1)
+    if a.cmd == "acc":
+        text = acceptance_text(a.state, a.ids)
+        with open(a.out, "w") as f:
+            f.write(text)
+        sys.stdout.write(acc_note(text, a.ids) + "\n")
+        return
     if a.cmd == "watch":
         watch(a)
         return

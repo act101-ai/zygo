@@ -9,7 +9,9 @@ no network.
 import datetime
 import json
 import os
+import resource
 import shutil
+import signal
 import sys
 import tempfile
 
@@ -333,14 +335,21 @@ try:
           (True, False, L1 + b"\n", True))
     os.chmod(tgt, 0o644)
 
-    # an append whose flush fails (a link to /dev/full: ENOSPC at the flush): not added
-    d = os.path.join(TMP, "full")
-    os.makedirs(d)
-    os.symlink("/dev/full", os.path.join(d, "known_hosts"))
-    with open(os.path.join(d, "kh443"), "wb") as f:
-        f.write(RUNL + b"\n")
-    a = w.kh_add(os.path.join(d, "known_hosts"), os.path.join(d, "kh443"), os.path.join(d, "start"))
-    check("kh_add_flush_failure_is_not_added", a.startswith("failed: "), True)
+    # an append whose write fails at the flush (RLIMIT_FSIZE at the target's size: EFBIG, SIGXFSZ ignored for the
+    # call): not added, the target unchanged
+    d, tgt, link, lf = kh_case("fsize", L1 + b"\n")
+    save = os.path.join(d, "start")
+    with open(save, "wb"):
+        pass   # the copy exists before the limit, so that only the append meets it
+    lim = resource.getrlimit(resource.RLIMIT_FSIZE)
+    old = signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+    resource.setrlimit(resource.RLIMIT_FSIZE, (len(L1) + 1, lim[1]))
+    try:
+        a = w.kh_add(link, lf, save)
+    finally:
+        resource.setrlimit(resource.RLIMIT_FSIZE, lim)
+        signal.signal(signal.SIGXFSZ, old)
+    check("kh_add_flush_failure_is_not_added", (a.startswith("failed: the append failed (EFBIG)"), rb(tgt)), (True, L1 + b"\n"))
 
     # the line is there before the run: present, the file is not changed
     d, tgt, link, lf = kh_case("present", L1 + b"\n" + RUNL + b"\n")
