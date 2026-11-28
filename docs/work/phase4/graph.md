@@ -89,7 +89,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | RS-15 | Streamed text in text_delta pieces of at most 64 KiB (null-restore filter, message_events, chat mapper), so each event stays within HOLD_MAX (K§6.4.3 stream obligation 8) | RS-13 | DONE | implementation | PR #183 merged a3a1b9f8; acceptance exit 0 on merged tree (responses_forward 28, translate 65, 3 named tests listed; zygo-proxy 592 passed, 0 failed); CI run 45777684134 green on 949ffed7 |
 | RS-16 | Messages clients: no zygo_calls_dropped key; Responses-upstream content_filter drops held calls | RS-12 | DONE | implementation | PR #204 merged f1634542; acceptance exit 0 on merged tree (refusal_calls 19 passed; zygo-proxy 659 passed, 0 failed); CI run 45867388614 green on e4d2592c; DDR-01M8CE0JMGSVYFYKASBVRHY5VX |
 | BS-1 | Base-spec notes: §6.4 and §7.4 (dialect_models stays v2), §7.4 (/openai/v1/models), §7.6 v2 (the Responses client route is built), §8.1 (the registry is the capability list) | CF-4, RS-5, RS-6, RS-7, RS-8, RS-9, RS-10, RS-11, RS-12, RS-13, RS-14, RS-15, RS-16, TF-2 | DONE | mechanical | PR #213 merged a0521b71; acceptance exit 0 on merged tree (6 base-spec notes + 4 Change log rows; client-model spec cited 4 times; check-premises ok P1 … PC19; cargo test workspace 0 failed); CI run 45897971110 green on 5612b35a |
-| CC-0 | Take `origin/phase-3` (pinned `74748ae7`) into `phase-4` | CF-1, CF-2, CF-3, CF-4, PC-1, PC-2, PC-3, PC-4, PC-5, PC-6, PC-7, RS-1, RS-2, RS-3, RS-4, RS-5, RS-6, RS-7, RS-8, BS-1, TF-1, TF-2, TF-3 | IN-PROGRESS | judgment | `.worktrees/phase4/CC-0` |
+| CC-0 | Take `origin/phase-3` (pinned `74748ae7`) into `phase-4` | CF-1, CF-2, CF-3, CF-4, PC-1, PC-2, PC-3, PC-4, PC-5, PC-6, PC-7, RS-1, RS-2, RS-3, RS-4, RS-5, RS-6, RS-7, RS-8, BS-1, TF-1, TF-2, TF-3 | DONE | judgment | PR #245 merged b324e1dc, head 060c4c2d; acceptance exit 0 (merge-base checks; check-premises ok incl. POC1 POC2 PM1-3 PO1-4; cargo test --workspace 4539 passed 0 failed; test-check-premises ok (211); scrub ok (156)); CI on 060c4c2d green (test ubuntu/macos/windows, premises ubuntu/macos) |
 | CC-1 | Client-branch inventory at the P4-6 base commit, written under Observed (K§6.9) | CC-0 | TODO | judgment | — |
 | CC-2 | `scripts/check-test-edits.sh` and its `syn` helper: the per-node test-edit check (K-C7, amended) | CC-0 | TODO | implementation | — |
 | CC-3 | Core client module `zygo_core::client`: descriptor type, concerns 1 and 2, `Agent::ALL`/`DEFAULT`/`spec()`, `Dialect` in core, minimum version from the descriptor | CC-1, CC-2, CF-4 | TODO | judgment | — |
@@ -97,7 +97,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | CC-5 | MCP tool naming and `compact` tool listing (concern 5) read the descriptor | CC-4 | TODO | implementation | — |
 | CC-6 | Hook output and session text delivery (concerns 3, 4) read the descriptor | CC-5 | TODO | implementation | — |
 | CC-7 | Argument grammar and session flags (concern 7) read the descriptor | CC-6 | TODO | implementation | — |
-| CC-8 | Pane kind, resume kind, turn events, workspace definition kinds (concern 8); `PaneKind` = `Agent(Agent)` or `Shell` | CC-7, TF-1 | TODO | judgment | — |
+| CC-8 | Pane kind, resume kind, turn events, workspace definition kinds (concern 8); `PaneKind` = `Agent(Agent)` or `Shell` | CC-7, TF-1, TF-6 | TODO | judgment | — |
 | CC-9 | Launch layer: `adapter_for` registry, adapters under `client/`, plugin delivery and env rows (concerns 6, 11), `Plugins` removed | CC-8 | TODO | judgment | — |
 | CC-10 | CLI shims under `cmd/client/`; binary-crate client sites read the registry (concern 10) | CC-9 | TODO | implementation | — |
 | CC-11 | Preview gate at launch for every entry point, loadout check, hidden help and doctor (K§6.2.7) | CC-10 | TODO | judgment | — |
@@ -110,6 +110,8 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | TF-2 | CI runs the premise test scripts | PC-13 | DONE | mechanical | PR #197 merged 80a4f52b; acceptance exit 0 on merged tree (lib tests ok (183), scrub 156, rescrub 172, check-premises ok P1 … PC19, ci.yml names 5 scripts); CI run 45888172612 green on d10d771a (test ubuntu/macos/windows, premises ubuntu/macos) |
 | TF-3 | check-premises.sh: no bash warning on a binary file in the name scan | TF-2 | DONE | implementation | PR #216 merged 0dd46bf9, head 931ca6a6; acceptance exit 0 (`sh scripts/test-check-premises.sh` → test-check-premises: ok (211 cases), also bash 211; check-premises ok; scrub tests ok (156)); CI run on 931ca6a6 green (test ubuntu/macos/windows, premises ubuntu/macos) |
 | TF-4 | Premise tests leave no `__pycache__` in the checkout | TF-3 | IN-PROGRESS | mechanical | .worktrees/phase4/TF-4 (branch phase-4--TF-4) |
+| TF-5 | live-selftest.sh: T5 and U5 pass again; each planted-name case fails on its planted line | CC-0 | PLANNED | implementation | — |
+| TF-6 | Tests: every child-stdin write in `crates/zygo/tests` goes through `common::write_stdin` (`feed_stdin` removed) | CC-0, TF-1 | PLANNED | mechanical | — |
 
 ## Log
 
@@ -206,3 +208,8 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-27 | CC-0 re-planned: BLOCKED → PLANNED (judgment: 9 conflicted paths; PO1/PO2 id clash renamed POC1/POC2). Edges TF-1..TF-3 added (TF-1 shares test files). Graph valid. |
 | 2026-11-27 | CC-0 IN-PROGRESS. origin/phase-3 is now 4ed521d7 (2 commits past the pin: e41e17d9, merge #243); CC-0 merges the pin 74748ae7 all the same (Premises); the later commits reach phase-4 with main. |
 | 2026-11-27 | TF-4 added: premise tests leave scripts/premises/__pycache__ (found by the dash test run) |
+| 2026-11-27 | Operator decision: phase 3 and phase 4 go to main together through PR #241 (phase-4 → main). phase-4 takes each new phase-3 head in a merge layer of its own; phase-3 is not merged into main on its own. Posted to PR #242. |
+| 2026-11-27 | CC-0 DONE: PR #245 merged (b324e1dc); phase 3 at 74748ae7 is in phase-4. Round 1: F2, F3 fixed; F1 → TF-5. |
+| 2026-11-27 | TF-5 added: live-selftest.sh fails T5 and U5 on phase-4 (PC-8 changes); T8 cases pass for the wrong reason (CC-0 round 1 F1). |
+| 2026-11-27 | TF-6 added: two child-stdin helpers (write_stdin, feed_stdin) and four raw write_all calls in crates/zygo/tests after CC-0; TF-1's rule is that every child-stdin write goes through write_stdin. |
+| 2026-11-27 | CC-8 now depends on TF-6 (author's call): both change crates/zygo/tests. TF-5 does not change test-check-premises.sh, which TF-4 changes (no path between them). |
