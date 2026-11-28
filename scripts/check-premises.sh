@@ -22,6 +22,13 @@ SIDS="ST1 ST2 ST3 ST4"
 
 fail() { echo "check-premises: $*"; exit 1; }
 
+# A dated note of a failed P, Q, ST or PW row (node FX-32, review F1-F3, F5): NDATE is a real date shape (spec
+# §19 and §19a: Note YYYY-MM-DD); NTEXT is the note text up to its own closing ")*". The text may hold ")", and
+# anything inside a `code span`; outside a code span it holds no "*" (no start of another note, no italic span)
+# and no ")*", so an unclosed note is not closed by a later ")*" on its line.
+NDATE='[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])'
+NTEXT='([^)*`]|`[^`]*`|\)+[^)*`]|\)+`[^`]*`)*\)+\*'
+
 # nontrivial <path>: a regular file (not a symlink) of more than 2 bytes that is not {} or [].
 nontrivial() {
   [ -f "$1" ] && [ ! -L "$1" ] || return 1
@@ -146,16 +153,16 @@ EOF_PATHS
   esac
 
   if [ "$result" = failed ]; then
-    pat="\*\(Note [0-9]{4}-[0-9]{2}-[0-9]{2}, N2, $id: [^)]*\)\*"
+    pat="\*\(Note $NDATE, N2, $id: $NTEXT"   # node FX-32: NDATE and NTEXT above
     case "$id" in
       PW*) ;;
       # Node MS-25 Acceptance: "a failed SP row names the spec change or work node that answers it".
       SP*) sp_answered "$id" "$evidence" ||
         fail "$id: failed, but the evidence names no work node (docs/work/<phase>/nodes/<id>.md) and no spec change (an S§ section whose mail-sync change-log line names $id)" ;;
       # Session text design T§12.1 items 3 and 4 (node SX-10 Acceptance, review F5): the dated P3-15 note in T§12.1
-      # of $SSPEC (from "### 12.1 " to "### 12.2 "), with a real date shape; its text may hold ")".
+      # of $SSPEC (from "### 12.1 " to "### 12.2 "), with a real date shape; its text may hold ")" (NTEXT, node FX-32).
       ST*) awk '/^### 12\.1 /{f=1;next} /^### 12\.2 /{f=0} f' "$SSPEC" 2>/dev/null |
-        grep -Eq "\*\(Note [0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01]), P3-15, $id: .*\)\*" ||
+        grep -Eq "\*\(Note $NDATE, P3-15, $id: $NTEXT" ||
         fail "$id: failed, but the session-text spec has no dated note *(Note YYYY-MM-DD, P3-15, $id: …)*" ;;
       P*) echo "$S19" | grep -Eq "$pat" || fail "$id: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
       Q*) echo "$S19A" | grep -Eq "$pat" || fail "$id: failed, but spec §19a has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
@@ -169,7 +176,9 @@ EOF_PATHS
   case "$id" in PW*)
     if [ -s "$WSPEC" ]; then
       grep -Eq "^\| $id \|.*Result $date: $result([ .;,]|\$)" "$WSPEC" || fail "$id: the W§17 row has no 'Result $date: $result'"
-      [ "$result" != failed ] || grep -Eq "\*\(Note $date, [A-Z0-9-]+, $id: [^)]*\)\*" "$WSPEC" ||
+      # Node FX-32 (review F5): the note is dated with the row's date, a real date shape, and its text is NTEXT.
+      [ "$result" != failed ] || { printf '%s\n' "$date" | grep -Eq "^$NDATE\$" &&
+        grep -Eq "\*\(Note $date, [A-Z0-9-]+, $id: $NTEXT" "$WSPEC"; } ||
         fail "$id: failed, but the workspaces spec has no dated note *(Note $date, <node>, $id: …)*"
     else
       WSKIP=1
