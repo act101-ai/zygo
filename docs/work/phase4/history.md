@@ -21,6 +21,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | PC-10 | Premise harness privacy: TZ=UTC for Codex runs; scrub OS in user agents and double-slash scratch paths | PC-2 | DONE | implementation | PR #141 merged a1c0ce8a; acceptance exit 0 on merged tree (scrub 70, lib 156, mock 56); CI run 45716982108 green (ubuntu, macos, windows) |
 | PC-9 | `scripts/premises/ver_test.sh`: its repo copy includes every evidence path the premise rows cite | PC-1 | DONE | mechanical | PR #136 merged 256e5cae; acceptance exit 0 on merged tree (ver_test 62, test-check-premises 102); CI run 45716799629 green (ubuntu, macos, windows) |
 | PC-6 | Codex resume and update captures: PC10, PC16 | PC-2, PC-10 | DONE | implementation | PR #138 merged 7ecef460; acceptance exit 0 @ 86ddb8e3 (real codex 0.172.0; PC10 PC16 verified); CI run 45735047521 green (ubuntu, macos, windows) |
+| RS-2 | Messages → Responses encoder: SSE stream and JSON response (`translate/responses_client.rs`) | RS-1 | DONE | judgment | PR #156 merged 1ad733f0; acceptance exit 0 on merged tree (responses_stream 29); CI run 45738657210 green (ubuntu, macos, windows) |
 
 ## Log
 
