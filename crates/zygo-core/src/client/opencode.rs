@@ -1,4 +1,21 @@
+//! OpenCode's descriptor and its pure functions.
+
 use serde_json::{json, Map, Value};
+
+use super::ClientSpec;
+
+pub(super) static SPEC: ClientSpec = ClientSpec {
+    id: "opencode",
+    name: "OpenCode",
+    program: "opencode",
+    verb: "opencode",
+    config_dir: ".opencode",
+    install_hint: "zygo: opencode was not found on PATH; install OpenCode: https://opencode.ai/docs/",
+    min_version: "1.18.16",
+    supported: true,
+    status_line: false,
+    hook_input: normalize,
+};
 
 /// The Claude Code name of an OpenCode tool; any other name is unchanged.
 fn tool_name(t: &str) -> &str {

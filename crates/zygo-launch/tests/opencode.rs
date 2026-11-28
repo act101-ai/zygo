@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use zygo_config::schema::CustomRole;
 use zygo_config::{load_with_builtin, LoadContext};
 use zygo_core::hook::{HookInput, HookOutput};
-use zygo_core::hook_opencode::normalize;
+use zygo_core::client::opencode::normalize;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::SessionView;

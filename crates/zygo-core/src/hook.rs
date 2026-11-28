@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 use serde_json::Value;
 
-use crate::{hook_opencode, Agent};
+use crate::Agent;
 
 pub struct HookInput {
     pub agent: Agent,
@@ -20,9 +20,7 @@ pub struct HookInput {
 impl HookInput {
     pub fn parse(agent: Agent, bytes: &[u8]) -> anyhow::Result<HookInput> {
         let mut v: Value = serde_json::from_slice(bytes)?;
-        if agent == Agent::OpenCode {
-            v = hook_opencode::normalize(v);
-        }
+        v = (agent.spec().hook_input)(v);
         let Some(obj) = v.as_object() else {
             anyhow::bail!("hook input is not a JSON object");
         };
