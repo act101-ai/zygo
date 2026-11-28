@@ -52,7 +52,7 @@ impl Problems {
         self.0.push(p);
     }
 
-    /// A git failure, once per distinct text: the `--batch` process stays failed after its first error.
+    /// A git failure, once per distinct text: the `--batch-command` process stays failed after its first error.
     fn git(&mut self, e: GitFail) {
         let p = e.to_string();
         if !self.0.contains(&p) {
@@ -254,7 +254,7 @@ fn shadowed(key: &str, rev: &str) -> String {
 fn version(git: &mut dyn VerdictGit, rev: &str, name: &str) -> Result<Version, GitFail> {
     Ok(match git.record_blob(rev, name)? {
         Blob::Missing => Version::Absent,
-        Blob::NotRegular => Version::Malformed,
+        Blob::NotRegular | Blob::TooLarge => Version::Malformed,
         Blob::Data(b) => {
             let stem = name.strip_suffix(".md").unwrap_or(name);
             parse_record(stem, &b).map_or(Version::Malformed, Version::Valid)
