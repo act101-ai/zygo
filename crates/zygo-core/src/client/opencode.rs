@@ -2,7 +2,7 @@
 
 use serde_json::{json, Map, Value};
 
-use super::ClientSpec;
+use super::{ClientSpec, Dialect};
 
 pub(super) static SPEC: ClientSpec = ClientSpec {
     id: "opencode",
@@ -15,6 +15,15 @@ pub(super) static SPEC: ClientSpec = ClientSpec {
     supported: true,
     status_line: false,
     hook_input: normalize,
+    dialect: Dialect::Anthropic,
+    request_class_header: None,
+    compaction_header: None,
+    agent_id_header: None,
+    agent_type_header: None,
+    window_rewrite: false,
+    passthrough_credential: None,
+    cache_markers: true,
+    redact_skip_tags: &["file", "shell"],
 };
 
 /// The Claude Code name of an OpenCode tool; any other name is unchanged.

@@ -6,6 +6,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use zygo_core::Agent;
 
 use crate::features::Features;
 
@@ -460,10 +461,9 @@ pub struct CacheConfig {
 }
 
 impl Default for CacheConfig {
+    /// Each client's `insert_markers` default is its descriptor's `cache_markers`.
     fn default() -> Self {
-        CacheConfig {
-            insert_markers: BTreeMap::from([("claude-code".to_string(), false), ("opencode".to_string(), true)]),
-        }
+        CacheConfig { insert_markers: Agent::ALL.iter().map(|a| (a.spec().id.to_string(), a.spec().cache_markers)).collect() }
     }
 }
 

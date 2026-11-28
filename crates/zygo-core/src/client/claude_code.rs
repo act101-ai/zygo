@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use super::ClientSpec;
+use super::{ClientSpec, Dialect};
 
 pub(super) static SPEC: ClientSpec = ClientSpec {
     id: "claude-code",
@@ -15,6 +15,15 @@ pub(super) static SPEC: ClientSpec = ClientSpec {
     supported: true,
     status_line: true,
     hook_input,
+    dialect: Dialect::Anthropic,
+    request_class_header: Some("x-claude-code-request-class"),
+    compaction_header: Some("x-claude-code-compaction"),
+    agent_id_header: Some("x-claude-code-agent-id"),
+    agent_type_header: Some("x-claude-code-agent-type"),
+    window_rewrite: true,
+    passthrough_credential: Some("claude-ai"),
+    cache_markers: false,
+    redact_skip_tags: &[],
 };
 
 /// Claude Code's hook JSON is the common form: it is returned unchanged.
