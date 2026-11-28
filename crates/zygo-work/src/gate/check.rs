@@ -52,7 +52,7 @@ impl Problems {
         self.0.push(p);
     }
 
-    /// A git failure, once per distinct text: the `--batch` process stays failed after its first error.
+    /// A git failure, once per distinct text: the `--batch-command` process stays failed after its first error.
     fn git(&mut self, e: GitFail) {
         let p = e.to_string();
         if !self.0.contains(&p) {
@@ -67,9 +67,36 @@ pub fn names_commit(given: &str, full: &str) -> bool {
     full.starts_with(given)
 }
 
-/// The D§9.4 problems of one keep; empty when the keep passes.
+/// The answers of the three whole-mode git processes (D§9.4 steps 4, 8 and 9), asked with `head` and `base` as the
+/// caller gave them.
+struct WholeReads {
+    merge_base: Result<Option<String>, GitFail>,
+    /// `None` when `merge-base` gave no base.
+    rev_list: Option<Result<Option<Vec<String>>, GitFail>>,
+    /// `None` when `rev-list` gave no range.
+    log: Option<Result<Vec<LogCommit>, GitFail>>,
+}
+
+/// D-C6: `merge-base`, `rev-list` and `log` run before the first object read starts the `--batch-command` process,
+/// so that process's own 2 s bound covers every read. git resolves `head` and `base` here as `<rev>^{commit}` does in
+/// steps 1 and 4; when those steps refuse a rev, these answers are not used.
+fn whole_reads(base: Option<&str>, head: &str, git: &mut dyn VerdictGit) -> WholeReads {
+    let merge_base = git.merge_base(base.unwrap_or("HEAD"), head);
+    let rev_list = match &merge_base {
+        Ok(Some(b)) => Some(git.rev_list(b, head, RANGE_MAX)),
+        _ => None,
+    };
+    let log = match (&merge_base, &rev_list) {
+        (Ok(Some(b)), Some(Ok(Some(_)))) => Some(git.log(b, head)),
+        _ => None,
+    };
+    WholeReads { merge_base, rev_list, log }
+}
+
+/// The D§9.4 problems of one keep; empty when the keep passes. Problems are given in step order.
 pub fn check_keep(req: &KeepRequest, git: &mut dyn VerdictGit) -> Vec<String> {
     let mut p = Problems::default();
+    let whole = req.head.as_deref().map(|h| whole_reads(req.base.as_deref(), h, git));
     // Step 1: head.
     let head = match &req.head {
         None => none(&mut p, "no head commit"),
@@ -87,9 +114,9 @@ pub fn check_keep(req: &KeepRequest, git: &mut dyn VerdictGit) -> Vec<String> {
     let ds: &[Disposition] = req.dispositions.as_deref().unwrap_or(&[]);
     // Step 3: uniqueness.
     unique(ds, &mut p);
-    let Some(head) = head else { return p.0 };
+    let (Some(head), Some(whole)) = (head, whole) else { return p.0 };
     // Step 4: node range.
-    let Some((base, range)) = node_range(req, &head, git, &mut p) else { return p.0 };
+    let Some((base, range)) = node_range(req, &head, whole.merge_base, whole.rev_list, git, &mut p) else { return p.0 };
     // Steps 5 to 7, each in entry order: one problem per entry.
     for d in ds {
         if let Proof::Fixed { commit } = &d.proof {
@@ -127,8 +154,9 @@ pub fn check_keep(req: &KeepRequest, git: &mut dyn VerdictGit) -> Vec<String> {
             }
         }
     }
-    // Steps 8 and 9 read one `git log` of R.
-    let log = match git.log(&base, &head) {
+    // Steps 8 and 9 read one `git log` of R; `rev-list` gave R, so `log` ran.
+    let Some(log) = whole.log else { unreachable!("log runs when rev-list gives the range") };
+    let log = match log {
         Ok(log) => log,
         Err(e) => {
             p.git(e);
@@ -254,7 +282,7 @@ fn shadowed(key: &str, rev: &str) -> String {
 fn version(git: &mut dyn VerdictGit, rev: &str, name: &str) -> Result<Version, GitFail> {
     Ok(match git.record_blob(rev, name)? {
         Blob::Missing => Version::Absent,
-        Blob::NotRegular => Version::Malformed,
+        Blob::NotRegular | Blob::TooLarge => Version::Malformed,
         Blob::Data(b) => {
             let stem = name.strip_suffix(".md").unwrap_or(name);
             parse_record(stem, &b).map_or(Version::Malformed, Version::Valid)
@@ -336,10 +364,13 @@ fn unique(ds: &[Disposition], p: &mut Problems) {
     }
 }
 
-/// D§9.4 step 4: the full base id and the node range R; `None` (with its problem) when R is not defined.
+/// D§9.4 step 4: the full base id and the node range R from the `merge-base` and `rev-list` answers; `None` (with its
+/// problem) when R is not defined.
 fn node_range(
     req: &KeepRequest,
     head: &str,
+    merge_base: Result<Option<String>, GitFail>,
+    rev_list: Option<Result<Option<Vec<String>>, GitFail>>,
     git: &mut dyn VerdictGit,
     p: &mut Problems,
 ) -> Option<(String, BTreeSet<String>)> {
@@ -351,20 +382,21 @@ fn node_range(
                 Ok(Resolved::Ref) => return none(p, &shadowed("base", b)),
                 Err(e) => return failed(p, e),
             };
-            match git.merge_base(&b, head) {
+            match merge_base {
                 Ok(Some(m)) if m == b => b,
                 Ok(_) => return none(p, "base is not an ancestor of head"),
                 Err(e) => return failed(p, e),
             }
         }
-        None => match git.merge_base("HEAD", head) {
+        None => match merge_base {
             Ok(Some(m)) if m == head => return none(p, "head is already in HEAD: call before the merge, or give base"),
             Ok(Some(m)) => m,
             Ok(None) => return none(p, "head has no common ancestor with HEAD: give base"),
             Err(e) => return failed(p, e),
         },
     };
-    match git.rev_list(&base, head, RANGE_MAX) {
+    let Some(rev_list) = rev_list else { unreachable!("rev-list runs when merge-base gives a base") };
+    match rev_list {
         Ok(Some(ids)) => Some((base, ids.into_iter().collect())),
         Ok(None) => none(p, "node range too large"),
         Err(e) => failed(p, e),

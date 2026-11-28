@@ -56,7 +56,9 @@ const PRINTERS: &[&str] = &[
 
 /// Wrappers that are skipped before the program, with their options that take an argument
 /// and the number of operand words skipped after the options.
-/// O§7.2 lists the first eight. `exec` and `nohup` are skipped too, for file printers only.
+/// O§7.2 lists all but `exec` and `nohup`, which are skipped too, for file printers only.
+/// After the options of `flock`, its lock file word is skipped, and `-c`/`--command` then
+/// gives the word that flock runs with `sh -c` (`argv`).
 const WRAPPERS: &[(&str, &[&str], usize)] = &[
     ("env", &["-u", "-C", "--unset", "--chdir"], 0),
     ("time", &["-f", "-o", "--format", "--output"], 0),
@@ -94,13 +96,22 @@ const WRAPPERS: &[(&str, &[&str], usize)] = &[
         0,
     ),
     ("builtin", &[], 0),
+    ("doas", &["-a", "-C", "-u"], 0),
+    ("busybox", &[], 0),
+    ("setsid", &[], 0),
+    (
+        "flock",
+        &["-w", "-E", "--wait", "--timeout", "--conflict-exit-code"],
+        1,
+    ),
     ("exec", &["-a"], 0),
     ("nohup", &[], 0),
 ];
 
 /// The wrappers that O§7.2 lists; a stage behind any other skipped word gives no name or runner.
 const LISTED_WRAPPERS: &[&str] = &[
-    "env", "time", "sudo", "nice", "command", "timeout", "stdbuf", "builtin",
+    "env", "time", "sudo", "nice", "command", "timeout", "stdbuf", "builtin", "doas", "busybox",
+    "setsid", "flock",
 ];
 
 /// Reserved words that are skipped at the start of a stage, for file printers only.
@@ -108,27 +119,108 @@ const RESERVED: &[&str] = &[
     "!", "{", "}", "if", "then", "else", "elif", "fi", "do", "done", "while", "until",
 ];
 
-/// `xargs` options that take the next word as their argument.
-const XARGS_TAKES: &[&str] = &[
-    "-I",
-    "-n",
-    "-P",
-    "-L",
-    "-d",
-    "-a",
-    "-E",
-    "-s",
-    "-J",
-    "-R",
-    "-S",
+/// `xargs` short options (GNU and BSD) that take a value: the rest of their word, or the next word.
+const XARGS_SHORT_TAKES: &[char] = &['I', 'n', 'P', 'L', 'd', 'a', 'E', 's', 'J', 'R', 'S'];
+/// GNU short options whose value is optional: only the rest of their word.
+const XARGS_SHORT_OPTIONAL: &[char] = &['e', 'l', 'i'];
+/// `xargs` long options that take the next word as their value (or a value after `=`).
+const XARGS_LONG_TAKES: &[&str] = &[
     "--max-args",
-    "--max-lines",
+    "--max-chars",
     "--max-procs",
     "--delimiter",
     "--arg-file",
-    "--eof",
     "--process-slot-var",
 ];
+/// GNU `xargs` long options that take no value.
+const XARGS_LONG_FLAGS: &[&str] = &[
+    "--null",
+    "--open-tty",
+    "--interactive",
+    "--no-run-if-empty",
+    "--verbose",
+    "--show-limits",
+    "--exit",
+    "--help",
+    "--version",
+];
+
+/// How one `xargs` option word ends.
+enum XargsOpt {
+    /// The next word is not its value.
+    Flag,
+    /// The next word is its value.
+    Arg,
+    /// Unsure whether the next word is its value: a GNU optional value (`--eof`, `--max-lines`, `--replace`,
+    /// a cluster ending in `-e`, `-l` or `-i`), or a long option that is not known (an abbreviation).
+    Maybe,
+}
+
+fn xargs_opt(o: &str) -> XargsOpt {
+    if o.starts_with("--") {
+        return if o.contains('=') || XARGS_LONG_FLAGS.contains(&o) {
+            XargsOpt::Flag
+        } else if XARGS_LONG_TAKES.contains(&o) {
+            XargsOpt::Arg
+        } else {
+            XargsOpt::Maybe
+        };
+    }
+    // A short cluster: the first letter with a value takes the rest of the word, or (when it is the last
+    // letter) the next word; an optional value is never the next word in GNU, but BSD has no such letter.
+    for (k, ch) in o.char_indices().skip(1) {
+        let attached = k + ch.len_utf8() < o.len();
+        if XARGS_SHORT_TAKES.contains(&ch) {
+            return if attached { XargsOpt::Flag } else { XargsOpt::Arg };
+        }
+        if XARGS_SHORT_OPTIONAL.contains(&ch) {
+            return if attached { XargsOpt::Flag } else { XargsOpt::Maybe };
+        }
+    }
+    XargsOpt::Flag
+}
+
+/// The indexes in `rest` (the words after `xargs`) where the command may start. A `Maybe` option is read both
+/// ways (O-C9: a printer in either reading counts). Each index is walked from at most once, so the work is
+/// linear in the number of words.
+fn xargs_starts(rest: &[Word]) -> Vec<usize> {
+    let n = rest.len();
+    let mut seen = vec![false; n + 1];
+    let mut starts = vec![];
+    let mut todo = vec![0];
+    while let Some(mut i) = todo.pop() {
+        loop {
+            if i >= n {
+                starts.push(n);
+                break;
+            }
+            if seen[i] {
+                break;
+            }
+            seen[i] = true;
+            let t = rest[i].text.as_str();
+            if !t.starts_with('-') {
+                starts.push(i);
+                break;
+            }
+            if t == "--" {
+                starts.push((i + 1).min(n));
+                break;
+            }
+            match xargs_opt(t) {
+                XargsOpt::Flag => i += 1,
+                XargsOpt::Arg => i += 2,
+                XargsOpt::Maybe => {
+                    todo.push(i + 2);
+                    i += 1;
+                }
+            }
+        }
+    }
+    starts.sort_unstable();
+    starts.dedup();
+    starts
+}
 
 // Subcommand lists (O§7.2, O§15 item 1).
 const GIT: &[&str] = &[
@@ -1023,6 +1115,19 @@ fn argv(words: &[Word]) -> Argv<'_> {
             };
         }
         i += operands;
+        // `flock <file> -c <command>` runs `<command>` with `sh -c`.
+        if wrapper == "flock"
+            && matches!(
+                words.get(i).map(|w| w.text.as_str()),
+                Some("-c" | "--command")
+            )
+        {
+            return Argv {
+                args: &[],
+                split: words.get(i + 1).map(|w| w.text.clone()),
+                listed,
+            };
+        }
     }
     Argv {
         args: &words[i.min(words.len())..],
@@ -1298,17 +1403,9 @@ fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, pos: usize, 
             nest(&text, depth, mode, acc);
         }
         "xargs" => {
-            let mut i = 0;
-            while let Some(w) = rest.get(i) {
-                if !w.text.starts_with('-') {
-                    break;
-                }
-                i += 1;
-                if XARGS_TAKES.contains(&w.text.as_str()) {
-                    i += 1;
-                }
+            for i in xargs_starts(rest) {
+                inner(&rest[i..], depth, mode, acc);
             }
-            inner(&rest[i.min(rest.len())..], depth, mode, acc);
         }
         "find" => {
             let mut i = 0;

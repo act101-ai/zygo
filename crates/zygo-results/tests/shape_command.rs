@@ -486,3 +486,81 @@ fn r1_shell_option_arguments_before_c() {
     ]);
     assert!(!fp("bash -o pipefail -c 'true'"));
 }
+
+// FX-42 O-F2: GNU `--max-chars` takes the next word; `--eof` takes a value only after `=` (O§7.1).
+#[test]
+fn xargs_max_chars_and_bare_eof_find_the_printer() {
+    let want = parse("ls | xargs cat");
+    assert!(want.file_printer);
+    for c in [
+        "ls | xargs --max-chars 100 cat",
+        "ls | xargs --eof cat",
+        "ls | xargs --eof=x cat",
+        "ls | xargs -s 100 cat",
+        "ls | xargs --max-lines cat",
+        "ls | xargs --max-lines=1 cat",
+    ] {
+        assert_eq!(parse(c), want, "{c:?}");
+    }
+}
+
+// FX-42 review F3: a short-option cluster whose value-taking letter is last takes the next word.
+#[test]
+fn xargs_short_option_clusters_take_their_value() {
+    all_fp(&[
+        "ls | xargs -0n 1 cat",
+        "ls | xargs -rn 1 cat",
+        "ls | xargs -0I {} cat {}",
+        "ls | xargs -tL 1 cat",
+        "ls | xargs -0n1 cat",
+        "ls | xargs -rtP 4 -n1 cat",
+    ]);
+    assert!(!fp("ls | xargs -0n 1 echo"));
+}
+
+// FX-42 review F5: an option whose value is optional is read both ways; a printer in either reading counts (O-C9).
+#[test]
+fn xargs_optional_value_either_reading_finds_the_printer() {
+    all_fp(&[
+        "ls | xargs --max-lines 1 cat",
+        "ls | xargs --max-lines cat",
+        "ls | xargs --eof x cat",
+        "ls | xargs --eof cat",
+        "ls | xargs --replace {} cat {}",
+        "ls | xargs -l 1 cat",
+        "ls | xargs -e x cat",
+        "ls | xargs -i cat {}",
+        "ls | xargs -0e x cat",
+        // An abbreviated long option (`--max-c` for `--max-chars`) is unsure: read both ways.
+        "ls | xargs --max-c 100 cat",
+        "ls | xargs --eof x --max-lines 1 -e y cat",
+    ]);
+    assert!(!fp("ls | xargs --eof x echo"));
+    assert!(!fp("ls | xargs -ex echo cat"));
+}
+
+// FX-42 O-F3: `doas`, `busybox`, `setsid` and `flock <file>` are skipped wrappers (O§7.2).
+#[test]
+fn doas_busybox_setsid_flock_are_skipped_wrappers() {
+    let want = parse("cat f");
+    assert!(want.file_printer);
+    for c in [
+        "doas cat f",
+        "busybox cat f",
+        "setsid cat f",
+        "flock /tmp/l cat f",
+        "doas -u root cat f",
+        "doas -n -C /etc/doas.conf cat f",
+        "setsid -f cat f",
+        "flock -w 5 /tmp/l cat f",
+        "flock -E 3 -x /tmp/l cat f",
+        "flock --timeout 5 /tmp/l cat f",
+    ] {
+        assert_eq!(parse(c), want, "{c:?}");
+    }
+    assert_eq!(parse("doas cargo test").name, "cargo test");
+    assert_eq!(parse("flock /tmp/l cargo test").name, "cargo test");
+    // flock runs the word after `-c` with `sh -c`.
+    all_fp(&["flock /tmp/l -c 'cat f'", "flock -n /tmp/l --command 'head f'"]);
+    assert!(!fp("flock /tmp/l -c 'cargo test'"));
+}

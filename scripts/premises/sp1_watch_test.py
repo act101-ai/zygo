@@ -2,12 +2,21 @@
 """Tests of sp1_watch.py (node MS-23): python3 -I scripts/premises/sp1_watch_test.py -> "sp1_watch tests: ok (<n>)".
 
 Pure parts only: argv classes, /proc stat and tcp parsing, environ names, git trace2 events, the judge and the
-side-traffic check on authored watcher events. No process is started, nothing is read from /proc, no network.
+side-traffic check on authored watcher events; the known_hosts add and remove and the note 3.4 reader (node FX-38)
+on files in a temporary folder (never the real ~/.ssh or HOME); the shell steps of sp1_kh.sh and the acc command
+run as child processes with HOME in that folder. No agent or git is started, nothing is read from /proc, no network.
 """
 import datetime
+import errno
+import hashlib
 import json
 import os
+import resource
+import shutil
+import signal
+import subprocess
 import sys
+import tempfile
 
 sys.dont_write_bytecode = True   # no __pycache__ in the checkout
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -259,6 +268,288 @@ ok, text = w.side_traffic(child_ev + [dict(npm, t=T - 5)], lines, clean, LO, HI)
 check("side: connection before the window: listed, passes", (ok, "opencode 2606:4700:0:0:0:0:6810:722:443 x1" in text), (True, True))
 check("side: known_marketplaces present: fail", w.side_traffic([], [], {"known_marketplaces": True, "git_dirs": 0}, LO, HI)[0], False)
 check("side: .git under config: fail", w.side_traffic([], [], {"known_marketplaces": False, "git_dirs": 1}, LO, HI)[0], False)
+
+# known_hosts add and remove (node FX-38): temporary folders only, never the real ~/.ssh or HOME; the shell steps
+# (sp1_kh.sh) run under sh with HOME set to a temporary folder
+RUNL = b"[ssh.github.com]:443 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+L1 = b"github.com ssh-ed25519 AAAAone"
+L2 = b"gitlab.com ssh-ed25519 AAAAtwo"
+HERE = os.path.dirname(os.path.abspath(__file__))
+TMP = tempfile.mkdtemp(prefix="sp1-kh-")
+TMP = os.path.realpath(TMP)
+
+
+def kh_case(name, target_bytes):
+    """<TMP>/<name>: the target file, ssh/known_hosts (a relative link to it), the run's line file kh443, and the
+    paths of the saved copy and the run-state file (both absent)."""
+    d = os.path.join(TMP, name)
+    os.makedirs(os.path.join(d, "ssh"))
+    tgt = os.path.join(d, "target")
+    with open(tgt, "wb") as f:
+        f.write(target_bytes)
+    os.chmod(tgt, 0o644)
+    link = os.path.join(d, "ssh", "known_hosts")
+    os.symlink("../target", link)
+    lf = os.path.join(d, "kh443")
+    with open(lf, "wb") as f:
+        f.write(RUNL + b"\n")
+    return d, tgt, link, lf, os.path.join(d, "known_hosts.start"), os.path.join(d, "kh.state")
+
+
+def rb(p):
+    with open(p, "rb") as f:
+        return f.read()
+
+
+def fsize_limited(n, fn):
+    """fn() with RLIMIT_FSIZE n (a write past n bytes gives EFBIG; SIGXFSZ ignored), both restored after."""
+    lim = resource.getrlimit(resource.RLIMIT_FSIZE)
+    old = signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+    resource.setrlimit(resource.RLIMIT_FSIZE, (n, lim[1]))
+    try:
+        return fn()
+    finally:
+        resource.setrlimit(resource.RLIMIT_FSIZE, lim)
+        signal.signal(signal.SIGXFSZ, old)
+
+
+def sh(script, *args, premises=HERE):
+    """Run <script> under sh with HOME and TMPDIR in TMP and PREMISES_DIR=<premises>; (exit, stdout)."""
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.path.join(TMP, "home"), "TMPDIR": TMP,
+           "PREMISES_DIR": premises, "LANG": "C.UTF-8"}
+    os.makedirs(env["HOME"], exist_ok=True)
+    p = subprocess.run(["sh", "-c", script, "sh"] + list(args), env=env, stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, timeout=60)
+    return p.returncode, p.stdout.decode("utf-8", "replace")
+
+
+try:
+    # the run's line between two other lines: the file was rewritten during the run (its prefix is not the saved
+    # copy), so the last exact copy of the line is removed; the target is byte-equal to its content before the add
+    before = L1 + b"\n" + L2 + b"\n"
+    d, tgt, link, lf, save, state = kh_case("between", before)
+    check("kh_add before the rewrite", w.kh_add(link, lf, save, state), "added")
+    with open(tgt, "wb") as f:
+        f.write(L1 + b"\n" + RUNL + b"\n" + L2 + b"\n")
+    res = w.kh_remove(state, lf)
+    check("kh_remove_through_a_symlinked_known_hosts",
+          (res, os.path.islink(link), os.readlink(link), rb(tgt), os.stat(tgt).st_mode & 0o7777, w.kh_compare(save, tgt)),
+          ("removed", True, "../target", before, 0o644, (0, 0)))
+
+    # add, then remove, through the link: the target is byte-equal to its content before the add; the run state
+    # names the resolved target and the saved copy's size and hash
+    d, tgt, link, lf, save, state = kh_case("roundtrip", before)
+    a = w.kh_add(link, lf, save, state)
+    mid = rb(tgt)
+    with open(state) as f:
+        st = json.load(f)
+    r = w.kh_remove(state, lf)
+    check("kh_add_then_remove_through_a_link_is_byte_equal",
+          (a, mid, rb(save), st["target"], st["size"], st["sha256"] == hashlib.sha256(before).hexdigest(), r,
+           os.path.islink(link), rb(tgt), w.kh_compare(save, w.kh_target(state))),
+          ("added", before + RUNL + b"\n", before, tgt, len(before), True, "removed", True, before, (0, 0)))
+
+    # another process adds a line after the run's line: the remove keeps it, the comparison names it
+    d, tgt, link, lf, save, state = kh_case("other", L1 + b"\n")
+    a = w.kh_add(link, lf, save, state)
+    with open(link, "ab") as f:
+        f.write(L2 + b"\n")
+    r = w.kh_remove(state, lf)
+    check("kh_remove_keeps_other_lines_added_during_the_run",
+          (a, r, rb(tgt), os.path.islink(link), w.kh_compare(save, tgt)),
+          ("added", "removed", L1 + b"\n" + L2 + b"\n", True, (0, 1)))
+
+    # an append to a read-only target fails: not added; the remove then changes nothing (skipped as root: root
+    # can write a 0444 file)
+    if os.geteuid() == 0:
+        print("skip: kh_add_failed_append_is_not_recorded_as_added (euid 0 can write a read-only file)")
+    else:
+        d, tgt, link, lf, save, state = kh_case("readonly", L1 + b"\n")
+        os.chmod(tgt, 0o444)
+        a = w.kh_add(link, lf, save, state)
+        r = w.kh_remove(state, lf)
+        check("kh_add_failed_append_is_not_recorded_as_added",
+              (a.startswith("failed: "), r, rb(tgt), os.path.islink(link), os.stat(tgt).st_mode & 0o7777),
+              (True, "the added line is not in the file", L1 + b"\n", True, 0o444))
+        os.chmod(tgt, 0o644)
+
+    # an append whose write fails at the flush before any byte (RLIMIT_FSIZE at the target's size; the target is
+    # larger than the saved copy's and the run state's files, so only the append meets the limit): not added
+    BIG = (L1 + b"\n") * 64
+    d, tgt, link, lf, save, state = kh_case("fsize", BIG)
+    a = fsize_limited(len(BIG), lambda: w.kh_add(link, lf, save, state))
+    check("kh_add_flush_failure_is_not_added", (a.startswith("failed: the append failed (EFBIG)"), rb(tgt)), (True, BIG))
+
+    # a partial append (EFBIG after 10 bytes of the line): not added; the remove cuts the fragment
+    d, tgt, link, lf, save, state = kh_case("partial", BIG)
+    a = fsize_limited(len(BIG) + 10, lambda: w.kh_add(link, lf, save, state))
+    part = rb(tgt)
+    r = w.kh_remove(state, lf)
+    check("kh_add_partial_append_is_restored",
+          (a.startswith("failed: the append failed (EFBIG)"), part, r, rb(tgt), os.path.islink(link)),
+          (True, BIG + RUNL[:10], "removed a partial append (10 bytes)", BIG, True))
+
+    # the fsync fails after the line was written: not added; the remove takes the whole line out
+    def eio(fd):
+        raise OSError(errno.EIO, "injected")
+    d, tgt, link, lf, save, state = kh_case("fsync", L1 + b"\n")
+    a = w.kh_add(link, lf, save, state, fsync=eio)
+    r = w.kh_remove(state, lf)
+    check("kh_add_fsync_failure_is_restored", (a.startswith("failed: the append failed (EIO)"), r, rb(tgt)),
+          (True, "removed", L1 + b"\n"))
+
+    # the link is pointed at another file between the add and the remove: the remove works on the recorded target
+    d, tgt, link, lf, save, state = kh_case("retarget", L1 + b"\n")
+    a = w.kh_add(link, lf, save, state)
+    other = os.path.join(d, "other")
+    with open(other, "wb") as f:
+        f.write(L2 + b"\n" + RUNL + b"\n")
+    os.unlink(link)
+    os.symlink("../other", link)
+    r = w.kh_remove(state, lf)
+    check("kh_remove_uses_the_recorded_target_after_a_retarget",
+          (a, r, rb(tgt), rb(other), os.readlink(link)),
+          ("added", "removed", L1 + b"\n", L2 + b"\n" + RUNL + b"\n", "../other"))
+
+    # the rewrite is a rename onto the resolved target: mode kept, link kept, no temporary file left
+    d, tgt, link, lf, save, state = kh_case("mode", L1 + b"\n")
+    os.chmod(tgt, 0o600)
+    w.kh_add(link, lf, save, state)
+    r = w.kh_remove(state, lf)
+    check("kh_remove_renames_onto_the_target",
+          (r, os.stat(tgt).st_mode & 0o7777, os.path.islink(link), sorted(os.listdir(d))),
+          ("removed", 0o600, True, ["kh.state", "kh443", "known_hosts.start", "ssh", "target"]))
+
+    # the target changes while the new text is written: read again and redo once; a second change: failure, no write
+    d, tgt, link, lf, save, state = kh_case("race1", L1 + b"\n")
+    w.kh_add(link, lf, save, state)
+    calls = []
+
+    def once():
+        calls.append(1)
+        if len(calls) == 1:
+            with open(tgt, "ab") as f:
+                f.write(L2 + b"\n")
+    r = w.kh_remove(state, lf, before_rename=once)
+    check("kh_remove_redoes_once_after_a_change", (r, rb(tgt), len(calls)), ("removed", L1 + b"\n" + L2 + b"\n", 2))
+    d, tgt, link, lf, save, state = kh_case("race2", L1 + b"\n")
+    w.kh_add(link, lf, save, state)
+
+    def always():
+        with open(tgt, "ab") as f:
+            f.write(b"x\n")
+    r = w.kh_remove(state, lf, before_rename=always)
+    check("kh_remove_fails_after_a_second_change",
+          (r, rb(tgt), sorted(os.listdir(d))),
+          ("failed: known_hosts changed while it was rewritten (twice)", L1 + b"\n" + RUNL + b"\nx\nx\n",
+           ["kh.state", "kh443", "known_hosts.start", "ssh", "target"]))
+
+    # the line is there before the run: present, the file is not changed, no run state
+    d, tgt, link, lf, save, state = kh_case("present", L1 + b"\n" + RUNL + b"\n")
+    check("kh_add_present_line", (w.kh_add(link, lf, save, state), rb(tgt), os.path.exists(state)),
+          ("present", L1 + b"\n" + RUNL + b"\n", False))
+
+    # a file without a line end at its end is not changed
+    d, tgt, link, lf, save, state = kh_case("noeol", L1)
+    a = w.kh_add(link, lf, save, state)
+    check("kh_add_no_line_end", (a.startswith("failed: "), rb(tgt), os.path.exists(state)), (True, L1, False))
+
+    # no known_hosts file: not created
+    d, tgt, link, lf, save, state = kh_case("missing", b"")
+    os.unlink(tgt)
+    a = w.kh_add(link, lf, save, state)
+    check("kh_add_missing_file", (a.startswith("failed: "), os.path.exists(tgt), os.path.exists(state)), (True, False, False))
+
+    # no run state: the remove says so and changes nothing
+    check("kh_remove_without_a_run_state", w.kh_remove(os.path.join(TMP, "none.state"), lf).startswith("failed: "), True)
+
+    # shell: sp1_kh_add and sp1_kh_restore (sp1_kh.sh, sourced by live-sp1.sh); the teardown's tab parse
+    d, tgt, link, lf, save, state = kh_case("shell", L1 + b"\n")
+    rc, out = sh('. "$PREMISES_DIR/sp1_kh.sh"; sp1_kh_add "$1" "$2"; printf "%s\\n" "$KHR"; '
+                 'printf "x\\n" >>"$1"; sp1_kh_restore "$2"; printf "%s|%s|%s|%s\\n" "$?" "$KH_R" "$KH_MISS" "$KH_MORE"',
+                 link, d)
+    check("sh: sp1_kh_add then sp1_kh_restore (tab parse)", (rc, out, rb(tgt)),
+          (0, "added\n0|removed|0|1\n", L1 + b"\nx\n"))
+    fake = os.path.join(TMP, "fake-premises")
+    os.makedirs(fake)
+    shutil.copy(os.path.join(HERE, "sp1_kh.sh"), fake)
+    with open(os.path.join(fake, "sp1_watch.py"), "w") as f:
+        f.write("import sys\nsys.exit(1)\n")
+    d, tgt, link, lf, save, state = kh_case("shell-q", L1 + b"\n")
+    with open(state, "w") as f:
+        f.write("{}")
+    rc, out = sh('. "$PREMISES_DIR/sp1_kh.sh"; sp1_kh_restore "$1"; printf "%s|%s|%s|%s\\n" "$?" "$KH_R" "$KH_MISS" "$KH_MORE"',
+                 d, premises=fake)
+    check("sh: sp1_kh_restore with no kh-remove output: the ? fallback", (rc, out),
+          (0, "1|not checked (kh-remove gave no result)|?|?\n"))
+    d, tgt, link, lf, save, state = kh_case("shell-none", L1 + b"\n")
+    rc, out = sh('. "$PREMISES_DIR/sp1_kh.sh"; sp1_kh_restore "$1"; printf "%s|%s\\n" "$?" "$KH_R"', d)
+    check("sh: sp1_kh_restore without a run state does nothing", (rc, out, rb(tgt)), (0, "0|\n", L1 + b"\n"))
+
+    # the signal window: TERM arrives while the command substitution of kh-add runs (the shell runs the trap after
+    # it, before the script reaches its own record of the result); the trap's restore needs only the run state
+    d, tgt, link, lf, save, state = kh_case("signal", L1 + b"\n")
+    rc, out = sh('. "$PREMISES_DIR/sp1_kh.sh"; '
+                 'trap \'sp1_kh_restore "$2"; printf "%s|%s\\n" "$KH_R" "$KH_MISS"; exit 143\' TERM; '
+                 'KHR=$(python3 -I "$PREMISES_DIR/sp1_watch.py" kh-add --file "$1" --line "$2/kh443" '
+                 '--save "$2/known_hosts.start" --state "$2/kh.state"; kill -TERM $$); echo "not reached: $KHR"',
+                 link, d)
+    check("sh: a signal between kh-add and the shell's record: restored", (rc, out, rb(tgt), os.path.islink(link)),
+          (143, "removed|0\n", L1 + b"\n", True))
+
+    # note 3.4: only this run's workspaces are read
+    st = os.path.join(TMP, "state", "workspaces")
+    mine, other = "bc10a6a9" + "0" * 18, "e77e1d00" + "1" * 18
+
+    def put(wid, raw):
+        os.makedirs(os.path.join(st, wid, "mail", "sync"), exist_ok=True)
+        with open(os.path.join(st, wid, "mail", "sync", "state.json"), "wb") as f:
+            f.write(raw)
+    put(mine, json.dumps({"last_ok": 1795846625, "public": {"verdict": "private"}, "pushed": {"ack/sp1ssh.json": "x"}}).encode())
+    put(other, json.dumps({"last_ok": 1700000000, "last_error": "OTHER-ERROR-TEXT", "public": {"verdict": "OTHER-VERDICT"},
+                           "pushed": {"registry/OTHER-HOST.json": "y"}}).encode())
+    acc = w.acceptance_text(st, [mine])
+    note = w.acc_note(st, [mine])
+    check("acceptance_note_reads_only_this_runs_workspaces",
+          (any(x in acc + note for x in ("OTHER-ERROR-TEXT", "OTHER-VERDICT", "OTHER-HOST", "1700000000", other)),
+           "not this run" in note,
+           note),
+          (False, False, "bc10a6a9… (this run): last_ok 1795846625, last_error absent, public private, pushed ack/sp1ssh.json"))
+    check("acceptance note: an id with no state.json", w.acc_note(st, ["f" * 26]), "ffffffff… (this run): no state.json")
+    check("acceptance note: an invalid id", (w.acc_note(st, ["../" + other]), w.acceptance_text(st, ["../" + other])),
+          ("invalid id (this run)", ""))
+    # malformed state files: "unreadable" for that id only, the others still read
+    bad_ids = {"a1" * 13: b"{not json", "a2" * 13: b"\xff\xfe{}", "a3" * 13: b'{"public": "x"}', "a4" * 13: b'{"pushed": ["a"]}',
+               "a5" * 13: b"[1, 2]",
+               "a6" * 13: b'{\n "last_error": "x",\n "note": "/h/u/workspaces/' + other.encode() + b'/mail/sync/state.json"\n}'}
+    for k, v in bad_ids.items():
+        put(k, v)
+    os.makedirs(os.path.join(st, "a7" * 13, "mail", "sync", "state.json"))
+    ids = sorted(bad_ids) + ["a7" * 13, mine]
+    note = w.acc_note(st, ids)
+    want = "; ".join(["a1a1a1a1… (this run): unreadable", "a2a2a2a2… (this run): unreadable",
+                      "a3a3a3a3… (this run): unreadable", "a4a4a4a4… (this run): unreadable",
+                      "a5a5a5a5… (this run): unreadable",
+                      "a6a6a6a6… (this run): last_ok None, last_error x, public None, pushed none",
+                      "a7a7a7a7… (this run): unreadable",
+                      "bc10a6a9… (this run): last_ok 1795846625, last_error absent, public private, pushed ack/sp1ssh.json"])
+    check("acceptance note: a malformed state.json is unreadable for that id only", note, want)
+    # the acc command: ids as arguments, the acceptance file, the note on stdout
+    out_f = os.path.join(TMP, "acceptance.txt")
+    p = subprocess.run([sys.executable, "-I", os.path.join(HERE, "sp1_watch.py"), "acc", "--state", st, "--out", out_f,
+                        mine, "f" * 26], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    acc_file = rb(out_f).decode()
+    check("acc command: this run's ids only",
+          (p.returncode, p.stdout.decode(), p.stderr, other in acc_file, mine in acc_file, "OTHER" in acc_file),
+          (0, "bc10a6a9… (this run): last_ok 1795846625, last_error absent, public private, pushed ack/sp1ssh.json; "
+              "ffffffff… (this run): no state.json\n", b"", False, True, False))
+finally:
+    for root, dirs, files in os.walk(TMP):
+        for x in dirs + files:
+            p = os.path.join(root, x)
+            if not os.path.islink(p):
+                os.chmod(p, 0o700)
+    shutil.rmtree(TMP)
 
 if bad == 0:
     print("sp1_watch tests: ok (%d)" % n)

@@ -1,5 +1,5 @@
-//! The verdict git reader (D§9.4): one `git cat-file --batch`, one `git merge-base`, one `git rev-list` and one
-//! `git log`, each bounded, behind an injectable runner (D§17).
+//! The verdict git reader (D§9.4): one `git cat-file --batch-command`, one `git merge-base`, one `git rev-list` and
+//! one `git log`, each bounded, behind an injectable runner (D§17).
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use zygo_core::esc;
 
+use crate::decisions::record::MAX_FILE;
 use crate::repo::{RunError, Whole};
 
 /// The deadline of one git process.
@@ -21,19 +22,28 @@ const CAT_FILE: &str = "git cat-file";
 const MERGE_BASE: &str = "git merge-base";
 const REV_LIST: &str = "git rev-list";
 const LOG: &str = "git log";
-/// The object reads of one `--batch` process (D§9.4).
+/// The objects one `--batch-command` process reads with `contents` (D§9.4); `info` requests do not count.
 const BATCH_OBJECTS: usize = 2_048;
-/// The object bytes read by one `--batch` process, in all (D§9.4).
+/// The object contents bytes read by one `--batch-command` process, in all (D§9.4).
 const BATCH_BYTES: u64 = 16 * 1024 * 1024;
-/// The longest `--batch` reply header read.
+/// The longest reply header read.
 const HEADER_MAX: usize = 600;
 /// The modes of a regular file tree entry.
 const REGULAR: [&[u8]; 2] = [b"100644", b"100755"];
 
-/// One `--batch` reply.
+/// What one request asks of an object.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Ask {
+    /// The header only: id, type and size.
+    Info,
+    /// The header and the contents.
+    Contents,
+}
+
+/// One `--batch-command` reply; `body` is empty for [`Ask::Info`].
 enum Reply {
     Missing,
-    Object { id: String, kind: String, body: Vec<u8> },
+    Object { id: String, kind: String, size: u64, body: Vec<u8> },
 }
 
 /// The bytes of stderr kept in a `failed: <line>` reason.
@@ -60,6 +70,8 @@ impl std::fmt::Display for GitFail {
 pub enum Blob {
     Missing,
     NotRegular,
+    /// A regular file over 64 KiB (D§6.8, D§14): malformed; its contents are never read.
+    TooLarge,
     Data(Vec<u8>),
 }
 
@@ -139,6 +151,8 @@ pub struct ProcessGit {
     bytes: u64,
     /// The reply to `<rev>:docs/decisions`, by rev: each tree is read and counted once.
     trees: HashMap<String, Reply>,
+    /// The record file of each blob id: each blob is asked once.
+    blobs: HashMap<String, Blob>,
 }
 
 impl ProcessGit {
@@ -156,6 +170,7 @@ impl ProcessGit {
             objects: 0,
             bytes: 0,
             trees: HashMap::new(),
+            blobs: HashMap::new(),
         }
     }
 
@@ -181,12 +196,13 @@ impl ProcessGit {
         c
     }
 
-    /// The one `--batch` process: spawned at the first object read, with the deadline it got then. Its first failure
-    /// is kept, and every later read gives it with no new process.
+    /// The one `--batch-command` process: spawned at the first object read, with the deadline it got then (D-C6: 2 s
+    /// for the process; `check_keep` runs the other three processes before it). Its first failure is kept, and every
+    /// later read gives it with no new process.
     fn batch_io(&mut self) -> Result<&mut Box<dyn BatchIo>, GitFail> {
         if self.batch.is_none() {
             let spawned = self.deadline(CAT_FILE).and_then(|deadline| {
-                let cmd = self.cmd(&["cat-file", "--batch"]);
+                let cmd = self.cmd(&["cat-file", "--batch-command"]);
                 self.runner.batch(cmd, deadline).map_err(|e| fail(CAT_FILE, e.reason()))
             });
             self.batch = Some(spawned);
@@ -198,28 +214,35 @@ impl ProcessGit {
         }
     }
 
-    /// Reads `object` through the one `--batch` process. Every error is kept (the process is dropped), so later reads
-    /// give it with no new process.
-    fn ask(&mut self, object: &str) -> Result<Reply, GitFail> {
-        let reply = self.read_object(object);
+    /// Asks `what` of `object` through the one `--batch-command` process. Every error is kept (the process is
+    /// dropped), so later reads give it with no new process.
+    fn ask(&mut self, what: Ask, object: &str) -> Result<Reply, GitFail> {
+        let reply = self.read_object(what, object);
         if let Err(e) = &reply {
             self.batch = Some(Err(e.clone()));
         }
         reply
     }
 
-    /// The object and byte caps are checked before any stdout of the object is read: the 2,049th request is not sent,
-    /// and a header whose size takes the total past 16 MiB gives `TooMuch` with no body read.
-    fn read_object(&mut self, object: &str) -> Result<Reply, GitFail> {
+    /// The object and byte caps are checked before any stdout of the object is read: the 2,049th `contents` request is
+    /// not sent, and a `contents` header whose size takes the total past 16 MiB gives `TooMuch` with no body read. An
+    /// `info` reply is its header only, and counts toward neither cap.
+    fn read_object(&mut self, what: Ask, object: &str) -> Result<Reply, GitFail> {
         self.batch_io()?;
-        if self.objects == BATCH_OBJECTS {
-            return Err(GitFail::TooMuch);
+        if what == Ask::Contents {
+            if self.objects == BATCH_OBJECTS {
+                return Err(GitFail::TooMuch);
+            }
+            self.objects += 1;
         }
-        self.objects += 1;
         let Some(Ok(io)) = self.batch.as_mut() else { unreachable!("batch_io gave a process") };
         let run = |e: RunError| fail(CAT_FILE, e.reason());
         let bad = || fail(CAT_FILE, "bad output");
-        io.send(format!("{object}\n").as_bytes()).map_err(run)?;
+        let verb = match what {
+            Ask::Info => "info",
+            Ask::Contents => "contents",
+        };
+        io.send(format!("{verb} {object}\n").as_bytes()).map_err(run)?;
         let header = io.read_line(HEADER_MAX).map_err(run)?;
         let header = std::str::from_utf8(&header).map_err(|_| bad())?;
         match header.split(' ').collect::<Vec<_>>()[..] {
@@ -227,6 +250,10 @@ impl ProcessGit {
             [id, kind, size] => {
                 let id = hex_id(id.as_bytes()).ok_or_else(bad)?;
                 let size: u64 = size.parse().map_err(|_| bad())?;
+                let kind = kind.to_string();
+                if what == Ask::Info {
+                    return Ok(Reply::Object { id, kind, size, body: Vec::new() });
+                }
                 let total = self.bytes.saturating_add(size);
                 if total > BATCH_BYTES {
                     return Err(GitFail::TooMuch);
@@ -236,7 +263,7 @@ impl ProcessGit {
                 if io.read_exact(1).map_err(run)? != b"\n" {
                     return Err(bad());
                 }
-                Ok(Reply::Object { id, kind: kind.to_string(), body })
+                Ok(Reply::Object { id, kind, size, body })
             }
             _ => Err(bad()),
         }
@@ -360,7 +387,7 @@ impl VerdictGit for ProcessGit {
         if !good_rev(rev) {
             return Ok(None);
         }
-        match self.ask(&format!("{rev}^{{commit}}"))? {
+        match self.ask(Ask::Contents, &format!("{rev}^{{commit}}"))? {
             Reply::Object { id, .. } => Ok(Some(id)),
             Reply::Missing => Ok(None),
         }
@@ -371,12 +398,17 @@ impl VerdictGit for ProcessGit {
             return Ok(Blob::Missing);
         }
         // The tree is read and its entry mode decides: a link or submodule is never read as a blob (D§6.8). Each
-        // rev's tree is read, and counted toward the caps, once.
+        // rev's tree is read, and counted toward the caps, once. Its type comes first (`info`): a `docs/decisions`
+        // that is not a tree is missing, and its contents are never read (D§14).
         if !self.trees.contains_key(rev) {
-            let r = self.ask(&format!("{rev}:docs/decisions"))?;
+            let path = format!("{rev}:docs/decisions");
+            let r = match self.ask(Ask::Info, &path)? {
+                Reply::Object { kind, .. } if kind == "tree" => self.ask(Ask::Contents, &path)?,
+                _ => Reply::Missing,
+            };
             self.trees.insert(rev.to_string(), r);
         }
-        let Some(Reply::Object { id, kind, body }) = self.trees.get(rev) else { return Ok(Blob::Missing) };
+        let Some(Reply::Object { id, kind, body, .. }) = self.trees.get(rev) else { return Ok(Blob::Missing) };
         if kind != "tree" {
             return Ok(Blob::Missing);
         }
@@ -389,10 +421,20 @@ impl VerdictGit for ProcessGit {
             return Ok(Blob::NotRegular);
         }
         let blob: String = raw.iter().map(|b| format!("{b:02x}")).collect();
-        match self.ask(&blob)? {
-            Reply::Object { kind, body, .. } if kind == "blob" => Ok(Blob::Data(body)),
-            _ => Err(bad()),
+        if let Some(found) = self.blobs.get(&blob) {
+            return Ok(found.clone());
         }
+        // The size comes first (`info`): a file over 64 KiB is malformed and never read (D§6.8, D§14).
+        let found = match self.ask(Ask::Info, &blob)? {
+            Reply::Object { kind, size, .. } if kind == "blob" && size > MAX_FILE as u64 => Blob::TooLarge,
+            Reply::Object { kind, .. } if kind == "blob" => match self.ask(Ask::Contents, &blob)? {
+                Reply::Object { kind, body, .. } if kind == "blob" => Blob::Data(body),
+                _ => return Err(bad()),
+            },
+            _ => return Err(bad()),
+        };
+        self.blobs.insert(blob, found.clone());
+        Ok(found)
     }
 
     fn merge_base(&mut self, a: &str, b: &str) -> Result<Option<String>, GitFail> {

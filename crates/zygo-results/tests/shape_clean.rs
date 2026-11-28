@@ -200,9 +200,10 @@ fn osc_stops_at_carriage_return() {
     // F2: an escape never takes `\r`.
     let input = "a\x1b]0;t\rb\x07c\r\n";
     assert_eq!(got(input, true), ("a0;t\rb\x07c\r\n".into(), vec![ColorCodesRemoved]));
+    // FX-42: an escape was removed from the line, so the line is unsure: only the `\r` goes, the text stays in order.
     assert_eq!(
         got(input, false),
-        ("b\x07c\n".into(), vec![ColorCodesRemoved, ProgressLinesRemoved])
+        ("a0;tb\x07c\n".into(), vec![ColorCodesRemoved, ProgressLinesRemoved])
     );
 }
 
@@ -332,4 +333,100 @@ fn nf_intermediates_before_a_c0_control_lose_only_esc() {
     // FX-21 review F5: a C0 control is not a final byte (`clean.rs` `_ => 1`)
     color("a\x1b(\tb", "a(\tb");
     color("a\x1b$(\x07b", "a$(\x07b");
+}
+
+// FX-42 O-F1, review F1/F2/F4/F6 (author's direction): a line with `\r` keeps only its last segment when that
+// segment surely covers every earlier one; else the line is unsure and only its `\r` bytes go (O§7.4, O-C9).
+#[test]
+fn cr_overwrite_keeps_the_columns_a_terminal_shows() {
+    // A shorter last segment does not cover the error text: nothing of it goes.
+    assert_eq!(
+        got("error[E0425]: cannot find value `x` in this scope at src/main.rs:10\r   \n", false),
+        (
+            "error[E0425]: cannot find value `x` in this scope at src/main.rs:10   \n".into(),
+            vec![ProgressLinesRemoved]
+        )
+    );
+    assert_eq!(got("50%\r100%\n", false), ("100%\n".into(), vec![ProgressLinesRemoved]));
+    // A character of unsure width (a wide character, a tab, a combining mark) makes the line unsure.
+    assert_eq!(got("ab\u{6f22}cd\rxyz12\n", false).0, "ab\u{6f22}cdxyz12\n");
+    assert_eq!(got("a\tb\rxyz\n", false).0, "a\tbxyz\n");
+    assert_eq!(got("abc\r\u{6f22}\u{6f22}\n", false).0, "abc\u{6f22}\u{6f22}\n");
+    assert_eq!(got("e\u{301}abc\rxyzzy\n", false).0, "e\u{301}abcxyzzy\n");
+}
+
+// Review F6: a narrower last segment never reorders text.
+#[test]
+fn cr_narrower_last_segment_keeps_text_in_order() {
+    assert_eq!(got("abcdef\rxy\n", false), ("abcdefxy\n".into(), vec![ProgressLinesRemoved]));
+    assert_eq!(got("abcdef\rxy\rz\n", false).0, "abcdefxyz\n");
+    // A wider earlier segment anywhere before the last makes the line unsure.
+    assert_eq!(got("ab\rabcdef\rabcd\n", false).0, "ababcdefabcd\n");
+    // Equal or wider last segment: only it stays.
+    assert_eq!(got("abcd\rab\rwxyz\n", false).0, "wxyz\n");
+    // A `\r` with nothing after it overwrites nothing.
+    assert_eq!(got("abc\r\r\n", false).0, "abc\n");
+}
+
+// Review F2: an escape removed from the line (a cursor move, an erase) makes the column count unsure.
+#[test]
+fn cr_after_an_escape_keeps_the_line() {
+    let (out, steps) = got("error: build failed in module foo\r\x1b[60C[FAIL]\n", false);
+    assert_eq!(out, "error: build failed in module foo[FAIL]\n");
+    assert_eq!(steps, vec![ColorCodesRemoved, ProgressLinesRemoved]);
+    assert_eq!(got("ok\x1b[20Cerror: x failed\rdone.\n", false).0, "okerror: x faileddone.\n");
+    assert_eq!(got("abc\x1b[2Kdef\rX\n", false).0, "abcdefX\n");
+}
+
+// Review F4: progress frames of equal width give only the last frame.
+#[test]
+fn cr_equal_width_tqdm_frames_give_the_last_frame() {
+    let frames = [
+        " 10%|\u{2588}         | 1/10\r",
+        " 50%|\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}     | 5/10\r",
+        " 95%|\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{258c}| 9/10\r",
+        "100%|\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}| 10/10\n",
+    ];
+    assert_eq!(
+        got(&frames.concat(), false).0,
+        "100%|\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}| 10/10\n"
+    );
+    // pip / rich bars draw with box-drawing characters.
+    assert_eq!(got("\u{2501}\u{2501}  2/4\r\u{2501}\u{2501}\u{2501}\u{2501} 4/4\n", false).0, "\u{2501}\u{2501}\u{2501}\u{2501} 4/4\n");
+}
+
+// Review F4: a spinner whose last frame is narrower is kept in order, never reordered.
+#[test]
+fn cr_braille_spinner_is_never_reordered() {
+    assert_eq!(
+        got("\u{280b} Compiling a\r\u{2819} error: b\r\u{2839} done\n", false).0,
+        "\u{280b} Compiling a\u{2819} error: b\u{2839} done\n"
+    );
+    assert_eq!(got("\u{280b} 1/3\r\u{2819} 2/3\r\u{2839} 3/3\n", false).0, "\u{2839} 3/3\n");
+}
+
+// Review F1: the reviewer's 53.8 s and 12.9 s inputs. Work is checked by the output, not by time (the time
+// check is `shaping_latency`): a long first segment then short ones keeps every character in order; equal
+// spinner frames give the last frame.
+#[test]
+fn cr_heavy_lines_give_the_rule_output() {
+    let mut a = "a".repeat(2_000_000);
+    for _ in 0..50_000 {
+        a.push_str("\rx");
+    }
+    a.push('\n');
+    let mut want = "a".repeat(2_000_000);
+    want.push_str(&"x".repeat(50_000));
+    want.push('\n');
+    let (out, steps) = got(&a, false);
+    assert_eq!(steps, vec![ProgressLinesRemoved]);
+    assert_eq!(out.len(), a.len() - 50_000);
+    assert!(out == want);
+
+    let mut b = String::new();
+    for i in 0..60_000 {
+        b.push_str(&format!("\u{280b} {i:>6}/60000 building\r"));
+    }
+    b.push('\n');
+    assert_eq!(got(&b, false).0, "\u{280b}  59999/60000 building\n");
 }

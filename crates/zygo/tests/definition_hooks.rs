@@ -1251,11 +1251,11 @@ mod unix {
         for i in [0, 2, 4] {
             assert!(ran[i].2.iter().any(|l| l.contains(LOAD_READ)), "{}: {:?}", ran[i].0, ran[i].2);
         }
-        // Control (review F2): the `work_verdict` keep reads objects through `cat-file --batch`
-        // (`crates/zygo-work/src/gate/git.rs:189`), and `bin/git` logged its stdin, which the predicate judged.
+        // Control (review F2): the `work_verdict` keep reads objects through `cat-file --batch-command`
+        // (`crates/zygo-work/src/gate/git.rs`, `batch_io`), and `bin/git` logged its stdin, which the predicate judged.
         for i in [1, 3, 5] {
-            assert!(ran[i].2.iter().any(|l| l.ends_with(" cat-file --batch")), "{}: {:?}", ran[i].0, ran[i].2);
-            assert!(ran[i].2.iter().any(|l| l == &format!("{STDIN}<head>^{{commit}}")), "{}: {:?}", ran[i].0, ran[i].2);
+            assert!(ran[i].2.iter().any(|l| l.ends_with(" cat-file --batch-command")), "{}: {:?}", ran[i].0, ran[i].2);
+            assert!(ran[i].2.iter().any(|l| l == &format!("{STDIN}contents <head>^{{commit}}")), "{}: {:?}", ran[i].0, ran[i].2);
         }
     }
 }

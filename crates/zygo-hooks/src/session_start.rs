@@ -134,8 +134,8 @@ pub fn fixed_item(dir: &SessionDir, agent_session: &str, build: &mut dyn FnMut()
     }
 }
 
-/// What `session-item` is.
-enum Folder {
+/// What `session-item` (and `reinject/` in `pre_compact`, FX-37) is.
+pub(crate) enum Folder {
     Missing,
     /// A real folder (not a link).
     Usable,
@@ -143,7 +143,7 @@ enum Folder {
     Unusable,
 }
 
-fn folder_state(folder: &Path) -> Folder {
+pub(crate) fn folder_state(folder: &Path) -> Folder {
     match std::fs::symlink_metadata(folder) {
         Ok(m) if m.file_type().is_dir() => Folder::Usable,
         Ok(_) => Folder::Unusable,

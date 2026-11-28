@@ -146,17 +146,17 @@ pub fn run(a: MailArgs) -> i32 {
         None => finish(ls_text(&paths, &ws, None)),
         Some(MailCmd::Ls { name }) => finish(ls_text(&paths, &ws, name.as_deref())),
         Some(MailCmd::Read { name, max }) => {
-            let keys = match (name, pane) {
-                (Some(n), _) => match member_arg(&paths, &ws, &n).and_then(|m| names::resolve(&ws, &m, None).map_err(Into::into)) {
-                    Ok(t) => t.into_iter().map(|t| t.key).collect(),
+            let key = match (name, pane) {
+                (Some(n), _) => match one_member(&paths, &ws, &n, "read") {
+                    Ok(k) => k,
                     Err(e) => return finish(Err(e)),
                 },
-                (None, Some(k)) => vec![k],
+                (None, Some(k)) => k,
                 (None, None) => {
                     return finish(Err(UsageError("zygo mail read: no member for this pane; pass --name".into()).into()))
                 }
             };
-            let (text, failed) = read_text(&paths, &ws, &keys, max);
+            let (text, failed) = read_text(&paths, &ws, &key, max);
             if !text.is_empty() {
                 print_out(&format!("{text}\n"));
             }
@@ -174,9 +174,8 @@ pub fn run(a: MailArgs) -> i32 {
                 return 2;
             };
             let key = match (name, pane) {
-                (Some(n), _) => match member_arg(&paths, &ws, &n).and_then(|m| names::resolve(&ws, &m, None).map_err(Into::into)) {
-                    Ok(mut t) if t.len() == 1 => t.remove(0).key,
-                    Ok(_) => return finish(Err(UsageError(format!("zygo mail watch: {n} is not one member")).into())),
+                (Some(n), _) => match one_member(&paths, &ws, &n, "watch") {
+                    Ok(k) => k,
                     Err(e) => return finish(Err(e)),
                 },
                 (None, Some(k)) => k,
@@ -618,8 +617,8 @@ pub(crate) fn workspace_of(
     }
 }
 
-/// `ls` (D3, D4): per member in key order `<key> <name or -> <unread>`, or with `name` each new message of its
-/// targets as `<id> <from> <subject>`; nothing is moved.
+/// `ls` (D3, D4; M§8): per member in key order `<key> <name or -> <unread>`, or with `name` each new message of the
+/// one member it names (`one_member`) as `<id> <from> <subject>`; nothing is moved.
 fn ls_text(paths: &Paths, ws: &Workspace, name: Option<&str>) -> anyhow::Result<String> {
     let dir = mail_dir(paths, &ws.id);
     let mut lines = Vec::new();
@@ -635,10 +634,8 @@ fn ls_text(paths: &Paths, ws: &Workspace, name: Option<&str>) -> anyhow::Result<
             lines.extend(sync_line(paths, ws));
         }
         Some(n) => {
-            for t in names::resolve(ws, &member_arg(paths, ws, n)?, None)? {
-                for s in store::list(&dir, &t.key)? {
-                    lines.push(format!("{} {} {}", esc(&s.id), esc(&s.from), esc(&s.subject)));
-                }
+            for s in store::list(&dir, &one_member(paths, ws, n, "ls")?)? {
+                lines.push(format!("{} {} {}", esc(&s.id), esc(&s.from), esc(&s.subject)));
             }
             if lines.is_empty() {
                 return Ok("no new messages".into());
@@ -712,35 +709,38 @@ fn member(ws: &Workspace, key: &str) -> String {
     }
 }
 
-/// `read` (D3, D4): at most `max` messages in all over `keys`, each as `<id> <from> <sent_at> <subject>` and its
-/// body lines indented by two spaces. A member that fails stops the read: the text has the messages already read
-/// (moved to `cur/`), and the error names the member.
-fn read_text(paths: &Paths, ws: &Workspace, keys: &[String], max: usize) -> (String, Option<String>) {
-    let dir = mail_dir(paths, &ws.id);
-    let mut lines = Vec::new();
-    let mut left = max;
-    let mut failed = None;
-    for k in keys {
-        if left == 0 {
-            break;
-        }
-        let got = match store::read(&dir, k, left) {
-            Ok(g) => g,
-            Err(e) => {
-                failed = Some(format!("{e}; mail of {}", member(ws, k)));
-                break;
-            }
-        };
-        left = left.saturating_sub(got.len());
-        for m in got {
-            lines.push(format!("{} {} {} {}", esc(&m.id), esc(&m.from), esc(&m.sent_at), esc(&m.subject)));
-            lines.extend(m.body.lines().map(|l| format!("  {}", esc(l))));
-        }
+/// The one member `n` names for `zygo mail read`, `ls` and `watch` (M§8: "`<n>` is a member of this machine";
+/// M§6 reserves `all`): its pane key. A `n` that resolves to other than one member (`all`, a name two members hold)
+/// is the usage error `zygo mail <verb>: <n> is not one member` (exit 2); an unknown name is the resolve error.
+fn one_member(paths: &Paths, ws: &Workspace, n: &str, verb: &str) -> anyhow::Result<String> {
+    let m = member_arg(paths, ws, n)?;
+    let mut t = names::resolve(ws, &m, None)?;
+    if t.len() != 1 {
+        return Err(UsageError(format!("zygo mail {verb}: {n} is not one member")).into());
     }
-    if lines.is_empty() && failed.is_none() {
+    Ok(t.remove(0).key)
+}
+
+/// `read` (D3, D4): at most `max` messages of the member `key`, each as `<id> <from> <sent_at> <subject>` and its
+/// body lines indented by two spaces. A read that fails gives no text and an error that names the member. `max` 0
+/// reads nothing.
+fn read_text(paths: &Paths, ws: &Workspace, key: &str, max: usize) -> (String, Option<String>) {
+    if max == 0 {
         return ("no new messages".into(), None);
     }
-    (lines.join("\n"), failed)
+    let got = match store::read(&mail_dir(paths, &ws.id), key, max) {
+        Ok(g) => g,
+        Err(e) => return (String::new(), Some(format!("{e}; mail of {}", member(ws, key)))),
+    };
+    if got.is_empty() {
+        return ("no new messages".into(), None);
+    }
+    let mut lines = Vec::new();
+    for m in got {
+        lines.push(format!("{} {} {} {}", esc(&m.id), esc(&m.from), esc(&m.sent_at), esc(&m.subject)));
+        lines.extend(m.body.lines().map(|l| format!("  {}", esc(l))));
+    }
+    (lines.join("\n"), None)
 }
 
 /// The body of `send` (D5): the file, else stdin when `stdin`, else empty. At most `BODY_MAX + 1` bytes are read; a

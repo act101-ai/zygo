@@ -98,9 +98,11 @@ fn target(input: &HookInput) -> Option<(String, String)> {
     Some((tool.to_owned(), text))
 }
 
-/// O§7.8: whether a hook output with `stderr` "" leaves the model no stderr text. True, as the PO2 row of
-/// `docs/premises.md` (verified, Claude Code 2.1.332, where the hook input carries stderr in `stdout`): the hook
-/// shapes both streams, sets `stderr` to "" and counts both; false selects "When PO2 fails".
+/// O§7.8: whether a hook output with `stderr` "" leaves the model no stderr text. True: the hook shapes both
+/// streams, sets `stderr` to "" and counts both; false selects "When PO2 fails". O§17 PO2 and the PO2 row of
+/// `docs/premises.md` (Claude Code 2.1.332): the hook input carried stderr merged into `stdout` with `stderr` "",
+/// and the replaced `stdout` removed the error text; the run did not observe whether `stderr` "" removes a
+/// non-empty `stderr`.
 pub const PO2_STDERR_CLEARED: bool = true;
 
 /// O§7.13: whether a `PostToolUseFailure` hook output replaces the text the model sees after a failed Bash call.
@@ -239,25 +241,61 @@ pub fn trim_in_with(input: &HookInput, dir: &SessionDir, usage_db: &Path, opts: 
 
 /// T§9.2 item 2: for a `PostToolUse` input whose `agent_id` passes `flag_path`, removes the flag and returns M.
 /// No flag, or a flag that cannot be stat'ed or removed, gives `None`; a stat error other than NotFound or a failed
-/// remove writes one stderr line (T§14 item 2).
+/// remove writes one stderr line (T§14 item 2). The rule of `pre_compact`'s flag (FX-37): `reinject/` must be a real
+/// folder, not a link, and the flag a regular file; any other entry is not a flag (no text, no removal, one stderr
+/// line). On unix `reinject/` is opened once with `O_DIRECTORY | O_NOFOLLOW` and the flag is checked with `fstatat`
+/// (`AT_SYMLINK_NOFOLLOW`, so it is never opened and a FIFO cannot make the hook wait) and removed with `unlinkat`,
+/// both through that handle.
 fn take_flag(input: &HookInput, dir: &SessionDir) -> anyhow::Result<Option<String>> {
     if input.event.as_deref() != Some("PostToolUse") {
         return Ok(None);
     }
-    let Some(p) = input.agent_id.as_deref().and_then(|id| flag_path(dir, id)) else { return Ok(None) };
-    let cannot_remove = |e: std::io::Error| {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            error_line(&format!("trim: cannot remove {}: {e}", p.display()));
-        }
+    let Some(id) = input.agent_id.as_deref() else { return Ok(None) };
+    let Some(p) = flag_path(dir, id) else { return Ok(None) };
+    let not_taken = |why: String| {
+        error_line(&format!("trim: cannot remove {}: {why}", p.display()));
         Ok(None)
     };
-    if let Err(e) = std::fs::symlink_metadata(&p) {
-        return cannot_remove(e);
+    let missing = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
+    #[cfg(unix)]
+    {
+        let r = dir.reinject();
+        let folder = match crate::pre_compact::at::open_folder(&r) {
+            Ok(f) => f,
+            Err(e) if missing(&e) => return Ok(None),
+            Err(e) => return not_taken(format!("{}: {e}", r.display())),
+        };
+        match crate::pre_compact::at::is_regular(&folder, id) {
+            Ok(true) => {}
+            Ok(false) => return not_taken("is not a regular file".into()),
+            Err(e) if missing(&e) => return Ok(None),
+            Err(e) => return not_taken(e.to_string()),
+        }
+        let v = SessionView::load(dir)?;
+        match crate::pre_compact::at::unlink(&folder, id) {
+            Ok(()) => Ok(Some(mechanics_with_overrides(dir, &v))),
+            Err(e) if missing(&e) => Ok(None),
+            Err(e) => not_taken(e.to_string()),
+        }
     }
-    let v = SessionView::load(dir)?;
-    match std::fs::remove_file(&p) {
-        Ok(()) => Ok(Some(mechanics_with_overrides(dir, &v))),
-        Err(e) => cannot_remove(e),
+    #[cfg(not(unix))]
+    {
+        use crate::session_start::{folder_state, Folder};
+        match std::fs::symlink_metadata(&p) {
+            Ok(m) if m.is_file() => {}
+            Ok(_) => return not_taken("is not a regular file".into()),
+            Err(e) if missing(&e) => return Ok(None),
+            Err(e) => return not_taken(e.to_string()),
+        }
+        if !matches!(folder_state(&dir.reinject()), Folder::Usable) {
+            return not_taken(format!("{}: is a link or not a folder", dir.reinject().display()));
+        }
+        let v = SessionView::load(dir)?;
+        match std::fs::remove_file(&p) {
+            Ok(()) => Ok(Some(mechanics_with_overrides(dir, &v))),
+            Err(e) if missing(&e) => Ok(None),
+            Err(e) => not_taken(e.to_string()),
+        }
     }
 }
 

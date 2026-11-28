@@ -673,7 +673,7 @@ fn plugin_text_matches_the_fixtures() {
     assert!(cm["output"]["message"]["model"]["providerID"].is_string());
     assert!(cm["output"]["message"]["model"]["modelID"].is_string());
     assert!(cm["output"]["parts"].is_array());
-    for t in ["\"message\"", "synthetic: true", "model.modelID !== role", "output.parts.push", "randomBytes"] {
+    for t in ["\"message\"", "\"message-seen\"", "synthetic: true", "model.modelID !== role", "output.parts.push", "randomBytes"] {
         assert!(TEMPLATE.contains(t), "{t}");
     }
     for t in [
@@ -1250,6 +1250,8 @@ const output = JSON.parse(process.env.OUTPUT);
 const res = { threw: null };
 try { await h["chat.message"](JSON.parse(process.env.INPUT), output); } catch (e) { res.threw = e.message; }
 res.parts = output.parts;
+// A `task` call waits for its queued `pre-tool` answer, so every member call queued before it has run.
+await h["tool.execute.before"]({ tool: "task", sessionID: "drain", callID: "drain" }, { args: {} });
 process.stdout.write(JSON.stringify(res) + "\n", () => process.exit(0));
 "#,
     )
@@ -1287,6 +1289,12 @@ fn message_calls(r: &NodeRun) -> Vec<&str> {
     r.calls.lines().filter(|l| l.starts_with("hook workspace") && l.ends_with("--event message")).collect()
 }
 
+/// The `hook workspace ... --event message-seen` calls of a run (M§7.2; FX-35).
+#[cfg(unix)]
+fn seen_calls(r: &NodeRun) -> Vec<&str> {
+    r.calls.lines().filter(|l| l.starts_with("hook workspace") && l.ends_with("--event message-seen")).collect()
+}
+
 // M§7.2 (FX-33): the plugin's `chat.message` asks for the mail line only for a user message of the main session (the
 // member gate, the main role's `zygo/` model, not a known child), adds it as one synthetic text part, and never
 // throws or changes the message when `zygo` gives nothing, fails or is missing (C6, T-C1).
@@ -1317,6 +1325,13 @@ fn plugin_chat_message_sends_message_only_for_the_main_session() {
     let id = parts[1]["id"].as_str().unwrap();
     assert!(part_id_form(id), "{id}");
     assert_eq!(parts[1], json!({"id": id, "sessionID": "A", "messageID": "msg_1", "type": "text", "text": "LINE", "synthetic": true}));
+    // FX-35 (M§7.2): after the part is added, one `message-seen` call for the same session, after the `message` call.
+    assert_eq!(seen_calls(&r), ["hook workspace --agent opencode --event message-seen"]);
+    let lines: Vec<&str> = r.calls.lines().collect();
+    let at = |e: &str| lines.iter().position(|l| l.ends_with(&format!("--event {e}"))).unwrap();
+    assert!(at("message") < at("message-seen"), "{}", r.calls);
+    let stdin: Value = serde_json::from_slice(&std::fs::read(r.dir.join("stdin-workspace-message-seen.json")).unwrap()).unwrap();
+    assert_eq!(stdin, json!({"sessionID": "A", "cwd": "/r"}));
 
     let unchanged = chat_output("A", "zygo", "lead")["parts"].clone();
     let cases = [
@@ -1337,6 +1352,7 @@ fn plugin_chat_message_sends_message_only_for_the_main_session() {
         assert_eq!(v["threw"], Value::Null, "{name}");
         assert_eq!(v["parts"], unchanged, "{name}");
         assert!(message_calls(&r).is_empty(), "{name}: {}", r.calls);
+        assert!(seen_calls(&r).is_empty(), "{name}: {}", r.calls);
     }
     // `parts` that is not an array: no call, no throw.
     let mut no_parts = chat_output("A", "zygo", "lead");
@@ -1345,12 +1361,24 @@ fn plugin_chat_message_sends_message_only_for_the_main_session() {
     assert_eq!(r.result.clone().unwrap()["threw"], Value::Null);
     assert_eq!(r.result.clone().unwrap()["parts"], json!({}));
     assert!(message_calls(&r).is_empty(), "{}", r.calls);
-    // `zygo` prints nothing, fails or is missing: the message is unchanged.
+    // `zygo` prints nothing, fails or is missing: the message is unchanged, and no `message-seen` call follows, so the
+    // ids stay unannounced (M§7.2; FX-35).
     for (mode, name) in [("empty", "cm-empty"), ("fail", "cm-fail"), ("missing", "cm-missing")] {
         let r = chat_node(&fx, Chat { mode, ..base(name) });
         let v = r.result.clone().unwrap();
         assert_eq!(v["threw"], Value::Null, "{mode}");
         assert_eq!(v["parts"], unchanged, "{mode}");
+        assert!(seen_calls(&r).is_empty(), "{mode}: {}", r.calls);
+    }
+}
+
+/// Writes `bytes` to a child's stdin and closes it, as `crates/zygo/tests/common/mod.rs` `feed_stdin` (FX-3). A child
+/// may exit before it reads stdin (`stub-hook` with a bad `--agent` value, FX-45), so a broken pipe is not an error.
+#[cfg(unix)]
+fn feed_stdin(mut stdin: std::process::ChildStdin, bytes: &[u8]) {
+    use std::io::Write;
+    if let Err(e) = stdin.write_all(bytes) {
+        assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "write to child stdin: {e}");
     }
 }
 
@@ -1358,7 +1386,6 @@ fn plugin_chat_message_sends_message_only_for_the_main_session() {
 /// for `None`) and `payload` on stdin: (stdout, stderr, exit code).
 #[cfg(unix)]
 fn stub_hook(fx: &Fx, args: &[&str], agent: Option<&str>, payload: &Value) -> (String, String, Option<i32>) {
-    use std::io::Write;
     use std::process::Stdio;
     let sd = ctx(fx, |_| {}).session_dir;
     let home = fx.root.join("home");
@@ -1377,7 +1404,7 @@ fn stub_hook(fx: &Fx, args: &[&str], agent: Option<&str>, payload: &Value) -> (S
         cmd.env("ZYGO_AGENT", a);
     }
     let mut child = cmd.spawn().unwrap();
-    child.stdin.take().unwrap().write_all(payload.to_string().as_bytes()).unwrap();
+    feed_stdin(child.stdin.take().unwrap(), payload.to_string().as_bytes());
     let out = child.wait_with_output().unwrap();
     (String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned(), out.status.code())
 }
@@ -1414,6 +1441,18 @@ fn stub_hook_parses_agent_and_event_as_zygo_hook() {
     assert_eq!(stub_hook(&fx, &[], Some("opencode"), &split), opencode);
     assert_eq!(stub_hook(&fx, &[], None, &split), claude);
     assert_eq!(stub_hook(&fx, &[], Some("bogus"), &split), claude);
+}
+
+// FX-45: a bad `--agent` value ends `stub-hook` before it reads stdin, so the helper's write to stdin can get a broken
+// pipe (CI run 46157648977). A 1 MiB payload is larger than the pipe buffer, so the write is still in progress when
+// the child exits and fails each time, not by chance.
+#[cfg(unix)]
+#[test]
+fn stub_hook_helper_accepts_a_child_that_exits_before_it_reads_stdin() {
+    let fx = fx();
+    let big = json!({"pad": "x".repeat(1 << 20)});
+    let refused = stub_hook(&fx, &["--agent", "bogus"], None, &big);
+    assert_eq!(refused, (String::new(), "zygo hook: unknown agent `bogus` (claude-code or opencode)\n".to_string(), Some(0)));
 }
 
 // ---- Task 4: delivery ----

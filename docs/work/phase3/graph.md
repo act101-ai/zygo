@@ -196,7 +196,6 @@ Session text (T, SX nodes):
 | OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45, OS-47 | DONE | lookup | 5 passed, release, 01855abf · PR #239 |
 | WD-21 | PR1 live check: two pool members send two logins | WD-14, ML-19 | DONE | mechanical | PR1 6/6, PR2 8/8, two runs, claude 2.1.332 · PR #244 |
 | WD-22 | PR2 live check: per-session settings act the same on a pool directory | WD-14, WD-21 | DONE | mechanical | PR1 6/6, PR2 8/8, two runs, claude 2.1.332 · PR #244 |
-| MS-22 | No mail content in logs, state, usage rows, commits or refs | MS-18, MS-19, MS-21 | DONE | judgment | e2b744fe^..91edeada · acceptance pass (mail_sync_no_content 2 passed) · PR #222 |
 | WD-15 | `zygo workspace approve [--yes] [--digest <hex>]` | WD-14, DR-3, MS-21 | DONE | judgment | a923b915^..fe86a15d · acceptance pass (workspace_approve 28 passed) · PR #223 |
 | WD-16 | `config show/check`, `profile list/show`, `loadout list/show` show the repository files | WD-15, WD-24 | DONE | implementation | 4e0686e5^..b5991ee0 · acceptance pass (definition_surfaces 22 passed) · PR #225 |
 | WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | DONE | mechanical | cff91852^..b884b0b7 · acceptance pass (docs_readme_and_passthrough_md 1 passed, cli_surface 21 passed) · PR #228 |
@@ -221,7 +220,7 @@ Session text (T, SX nodes):
 | FX-38 | `live-sp1.sh`: known_hosts restore breaks a symlink, a failed append is recorded as added, note 3.4 reads other workspaces | — | TODO | implementation | — |
 | FX-39 | Pin withdrawal check skipped without a common dir; pane-folder workspace id; uncapped `.zygo` listing | — | TODO | judgment | — |
 | FX-40 | Mail sync checks only the first push URL; the 500-candidate cap is per attempt, not per pass | — | DONE | implementation | 83673e68^..977e4f75 · acceptance pass (public 1 passed; sync_pass 63 passed; branch 1 passed; zygo-mail-sync 414 passed) · PR #264 |
-| FX-41 | Decision gate: batch reads keep the spawn deadline, records read before the 64 KiB check, a `docs` link and an empty `ZYGO_SESSION_DIR` pass the verb guards | — | TODO | implementation | — |
+| FX-41 | Decision gate: batch reads keep the spawn deadline, records read before the 64 KiB check, a `docs` link and an empty `ZYGO_SESSION_DIR` pass the verb guards | — | DONE | implementation | 345222eb^..ef5c561d · acceptance pass (decision_verdict 51 passed, decision_git 41 passed, decision_cli 19 passed) · PR #266 |
 | FX-42 | Shaping: CR overwrite deletes text a terminal shows, xargs `--max-chars`/`--eof`, missing wrappers, PO2 comment | — | TODO | implementation | — |
 
 ## Log
@@ -490,3 +489,6 @@ Session text (T, SX nodes):
 | 2026-11-28 | FX-40 DONE; the public check reads the fetch URL and every push URL (get-url --push --all); one 500-candidate set per pass across push attempts, acks carried; FX-22 row archived · PR #264 |
 | 2026-11-28 | FX-40 review: F1-F5 confirmed and fixed; a push or prune that one push URL took and another did not (Split) stops the pass with the push stop; push URLs counted so a URL with no ref line is seen; probes bound by the pass deadline |
 | 2026-11-28 | FX-40 author's call: push_split flag in state.json, set on a Split push or prune; while set no outbox file is deleted as pushed, no prune runs and the tip goes to every push URL until all take it. Reason: a pass must not delete an outbox file one push URL lacks |
+| 2026-11-28 | FX-41 DONE; the decision gate's `cat-file` reads no longer time out after merge-base/rev-list/log, a record over 64 KiB is malformed with no contents read, a `docs` link and an empty `ZYGO_SESSION_DIR` are refused by the operator verbs; MS-22 row archived · PR #266 |
+| 2026-11-28 | FX-41 review: F1 (info requests cut the 2,048 cap), F2 (per-read bounds broke D-C6), F3 (a non-tree `docs/decisions` read whole) and F4 (boundary tests) confirmed and fixed (ef5c561d) |
+| 2026-11-28 | FX-41 author's call: D-C6 kept: merge-base, rev-list and log run before the `--batch-command` process, which then has its own 2 s; only `contents` reads count toward 2,048 objects, `info` requests do not (D§9.4 rewritten) |
