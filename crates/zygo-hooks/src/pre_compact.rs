@@ -7,6 +7,8 @@ use zygo_core::hook::{error_line, HookInput, HookOutput};
 use zygo_core::session_dir::SessionDir;
 use zygo_work::log::{open_unit, Begin};
 
+use crate::session_start::{folder_state, Folder};
+
 pub fn run(input: &HookInput) -> anyhow::Result<HookOutput> {
     run_with(input, SessionDir::from_env().as_ref())
 }
@@ -28,23 +30,38 @@ pub fn flag_path(dir: &SessionDir, agent_id: &str) -> Option<PathBuf> {
 }
 
 /// T§9.2 item 1: the output of `run_in(dir)`. For an input whose `agent_id` is a string and whose `agent_type` does
-/// not start with `zygo-`, it also creates the empty flag `flag_path(dir, agent_id)`. If the flag cannot be created,
-/// it writes one stderr line and still returns the text (T§14 item 2).
+/// not start with `zygo-`, it also creates the empty flag `flag_path(dir, agent_id)`, whatever `run_in` gives (FX-37).
+/// If the flag cannot be created, it writes one stderr line and still returns the text (T§14 item 2). If `run_in`
+/// fails, its error is the result (no text); when the flag also failed, the two are one error, so the C6 wrapper
+/// writes one line: `<run_in error>; pre-compact: cannot create <flag>: <reason>`.
 pub fn run_with(input: &HookInput, dir: Option<&SessionDir>) -> anyhow::Result<HookOutput> {
-    let out = run_in(dir)?;
+    let out = run_in(dir);
     let zygo = input.raw.get("agent_type").and_then(Value::as_str).is_some_and(|t| t.starts_with("zygo-"));
+    let mut flag_error = None;
     if !zygo
         && let (Some(d), Some(id)) = (dir, input.agent_id.as_deref())
         && let Some(p) = flag_path(d, id)
         && let Err(e) = create_flag(d, &p)
     {
-        error_line(&format!("pre-compact: cannot create {}: {e:#}", p.display()));
+        flag_error = Some(format!("pre-compact: cannot create {}: {e:#}", p.display()));
     }
-    Ok(out)
+    match (out, flag_error) {
+        (Ok(out), Some(line)) => {
+            error_line(&line);
+            Ok(out)
+        }
+        (Ok(out), None) => Ok(out),
+        (Err(e), Some(line)) => Err(anyhow::anyhow!("{e:#}; {line}")),
+        (Err(e), None) => Err(e),
+    }
 }
 
 /// The empty flag `p` in `reinject/` (directory 0700, file 0600 on unix, set also when they exist). Only `reinject/`
-/// itself is created: a missing session root is an error, never created again.
+/// itself is created: a missing session root is an error, never created again. `reinject/` must be a real folder, not
+/// a link (`session_start::folder_state`), before its mode is set. On unix the flag is opened with
+/// `O_NOFOLLOW | O_NONBLOCK`: a link at the flag name is an error and is not followed, and a FIFO there does not make
+/// the hook wait (with no reader the open fails); an opened entry that is not a regular file is an error, and its mode
+/// is not set (FX-37).
 fn create_flag(dir: &SessionDir, p: &Path) -> anyhow::Result<()> {
     let r = dir.reinject();
     let mut b = std::fs::DirBuilder::new();
@@ -54,15 +71,24 @@ fn create_flag(dir: &SessionDir, p: &Path) -> anyhow::Result<()> {
         Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => return Err(e.into()),
         _ => {}
     }
+    if !matches!(folder_state(&r), Folder::Usable) {
+        anyhow::bail!("{}: is a link or not a folder", r.display());
+    }
     #[cfg(unix)]
     std::fs::set_permissions(&r, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
     let mut o = std::fs::OpenOptions::new();
     o.write(true).create(true).truncate(false);
     #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
-    let _f = o.open(p)?;
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    }
+    let f = o.open(p)?;
+    if !f.metadata()?.is_file() {
+        anyhow::bail!("{}: is not a regular file", p.display());
+    }
     #[cfg(unix)]
-    _f.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    f.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
     Ok(())
 }
 

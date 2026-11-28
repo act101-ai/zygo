@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -23,9 +24,12 @@ pub struct Overrides {
 }
 
 impl Overrides {
-    /// A missing or invalid file gives the default.
+    /// A missing or invalid file gives the default. Only a regular file is read (FX-37), by the rule of the setting
+    /// verbs' reader `zygo_hooks::workspace::read_session_file`: on unix the open is `O_NOFOLLOW | O_NONBLOCK`, so a
+    /// link is not followed and a FIFO does not make the read wait; a link, a FIFO, a folder or another entry that is
+    /// not a regular file, and an open or read error, give the default. There is no size cap (as FIX-22).
     pub fn load(dir: &SessionDir) -> Overrides {
-        Overrides::parse(std::fs::read(dir.overrides_json()).ok().as_deref())
+        Overrides::parse(read_regular(&dir.overrides_json()).as_deref())
     }
 
     /// The overrides of the bytes of `overrides.json`, by the rule of `load`: no bytes (no file) or bytes that are not
@@ -38,6 +42,24 @@ impl Overrides {
     pub fn save(&self, dir: &SessionDir) -> anyhow::Result<()> {
         write_atomic(&dir.overrides_json(), &serde_json::to_vec(self)?)
     }
+}
+
+/// The bytes of the regular file at `path`, by the rule of `Overrides::load`; `None` for any other entry or error.
+fn read_regular(path: &Path) -> Option<Vec<u8>> {
+    let mut o = std::fs::OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    }
+    let mut f = o.open(path).ok()?;
+    if !f.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut f, &mut bytes).ok()?;
+    Some(bytes)
 }
 
 #[cfg(test)]
