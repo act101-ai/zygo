@@ -164,7 +164,7 @@ fn one_read_per_use_and_never_a_mix() {
     let r = Cnt { swap: Some((2, B.as_bytes())), ..Cnt::default() };
     let Use::Approved { full_ref, pin, files, def } = repo_def::check_default(&f.c, ID, &s, &r) else { panic!() };
     assert_eq!((r.reads(), r.blobs()), (1, 1));
-    assert_eq!((full_ref.as_str(), pin.clone()), (MAIN, Pin::new(head(&f.c), d(A))));
+    assert_eq!((full_ref.as_str(), pin.clone()), (MAIN, Pin::approved(head(&f.c), d(A), ID.into())));
     assert_eq!(files.workspace.as_deref(), Some(A.as_bytes()));
     assert_eq!(def, parsed(A));
     let Use::NotApproved { digest, def, files, .. } = repo_def::check_default(&f.c, ID, &s, &r) else { panic!() };
@@ -274,4 +274,33 @@ fn default_missing_or_invalid_store_is_not_approved() {
     std::fs::write(&s, "[[workspace\nid = ").unwrap();
     let Use::NotApproved { digest, .. } = repo_def::check_default(&f.c, ID, &s, &Cnt::default()) else { panic!() };
     assert_eq!(digest, d(A));
+}
+
+#[test] // R§7.4 (FX-39 D1): the pin of an approved read holds the workspace id of its approval
+fn the_pin_of_an_approved_read_holds_its_workspace_id() {
+    let f = fx(&[(".zygo/workspace.toml", A.as_bytes())]);
+    let s = store(&f);
+    repo_def::approve_workspace_in(&s, ID, &d(A)).unwrap();
+    let Use::Approved { pin, .. } = repo_def::check_default(&f.c, ID, &s, &Cnt::default()) else { panic!() };
+    assert_eq!(pin.workspace.as_deref(), Some(ID));
+    assert_eq!(pin, Pin::approved(head(&f.c), d(A), ID.into()));
+}
+
+#[test] // R§7.4 (FX-39 D1), W§7.2: an old pin has no `workspace`; a value that is not a string reads as none
+fn a_pin_reads_its_workspace_id_leniently() {
+    let (c, g) = ("1".repeat(40), "a".repeat(64));
+    let read = |v: serde_json::Value| serde_json::from_value::<Pin>(v).expect("a pin with any workspace value reads");
+    let old = read(serde_json::json!({ "commit": c, "digest": g }));
+    assert_eq!(old, Pin::new(c.clone(), g.clone()));
+    let with = read(serde_json::json!({ "commit": c, "digest": g, "workspace": ID }));
+    assert_eq!(with.workspace.as_deref(), Some(ID));
+    for bad in [serde_json::json!(7), serde_json::json!(null), serde_json::json!(["x"]), serde_json::json!({ "x": 1 })] {
+        let p = read(serde_json::json!({ "commit": c, "digest": g, "workspace": bad }));
+        assert_eq!(p.workspace, None, "{bad}");
+        assert!(p.extra.is_empty(), "{bad}: {:?}", p.extra);
+    }
+    // A write keeps the string; an old pin writes no `workspace` key.
+    assert_eq!(serde_json::to_value(&with).unwrap()["workspace"], serde_json::json!(ID));
+    assert_eq!(serde_json::from_value::<Pin>(serde_json::to_value(&with).unwrap()).unwrap(), with);
+    assert!(serde_json::to_value(&old).unwrap().get("workspace").is_none());
 }

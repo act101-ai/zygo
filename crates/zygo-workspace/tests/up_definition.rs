@@ -355,7 +355,7 @@ fn default_set_members_hold_job_and_pin() {
         assert_eq!(m.launch.kind, Agent::ClaudeCode);
         let job = if p.name.as_deref() == Some("orchestrator") { "orchestrator" } else { "worker" };
         assert_eq!(m.launch.job.as_deref(), Some(job));
-        assert_eq!(m.launch.definition, Some(Pin::new(f.head(MAIN), pin.digest.clone())));
+        assert_eq!(m.launch.definition, Some(Pin::approved(f.head(MAIN), pin.digest.clone(), f.id())));
     }
 }
 
@@ -497,7 +497,7 @@ fn revert_to_approved_content_applies_it() {
     assert_eq!(ws.loadout, "repository");
     assert!(!ws.members.is_empty());
     for m in ws.members.values() {
-        assert_eq!(m.launch.definition, Some(Pin::new(f.head(MAIN), p1.digest.clone())));
+        assert_eq!(m.launch.definition, Some(Pin::approved(f.head(MAIN), p1.digest.clone(), f.id())));
     }
     assert_eq!(fs::read(&f.o.paths.approvals_file).unwrap(), before);
 }
@@ -519,7 +519,7 @@ fn origin_head_chooses_among_approved_branches() {
     let ws = f.planned();
     assert_eq!(ws.windows[0].layout, "even-vertical");
     for m in ws.members.values() {
-        assert_eq!(m.launch.definition, Some(Pin::new(f.head("refs/remotes/origin/dev"), pin.digest.clone())));
+        assert_eq!(m.launch.definition, Some(Pin::approved(f.head("refs/remotes/origin/dev"), pin.digest.clone(), f.id())));
     }
     git(&f.c, &["remote", "set-head", "origin", "other"]);
     let Use::NotApproved { digest, .. } = f.read() else { panic!("not approved") };

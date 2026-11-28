@@ -344,16 +344,23 @@ impl Launcher {
         let mut profile = None;
         let known = known_plugins(&selection(&cfg, None), &zygo_plugins::store::state(&opts.paths.plugin_store));
         let name = requested(&cfg, opts.profile.as_deref());
-        // R§7.4, R§11 (FX-31 review F1): a withdrawn approval of the pin stops every pinned member launch, whatever its
-        // profile and in passthrough too, before the passthrough drop and the profile step. It reads the approvals file
-        // only (no git read); outside a checkout there is no workspace id, and only the pinned read below stops.
-        if let (Some(pin), Some(cd)) = (&opts.definition, common_dir.as_deref())
-            && !is_workspace_approved_in(&opts.paths.approvals_file, &workspace_id(cd), &pin.digest)
-        {
+        // R§7.4 approval bullet, R§11 (FX-31 review F1, FX-39): a withdrawn approval of the pin stops every pinned member
+        // launch, whatever its profile and in passthrough too, before the passthrough drop and the profile step. It
+        // reads the approvals file only (no git read), under the workspace id of the pin, so the launch folder does not
+        // change the check. An old pin (no workspace id) takes the id of the launch folder's checkout; with no checkout
+        // there (no work tree, a failed call, a call past its bound) the check cannot be made, and the launch stops.
+        if let Some(pin) = &opts.definition {
             // The profile name is in the line only for a launch that makes the pinned read; else "this member".
             let reads = name.as_deref().filter(|n| !opts.passthrough && valid_name(n) && !cfg.config.profile.contains_key(*n));
-            out.line(&pin_line(reads.map(zygo_core::esc).as_deref(), pin, NO_LONGER));
-            return 1;
+            let stop = match pin_workspace(pin, common_dir.as_deref()) {
+                None => Some(NO_CHECKOUT),
+                Some(id) if !is_workspace_approved_in(&opts.paths.approvals_file, &id, &pin.digest) => Some(NO_LONGER),
+                Some(_) => None,
+            };
+            if let Some(which) = stop {
+                out.line(&pin_line(reads.map(zygo_core::esc).as_deref(), pin, which));
+                return 1;
+            }
         }
         // R§8 "Passthrough": no profile from any source, and no read; a requested name is reported.
         let name = match name {
@@ -945,6 +952,14 @@ fn repository_profile(
 
 /// The R§7.4 stop text of a pin that is gone or no longer approved.
 const NO_LONGER: &str = "this repository no longer has or no longer approves";
+/// The R§7.4 stop text of an old pin (no workspace id) whose launch folder gives no checkout (FX-39).
+const NO_CHECKOUT: &str = "were not read (the pin has no workspace id and git found no checkout at the launch folder)";
+
+/// R§7.4 (FX-39): the workspace id of the approval check of `pin`: its own `workspace`, else (an old pin) the id of the
+/// launch folder's checkout (`common_dir`); none when neither is there.
+fn pin_workspace(pin: &Pin, common_dir: Option<&Path>) -> Option<String> {
+    pin.workspace.clone().or_else(|| common_dir.map(workspace_id))
+}
 
 /// What a pinned read (R§7.4) gives the launch.
 enum Pinned {
@@ -967,14 +982,15 @@ fn pin_line(n: Option<&str>, pin: &Pin, which: &str) -> String {
     )
 }
 
-/// R§7.4: one pinned read (`check_pinned`) for profile `name`, which neither the user nor the team config has. No
-/// checkout (no common dir): the `NO_LONGER` stop.
+/// R§7.4: one pinned read (`check_pinned`) for profile `name`, which neither the user nor the team config has. The read
+/// runs at the launch folder's checkout; its store lookup uses the workspace id of the pin ([`pin_workspace`]). No
+/// checkout (no top level) or no workspace id: the `NO_LONGER` stop.
 fn pinned_profile(opts: &LaunchOpts, cfg: &Merged, name: &str, pin: &Pin, top: Option<&Path>, common_dir: Option<&Path>) -> Pinned {
     let n = zygo_core::esc(name);
-    let (Some(top), Some(cd)) = (top, common_dir) else {
+    let (Some(top), Some(id)) = (top, pin_workspace(pin, common_dir)) else {
         return Pinned::Stop(pin_line(Some(&n), pin, NO_LONGER));
     };
-    match check_pinned(top, &workspace_id(cd), pin, &opts.paths.approvals_file, definition_git(opts).as_ref()) {
+    match check_pinned(top, &id, pin, &opts.paths.approvals_file, definition_git(opts).as_ref()) {
         PinnedUse::Approved { def } if def.profiles.contains_key(name) => Pinned::Apply(cfg.with_definition(&def)),
         PinnedUse::Approved { .. } => Pinned::NotFound(format!("zygo: profile {n} not found; launching without it")),
         PinnedUse::Gone | PinnedUse::NotApproved => Pinned::Stop(pin_line(Some(&n), pin, NO_LONGER)),

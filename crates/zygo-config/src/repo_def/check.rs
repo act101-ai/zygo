@@ -6,20 +6,39 @@ use serde::{Deserialize, Serialize};
 
 use super::{digest, is_workspace_approved_in, parse, read_at, read_default, Definition, Files, GitRunner, Read};
 
-/// The approved read that a session saves: the commit and the digest of the files read there.
+/// The approved read that a session saves: the commit and the digest of the files read there, and the workspace id
+/// under which that read was approved (R§7.4).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pin {
     pub commit: String,
     pub digest: String,
+    /// R§7.4 (FX-39): the workspace id of the approval; none for an old pin (written before this field, or a value that
+    /// is not a string).
+    #[serde(default, deserialize_with = "lenient_id", skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
     /// AU78: fields this version does not know, kept through a read and a write.
     #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+/// A stored `workspace`: a string is kept; any other JSON value reads as none, so a bad value does not refuse the whole
+/// state file.
+fn lenient_id<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => Some(s),
+        _ => None,
+    })
+}
+
 impl Pin {
-    /// A pin with no unknown fields.
+    /// A pin with no workspace id and no unknown fields (an old pin, R§7.4).
     pub fn new(commit: String, digest: String) -> Pin {
-        Pin { commit, digest, extra: serde_json::Map::new() }
+        Pin { commit, digest, workspace: None, extra: serde_json::Map::new() }
+    }
+
+    /// The pin of a read approved under the workspace id `workspace` (R§7.3), with no unknown fields.
+    pub fn approved(commit: String, digest: String, workspace: String) -> Pin {
+        Pin { commit, digest, workspace: Some(workspace), extra: serde_json::Map::new() }
     }
 }
 
@@ -55,7 +74,7 @@ pub fn check_default(top: &Path, ws_id: &str, approvals: &Path, git: &dyn GitRun
     let digest = digest(&files);
     let full_ref = files.full_ref.clone().unwrap_or_default();
     if is_workspace_approved_in(approvals, ws_id, &digest) {
-        Use::Approved { full_ref, pin: Pin::new(files.commit.clone(), digest), files, def }
+        Use::Approved { full_ref, pin: Pin::approved(files.commit.clone(), digest, ws_id.to_string()), files, def }
     } else {
         Use::NotApproved { full_ref, files, digest, def }
     }
