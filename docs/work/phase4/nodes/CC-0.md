@@ -33,7 +33,7 @@ Merge commit `d26231d2` (parents `636f52a3` = `origin/phase-4` at the merge, `74
 Conflicted hunks:
 
 1. `crates/zygo/tests/compact_cmd.rs`, `mod common;` hunk. phase-4: nothing. phase 3: `mod dead_port;`. Kept: phase 3 (`mod dead_port;`).
-2. `crates/zygo/tests/compact_cmd.rs`, end of the spawn function. phase-4: `zygo(..)` spawns, `common::write_stdin`, waits, returns `(code, stdout, stderr)`. phase 3: `spawn_zygo(..) -> Child` ends with `.spawn().unwrap()`; `zygo(..)` (merged clean) calls `spawn_zygo`, `common::feed_stdin`, waits. Kept: phase 3; the TF-1 tests (`write_stdin` BrokenPipe and other-error cases) stay; `zygo(..)` stays as merged (`feed_stdin`).
+2. `crates/zygo/tests/compact_cmd.rs`, end of the spawn function. phase-4: `zygo(..)` spawns, `common::write_stdin`, waits, returns `(code, stdout, stderr)`. phase 3: `spawn_zygo(..) -> Child` ends with `.spawn().unwrap()`; `zygo(..)` (merged clean) calls `spawn_zygo`, `common::feed_stdin`, waits. Kept: phase 3; the TF-1 tests (`write_stdin` BrokenPipe and other-error cases) stay; the stdin call of `zygo(..)` takes `common::write_stdin` (round 1 F2, `77193b63`; at the merge commit it was `feed_stdin`).
 3. `crates/zygo/tests/statusline_cmd.rs`, stdin call line. phase-4: `common::write_stdin(child.stdin.take().unwrap(), stdin)`. phase 3: `common::feed_stdin(…, stdin)`. Kept: phase-4 (`write_stdin`, TF-1).
 4. `crates/zygo/tests/statusline_git.rs`, stdin call line. phase-4: `common::write_stdin(…, stdin.as_bytes())`. phase 3: `common::feed_stdin(…, stdin.as_bytes())`. Kept: phase-4 (`write_stdin`).
 5. `docs/live-checks.md`, sections hunk. phase-4: `## LC-CX1 (Codex update notice)`. phase 3: `## P3-15`, `## Mail premises (node ML-17)`, `## PD2, PD3`, `## M12`. Kept: both, LC-CX1 first; each `## ` heading once.
@@ -76,6 +76,12 @@ Each command run alone in `.worktrees/phase4/CC-0` with `TMPDIR=/home/kagemartin
 - `ZYGO_WRITE_CONFORMANCE=1 cargo test -p zygo-core --test conformance --locked` then `git diff --exit-code docs/conformance.md docs/conformance.json` → exit 0; `cargo test -p zygo-core --test conformance --locked` → 121 passed
 - `cargo test -p zygo --test compact_cmd --test statusline_cmd --test statusline_git --locked -- --include-ignored` → 26, 12, 6 passed (without `--include-ignored`: 7, 4, 0 passed; 19, 8, 6 ignored by the timing rule)
 - `git grep -n -E '^(<<<<<<<|=======|>>>>>>>)( |$)'` → no line; `git diff --name-only --diff-filter=U` → no line
+
+## Round 1 review
+
+- F1 (`scripts/premises/live-selftest.sh` fails 2 of 85, T5 and U5, from PC-8 changes on `phase-4`) → new node TF-5 (coordinator); not changed in CC-0.
+- F2 fixed, `77193b63`: `crates/zygo/tests/compact_cmd.rs:104`, the stdin call of `zygo(..)` from the conflicted spawn hunk, `common::feed_stdin(…)` → `common::write_stdin(child.stdin.take().unwrap(), stdin)` (the phase-4 form at `636f52a3`; CC-0 stdin rule). Other `feed_stdin` and `write_all` call sites unchanged (TF-6 unifies the helpers). Evidence: `cargo test -p zygo --test compact_cmd --locked` → 7 passed, 0 failed, 19 ignored; with `--include-ignored` → 26 passed.
+- F3 fixed, `77193b63`: `docs/specs/2026-11-18-zygo-design.md:1163` (OC-1 review round 1 Change log row) `what PO2 shows` → `what POC2 shows`. Search: `git grep -n -w -E 'PO1|PO2' -- docs ':!docs/work'`; the other hits are phase 3's output-shaping premises (base spec :433, :434, :1179; `docs/specs/2026-11-24-output-shaping-design.md`; `docs/premises.md` :26, :85, :86) or text that names the clash itself with both ids (base spec :1188 rename row, `docs/roadmap/phase-4.md:42`, client-model spec :679, :1042); none of them changed. Evidence: `N2_FORBIDDEN_NAMES=zzcinameq sh scripts/check-premises.sh` → exit 0, `check-premises: ok (P1 … POC1 POC2 PC1 … PC19 PM1 PM2 PM3 PO1 PO2 PO3 PO4)`.
 
 ## Plan
 
