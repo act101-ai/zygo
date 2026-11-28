@@ -5,8 +5,7 @@ use zygo_core::ids::{reserved_member_name, valid_member_name};
 
 use crate::layers::{join, seg};
 use crate::profile::valid_name;
-use crate::repo_def::REPOSITORY_LOADOUT;
-use crate::schema::{parse_duration, parse_sync_gap, valid_mail_host, valid_sync_branch, BUILTIN_LOADOUT, Config, KeyRef, JOBS, LOADOUT_KINDS, Reasoning, STATUSLINE_STYLES};
+use crate::schema::{parse_duration, parse_sync_gap, valid_mail_host, valid_sync_branch, BUILTIN_LOADOUT, Config, KeyRef, JOBS, LOADOUT_KINDS, Reasoning, REPOSITORY_LOADOUT, STATUSLINE_STYLES};
 
 const MAIL_HOST_FORM: &str = "must match ^[a-z0-9][a-z0-9-]{0,31}$";
 const MAIL_SYNC_FORM: &str = "must match ^zygo/[a-z0-9][a-z0-9-]{0,31}$";
