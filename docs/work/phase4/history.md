@@ -18,6 +18,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | PC-5 | Codex agents, compaction, MCP, status line and skills captures: PC6, PC8, PC9, PC11, PC15 | PC-2, PC-10 | DONE | implementation | PR #147 merged 08774771; acceptance exit 0 @ 6cbfc673 (real codex 0.172.0; PC6 PC8 PC9 PC11 verified, PC15 failed); CI run 45735709999 green (ubuntu, macos, windows) |
 | PC-8 | check-premises.sh: the name scan exempts the verbatim schemas; an indented table row is not a premise row | PC-1 | DONE | implementation | PR #127 merged 73a4ff40; acceptance exit 0 on merged tree (test-check-premises 99 cases); CI run 45704926916 green (ubuntu, macos, windows) |
 | RS-1 | Responses → Messages request translator and the zygo mark on reasoning items (`translate/responses_client.rs`, `translate/reasoning.rs`) | PC-3 | DONE | judgment | PR #152 merged fe18f3dd; acceptance exit 0 on merged tree (responses_request 49, translate 48); CI run 45733206649 green (ubuntu, macos, windows) |
+| PC-10 | Premise harness privacy: TZ=UTC for Codex runs; scrub OS in user agents and double-slash scratch paths | PC-2 | DONE | implementation | PR #141 merged a1c0ce8a; acceptance exit 0 on merged tree (scrub 70, lib 156, mock 56); CI run 45716982108 green (ubuntu, macos, windows) |
 
 ## Log
 
