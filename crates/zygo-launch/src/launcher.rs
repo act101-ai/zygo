@@ -146,6 +146,12 @@ pub struct LaunchOpts {
     /// R§7.4: the saved pin of this member. `Some`: a repository profile resolves only by the pinned read of this
     /// commit and digest, never by a default-branch read; a pin that is gone, not approved or unread stops the launch.
     pub definition: Option<Pin>,
+    /// R§7.4 "The repository of a member launch" (FX-39 R1): the main worktree of the member's workspace (`main_root`
+    /// of the workspace record). `Some`: every definition step (the approval check, the pinned read, the default-branch
+    /// read) runs at the checkout there, with the workspace id that git gives there; a launch with a pin stops when git
+    /// finds no checkout there. `None`: a launch that is not a member reads at its current folder; a launch with a pin
+    /// stops.
+    pub definition_root: Option<PathBuf>,
     /// R§7.4: set to the pin of this launch's own default-branch read when that read is approved and gives the
     /// requested profile, and that profile passes `validate` and is applied; cleared when the session grant refuses
     /// the profile (`profile_warning`, serve mode); never set by a pinned launch. The member callback reads it before
@@ -188,6 +194,7 @@ impl LaunchOpts {
             agent_session: None,
             on_session: None,
             definition: None,
+            definition_root: None,
             definition_out: None,
             #[cfg(feature = "test-hooks")]
             builtin: None,
@@ -344,16 +351,38 @@ impl Launcher {
         let mut profile = None;
         let known = known_plugins(&selection(&cfg, None), &zygo_plugins::store::state(&opts.paths.plugin_store));
         let name = requested(&cfg, opts.profile.as_deref());
-        // R§7.4, R§11 (FX-31 review F1): a withdrawn approval of the pin stops every pinned member launch, whatever its
-        // profile and in passthrough too, before the passthrough drop and the profile step. It reads the approvals file
-        // only (no git read); outside a checkout there is no workspace id, and only the pinned read below stops.
-        if let (Some(pin), Some(cd)) = (&opts.definition, common_dir.as_deref())
-            && !is_workspace_approved_in(&opts.paths.approvals_file, &workspace_id(cd), &pin.digest)
-        {
+        // R§7.4 "The repository of a member launch" (FX-39 R1): the checkout of every definition step. A member reads at
+        // its workspace's main worktree; a launch that is not a member at its current folder.
+        let (def_top, def_cd) = match &opts.definition_root {
+            Some(r) if *r == opts.cwd => (top.clone(), common_dir.clone()),
+            Some(r) => checkout(r, Instant::now() + BOUND).map_or((None, None), |c| (Some(c.top), Some(c.common_dir))),
+            None => (top.clone(), common_dir.clone()),
+        };
+        // R§7.4 approval bullet, R§11 (FX-31 review F1, FX-39): a withdrawn approval of the pin stops every pinned member
+        // launch, whatever its profile and in passthrough too, before the passthrough drop and the profile step. It
+        // reads the approvals file only (no workspace file), under the workspace id that git gives at the main worktree,
+        // so the pane folder does not change the check. No main worktree, or no checkout there (no work tree, a failed
+        // call, a call past its bound): the check cannot be made, and the launch stops.
+        if let Some(pin) = &opts.definition {
             // The profile name is in the line only for a launch that makes the pinned read; else "this member".
             let reads = name.as_deref().filter(|n| !opts.passthrough && valid_name(n) && !cfg.config.profile.contains_key(*n));
-            out.line(&pin_line(reads.map(zygo_core::esc).as_deref(), pin, NO_LONGER));
-            return 1;
+            let line = |which: &str| pin_line(reads.map(zygo_core::esc).as_deref(), pin, which);
+            let (Some(_), Some(def_top), Some(cd)) = (&opts.definition_root, def_top.as_deref(), def_cd.as_deref()) else {
+                out.line(&line(NO_CHECKOUT));
+                return 1;
+            };
+            if !is_workspace_approved_in(&opts.paths.approvals_file, &workspace_id(cd), &pin.digest) {
+                out.line(&line(NO_LONGER));
+                return 1;
+            }
+            // R§7.4 "The pane folder" (FX-39 R2): a pane folder that resolves into a git dir stops the launch.
+            if let Some(p) = in_git_dir(&opts.cwd, def_top, cd) {
+                out.line(&format!(
+                    "zygo: the folder of this member is inside a git dir ({}); the agent was not started",
+                    zygo_core::esc(&p.to_string_lossy())
+                ));
+                return 1;
+            }
         }
         // R§8 "Passthrough": no profile from any source, and no read; a requested name is reported.
         let name = match name {
@@ -371,7 +400,7 @@ impl Launcher {
                 let read = if !valid_name(&n) {
                     Err(format!("zygo: profile {} not found; launching without it", zygo_core::esc(&n)))
                 } else if let Some(pin) = &opts.definition {
-                    match pinned_profile(&opts, &cfg, &n, pin, top.as_deref(), common_dir.as_deref()) {
+                    match pinned_profile(&opts, &cfg, &n, pin, def_top.as_deref(), def_cd.as_deref()) {
                         Pinned::Apply(m) => Ok(m),
                         Pinned::NotFound(line) => Err(line),
                         // R§7.4: before the proxy, the session and the callback, so the record does not change (AU92).
@@ -381,7 +410,7 @@ impl Launcher {
                         }
                     }
                 } else {
-                    repository_profile(&opts, &cfg, &n, top.as_deref(), common_dir.as_deref()).map(|(m, pin)| {
+                    repository_profile(&opts, &cfg, &n, def_top.as_deref(), def_cd.as_deref()).map(|(m, pin)| {
                         read_pin = Some(pin);
                         m
                     })
@@ -945,6 +974,18 @@ fn repository_profile(
 
 /// The R§7.4 stop text of a pin that is gone or no longer approved.
 const NO_LONGER: &str = "this repository no longer has or no longer approves";
+/// The R§7.4 stop text of a launch with a pin whose main worktree gives no checkout (FX-39 R1).
+const NO_CHECKOUT: &str = "were not read (git found no checkout at the main worktree of the workspace)";
+
+/// R§7.4 "The pane folder" (FX-39 R2): the resolved pane folder `cwd` when it is inside the common dir `common_dir` of
+/// the main worktree's checkout, or has more path parts named `.git` (any ASCII letter case) than the resolved main
+/// worktree `top` (a nested repository's git dir). `top` and `common_dir` come resolved from `checkout`. A folder that
+/// cannot be resolved is left to the launch (none).
+fn in_git_dir(cwd: &Path, top: &Path, common_dir: &Path) -> Option<PathBuf> {
+    let c = cwd.canonicalize().ok()?;
+    let gits = |p: &Path| p.components().filter(|c| c.as_os_str().to_str().is_some_and(|s| s.eq_ignore_ascii_case(".git"))).count();
+    (c.starts_with(common_dir) || gits(&c) > gits(top)).then_some(c)
+}
 
 /// What a pinned read (R§7.4) gives the launch.
 enum Pinned {
@@ -967,8 +1008,9 @@ fn pin_line(n: Option<&str>, pin: &Pin, which: &str) -> String {
     )
 }
 
-/// R§7.4: one pinned read (`check_pinned`) for profile `name`, which neither the user nor the team config has. No
-/// checkout (no common dir): the `NO_LONGER` stop.
+/// R§7.4: one pinned read (`check_pinned`) for profile `name`, which neither the user nor the team config has, at the
+/// checkout of the definition steps (`top`, `common_dir`: the main worktree of a member, R§7.4 "The repository of a
+/// member launch"), with the workspace id that git gives there. No checkout: the `NO_LONGER` stop.
 fn pinned_profile(opts: &LaunchOpts, cfg: &Merged, name: &str, pin: &Pin, top: Option<&Path>, common_dir: Option<&Path>) -> Pinned {
     let n = zygo_core::esc(name);
     let (Some(top), Some(cd)) = (top, common_dir) else {

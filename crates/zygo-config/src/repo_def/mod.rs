@@ -14,7 +14,10 @@ pub use apply::{apply_to_config, Applied};
 pub use check::{check_default, check_pinned, Pin, PinnedUse, Use};
 pub use digest::{digest, short};
 pub use loadout::{repository_loadout, REPOSITORY_LOADOUT};
-pub use read::{read_at, read_default, Files, GitRunner, Read, SystemGit, PROFILES_MAX, PROFILE_MAX, WORKSPACE_MAX};
+pub use read::{
+    read_at, read_default, Files, GitRunner, Read, SystemGit, LISTING_BYTES_MAX, LISTING_ENTRIES_MAX, PROFILES_MAX, PROFILE_MAX,
+    WORKSPACE_MAX,
+};
 pub use shape::{parse, Definition, MemberDef, RepoProfile, WorkspaceFile};
 pub use store::{approve_workspace_in, is_workspace_approved_in, Stored};
 

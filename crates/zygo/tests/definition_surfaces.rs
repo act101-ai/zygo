@@ -719,6 +719,18 @@ mod unix {
     }
 
     #[test]
+    fn loadout_list_shows_an_invalid_row_for_a_listing_above_a_limit() { // R§10 `zygo loadout list` row (FX-39 R5); R§6.1 step 4
+        // `.zygo/` with workspace.toml and 256 more entries: 257 in all, above the 256-entry listing limit.
+        let mut ents = vec![(WS.to_string(), MIN.to_string())];
+        ents.extend((0..256).map(|i| (format!(".zygo/x{i:03}"), "x".to_string())));
+        let ents: Vec<(&str, &str)> = ents.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+        let f = fx(&ents);
+        let (so, se) = list(&f, "", false);
+        assert_eq!(so, "repository  workspace-files, invalid\nsolo  built-in\n");
+        assert!(def_lines(&se).is_empty(), "{se}");
+    }
+
+    #[test]
     fn loadout_show_repository_prints_only_when_approved() { // R-C2
         let f = fx(&[(WS, MIN)]);
         let h = home(&f, "");

@@ -195,6 +195,8 @@ pub struct Launch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job: Option<String>,
     /// W§7.2 member.launch.definition = { commit, digest } (R§7.4): the pin of the approved read of the workspace files.
+    /// A member launch checks it at the checkout of the workspace's main worktree (`main_root`), with the workspace id
+    /// that git gives there (R§7.4 "The repository of a member launch").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub definition: Option<zygo_config::repo_def::Pin>,
     #[serde(flatten)]

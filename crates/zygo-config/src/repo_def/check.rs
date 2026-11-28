@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{digest, is_workspace_approved_in, parse, read_at, read_default, Definition, Files, GitRunner, Read};
 
-/// The approved read that a session saves: the commit and the digest of the files read there.
+/// The approved read that a session saves: the commit and the digest of the files read there. It holds no workspace
+/// id: a member launch computes the id at the checkout of its workspace's main worktree (R§7.4, FX-39 R1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pin {
     pub commit: String,
