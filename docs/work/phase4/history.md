@@ -24,6 +24,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | RS-2 | Messages → Responses encoder: SSE stream and JSON response (`translate/responses_client.rs`) | RS-1 | DONE | judgment | PR #156 merged 1ad733f0; acceptance exit 0 on merged tree (responses_stream 29); CI run 45738657210 green (ubuntu, macos, windows) |
 | RS-3 | `POST /openai/v1/responses` route, test harness, request side of forward, errors before the first byte, redaction on `input` | RS-1 | DONE | judgment | PR #157 merged f37bba43; acceptance exit 0 on merged tree (responses_route 20); CI run 45740502290 green (ubuntu, macos, windows) |
 | RS-9 | Codex namespace tools: flatten into function tools for Anthropic and chat upstreams, map their calls back | RS-1, RS-2, PC-5 | DONE | judgment | PR #161 merged 01d4b522; acceptance pass on merged tree (responses_request 59, responses_stream 34; workspace: only the 2 known guard_hook failures) |
+| RS-8 | `GET /openai/v1/models` in the PC7 shape, other PC1 paths, chat route stays 404 | RS-3 | DONE | implementation | PR #164 merged 62740dc2; acceptance exit 0 on merged tree (responses_models 7); CI run 45744874257 green (ubuntu, macos, windows) |
 
 ## Log
 

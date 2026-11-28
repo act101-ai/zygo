@@ -333,7 +333,7 @@ The generator gives three named outputs **(operator)**, each from the K§6.2.4 r
 2. **Rollup.** One table per client, with one row per tier and one total row: full, partial, none, n/a, criteria met / applicable. Under it, the bar verdict: `meets bar` or `below bar: <failing core capability ids>`; the bar exceptions with reason and approval; and the release state (`supported`, `meets bar, not released`, `below bar`).
 3. **Score.** One table: client, total score, core, standard and extra tier scores, each a percent by K§6.2.4, or `n/a` for a tier with no applicable cell.
 
-After the three outputs, `docs/conformance.md` lists, per client, each unmet criterion with its reason, each `n/a` with its reason, and the evidence of each met criterion.
+After the three outputs, `docs/conformance.md` lists, per client, each unmet criterion with its reason, each `n/a` with its reason, and the evidence of each met criterion. A `met` grade with a reason keeps it: its line is the evidence, then `(reason: <reason>)`. A `met` grade with no reason gives the evidence only.
 
 **Machine-readable form** **(author)**: `docs/conformance.json`, written by the same generator and checked by the same test (item 10). CI and later tools read it, not the Markdown. Its form:
 
@@ -353,6 +353,8 @@ After the three outputs, `docs/conformance.md` lists, per client, each unmet cri
   }]
 }
 ```
+
+A cell has one more key, `met_reasons`, after `na`, only when a `met` criterion of the cell has a grade with a reason: `"met_reasons": [{"criterion": "A-1.2", "reason": "…"}]`, one entry for each such criterion, in registry order. A cell with no such criterion has no `met_reasons` key, so its JSON does not change. The generator never drops the reason of a grade, whatever its status.
 
 The numbers are an example that follows K§6.2.4: core = (7 × 1 + 0.75) ÷ 8 = 0.96875 → 96; standard = 0.75 (12 cells whose values sum to 9) → 75; extra = (5/6 + 1 + 1) ÷ 3 = 0.944 → 94; total = (3 × 0.96875 + 2 × 0.75 + 1 × 0.944) ÷ 6 = 0.8918 → 89. Each cell also carries its `value`, so a reader can recompute each score.
 
@@ -1046,3 +1048,4 @@ P4-11 (client updates):
 - 2026-11-27: K§6.9 P4-6; operator: phase 3 and phase 4 reach `main` together through the `phase-4` pull request (#241); `phase-4` takes each new phase-3 head in a merge layer of its own, and phase 3 is not merged into `main` on its own.
 - 2026-11-27: K§6.9 intro; operator: phase 3 and phase 4 reach `main` together through the `phase-4` pull request (#241), and `phase-4` takes each new phase-3 head in a merge layer of its own, so the intro no longer says that `phase-4` takes `main` again when phase 3 reaches `main`; the merge base after CC-0 is `74748ae7` (CC-1 planning).
 - 2026-11-28: K§6.2.2 — the phase 3 client features (K-D51): A-7.6 and A-7.7 (output shaping), A-9.7 (session run time), WA-3 Mail wake and delivery (standard, WA-3.1 to WA-3.4); author's call, for the operator at the CC-12 merge (K§6.2.1: new standard text and its tier).
+- 2026-11-28: K§6.2.6 (the criteria list after the three outputs and the JSON cell form): a `met` grade with a reason keeps it, as `(reason: <reason>)` in `docs/conformance.md` and in a `met_reasons` cell key in `docs/conformance.json`; author's call, "CC-12 round 1 F2: the generator drops the reason of a met grade".

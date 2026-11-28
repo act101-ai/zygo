@@ -1,6 +1,0 @@
-# Minimum supported agent versions (spec §8.1 A-13). Equal to the versions pinned in docs/premises.md.
-[claude-code]
-min_version = "2.1.328"
-
-[opencode]
-min_version = "1.18.16"

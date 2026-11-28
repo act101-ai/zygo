@@ -181,13 +181,8 @@ pub enum StructuredOutput {
     None,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Dialect {
-    Anthropic,
-    Openai,
-    OpenaiChat,
-}
+/// The model API wire format, defined in `zygo-core` so a client descriptor can name it (K§6.1.1).
+pub use zygo_core::Dialect;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
