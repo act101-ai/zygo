@@ -100,10 +100,16 @@
         },
         "A-7": {
           "tier": "standard",
-          "grade": "full",
-          "value": 1.0,
+          "grade": "partial",
+          "value": 0.8571428571428571,
           "url": "https://code.claude.com/docs/en/hooks",
-          "missing": [],
+          "missing": [
+            {
+              "criterion": "A-7.7",
+              "text": "The output of a failed Bash call (exit code not 0) reaches the model through output shaping too (§10.1, Failed Bash call).",
+              "reason": "PO1 failed: on Claude Code 2.1.332 a failed Bash call fires PostToolUseFailure and no hook output replaces the text the model sees, so zygo registers no trim hook there and the output passes unshaped (base spec 10.1 Failed Bash call)"
+            }
+          ],
           "na": []
         },
         "A-11": {
@@ -189,10 +195,18 @@
           ],
           "na": []
         },
+        "WA-3": {
+          "tier": "standard",
+          "grade": "full",
+          "value": 1.0,
+          "url": "https://code.claude.com/docs/en/hooks",
+          "missing": [],
+          "na": []
+        },
         "A-9": {
           "tier": "extra",
           "grade": "partial",
-          "value": 0.8333333333333334,
+          "value": 0.8571428571428571,
           "url": "https://code.claude.com/docs/en/statusline",
           "missing": [
             {
@@ -231,27 +245,27 @@
         },
         "standard": {
           "full": 11,
-          "partial": 1,
+          "partial": 2,
           "none": 0,
           "na": 0,
-          "met": 31,
-          "applicable": 33
+          "met": 36,
+          "applicable": 39
         },
         "extra": {
           "full": 2,
           "partial": 1,
           "none": 0,
           "na": 0,
-          "met": 9,
-          "applicable": 10
+          "met": 10,
+          "applicable": 11
         },
         "total": {
           "full": 20,
-          "partial": 3,
+          "partial": 4,
           "none": 0,
           "na": 0,
-          "met": 59,
-          "applicable": 63
+          "met": 65,
+          "applicable": 70
         },
         "bar": {
           "verdict": "meets bar",
@@ -265,8 +279,8 @@
       "score": {
         "total": 96,
         "core": 96,
-        "standard": 96,
-        "extra": 94
+        "standard": 95,
+        "extra": 95
       }
     },
     {
@@ -370,7 +384,7 @@
         "A-7": {
           "tier": "standard",
           "grade": "partial",
-          "value": 0.4,
+          "value": 0.5714285714285714,
           "url": "https://opencode.ai/docs/plugins/",
           "missing": [
             {
@@ -507,6 +521,20 @@
           ],
           "na": []
         },
+        "WA-3": {
+          "tier": "standard",
+          "grade": "partial",
+          "value": 0.75,
+          "url": "https://opencode.ai/docs/plugins/",
+          "missing": [
+            {
+              "criterion": "WA-3.1",
+              "text": "A member busy in a turn reads mail delivered during the turn before the turn ends (M§7.1).",
+              "reason": "OpenCode has no Stop block: the plugin sends its idle event as stop and does not read the hook output (opencode-plugin.js:75-78), and the hook blocks only a Claude Code Stop (workspace.rs:347-358); mail that comes after the last model request of a turn waits for the next turn or start"
+            }
+          ],
+          "na": []
+        },
         "A-9": {
           "tier": "extra",
           "grade": "full",
@@ -560,27 +588,27 @@
         },
         "standard": {
           "full": 7,
-          "partial": 5,
+          "partial": 6,
           "none": 0,
           "na": 0,
-          "met": 21,
-          "applicable": 32
+          "met": 26,
+          "applicable": 38
         },
         "extra": {
           "full": 2,
           "partial": 0,
           "none": 1,
           "na": 0,
-          "met": 7,
-          "applicable": 9
+          "met": 8,
+          "applicable": 10
         },
         "total": {
           "full": 16,
-          "partial": 6,
+          "partial": 7,
           "none": 1,
           "na": 0,
-          "met": 47,
-          "applicable": 61
+          "met": 53,
+          "applicable": 68
         },
         "bar": {
           "verdict": "meets bar",
@@ -592,9 +620,9 @@
         "release": "supported"
       },
       "score": {
-        "total": 84,
+        "total": 85,
         "core": 96,
-        "standard": 76,
+        "standard": 77,
         "extra": 66
       }
     }

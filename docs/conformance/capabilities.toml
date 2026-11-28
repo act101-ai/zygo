@@ -128,6 +128,14 @@ text = "Web-fetch output, the same (`n/a` for a client with no such tool)."
 id = "A-7.5"
 text = "The view takes the place of the tool's output in the tool's own result, not of an error or a feedback message."
 
+[[capability.criterion]]
+id = "A-7.6"
+text = "Bash tool output reaches the model through output shaping (§10.1, Shaping): color codes and progress removed, runs of equal lines counted, runner and kind views, below and above the threshold."
+
+[[capability.criterion]]
+id = "A-7.7"
+text = "The output of a failed Bash call (exit code not 0) reaches the model through output shaping too (§10.1, Failed Bash call)."
+
 [[capability]]
 id = "A-8"
 name = "Session context"
@@ -171,6 +179,10 @@ text = "The session savings show on the client's status surface, or in `zygo sta
 [[capability.criterion]]
 id = "A-9.6"
 text = "Each status command that zygo writes runs in each shell the client uses."
+
+[[capability.criterion]]
+id = "A-9.7"
+text = "The session run time (since the member's first start, or the session's own start outside a workspace) shows on the client's status surface, or in `zygo status` when the client has no surface."
 
 [[capability]]
 id = "A-10"
@@ -387,6 +399,28 @@ text = "Subagent end, for each subagent."
 [[capability.criterion]]
 id = "WA-2.5"
 text = "A dispatch block can refuse a subagent call."
+
+[[capability]]
+id = "WA-3"
+name = "Mail wake and delivery"
+tier = "standard"
+standard = "Workspace mail reaches the member it is sent to: a busy member reads it before its turn ends, a new turn or start names the unread count, an idle member is woken, and the member's hooks fetch mail from other machines (workspace mail design M§7, mail sync design S§8.1, S§10)."
+
+[[capability.criterion]]
+id = "WA-3.1"
+text = "A member busy in a turn reads mail delivered during the turn before the turn ends (M§7.1)."
+
+[[capability.criterion]]
+id = "WA-3.2"
+text = "While the member has unread mail, the main loop gets the line `zygo: <n> new messages; read them with mail_read` at each new turn and at each session start (M§7.2)."
+
+[[capability.criterion]]
+id = "WA-3.3"
+text = "An idle member whose launcher is live is woken with the fixed wake text, at most once in the wake gap (M§7.3)."
+
+[[capability.criterion]]
+id = "WA-3.4"
+text = "The member's hook events (main-loop start, prompt, turn end, tool end) start the mail sync by the sync gap, and mail that the sync imports from another machine wakes its member as WA-3.3 does (S§8.1, S§10.1)."
 
 [[bar_exception]]
 client = "claude-code"
