@@ -1,0 +1,13 @@
+__________________________________ test_total __________________________________
+E       assert 5 == 6
+E        +  where 5 = add(2, 3)
+tests/test_calc.py:19: AssertionError
+_________________________________ test_plural __________________________________
+E       AssertionError: assert 'PEAR' == 'PEARS'
+E         
+E         - PEARS
+E         ?     -
+E         + PEAR
+tests/test_text.py:10: AssertionError
+FAILED tests/test_calc.py::test_total - assert 5 == 6
+FAILED tests/test_text.py::test_plural - AssertionError: assert 'PEAR' == 'PE...

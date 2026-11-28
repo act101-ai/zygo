@@ -1,0 +1,33 @@
+[[capability]]
+id = "A-1"
+name = "Transport"
+tier = "core"
+standard = "Each model request goes to the proxy."
+
+[[capability.criterion]]
+id = "A-1.1"
+text = "Each model request goes to the proxy."
+
+[[capability.criterion]]
+id = "A-1.2"
+text = "The credential is the session token."
+
+[[capability]]
+id = "A-3"
+name = "Model list"
+tier = "standard"
+standard = "The picker shows the roles."
+
+[[capability.criterion]]
+id = "A-3.1"
+text = "The picker shows the role list."
+
+[[capability]]
+id = "WA-2"
+name = "Turn signals"
+tier = "extra"
+standard = "zygo sees each turn."
+
+[[capability.criterion]]
+id = "WA-2.1"
+text = "Turn start."

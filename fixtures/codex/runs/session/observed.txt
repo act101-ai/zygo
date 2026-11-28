@@ -1,0 +1,5 @@
+- PC6: verified 2026-11-26: fixtures/codex/agents/models.txt fixtures/codex/agents/marker.txt fixtures/codex/agents/roles.txt fixtures/codex/agents/tools.json
+- PC8: verified 2026-11-26: fixtures/codex/compaction/compaction.txt fixtures/codex/compaction/config.toml fixtures/codex/compaction/requests/pc8-high-0017.json fixtures/codex/compaction/requests/pc8-live-high-0022.json fixtures/codex/compaction/requests/pc8-tui-high-0029.json
+- PC9: verified 2026-11-26: fixtures/codex/mcp/mcp.txt fixtures/codex/mcp/tools.json
+- PC11: verified 2026-11-26: fixtures/codex/status/status.txt fixtures/codex/status/pane-turn.txt fixtures/codex/status/pane-default-turn.txt fixtures/codex/status/config.toml fixtures/codex/status/warnings.txt
+- PC15: failed 2026-11-26: fixtures/codex/skills/skills.txt fixtures/codex/skills/config.toml

@@ -8,6 +8,7 @@ and the secret parts that must be gone.
 import getpass
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -73,6 +74,235 @@ CASES = [
      ["Jo", "Ann"]),
     ("msys name with spaces at the end", "/c/" + "Users/Mary Jane Smith", "/home/user", ["Mary", "Jane", "Smith"]),
 ]
+# PC-2: Codex rollout file names and session and turn ids (UUIDv7, lower case).
+U1 = "0199b0c2-7c1d-7a3e-9f00-1234567890ab"
+U2 = "0199b0c3-0000-7000-8000-00000000abcd"
+CASES += [
+    ("codex rollout file name", "rollout-2026-11-25T10-20-30-" + U1 + ".jsonl",
+     "rollout-2026-11-25T10-20-30-00000000-0000-4000-8000-000000000001.jsonl", [U1]),
+    ("codex session and turn ids", '{"session_id":"' + U1 + '","turn_id":"' + U2 + '"}',
+     '{"session_id":"00000000-0000-4000-8000-000000000001","turn_id":"00000000-0000-4000-8000-000000000002"}',
+     [U1, U2]),
+]
+# PC-10: the host OS name, version and architecture in a user agent -> "(os omitted)".
+CASES += [
+    ("user agent, macos", "codex_exec/0.172.0 (Mac OS 27.2.1; arm64) xterm-256color",
+     "codex_exec/0.172.0 (os omitted) xterm-256color", ["27.2.1", "arm64"]),
+    ("user agent, linux", "codex_cli_rs/0.172.0 (Linux 6.8.0-49-generic; x86_64) dumb",
+     "codex_cli_rs/0.172.0 (os omitted) dumb", ["6.8.0", "x86_64"]),
+    ("user agent, ubuntu", "codex_exec/0.172.0 (Ubuntu 24.04; aarch64) xterm",
+     "codex_exec/0.172.0 (os omitted) xterm", ["24.04", "aarch64"]),
+    ("user agent, windows", "codex_exec/0.172.0 (Windows 10.0.26100; x86_64) unknown",
+     "codex_exec/0.172.0 (os omitted) unknown", ["26100", "x86_64"]),
+    ("user agent, windows without arch", "codex_exec/0.172.0 (Windows 10.0.26100)",
+     "codex_exec/0.172.0 (os omitted)", ["26100"]),
+    ("a parenthesis that is not a user agent", "see note (Mac OS 27.2.1; arm64) and x/y (b 2)",
+     "see note (Mac OS 27.2.1; arm64) and x/y (b 2)", []),
+]
+# PC-10 review round 1, F4: more OS forms (a user agent with macOS, a distribution name, a Windows
+# edition, no blank before the parenthesis, a browser's Macintosh text), JSON os_type / os_version
+# values, and uname -a lines. F3: a <timezone> other than UTC (a backstop; TZ=UTC is the fix).
+CASES += [
+    ("user agent, macos lower case", "codex/1.0 (macOS 15.1; arm64) t", "codex/1.0 (os omitted) t", ["15.1", "arm64"]),
+    ("user agent, arch linux", "codex/1.0 (Arch Linux Rolling Release; x86_64) t", "codex/1.0 (os omitted) t",
+     ["Rolling", "x86_64"]),
+    ("user agent, ubuntu with arch", "codex/1.0 (Ubuntu 22.04.5 LTS; aarch64)", "codex/1.0 (os omitted)", ["22.04", "aarch64"]),
+    ("user agent, windows edition", "codex/1.0 (Windows 10 Pro 10.0.19045; x86_64)", "codex/1.0 (os omitted)",
+     ["19045", "Pro"]),
+    ("user agent, no blank", "x/1.0(Mac OS 27.2.1; arm64) t", "x/1.0(os omitted) t", ["27.2.1", "arm64"]),
+    ("browser user agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+     "Mozilla/5.0 (os omitted) AppleWebKit/537.36", ["10_15_7", "Intel"]),
+    ("macintosh text alone", "platform Macintosh; Intel Mac OS X 10_15_7 end", "platform (os omitted) end",
+     ["10_15_7", "Intel"]),
+    ("json os_type and os_version", '{"os_type":"Mac OS","os_version":"27.2.1","x":1}',
+     '{"os_type":"(os omitted)","os_version":"(os omitted)","x":1}', ["Mac OS", "27.2.1"]),
+    ("nested json os_version", '{\\"os_version\\": \\"6.8.0\\"}', '{\\"os_version\\": \\"(os omitted)\\"}', ["6.8.0"]),
+    ("uname -a, darwin", "Darwin zzbox.local 25.2.0 Darwin Kernel Version 25.2.0: Tue Oct 1; root:xnu-123/RELEASE_ARM64_T6041 arm64",
+     "(os omitted)", ["25.2.0", "zzbox", "arm64"]),
+    ("uname -a, linux", "Linux zzbox 6.8.0-49-generic #49-Ubuntu SMP PREEMPT_DYNAMIC Thu x86_64 x86_64 GNU/Linux",
+     "(os omitted)", ["6.8.0", "zzbox", "x86_64"]),
+    ("prose with linux and a version", "Linux and 2.0 support", "Linux and 2.0 support", []),
+    ("timezone other than utc", "<timezone>America/Los_Angeles</timezone>", "<timezone>(omitted)</timezone>",
+     ["Los_Angeles"]),
+    ("timezone utc kept", "<timezone>UTC</timezone> <timezone>Etc/UTC</timezone>",
+     "<timezone>UTC</timezone> <timezone>Etc/UTC</timezone>", []),
+    # Round 2 (G6): the same forms as codex_record's check.
+    ("timezone with escaped slashes", "<timezone>America\\/Los_Angeles<\\/timezone>",
+     "<timezone>(omitted)<\\/timezone>", ["Los_Angeles"]),
+    ("timezone as entities", "&lt;timezone&gt;Europe/Paris&lt;/timezone&gt;",
+     "&lt;timezone&gt;(omitted)&lt;/timezone&gt;", ["Paris"]),
+    ("timezone as unicode escapes", "\\u003ctimezone\\u003eAsia/Tokyo\\u003c/timezone\\u003e",
+     "\\u003ctimezone\\u003e(omitted)\\u003c/timezone\\u003e", ["Tokyo"]),
+    ("timezone utc forms kept", "<timezone>utc</timezone> <timezone>Etc/GMT</timezone> <timezone>GMT</timezone> "
+     "<timezone>UTC+0</timezone> <timezone>UTC+00:00</timezone>",
+     "<timezone>utc</timezone> <timezone>Etc/GMT</timezone> <timezone>GMT</timezone> "
+     "<timezone>UTC+0</timezone> <timezone>UTC+00:00</timezone>", []),
+]
+# PC-11: Codex OS keys, login shell, macOS writable roots, item ids, sandbox, marketplace and macOS env names.
+I1 = "da690f77-7707-5fdf-97a5-850943e7a34c"
+I2 = "8e32dd58-d565-50b3-83f4-72b17fc59ae7"
+PC11 = [
+    ("codex platformOs", '{"platformFamily":"unix","platformOs":"macos"}',
+     '{"platformFamily":"(os omitted)","platformOs":"(os omitted)"}', ["macos", "unix"]),
+    ("codex platformOs escaped", '{\\"platformOs\\":\\"linux\\"}', '{\\"platformOs\\":\\"(os omitted)\\"}', ["linux"]),
+    ("login shell tag", "<environment_context>\n  <cwd>/repo</cwd>\n  <shell>zsh</shell>\n</environment_context>",
+     "<environment_context>\n  <cwd>/repo</cwd>\n  <shell>(omitted)</shell>\n</environment_context>", ["zsh"]),
+    ("login shell tag, unicode escapes",
+     "\\u003cenvironment_context\\u003e\\u003cshell\\u003efish\\u003c/shell\\u003e\\u003c/environment_context\\u003e",
+     "\\u003cenvironment_context\\u003e\\u003cshell\\u003e(omitted)\\u003c/shell\\u003e\\u003c/environment_context\\u003e",
+     ["fish"]),
+    ("login shell tag, entities", "&lt;environment_context&gt;&lt;shell&gt;bash&lt;/shell&gt;&lt;/environment_context&gt;",
+     "&lt;environment_context&gt;&lt;shell&gt;(omitted)&lt;/shell&gt;&lt;/environment_context&gt;", ["bash"]),
+    # Review round 1 F6: the shell rules apply only to the environment_context block and command fields.
+    ("shell tag outside environment_context kept", "The <shell>bash</shell> tag names a shell.",
+     "The <shell>bash</shell> tag names a shell.", []),
+    ("login shell in model text kept", "Run /bin/bash -lc 'ls' to list files.", "Run /bin/bash -lc 'ls' to list files.", []),
+    ("macos writable root", "The writable roots are `/private/tmp`, `/repo`.", "The writable roots are `/tmp`, `/repo`.",
+     ["/private"]),
+    ("macos temp writable root", "roots `/private/var/folders/ab/cd_ef/T`, `/repo`", "roots `/tmp/x`, `/repo`",
+     ["/private", "cd_ef"]),
+    ("codex item ids", '{"a":"msg_' + I1 + '","b":"fco_' + I2 + '","c":"msg_' + I1 + '","d":"ctco_' + I2 + '"}',
+     '{"a":"msg_placeholder0001","b":"fco_placeholder0001","c":"msg_placeholder0001","d":"ctco_placeholder0001"}',
+     [I1, I2]),
+    ("codex item id after an escape", "a\\nmsg_" + I1, "a\\nmsg_placeholder0001", [I1]),
+    ("macos sandbox name", '{\\"sandbox\\":\\"seatbelt\\",\\"sandbox_mode\\":\\"workspace-write\\"}',
+     '{\\"sandbox\\":\\"(os omitted)\\",\\"sandbox_mode\\":\\"workspace-write\\"}', ["seatbelt"]),
+    ("linux sandbox name", '"sandbox":"linux_seccomp"', '"sandbox":"(os omitted)"', ["seccomp"]),
+    ("no sandbox kept", '"sandbox":"none"', '"sandbox":"none"', []),
+    ("marketplace os name", ".tmp/marketplace-macos-1a2b3c/x", ".tmp/marketplace-os-omitted/x", ["macos", "1a2b3c"]),
+    ("login shell in a command", '"command":"/bin/zsh -lc \'echo hi\'"', '"command":"(shell omitted) -lc \'echo hi\'"', ["zsh"]),
+    ("login shell in exec json", '{"command":"/opt/homebrew/bin/fish -lc \'ls\'"}',
+     '{"command":"(shell omitted) -lc \'ls\'"}', ["fish", "homebrew"]),
+    ("login shell in an escaped cmd field", '{\\"cmd\\":\\"/bin/bash -lc ls\\"}', '{\\"cmd\\":\\"(shell omitted) -lc ls\\"}',
+     ["bash"]),
+    ("macos env line", "__CF_USER_TEXT_ENCODING=0x1F5:0x0:0x0\nPATH=/bin", "(os env omitted)\nPATH=/bin",
+     ["0x1F5", "__CF"]),
+    ("macos env name in a list", '["HOME","__CF_USER_TEXT_ENCODING"]', '["HOME","(os env omitted)"]', ["__CF"]),
+]
+CASES += PC11
+# PC-13: the shell name and OS version lines of a Claude Code environment block.
+CASES += [
+    ("claude code env block", "Platform: darwin\n - Shell: zsh\n - OS Version: Darwin 25.6.0\n - Downloaded files",
+     "Platform: darwin\n - Shell: (omitted)\n - OS Version: (os omitted)\n - Downloaded files", ["zsh", "25.6.0"]),
+    ("claude code env block, json-escaped", "x\\n - Shell: bash\\n - OS Version: Linux 6.8.0-49-generic\\n - y",
+     "x\\n - Shell: (omitted)\\n - OS Version: (os omitted)\\n - y", ["bash", "6.8.0"]),
+    ("shell outside an env block kept", 'The Shell: zsh is the default; "shell": "/bin/zsh"',
+     'The Shell: zsh is the default; "shell": "/bin/zsh"', []),
+    ("env block placeholders kept", " - Shell: (omitted)\n - OS Version: (os omitted)",
+     " - Shell: (omitted)\n - OS Version: (os omitted)", []),
+    # Review round 1 F5: any case, any whitespace after the colon (space, tab, escaped \t), with or
+    # without the leading "- ", at a line start or after a literal or escaped newline.
+    ("env block, lower case", "x\n - shell: zsh\n - os version: Darwin 25.6.0",
+     "x\n - shell: (omitted)\n - os version: (os omitted)", ["zsh", "25.6.0"]),
+    ("env block, upper case", "x\n - SHELL: zsh\n - OS VERSION: Darwin 25.6.0",
+     "x\n - SHELL: (omitted)\n - OS VERSION: (os omitted)", ["zsh", "25.6.0"]),
+    ("env block, tab after the colon", "x\n - Shell:\tzsh\n - OS Version:\tDarwin 25.6.0",
+     "x\n - Shell:\t(omitted)\n - OS Version:\t(os omitted)", ["zsh", "25.6.0"]),
+    ("env block, escaped tab after the colon", "x\\n - Shell:\\tzsh\\n - OS Version:\\tDarwin 25.6.0",
+     "x\\n - Shell:\\t(omitted)\\n - OS Version:\\t(os omitted)", ["zsh", "25.6.0"]),
+    ("env block, no dash", "Shell: zsh\nOS Version: Darwin 25.6.0",
+     "Shell: (omitted)\nOS Version: (os omitted)", ["zsh", "25.6.0"]),
+    ("env block, no dash after an escaped newline", "x\\nShell: fish\\nOS Version: Linux 6.8.0",
+     "x\\nShell: (omitted)\\nOS Version: (os omitted)", ["fish", "6.8.0"]),
+    # Review round 2 G1 (replaces round 1 F8, fail closed): one or more backslashes then "n" or "r", a
+    # carriage return, or a \u000a escape starts a line.
+    ("G1: escaped backslash then n", "x\\\\n - Shell: zsh", "x\\\\n - Shell: (omitted)", ["zsh"]),
+    ("env block, escaped backslash then escaped newline", "x\\\\\\n - Shell: zsh",
+     "x\\\\\\n - Shell: (omitted)", ["zsh"]),
+    ("G1: plant.sse partial_json",
+     'data: {"delta":{"type":"input_json_delta","partial_json":"{\\"text\\": \\"a\\\\n - Shell: zsh\\\\n - OS Version: '
+     'Darwin 25.6.0\\"}"}}',
+     'data: {"delta":{"type":"input_json_delta","partial_json":"{\\"text\\": \\"a\\\\n - Shell: (omitted)\\\\n - '
+     'OS Version: (os omitted)\\"}"}}', ["zsh", "25.6.0"]),
+    ("G1: .summary.json doubly escaped", '{"summary": "a\\\\n - Shell: zsh\\\\n - OS Version: Darwin 25.6.0"}',
+     '{"summary": "a\\\\n - Shell: (omitted)\\\\n - OS Version: (os omitted)"}', ["zsh", "25.6.0"]),
+    ("G1: \\u000a escape", "x\\u000a - Shell: zsh\\u000A - OS Version: Darwin 25.6.0",
+     "x\\u000a - Shell: (omitted)\\u000A - OS Version: (os omitted)", ["zsh", "25.6.0"]),
+    ("G1: carriage return", "x\r - Shell: zsh\rOS Version: Darwin 25.6.0",
+     "x\r - Shell: (omitted)\rOS Version: (os omitted)", ["zsh", "25.6.0"]),
+    ("G1: escaped carriage return", "x\\r - Shell: zsh", "x\\r - Shell: (omitted)", ["zsh"]),
+    # Review round 2 G2: the dash form for any value; the dashless form only with a capital first
+    # letter and a host value. Prose and a YAML key are kept.
+    ("G2: dash form, any value", " - Shell: anything at all", " - Shell: (omitted)", ["anything"]),
+    ("G2: prose shell line kept", "Shell: run make first", "Shell: run make first", []),
+    ("G2: prose OS line kept", "OS version: check it is 14 or later", "OS version: check it is 14 or later", []),
+    ("G2: YAML shell key kept", "x\n  shell: bash\n", "x\n  shell: bash\n", []),
+    ("G2: dashless shell path", "Shell: /bin/zsh\nShell: /opt/homebrew/bin/fish",
+     "Shell: (omitted)\nShell: (omitted)", ["/bin/zsh", "fish"]),
+    ("G2: dashless OS values", "OS Version: macOS 15.1\nOS Version: Windows 10.0.26100",
+     "OS Version: (os omitted)\nOS Version: (os omitted)", ["15.1", "26100"]),
+    # Review round 2 G5: the key's own placeholder as the whole value; CRLF; anchored Stainless values.
+    ("G5: wrong placeholder on the shell line", " - Shell: (os omitted)", " - Shell: (omitted)", []),
+    ("G5: placeholder then text", " - Shell: (omitted) zsh", " - Shell: (omitted)", ["zsh"]),
+    ("G5: placeholder in upper case", " - OS Version: (OS OMITTED)", " - OS Version: (os omitted)", []),
+    ("G5: CRLF", "x\r\n - Shell: zsh\r\n - OS Version: Darwin 25.6.0\r\n",
+     "x\r\n - Shell: (omitted)\r\n - OS Version: (os omitted)\r\n", ["zsh", "25.6.0"]),
+    ("G5: Stainless wrong placeholder", '"x-stainless-arch": "(version omitted)"', '"x-stainless-arch": "(arch omitted)"',
+     []),
+    ("G5: Stainless placeholder then text", '"x-stainless-runtime-version": "(version omitted)v26"',
+     '"x-stainless-runtime-version": "(version omitted)"', ["v26"]),
+    ("G5: Stainless CRLF header line", "x-stainless-arch: arm64\r\nx-stainless-arch: (arch omitted)\r\n",
+     "x-stainless-arch: (arch omitted)\r\nx-stainless-arch: (arch omitted)\r\n", ["arm64"]),
+    # Review round 2 G8: quoted values and no-break spaces.
+    ("G8: quoted value", ' - Shell: "zsh"\nShell: "bash"', ' - Shell: "(omitted)"\nShell: "(omitted)"', ["zsh", "bash"]),
+    ("G8: escaped quoted value", 'x\\n - Shell: \\"zsh\\"', 'x\\n - Shell: \\"(omitted)\\"', ["zsh"]),
+    ("G8: no-break space", " - Shell: zsh\n - OS Version:\\u00a0Darwin 25.6.0",
+     " - Shell: (omitted)\n - OS Version:\\u00a0(os omitted)", ["zsh", "25.6.0"]),
+    # Review round 1 F3: the Stainless SDK's architecture and runtime version headers.
+    ("stainless arch and runtime version", '"x-stainless-arch": "arm64", "X-Stainless-Runtime-Version": "v26.12.1"',
+     '"x-stainless-arch": "(arch omitted)", "X-Stainless-Runtime-Version": "(version omitted)"', ["arm64", "26.12.1"]),
+    ("stainless headers, escaped", '{\\"x-stainless-arch\\":\\"x64\\",\\"x-stainless-runtime-version\\":\\"v22.1.0\\"}',
+     '{\\"x-stainless-arch\\":\\"(arch omitted)\\",\\"x-stainless-runtime-version\\":\\"(version omitted)\\"}',
+     ["x64", "22.1.0"]),
+    ("stainless header line", "x-stainless-arch: arm64\nx-stainless-os: MacOS",
+     "x-stainless-arch: (arch omitted)\nx-stainless-os: MacOS", ["arm64"]),
+    ("stainless placeholders kept", '"x-stainless-arch": "(arch omitted)", "x-stainless-runtime-version": "(version omitted)"',
+     '"x-stainless-arch": "(arch omitted)", "x-stainless-runtime-version": "(version omitted)"', []),
+    # Review round 1 F7: the process id in a Claude Code messaging socket path.
+    ("messaging socket pid", "/tmp/cc-socks/95709.sock", "/tmp/cc-socks/<pid>.sock", ["95709"]),
+]
+# PC-13 review round 3. H1: a quoted Stainless value is replaced up to its closing quote; an unquoted
+# one up to the line end (or a quote or backslash: a header line inside a JSON string); a "," or a blank
+# does not end it (fails closed).
+H1_INPUTS = ["x-stainless-arch=arm64, x-stainless-os=MacOS", "x-stainless-arch: arm64 ",
+             '"x-stainless-arch": "arm64 extra"', "x-stainless-runtime-version: v26.1.0, node"]
+CASES += [
+    ("H1: header pair with a comma", H1_INPUTS[0], "x-stainless-arch=(arch omitted)", ["arm64"]),
+    ("H1: trailing blank", H1_INPUTS[1], "x-stainless-arch: (arch omitted)", ["arm64"]),
+    ("H1: quoted value with a blank", H1_INPUTS[2], '"x-stainless-arch": "(arch omitted)"', ["arm64", "extra"]),
+    ("H1: runtime version then a comma", H1_INPUTS[3], "x-stainless-runtime-version: (version omitted)",
+     ["26.1.0", "node"]),
+    ("H1: placeholder then a value", "x-stainless-arch: (arch omitted) arm64", "x-stainless-arch: (arch omitted)",
+     ["arm64"]),
+    ("H1: header line in a JSON string", '{\\"h\\":\\"x-stainless-arch: arm64 x\\\\nk: v\\"}',
+     '{\\"h\\":\\"x-stainless-arch: (arch omitted)\\\\nk: v\\"}', ["arm64"]),
+    ("H1: escaped quoted value with a blank", '{\\"x-stainless-arch\\":\\"arm64 extra\\",\\"k\\":1}',
+     '{\\"x-stainless-arch\\":\\"(arch omitted)\\",\\"k\\":1}', ["arm64", "extra"]),
+    # H3: more dashless host values (OS names, shells, shell paths, Windows shell paths).
+    ("H3: Windows_NT", "OS Version: Windows_NT 10.0.26100", "OS Version: (os omitted)", ["Windows_NT", "26100"]),
+    ("H3: Windows then a blank", "OS Version: Windows Server 2022", "OS Version: (os omitted)", ["Server", "2022"]),
+    ("H3: Linux distributions", "OS Version: Ubuntu 24.04\nOS Version: Debian 12\nOS Version: Fedora 40",
+     "OS Version: (os omitted)\nOS Version: (os omitted)\nOS Version: (os omitted)", ["24.04", "Debian", "Fedora"]),
+    ("H3: BSD and NixOS", "OS Version: FreeBSD 14.1\nOS Version: OpenBSD 7.5\nOS Version: NixOS 24.05",
+     "OS Version: (os omitted)\nOS Version: (os omitted)\nOS Version: (os omitted)", ["14.1", "OpenBSD", "NixOS"]),
+    ("H3: OS name without a version kept", "OS Version: Ubuntu is fine", "OS Version: Ubuntu is fine", []),
+    ("H3: more shell names", "Shell: nu\nShell: mksh\nShell: csh\nShell: xonsh",
+     "Shell: (omitted)\nShell: (omitted)\nShell: (omitted)\nShell: (omitted)", ["nu\n", "mksh", "csh", "xonsh"]),
+    ("H3: linuxbrew and NixOS shell paths", "Shell: /home/linuxbrew/.linuxbrew/bin/zsh\n"
+     "Shell: /run/current-system/sw/bin/bash\nShell: /nix/store/0a1b2c3d4e5f6g7h8i9j0k1l2m3n4p5q-zsh-5.9/bin/zsh",
+     "Shell: (omitted)\nShell: (omitted)\nShell: (omitted)", ["linuxbrew", "current-system", "zsh-5.9"]),
+    ("H3: Windows shell paths", "Shell: C:\\Program Files\\Git\\bin\\bash.exe\n"
+     "Shell: C:\\Program Files\\PowerShell\\7\\pwsh.exe\n"
+     "Shell: C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\nShell: C:\\Windows\\System32\\cmd.exe",
+     "Shell: (omitted)\nShell: (omitted)\nShell: (omitted)\nShell: (omitted)",
+     ["Program", "bash.exe", "pwsh", "powershell", "cmd.exe"]),
+    ("H3: Windows shell path, escaped backslashes", "x\\nShell: C:\\\\Program Files\\\\Git\\\\bin\\\\bash.exe\\n",
+     "x\\nShell: (omitted)\\n", ["Program", "bash.exe"]),
+    ("H3: dash form, Windows shell path", " - Shell: C:\\Program Files\\Git\\bin\\bash.exe",
+     " - Shell: (omitted)", ["Program", "bash.exe"]),
+    # H5: a socket path with escaped slashes.
+    ("H5: escaped socket path", "\\/tmp\\/cc-socks\\/95709.sock", "\\/tmp\\/cc-socks\\/<pid>.sock", ["95709"]),
+]
 # T8: the macOS LocalHostName and ComputerName, when scutil gives them (4 characters or more).
 for k in ("LocalHostName", "ComputerName"):
     try:
@@ -87,6 +317,12 @@ def scrub(path):
     with tempfile.TemporaryDirectory() as run:
         return subprocess.run([sys.executable, "-I", SCRUB, run, path], check=True,
                               capture_output=True, text=True).stdout
+
+
+def scrub_env(path, env):
+    with tempfile.TemporaryDirectory() as run:
+        return subprocess.run([sys.executable, "-I", SCRUB, run, path], check=True, capture_output=True,
+                              text=True, env=dict(os.environ, **env)).stdout
 
 
 def main():
@@ -135,11 +371,199 @@ def main():
                                 run, j], capture_output=True, text=True)
         if r.returncode != 0 or json.loads(r.stdout)["v"] != "zzhostq_x zzhostq-y a\\nhost. x_zzhostq":
             bad.append("host name edges: got %r" % (r.stdout,))
+        # PC-2: CODEX_HOME paths under the run folder (the default under home, and another one).
+        with tempfile.TemporaryDirectory() as run:
+            rr = os.path.realpath(run)
+            t = os.path.join(d, "cx.txt")
+            with open(t, "w") as f:
+                f.write(rr + "/home/.codex/sessions/2026/11/25/x.jsonl " + rr + "/cx/config.toml\n")
+            got = subprocess.run([sys.executable, "-I", SCRUB, rr, t], check=True,
+                                 capture_output=True, text=True).stdout
+        want = "/home/user/.codex/sessions/2026/11/25/x.jsonl /tmp/run/cx/config.toml\n"
+        if got != want:
+            bad.append("codex home paths: got %r" % (got,))
+        # PC-10: a TMPDIR that ends in "/" gives run folders like .../T//tmp.X; such paths map to
+        # /tmp/run too (with and without /private), not to /tmp/x.
+        with tempfile.TemporaryDirectory() as run:
+            rr = os.path.realpath(run)
+            head, tail = os.path.split(rr)
+            dbl = head + "//" + tail
+            alt = dbl[len("/private"):] if dbl.startswith("/private/") else dbl
+            t = os.path.join(d, "dbl.txt")
+            with open(t, "w") as f:
+                f.write(dbl + "/tmp/x.txt " + alt + "/home/.codex/a " + alt + "//repo/b\n")
+            got = subprocess.run([sys.executable, "-I", SCRUB, dbl, t], check=True,
+                                 capture_output=True, text=True).stdout
+        want = "/tmp/run/tmp/x.txt /home/user/.codex/a /repo/b\n"
+        if got != want:
+            bad.append("double-slash run paths: got %r" % (got,))
+        # F4: os_type / os_version as keys of a captured JSON object.
+        t = os.path.join(d, "os.json")
+        with open(t, "w") as f:
+            json.dump({"client": {"os_type": "Mac OS", "os_version": "27.2.1", "os_arch": "arm64", "k": "v"}}, f)
+        with tempfile.TemporaryDirectory() as run:
+            got = json.loads(subprocess.run([sys.executable, "-I", SCRUB, run, t], check=True,
+                                            capture_output=True, text=True).stdout)
+        want = {"client": {"os_type": "(os omitted)", "os_version": "(os omitted)", "os_arch": "(os omitted)", "k": "v"}}
+        if got != want:
+            bad.append("json os keys: got %r" % (got,))
+        # F9: Claude's dashed form of a run path that holds "//" (so "--"). Review round 3 H6: the run
+        # folder has a fixed name ("pc13run", letters and digits only) under a temp root, so the dashed
+        # form never ends in a "-" that the next "-" could join.
+        with tempfile.TemporaryDirectory() as root:
+            rr = os.path.join(os.path.realpath(root), "pc13run")
+            os.mkdir(rr)
+            head, tail = os.path.split(rr)
+            dbl = head + "//" + tail
+            alt = dbl[len("/private"):] if dbl.startswith("/private/") else dbl
+            dash = lambda x: re.sub(r"[^A-Za-z0-9]", "-", x)
+            t = os.path.join(d, "dash.txt")
+            with open(t, "w") as f:
+                f.write(dash(dbl + "/repo") + " " + dash(alt + "/home") + " " + dash(alt) + "-x\n")
+            got = subprocess.run([sys.executable, "-I", SCRUB, dbl, t], check=True,
+                                 capture_output=True, text=True).stdout
+        if got != "-repo -home-user -tmp-run-x\n":
+            bad.append("dashed run paths with --: got %r" % (got,))
+        # PC-11: descriptions of tools inside a namespace tool; parameter descriptions kept.
+        t = os.path.join(d, "ns.json")
+        with open(t, "w") as f:
+            json.dump({"body": {"tools": [{"type": "namespace", "name": "multi_agent_v1", "description": "d", "tools": [
+                {"type": "function", "name": "spawn_agent", "description": "spawn-desc", "parameters": {
+                    "type": "object", "properties": {"agent_type": {"type": "string", "description": "role list"}}}}]}]}}, f)
+        got = json.loads(scrub(t))
+        ns = got["body"]["tools"][0]
+        inner = ns["tools"][0]
+        if (ns["description"] != "[omitted]" or inner["description"] != "[omitted]"
+                or inner["parameters"]["properties"]["agent_type"]["description"] != "role list"):
+            bad.append("namespace tool descriptions: got %r" % (got,))
+        # PC-11: a harness tool listing (a top-level list of tools) gets its descriptions omitted.
+        listing = [{"type": "function", "name": "a", "description": "x", "parameters": {}},
+                   {"type": "namespace", "name": "n", "description": "y",
+                    "tools": [{"type": "function", "name": "b", "description": "z", "parameters": {}}]},
+                   {"type": "web_search"}]
+        t = os.path.join(d, "tools.json")
+        with open(t, "w") as f:
+            json.dump(listing, f)
+        got = json.loads(scrub(t))
+        want = json.loads(json.dumps(listing).replace('"x"', '"[omitted]"').replace('"y"', '"[omitted]"')
+                          .replace('"z"', '"[omitted]"'))
+        if got != want:
+            bad.append("tool listing descriptions: got %r" % (got,))
+        # PC-11: a list that is not a tool listing keeps its descriptions.
+        t = os.path.join(d, "events.json")
+        with open(t, "w") as f:
+            json.dump([{"event": "x", "description": "kept"}], f)
+        got = json.loads(scrub(t))
+        if got != [{"event": "x", "description": "kept"}]:
+            bad.append("non-listing list kept: got %r" % (got,))
+        # PC-11: a second scrub of the PC-11 inputs changes nothing.
+        t = os.path.join(d, "idem.txt")
+        with open(t, "w") as f:
+            f.write("\n".join(c[1] for c in PC11) + "\n")
+        a = scrub(t)
+        t2 = os.path.join(d, "idem2.txt")
+        with open(t2, "w") as f:
+            f.write(a)
+        if scrub(t2) != a:
+            bad.append("pc-11 rules idempotent: a second scrub changes the text")
+        # Review round 1 F6: in a captured JSON object, only an exec command field loses its shell.
+        t = os.path.join(d, "exec.json")
+        with open(t, "w") as f:
+            json.dump({"item": {"type": "command_execution", "command": "/bin/zsh -lc 'x'",
+                                "aggregated_output": "/bin/bash -lc y"}}, f)
+        got = json.loads(scrub(t))["item"]
+        if got["command"] != "(shell omitted) -lc 'x'" or got["aggregated_output"] != "/bin/bash -lc y":
+            bad.append("exec command field: got %r" % (got,))
+        # Review round 1 F2: one id map per capture folder (SCRUB_IDMAP, shared by the folder's files):
+        # the same id gets the same placeholder in two files, different ids get different placeholders.
+        with tempfile.TemporaryDirectory() as m:
+            mp = os.path.join(m, "ids.json")
+            a, b = os.path.join(d, "ida.json"), os.path.join(d, "idb.json")
+            with open(a, "w") as f:
+                json.dump({"x": "msg_" + I1}, f)
+            with open(b, "w") as f:
+                json.dump({"x": "msg_" + I2, "y": "msg_" + I1, "z": "fco_" + I2}, f)
+            got = [json.loads(scrub_env(p, {"SCRUB_IDMAP": mp})) for p in (a, b)]
+        want = [{"x": "msg_placeholder0001"},
+                {"x": "msg_placeholder0002", "y": "msg_placeholder0001", "z": "fco_placeholder0001"}]
+        if got != want:
+            bad.append("item ids, one map per folder: got %r" % (got,))
+        # Review round 1 F3: time-bearing ULIDs of response and item ids (resp_<ulid>, msg_<ulid>_<n>,
+        # fc_<ulid>_<n>) -> a ULID of time 0, one map per folder; a response and its items stay paired.
+        u = ["01" + "ABCDEFGHJK" + "MNPQRSTVWXYZ" + "0" + c for c in "123"]
+        p = ["0" * 22 + "%04d" % n for n in (1, 2, 3)]
+        with tempfile.TemporaryDirectory() as m:
+            mp = os.path.join(m, "ids.json")
+            a, b = os.path.join(d, "ua.sse"), os.path.join(d, "ub.sse")
+            with open(a, "w") as f:
+                f.write('data: {"id":"resp_%s","item":{"id":"msg_%s_0"}} fc_%s_1\n' % (u[0], u[0], u[1]))
+            with open(b, "w") as f:
+                f.write('{\\"id\\":\\"msg_%s_0\\"} resp_%s\n' % (u[0], u[2]))
+            got = [scrub_env(x, {"SCRUB_IDMAP": mp}) for x in (a, b)]
+            with open(a, "w") as f:
+                f.write(got[0])
+            again = scrub_env(a, {"SCRUB_IDMAP": mp})
+        want = ['data: {"id":"resp_%s","item":{"id":"msg_%s_0"}} fc_%s_1\n' % (p[0], p[0], p[1]),
+                '{\\"id\\":\\"msg_%s_0\\"} resp_%s\n' % (p[0], p[2])]
+        if got != want or again != want[0]:
+            bad.append("ulid ids, one map per folder: got %r, again %r" % (got, again))
+        # Review round 1 F5: SCRUB_FIXED=1 takes the user name from SCRUB_USER and the host names from
+        # SCRUB_HOSTS, not from the machine, so a check gives the same result on every machine.
+        # TF-2: the machine's names are injected (getuser, gethostname and scutil give zzmachuserq and
+        # zzmachhostq), not read, so the result does not depend on the runner's own names.
+        t = os.path.join(d, "fixed.txt")
+        with open(t, "w") as f:
+            f.write("zzuserq on zzhostq; zzmachuserq on zzmachhostq.local and zzmachhostq\n")
+        with tempfile.TemporaryDirectory() as run:
+            r = subprocess.run([sys.executable, "-I", "-c",
+                                "import getpass, runpy, socket, subprocess, sys; "
+                                "getpass.getuser = lambda: 'zzmachuserq'; "
+                                "socket.gethostname = lambda: 'zzmachhostq.local'; "
+                                "subprocess.run = lambda *a, **k: subprocess.CompletedProcess(a, 0, 'zzmachhostq', ''); "
+                                "sys.argv = ['scrub.py', sys.argv[1], sys.argv[2]]; "
+                                "runpy.run_path(%r, run_name='__main__')" % SCRUB, run, t],
+                               capture_output=True, text=True,
+                               env=dict(os.environ, SCRUB_FIXED="1", SCRUB_USER="zzuserq", SCRUB_HOSTS="zzhostq"))
+        if r.returncode != 0 or r.stdout != "user on host; zzmachuserq on zzmachhostq.local and zzmachhostq\n":
+            bad.append("fixed user and host names: got %r" % (r.stdout,))
+        # Review round 2 G4: the user-name rule is case-insensitive and matches whole words only;
+        # a user name of "user" (any case) changes nothing.
+        with open(t, "w") as f:
+            f.write("Zzuserq ZZUSERQ zzuserqx x_zzuserq User\n")
+        got = [scrub_env(t, {"SCRUB_FIXED": "1", "SCRUB_USER": n, "SCRUB_HOSTS": ""}) for n in ("zzuserq", "user")]
+        if got != ["user user zzuserqx x_zzuserq User\n", "Zzuserq ZZUSERQ zzuserqx x_zzuserq User\n"]:
+            bad.append("user name any case, whole word: got %r" % (got,))
+        # Review round 2 G2: a Codex item id in upper-case hex is scrubbed like a lower-case one.
+        t = os.path.join(d, "upper.json")
+        with open(t, "w") as f:
+            json.dump({"x": "msg_" + I1.upper(), "y": "fco_" + I1}, f)
+        got = json.loads(scrub(t))
+        if got != {"x": "msg_placeholder0001", "y": "fco_placeholder0001"}:
+            bad.append("upper-case item id: got %r" % (got,))
+        # PC-13 review round 1 F3: Stainless headers of a captured request (keys of a parsed object, any
+        # case); the OS family header is kept.
+        t = os.path.join(d, "stainless.json")
+        with open(t, "w") as f:
+            json.dump({"headers": {"x-stainless-arch": "arm64", "X-Stainless-Runtime-Version": "v26.12.1",
+                                   "x-stainless-os": "MacOS"}}, f)
+        got = json.loads(scrub(t))
+        if got != {"headers": {"x-stainless-arch": "(arch omitted)", "X-Stainless-Runtime-Version": "(version omitted)",
+                               "x-stainless-os": "MacOS"}}:
+            bad.append("stainless header keys: got %r" % (got,))
+        # Review round 3 H2: a .json file of 100000 nested "[" (too deep to parse) takes the raw-text
+        # scrub, with no traceback.
+        t = os.path.join(d, "deep.json")
+        with open(t, "w") as f:
+            f.write("[" * 100000)
+        with tempfile.TemporaryDirectory() as run:
+            r = subprocess.run([sys.executable, "-I", SCRUB, run, t], capture_output=True, text=True)
+        if r.returncode != 0 or r.stdout != "[" * 100000 or "Traceback" in r.stderr:
+            bad.append("100000 nested lists: exit %d, stderr %r" % (r.returncode, r.stderr[-200:]))
     for b in bad:
         print("scrub test fail: " + b)
     if bad:
         sys.exit(1)
-    print("scrub tests: ok (%d)" % (len(CASES) + 2))
+    print("scrub tests: ok (%d)" % (len(CASES) + 18))
 
 
 main()

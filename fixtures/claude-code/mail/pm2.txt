@@ -1,0 +1,4 @@
+Claude Code 2.1.332 + OpenCode 1.18.16
+2.1 ok Claude Code, idle: the wake line typed with send-keys -l, then Enter: UserPromptSubmit input seen: yes; its prompt is the wake line byte for byte: yes
+2.2 ok a recorded request holds the wake line: yes
+2.3 ok OpenCode TUI, idle: the wake line typed with send-keys -l, then Enter: a request holds it within 90 s: yes

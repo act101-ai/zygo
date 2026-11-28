@@ -438,7 +438,8 @@ fn begin_writes_the_levels_in_force() {
     let c = HookCtx { config: &cfg, ..ctx(&e, 1000) };
     run(&c, &begin_v(ZC, json!({"unit": U1, "round": 1})), Some("begin"));
     let want: BTreeMap<String, String> = [("claims", "enforce"), ("scope", "notify"), ("navigation", "monitor"), ("output", "monitor"),
-        ("trailers", "notify"), ("repeat", "monitor")].into_iter().map(|(g, l)| (g.to_string(), l.to_string())).collect();
+        ("trailers", "notify"), ("repeat", "monitor"), ("dispositions", "enforce")]
+        .into_iter().map(|(g, l)| (g.to_string(), l.to_string())).collect();
     assert_eq!(lines(&e, SUB)[1], LogLine { n: 2, ts: 1000, kind: Kind::Levels { levels: want.clone() } });
     assert_eq!(fold(&e.sd.work(), SUB).unwrap().levels, want);
 }
@@ -1104,7 +1105,7 @@ fn report_db(dir: &Path) -> PathBuf {
 fn report_prints_rounds_tokens_checks_guards_verdicts() {
     let t = tempfile::tempdir().unwrap();
     let db = report_db(t.path());
-    assert_eq!(report::report(&db, None, None).unwrap(), concat!(
+    assert_eq!(report::report(&db, None, None, None).unwrap(), concat!(
         "work-graph:zygo-v1-N12\n",
         "  rounds: 2\n",
         "  round 1 main: check ran no, passed no; verdict rework\n",
@@ -1119,7 +1120,7 @@ fn report_prints_rounds_tokens_checks_guards_verdicts() {
         "  guard events: none\n",
         "  lead m1: 1 requests, 7 in, 1 out, 0 cache read, 0 cache write, $0.0625"));
     let absent = t.path().join("absent.db");
-    assert_eq!(report::report(&absent, None, None).unwrap(), "no work units");
+    assert_eq!(report::report(&absent, None, None, None).unwrap(), "no work units");
     assert!(!absent.exists());
 }
 
@@ -1132,13 +1133,13 @@ fn report_filters_by_unit_and_since() {
         began_at: 120, ..Default::default() }).unwrap();
     s.insert_request(&RequestRow { ts: 130, session: "S1".into(), agent: "claude-code".into(), agent_id: Some("a1".into()),
         role_served: Some("review".into()), model: "m3".into(), input_tokens: 9, ..Default::default() }).unwrap();
-    let only = report::report(&db, Some(N12), None).unwrap();
+    let only = report::report(&db, None, Some(N12), None).unwrap();
     assert!(only.starts_with("work-graph:zygo-v1-N12\n"));
     assert!(only.contains("\n\nwork-graph:zygo-v1-N12:review\n"));
     assert!(only.contains("  review m3: 1 requests, 9 in, 0 out, 0 cache read, 0 cache write, $0.0000"));
     assert!(!only.contains("beads:"));
-    assert_eq!(report::report(&db, Some("work-graph:zygo-v1-N1"), None).unwrap(), "no work units");
-    let since = report::report(&db, None, Some(150)).unwrap();
+    assert_eq!(report::report(&db, None, Some("work-graph:zygo-v1-N1"), None).unwrap(), "no work units");
+    let since = report::report(&db, None, None, Some(150)).unwrap();
     assert!(since.starts_with(concat!(
         "work-graph:zygo-v1-N12\n",
         "  rounds: 1\n",

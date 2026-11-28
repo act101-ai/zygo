@@ -1,6 +1,6 @@
 //! N13: dialect translation (§7.6, §14).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -26,12 +26,15 @@ use zygo_proxy::redact_stage::RedactLimits;
 use zygo_proxy::server::StartOpts;
 use zygo_proxy::session::{ManualClock, SessionGrant, SessionRequest};
 use zygo_proxy::tee::{COPY_MAX, HOLD_MAX};
-use zygo_proxy::translate::reasoning::{decode, encode, without_zygo_thinking, Signature};
+use zygo_proxy::translate::reasoning::{decode, decode_thinking, encode, without_zygo_thinking, Signature};
+use zygo_proxy::translate::responses_client::{response, Calls, Encoder};
+use zygo_proxy::translate::schema::{NullMap, RestoreFilter, Seg};
+use zygo_proxy::translate::sse::INPUT_DELTA_MAX;
 use zygo_proxy::{Proxy, ProxyHandle};
 use zygo_redact::DeadlinePolicy;
 use zygo_usage::{RequestRow, Store};
 use zygo_proxy::translate::{
-    translate_error, translate_request, translate_response, SseEvent, StreamMapper, Target, DOC_OMITTED,
+    message_events, translate_error, translate_request, translate_response, SseEvent, StreamMapper, Target, DOC_OMITTED,
 };
 
 fn tgt() -> Target {
@@ -410,10 +413,33 @@ fn res_json_stop_reasons() {
         let r = json!({"id":"c","choices":[{"index":0,"message":m,"finish_reason":finish}]});
         assert_eq!(translate_response(&r, OpenaiChat, &tgt())["stop_reason"], json!(want), "{finish} {calls}");
     }
+    // RS-12 round 3 H2: content_filter drops the calls (their arguments may be cut) and counts them.
+    let r = json!({"id":"c","choices":[{"index":0,"message":{"role":"assistant","content":"x","tool_calls":tc},"finish_reason":"content_filter"}]});
+    let m = translate_response(&r, OpenaiChat, &tgt());
+    assert_eq!(m["stop_reason"], "refusal");
+    assert_eq!(m["content"], json!([{"type":"text","text":"x"}]));
+    assert_eq!(m["zygo_calls_dropped"], 1);
 }
 
 fn err(t: &str, m: &str) -> Value {
     json!({"type":"error","error":{"type":t,"message":m}})
+}
+
+/// Anthropic's other overflow text: input plus `max_tokens` over the context window. Claude Code parses it to retry
+/// with a smaller `max_tokens`, so an `anthropic` client gets it unchanged (RS-3 review round 2, G1).
+const ANTH_LIMIT: &str = "input length and `max_tokens` exceed context limit: 180000 + 32000 > 200000, decrease input length or `max_tokens` and try again";
+/// The part Claude Code's pattern reads.
+const ANTH_LIMIT_CORE: &str = "input length and `max_tokens` exceed context limit: 180000 + 32000 > 200000";
+
+#[allow(non_snake_case)]
+fn CTX_ANTH_LIMIT() -> Value {
+    json!({"type":"error","error":{"type":"invalid_request_error","message":ANTH_LIMIT}})
+}
+
+#[test]
+fn res_json_anthropic_limit_text_unchanged() {
+    let (s, v) = translate_error(StatusCode::BAD_REQUEST, CTX_ANTH_LIMIT().to_string().as_bytes(), 1, None);
+    assert_eq!((s, v), (StatusCode::BAD_REQUEST, err("invalid_request_error", ANTH_LIMIT)));
 }
 
 #[test]
@@ -572,8 +598,8 @@ fn resp_events(sig: &str) -> Vec<SseEvent> {
         text_d(1, "lo"),
         block_stop(1),
         block_start(2, json!({"type":"tool_use","id":"call_9","name":"get","input":{}})),
-        json_d(2, "{\"a\""),
-        json_d(2, ":1}"),
+        // RS-16: a Responses function_call is held until it closes, then sent with its arguments joined.
+        json_d(2, "{\"a\":1}"),
         block_stop(2),
         msg_delta("tool_use", [60, 40, 0, 7]),
         msg_stop(),
@@ -719,6 +745,15 @@ fn res_sse_in_stream_context_error() {
         + "data: {\"error\":{\"message\":\"This model's maximum context length is 128000 tokens. However, your messages resulted in 130532 tokens.\",\"code\":\"context_length_exceeded\"}}\n\n";
     assert_eq!(feed(&mut chat().errors(10, None), &s), [msg_start("chatcmpl-1", "up-chat"),
         err_ev("invalid_request_error", "prompt is too long: 130532 tokens > 128000 maximum")]);
+}
+
+/// Inside a translated stream, Anthropic's limit text reaches the Messages client unchanged (RS-3 review round 2, G1).
+#[test]
+fn res_sse_in_stream_anthropic_limit_text_unchanged() {
+    let s = chat_delta(json!({"role":"assistant","content":""}), Value::Null)
+        + &format!("data: {}\n\n", json!({"error":{"message":ANTH_LIMIT,"type":"invalid_request_error"}}));
+    let out = feed(&mut chat().errors(10, None), &s);
+    assert_eq!(out, [msg_start("chatcmpl-1", "up-chat"), err_ev("api_error", ANTH_LIMIT)]);
 }
 
 #[test]
@@ -1253,6 +1288,22 @@ fn wire_round_trip_tool_loop() {
     assert!(!adj(&r.1).contains("thinking_dropped"));
 }
 
+/// A chat upstream relays Anthropic's limit text: the Messages client gets it unchanged (RS-3 review round 2, G1).
+#[test]
+fn wire_anthropic_limit_text_unchanged_from_chat() {
+    let t = setup();
+    let g = grant(&t, false);
+    // `test-mix`: the Responses provider fails over (503) to the chat provider.
+    t.up.script("/resp", vec![json_reply(503, json!({"error":{"message":"busy"}}))]);
+    t.up.script("/chat", vec![json_reply(400, json!({"error":{"message":ANTH_LIMIT,"type":"invalid_request_error"}}))]);
+    let r = post(&t, &g, &msgs("test-mix", json!([user(json!("hi"))])));
+    assert_eq!(t.up.count("/chat"), 1);
+    assert_eq!(r.0, 400);
+    let v: Value = serde_json::from_slice(&r.2).unwrap();
+    assert_eq!(v, err("invalid_request_error", ANTH_LIMIT));
+    assert!(v["error"]["message"].as_str().unwrap().contains(ANTH_LIMIT_CORE));
+}
+
 #[test]
 fn wire_context_error_prompt_too_long() {
     let t = setup();
@@ -1387,12 +1438,9 @@ fn wire_openai_routes_not_in_v1() {
     let g = grant(&t, false);
     let not_in_v1 = json!({"error":{"type":"zygo_route_not_in_v1","message":"this route is not in zygo v1"}});
     for hd in [vec![], auth(&g)] {
-        for (m, p, b) in [("POST", "openai/v1/responses", Some(b"{}".to_vec())), ("POST", "openai/v1/chat/completions", Some(b"{}".to_vec())),
-            ("GET", "openai/v1/models", None)] {
-            let r = send(&t.h, m, p, &hd, b);
-            assert_eq!(r.0, 404, "{m} {p}");
-            assert_eq!(serde_json::from_slice::<Value>(&r.2).unwrap(), not_in_v1);
-        }
+        let r = send(&t.h, "POST", "openai/v1/chat/completions", &hd, Some(b"{}".to_vec()));
+        assert_eq!(r.0, 404);
+        assert_eq!(serde_json::from_slice::<Value>(&r.2).unwrap(), not_in_v1);
     }
     let r = send(&t.h, "GET", "openai/v1/responses", &auth(&g), None);
     assert_eq!((r.0, serde_json::from_slice::<Value>(&r.2).unwrap()["error"]["type"].clone()), (405, json!("zygo_method_not_allowed")));
@@ -1533,4 +1581,341 @@ fn res_sse_no_index_calls_in_separate_chunks() {
         block_start(0, json!({"type":"tool_use","id":"c1","name":"a","input":{}})), json_d(0, "{\"x\":1}"), block_stop(0),
         block_start(1, json!({"type":"tool_use","id":"c2","name":"b","input":{}})), json_d(1, "{\"y\":2}"), block_stop(1),
         msg_delta("tool_use", [0, 0, 0, 0]), msg_stop()]);
+}
+
+/// A Messages body with `content`, as an Anthropic upstream sends it.
+fn msg_body(content: Value) -> Value {
+    json!({"id":"msg_1","type":"message","role":"assistant","model":"up","content":content,
+        "stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":3,"output_tokens":2}})
+}
+
+/// `message_events` of `m` through the Responses encoder: its events and its adjustment codes.
+fn encoded(m: &Value) -> (Vec<SseEvent>, Vec<String>) {
+    let bytes: Vec<u8> = message_events(m).iter().flat_map(SseEvent::to_bytes).collect();
+    let mut e = Encoder::new("role-x", &tgt(), Calls::default());
+    let mut out = e.push(&bytes);
+    out.extend(e.finish());
+    (out, e.adjustments().into_iter().map(|a| a.0).collect())
+}
+
+#[test] // K§6.4.3 stream obligation 2: a redacted_thinking block of a JSON body keeps its block and its item
+fn message_events_keeps_redacted_thinking() {
+    let red = json!({"type":"redacted_thinking","data":"EmwKAhgB"});
+    let m = msg_body(json!([red.clone(), {"type":"text","text":"hi"}]));
+    let evs = message_events(&m);
+    let names: Vec<&str> = evs.iter().map(|e| e.event.as_str()).collect();
+    assert_eq!(names, ["message_start", "content_block_start", "content_block_stop", "content_block_start",
+        "content_block_delta", "content_block_stop", "message_delta", "message_stop"]);
+    assert_eq!(evs[1].data, json!({"type":"content_block_start","index":0,"content_block":red}));
+    assert_eq!(evs[2].data, json!({"type":"content_block_stop","index":0}));
+    assert_eq!(evs[3].data["content_block"], json!({"type":"text","text":""}));
+    assert_eq!(evs[4].data["delta"], json!({"type":"text_delta","text":"hi"}));
+    let (out, codes) = encoded(&m);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 2);
+    assert_eq!((&items[0]["type"], &items[0]["summary"]), (&json!("reasoning"), &json!([])));
+    assert_eq!(decode_thinking(items[0]["encrypted_content"].as_str().unwrap(), &tgt()), Some(red));
+    assert_eq!(items[1]["type"], "message");
+    assert_eq!(items[1]["content"][0]["text"], "hi");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+#[test] // K§6.4.3 stream obligation 3: server tool blocks of a JSON body are dropped with server_tool_dropped
+fn message_events_drops_server_tool_blocks() {
+    let use_ = json!({"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"q"}});
+    let res = json!({"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[]});
+    let m = msg_body(json!([use_.clone(), res.clone(), {"type":"text","text":"hi"}]));
+    let evs = message_events(&m);
+    let starts: Vec<&Value> = evs.iter().filter(|e| e.event == "content_block_start").map(|e| &e.data["content_block"]).collect();
+    assert_eq!(starts, [&use_, &res, &json!({"type":"text","text":""})]);
+    let deltas: Vec<&Value> = evs.iter().filter(|e| e.event == "content_block_delta").map(|e| &e.data).collect();
+    assert_eq!(deltas, [&json!({"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"hi"}})]);
+    let (out, codes) = encoded(&m);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["content"][0]["text"], "hi");
+    assert!(!out.iter().any(|e| e.data.to_string().contains("srvtoolu_1")));
+    assert_eq!(out.last().unwrap().event, "response.completed");
+    assert_eq!(codes, ["server_tool_dropped"]);
+}
+
+#[test] // RS-10: unknown block types and blocks with no `type` take the fallback arm: no empty message item, same items as the JSON path
+fn message_events_unknown_blocks_match_json_path() {
+    let m = msg_body(json!([
+        {"type":"mcp_tool_use","id":"mcptoolu_1","name":"n","server_name":"s","input":{}},
+        {"type":"mcp_tool_result","tool_use_id":"mcptoolu_1","is_error":false,"content":[]},
+        {"type":"container_upload","file_id":"file_1"},
+        {"type":"future_block_v9","x":1},
+        {},
+        {"type":"text","text":"hi"},
+    ]));
+    let (out, codes) = encoded(&m);
+    let without_id = |i: &Value| {
+        let mut i = i.clone();
+        i.as_object_mut().unwrap().remove("id");
+        i
+    };
+    let items: Vec<Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| without_id(&e.data["item"])).collect();
+    assert!(!items.iter().any(|i| i["type"] == "message" && i["content"][0]["text"] == ""), "{items:?}");
+    let (r, json_codes) = response(&m, "role-x", &tgt(), &Calls::default());
+    let json_items: Vec<Value> = r["output"].as_array().unwrap().iter().map(without_id).collect();
+    assert_eq!(items, json_items);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["content"][0]["text"], "hi");
+    assert_eq!(codes, json_codes.into_iter().map(|a| a.0).collect::<Vec<_>>());
+    assert_eq!(out.last().unwrap().event, "response.completed");
+}
+
+#[test] // RS-13, K§6.4.3 stream obligation 8: input_json_delta pieces of at most INPUT_DELTA_MAX, cut on a char boundary
+fn message_events_cuts_tool_input_on_char_boundaries() {
+    // Compact input `{"a":"` + c × n + `"}`: the first cut is the longest 6 + k·len(c) <= INPUT_DELTA_MAX.
+    for (c, n, first) in [('a', 200_000, INPUT_DELTA_MAX), ('€', 50_000, INPUT_DELTA_MAX - 1), ('😀', 40_000, INPUT_DELTA_MAX - 2)] {
+        let input = json!({"a": c.to_string().repeat(n)});
+        let m = msg_body(json!([{"type":"tool_use","id":"toolu_1","name":"exec_command","input":input}]));
+        let evs = message_events(&m);
+        assert_eq!(evs[1].data, json!({"type":"content_block_start","index":0,
+            "content_block":{"type":"tool_use","id":"toolu_1","name":"exec_command","input":{}}}));
+        let deltas: Vec<&Value> = evs.iter().filter(|e| e.event == "content_block_delta").map(|e| &e.data).collect();
+        assert!(deltas.iter().all(|d| d["index"] == 0 && d["delta"]["type"] == "input_json_delta"), "{c}");
+        let pieces: Vec<&str> = deltas.iter().map(|d| d["delta"]["partial_json"].as_str().unwrap()).collect();
+        assert!(pieces.len() > 1, "{c}");
+        assert_eq!(pieces[0].len(), first, "{c}");
+        assert!(pieces.iter().all(|p| !p.is_empty() && p.len() <= INPUT_DELTA_MAX), "{c}");
+        assert!(pieces[..pieces.len() - 1].iter().all(|p| p.len() > INPUT_DELTA_MAX - 4), "{c}");
+        assert_eq!(pieces.concat(), input.to_string(), "{c}");
+        assert_eq!(evs[evs.len() - 3].data, json!({"type":"content_block_stop","index":0}));
+    }
+}
+
+#[test] // RS-13: an empty input `{}`, and a tool_use with no input, is one input_json_delta `{}`
+fn message_events_empty_tool_input_one_piece() {
+    let m = msg_body(json!([{"type":"tool_use","id":"toolu_1","name":"exec_command","input":{}},
+        {"type":"tool_use","id":"toolu_2","name":"exec_command"}]));
+    let deltas: Vec<Value> = message_events(&m).into_iter().filter(|e| e.event == "content_block_delta").map(|e| e.data).collect();
+    assert_eq!(deltas, [
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}),
+        json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}}),
+    ]);
+}
+
+#[test] // RS-13, K§6.4.3 stream obligations 8 and 9: 1.5 MiB of `"` passes the encoder; each event stays under 2 × INPUT_DELTA_MAX plus framing
+fn message_events_large_tool_input_within_hold_max() {
+    let input = json!({"a": "\"".repeat(3 << 19)});
+    let m = msg_body(json!([{"type":"tool_use","id":"toolu_1","name":"exec_command","input":input}]));
+    let evs = message_events(&m);
+    let longest = evs.iter().map(|e| e.to_bytes().len()).max().unwrap();
+    assert!(longest < 2 * INPUT_DELTA_MAX + 256, "{longest}");
+    let (out, codes) = encoded(&m);
+    assert_eq!(out.last().unwrap().event, "response.completed", "{:?}", out.last().unwrap().data);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["type"], "function_call");
+    assert_eq!(items[0]["arguments"], input.to_string());
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+#[test] // RS-13 round 1 review F1, K§6.4.3 stream obligation 8: a body of `"` as close to COPY_MAX as fits still completes
+fn message_events_tool_input_near_copy_max_completes() {
+    let body = |n: usize| msg_body(json!([{"type":"tool_use","id":"toolu_1","name":"exec_command","input":{"a":"\"".repeat(n)}}]));
+    let base = serde_json::to_vec(&body(0)).unwrap().len();
+    let m = body((COPY_MAX - base) / 2);
+    let size = serde_json::to_vec(&m).unwrap().len();
+    assert!(size <= COPY_MAX && size + 2 > COPY_MAX, "{size}");
+    let (want, _) = response(&m, "role-x", &tgt(), &Calls::default());
+    let (out, codes) = encoded(&m);
+    assert_eq!(out.last().unwrap().event, "response.completed", "{:?}", out.last().unwrap().data);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["arguments"], want["output"][0]["arguments"]);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// A chat SSE stream of one tool call whose `arguments` come in 60 KB deltas (RS-13 round 2 review G2).
+fn chat_args_sse(args: &str) -> String {
+    let call = json!({"index":0,"id":"call_1","type":"function","function":{"name":"exec_command","arguments":""}});
+    let mut s = chat_delta(json!({"role":"assistant","tool_calls":[call]}), Value::Null);
+    for p in args.as_bytes().chunks(60_000) {
+        let a = std::str::from_utf8(p).unwrap();
+        s += &chat_delta(json!({"tool_calls":[{"index":0,"function":{"arguments":a}}]}), Value::Null);
+    }
+    s + &chat_delta(json!({}), json!("tool_calls")) + DONE
+}
+
+/// Chat SSE through the mapper, the restore filter when given, and the Responses encoder: the longest mapped event
+/// as bytes, and the encoder's events.
+fn chat_through_encoder(sse: &str, mut restore: Option<RestoreFilter>) -> (usize, Vec<SseEvent>) {
+    let mut m = chat();
+    let mut evs = m.push(sse.as_bytes());
+    evs.extend(m.finish_events());
+    if let Some(r) = &mut restore {
+        let mut x: Vec<SseEvent> = evs.into_iter().flat_map(|e| r.push(e)).collect();
+        x.extend(r.finish());
+        evs = x;
+    }
+    let longest = evs.iter().map(|e| e.to_bytes().len()).max().unwrap();
+    let bytes: Vec<u8> = evs.iter().flat_map(SseEvent::to_bytes).collect();
+    let mut e = Encoder::new("role-x", &tgt(), Calls::default());
+    let mut out = e.push(&bytes);
+    out.extend(e.finish());
+    (longest, out)
+}
+
+#[test] // RS-13 round 2 review G2, K§6.4.3 stream obligation 8: 2,621,448 bytes of chat arguments in 60 KB deltas complete
+fn chat_sse_large_tool_arguments_complete() {
+    let args = format!("{{\"a\":\"{}\"}}", "\\\"".repeat(5 << 18));
+    assert_eq!(args.len(), 2_621_448);
+    let (longest, out) = chat_through_encoder(&chat_args_sse(&args), None);
+    assert!(longest < 2 * INPUT_DELTA_MAX + 256, "{longest}");
+    assert_eq!(out.last().unwrap().event, "response.completed", "{:?}", out.last().unwrap().data);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["type"], "function_call");
+    assert_eq!(items[0]["arguments"], json!(args));
+}
+
+#[test] // RS-13 round 2 review G2: the restore filter's rebuilt arguments go out in INPUT_DELTA_MAX pieces too
+fn chat_sse_large_restored_tool_arguments_complete() {
+    let b = "\"".repeat(5 << 18);
+    let args = json!({"a":null,"b":b}).to_string();
+    assert!(args.len() > 2_600_000, "{}", args.len());
+    let nulls = NullMap { tools: BTreeMap::from([("exec_command".to_string(), vec![vec![Seg::Key("a".into())]])]), output: vec![] };
+    let (longest, out) = chat_through_encoder(&chat_args_sse(&args), Some(RestoreFilter::new(nulls)));
+    assert!(longest < 2 * INPUT_DELTA_MAX + 256, "{longest}");
+    assert_eq!(out.last().unwrap().event, "response.completed", "{:?}", out.last().unwrap().data);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["arguments"], json!(json!({"b":b}).to_string()));
+}
+
+#[test] // RS-13 round 3 review H5, K§6.4.3 stream obligation 8: the raw path's rebuilt arguments go out in several INPUT_DELTA_MAX pieces
+fn anthropic_sse_large_restored_tool_arguments_complete_raw() {
+    let b = "\"".repeat(600_000);
+    let args = json!({"a":null,"b":b}).to_string();
+    let want = json!({"b":b}).to_string();
+    assert!(want.len() > 18 * INPUT_DELTA_MAX, "{}", want.len());
+    let mut evs = vec![msg_start("msg_1", "up"), block_start(0, json!({"type":"tool_use","id":"toolu_1","name":"exec_command","input":{}}))];
+    evs.extend(args.as_bytes().chunks(60_000).map(|p| json_d(0, std::str::from_utf8(p).unwrap())));
+    evs.extend([block_stop(0), msg_delta("tool_use", [3, 0, 0, 2]), msg_stop()]);
+    let sse: Vec<u8> = evs.iter().flat_map(SseEvent::to_bytes).collect();
+    let nulls = NullMap { tools: BTreeMap::from([("exec_command".to_string(), vec![vec![Seg::Key("a".into())]])]), output: vec![] };
+    for n in [16 << 10, 1 << 20, sse.len()] {
+        let mut r = RestoreFilter::new(nulls.clone());
+        let mut e = Encoder::new("role-x", &tgt(), Calls::default());
+        let (mut sent, mut out) = (Vec::new(), Vec::new());
+        for c in sse.chunks(n) {
+            let x = r.push_raw(c);
+            out.extend(e.push(&x));
+            sent.extend(x);
+        }
+        let x = r.finish_raw();
+        out.extend(e.push(&x));
+        out.extend(e.finish());
+        sent.extend(x);
+        let text = String::from_utf8(sent).unwrap();
+        let rebuilt = text.split("\n\n").filter(|ev| ev.contains("input_json_delta")).count();
+        assert_eq!(rebuilt, want.len().div_ceil(INPUT_DELTA_MAX), "chunk {n}");
+        let longest = text.split("\n\n").map(str::len).max().unwrap();
+        assert!(longest < 2 * INPUT_DELTA_MAX + 256, "chunk {n}: {longest}");
+        assert_eq!(out.last().unwrap().event, "response.completed", "chunk {n}: {:?}", out.last().unwrap().data);
+        let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+        assert_eq!(items.len(), 1, "chunk {n}");
+        assert_eq!(items[0]["arguments"], json!(want), "chunk {n}");
+    }
+}
+
+#[test] // RS-15, K§6.4.3 stream obligation 8: text (and message_events' thinking) in pieces of at most INPUT_DELTA_MAX from each sender
+fn text_deltas_within_event_max() {
+    let text = "\"".repeat(300_000);
+    // Every event under 2 × INPUT_DELTA_MAX + 256 bytes; the `kind` deltas: more than one, each of 1..=INPUT_DELTA_MAX
+    // bytes of `key`; returns their concatenation.
+    let pieces = |evs: &[SseEvent], kind: &str, key: &str| -> String {
+        for e in evs {
+            let n = e.to_bytes().len();
+            assert!(n < 2 * INPUT_DELTA_MAX + 256, "{} {kind}: {n}", e.event);
+        }
+        let p: Vec<&str> = evs.iter().filter(|e| e.data["delta"]["type"] == kind).map(|e| e.data["delta"][key].as_str().unwrap()).collect();
+        assert!(p.len() > 1, "{kind}: {}", p.len());
+        assert!(p.iter().all(|x| !x.is_empty() && x.len() <= INPUT_DELTA_MAX), "{kind}");
+        p.concat()
+    };
+    // message_events: a thinking block and a text block of a JSON body.
+    let m = msg_body(json!([{"type":"thinking","thinking":text,"signature":"sig"},{"type":"text","text":text}]));
+    let evs = message_events(&m);
+    assert_eq!(pieces(&evs, "thinking_delta", "thinking"), text);
+    assert_eq!(pieces(&evs, "text_delta", "text"), text);
+    // The chat mapper: one upstream chunk whose `content` is the whole text.
+    let sse = chat_delta(json!({"role":"assistant","content":text}), Value::Null) + &chat_delta(json!({}), json!("stop")) + DONE;
+    let mut c = chat();
+    let mut evs = c.push(sse.as_bytes());
+    evs.extend(c.finish_events());
+    assert_eq!(evs.last().unwrap().event, "message_stop");
+    assert_eq!(pieces(&evs, "text_delta", "text"), text);
+    // The null-restore filter: a JSON text block of the output schema with an injected null, in 60,000-byte deltas.
+    let held = json!({"a":null,"b":text}).to_string();
+    let want = json!({"b":text}).to_string();
+    let nulls = NullMap { tools: BTreeMap::new(), output: vec![vec![Seg::Key("a".into())]] };
+    let mut up = vec![msg_start("msg_1", "up"), text_start(0)];
+    up.extend(held.as_bytes().chunks(60_000).map(|p| text_d(0, std::str::from_utf8(p).unwrap())));
+    up.extend([block_stop(0), msg_delta("end_turn", [3, 0, 0, 2]), msg_stop()]);
+    // Events path (after the chat mapper).
+    let mut r = RestoreFilter::new(nulls.clone());
+    let mut evs: Vec<SseEvent> = up.iter().cloned().flat_map(|e| r.push(e)).collect();
+    evs.extend(r.finish());
+    assert_eq!(pieces(&evs, "text_delta", "text"), want);
+    // Raw path (an Anthropic upstream), in INPUT_DELTA_MAX-byte reads.
+    let raw: Vec<u8> = up.iter().flat_map(SseEvent::to_bytes).collect();
+    let mut r = RestoreFilter::new(nulls);
+    let mut sent: Vec<u8> = raw.chunks(INPUT_DELTA_MAX).flat_map(|c| r.push_raw(c)).collect();
+    sent.extend(r.finish_raw());
+    assert_eq!(pieces(&events(&sent), "text_delta", "text"), want);
+}
+
+#[test] // RS-15: a short text is one text_delta as before; an empty text or thinking block keeps its one empty delta
+fn message_events_short_text_one_delta() {
+    let m = msg_body(json!([{"type":"thinking","thinking":"","signature":"sig"},{"type":"text","text":""},{"type":"text","text":"hi"}]));
+    let d: Vec<Value> = message_events(&m).into_iter().filter(|e| e.event == "content_block_delta").map(|e| e.data["delta"].clone()).collect();
+    assert_eq!(d, [
+        json!({"type":"thinking_delta","thinking":""}),
+        json!({"type":"signature_delta","signature":"sig"}),
+        json!({"type":"text_delta","text":""}),
+        json!({"type":"text_delta","text":"hi"}),
+    ]);
+}
+
+#[test] // RS-15 round 1 review F3: a thinking block cut into pieces sends its signature_delta after all of them
+fn thinking_signature_after_all_pieces() {
+    let m = msg_body(json!([thinking(&"x".repeat(3 * INPUT_DELTA_MAX), "sig")]));
+    let d: Vec<Value> = message_events(&m).into_iter().filter(|e| e.event == "content_block_delta").map(|e| e.data["delta"]["type"].clone()).collect();
+    assert_eq!(d, ["thinking_delta", "thinking_delta", "thinking_delta", "signature_delta"]);
+}
+
+#[test] // RS-15 round 1 review F4, K§6.4.3 stream obligation 8: control characters escape 6 ×, and the stream still completes
+fn control_char_text_within_event_max_completes() {
+    let text = "\u{1}".repeat(300_000);
+    // Every event at most 6 × INPUT_DELTA_MAX + 256 bytes, the longest over 2 × (the `\u0001` escape), more than one
+    // text_delta; returns the events as bytes.
+    let checked = |evs: &[SseEvent]| -> Vec<u8> {
+        let longest = evs.iter().map(|e| e.to_bytes().len()).max().unwrap();
+        assert!(longest <= 6 * INPUT_DELTA_MAX + 256 && longest > 2 * INPUT_DELTA_MAX, "{longest}");
+        assert!(evs.iter().filter(|e| e.data["delta"]["type"] == "text_delta").count() > 1);
+        evs.iter().flat_map(SseEvent::to_bytes).collect()
+    };
+    // The Responses encoder ends in response.completed with one message item that holds the whole text.
+    let completes = |bytes: &[u8]| {
+        let mut e = Encoder::new("role-x", &tgt(), Calls::default());
+        let mut out = e.push(bytes);
+        out.extend(e.finish());
+        assert_eq!(out.last().unwrap().event, "response.completed", "{:?}", out.last().unwrap().data);
+        let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["content"][0]["text"], json!(text));
+    };
+    // message_events: a JSON body with one text block.
+    completes(&checked(&message_events(&msg_body(json!([{"type":"text","text":text}])))));
+    // The chat mapper: one upstream chunk whose `content` is the whole text.
+    let sse = chat_delta(json!({"role":"assistant","content":text}), Value::Null) + &chat_delta(json!({}), json!("stop")) + DONE;
+    let mut c = chat();
+    let mut evs = c.push(sse.as_bytes());
+    evs.extend(c.finish_events());
+    completes(&checked(&evs));
 }

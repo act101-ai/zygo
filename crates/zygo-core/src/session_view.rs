@@ -27,6 +27,9 @@ pub struct SessionView {
     pub head_lines: u32,
     #[serde(default = "default_tail_lines")]
     pub tail_lines: u32,
+    /// `[results] shape` of the launch (output shaping O§9, O§11); `true` for a `view.json` without the field.
+    #[serde(default = "default_true")]
+    pub shape: bool,
     /// The status line style the launcher took from the user config (`statusline.style`):
     /// `compact` or `verbose`. A `view.json` without the field reads as `compact`.
     #[serde(default = "default_statusline_style")]
@@ -35,6 +38,14 @@ pub struct SessionView {
     /// and for a `view.json` without the field.
     #[serde(default)]
     pub workspace: Option<ViewWorkspace>,
+    /// The repository top level of the launch directory, where `work_verdict` runs git (decision records D§13 item 6);
+    /// `None` when the launcher holds no top level: outside a repository, git failed or passed its time bound, a non-UTF-8
+    /// path, or a `view.json` without the field (an older launcher).
+    #[serde(default)]
+    pub repo_root: Option<String>,
+    /// `[features] mail` of the launch (M§8, M§8a): item 8 of the session text; `false` for a `view.json` without the field.
+    #[serde(default)]
+    pub mail: bool,
     /// The top-level fields of `view.json` that this zygo does not know; a save puts them back, so a read, change and
     /// save of the view (the member hooks, H1) keeps the fields of a newer zygo (the AU78 pattern of `workspace.json`).
     /// `workspace`, its `member`, its `resume_note` and each `interrupted` entry keep theirs the same way (R5).
@@ -42,12 +53,12 @@ pub struct SessionView {
     pub extra: UnknownFields,
 }
 
-/// Each field that has a serde default holds that default; `agent` is Claude Code; every other field is empty or `false`.
+/// Each field that has a serde default holds that default; `agent` is `Agent::DEFAULT`; every other field is empty or `false`.
 impl Default for SessionView {
     fn default() -> Self {
         SessionView {
             session: String::new(),
-            agent: Agent::ClaudeCode,
+            agent: Agent::DEFAULT,
             main_role: String::new(),
             effective_role: None,
             role_prompt: None,
@@ -64,8 +75,11 @@ impl Default for SessionView {
             trim_threshold_bytes: default_trim_threshold(),
             head_lines: default_head_lines(),
             tail_lines: default_tail_lines(),
+            shape: default_true(),
             statusline_style: default_statusline_style(),
             workspace: None,
+            repo_root: None,
+            mail: false,
             extra: UnknownFields::default(),
         }
     }
@@ -129,8 +143,20 @@ pub struct LegendEntry {
 pub struct Member {
     pub ws_id: String,
     pub pane: String,
+    /// The member name (M§6, M§9a), written by the launcher; none for an unnamed member and in an older view. A value
+    /// that is not a string reads as none (AU78, ML-7 review round 1, F5).
+    #[serde(default, deserialize_with = "lenient_name", skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(flatten)]
     pub extra: UnknownFields,
+}
+
+/// A string is kept; any other JSON value reads as none (the form of `MemberRecord.name` in zygo-workspace).
+fn lenient_name<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => Some(s),
+        _ => None,
+    })
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

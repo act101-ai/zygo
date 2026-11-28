@@ -1,0 +1,49 @@
+{
+  "premise": "PD2",
+  "claude_code": "2.1.332",
+  "date": "2026-11-25",
+  "harness": {
+    "mcp_servers": [
+      {
+        "name": "zygo",
+        "status": "connected",
+        "source": "dynamic"
+      }
+    ],
+    "work_verdict_listed": true,
+    "small_call_reached_stub": true
+  },
+  "result": "verified",
+  "sent": {
+    "bytes": 262144,
+    "sha256": "3bd49a86ddb3280422777d34f8acb1cf586d935656b79f4ec615aa914753bb6a"
+  },
+  "pre_tool_use_tool_input": {
+    "bytes": 262144,
+    "sha256": "3bd49a86ddb3280422777d34f8acb1cf586d935656b79f4ec615aa914753bb6a",
+    "equal": true
+  },
+  "received": {
+    "bytes": 262144,
+    "sha256": "3bd49a86ddb3280422777d34f8acb1cf586d935656b79f4ec615aa914753bb6a",
+    "equal": true,
+    "raw_line_bytes": 262304,
+    "raw_line_holds_sent_bytes": true
+  },
+  "tools_calls_seen": {
+    "small": 1,
+    "big": 1
+  },
+  "mcp_tools_in_first_request": [
+    "mcp__zygo__work_verdict"
+  ],
+  "tool_result": {
+    "is_error": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "dr15-stub-ok call 2"
+      }
+    ]
+  }
+}

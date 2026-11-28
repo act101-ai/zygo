@@ -1,4 +1,5 @@
-use std::io::Write;
+mod common;
+
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -50,7 +51,7 @@ fn run(home: &Path, name: &str, sd: Option<&SessionDir>, stdin: &[u8]) -> (Optio
         None => cmd.env_remove("ZYGO_SESSION_DIR"),
     };
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    common::write_stdin(child.stdin.take().unwrap(), stdin);
     let out = child.wait_with_output().unwrap();
     (out.status.code(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
 }

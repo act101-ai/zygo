@@ -11,6 +11,19 @@ pub fn scratch_home<'a>(cmd: &'a mut Command, home: &Path) -> &'a mut Command {
     cmd.env("HOME", home).env("LOCALAPPDATA", home).env("APPDATA", home).env("ZYGO_CONFIG", home.join("config.toml"))
 }
 
+/// The user config that turns the built-in marketplace off (FX-23; WD-14 review F1). A user `act101` entry with an
+/// empty `ref` (the built-in source stays, §15.1), and sync skips a built-in entry without a `ref` (`zygo-plugins`
+/// `sync.rs` `engine`), so no launch clones `github:act101-ai/act101` or reaches the network. Its `[[marketplace]]`
+/// header closes any open table, so it goes after the other keys of a config.
+pub const NO_MARKETPLACE: &str = "[[marketplace]]\nname = \"act101\"\nref = \"\"\n";
+
+/// FX-23 review F1: no `zygo` run with the scratch home `home` ([`scratch_home`]) ran a marketplace sync. A sync takes
+/// `<marketplaces_dir>/<name>.lock` (`zygo-plugins` `sync.rs` `lock_marketplace`), which makes the folder.
+pub fn assert_no_marketplace_sync(home: &Path) {
+    let d = if cfg!(windows) { home.join("zygo").join("cache").join("marketplaces") } else { home.join(".cache/zygo/marketplaces") };
+    assert!(!d.exists(), "a marketplace sync ran (FX-23): {} exists", d.display());
+}
+
 /// The stub agent in `dir`, or the message that names the command which builds it.
 pub fn stub_agent_in(dir: &Path) -> Result<PathBuf, String> {
     let p = dir.join(format!("stub-agent{EXE_SUFFIX}"));
@@ -57,6 +70,17 @@ pub fn stub_control(dir: &Path, step: &str) -> std::io::Result<()> {
     use std::io::Write;
     std::fs::create_dir_all(dir)?;
     std::fs::OpenOptions::new().create(true).append(true).open(dir.join("steps"))?.write_all(format!("{step}\n").as_bytes())
+}
+
+/// Writes `bytes` to a child's stdin and then drops `w`. The child gets EOF only when `w` is an owned handle;
+/// a caller that passes `&mut` must drop the handle itself. A child can exit before it reads its stdin; the
+/// write then fails with `BrokenPipe`, which this ignores. Any other error panics. The caller still asserts the
+/// child's output and exit status.
+pub fn write_stdin(mut w: impl std::io::Write, bytes: &[u8]) {
+    match w.write_all(bytes) {
+        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => panic!("write to the child's stdin: {e}"),
+        _ => {}
+    }
 }
 
 /// The workspace test harness (M2, W§18 preamble).

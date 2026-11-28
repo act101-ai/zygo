@@ -1,0 +1,50 @@
+{
+  "models": [
+    {
+      "slug": "gpt-mock",
+      "display_name": "PC3 gpt-mock",
+      "description": "authored for PC-3",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "low"
+        }
+      ],
+      "default_reasoning_level": "low",
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 1,
+      "support_verbosity": false,
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "base_instructions": "PC3 base instructions."
+    },
+    {
+      "slug": "gpt-mock-file",
+      "display_name": "PC3 gpt-mock-file",
+      "description": "authored for PC-3",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "low"
+        }
+      ],
+      "default_reasoning_level": "low",
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 1,
+      "support_verbosity": false,
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "base_instructions": "PC3 base instructions."
+    }
+  ]
+}

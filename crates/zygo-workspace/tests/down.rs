@@ -500,6 +500,8 @@ fn live() -> Live {
         vars,
         paths: p,
         config: Config::default(),
+        default_loadout_set: false,
+        git: None,
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = up::testing::run_with(&o, &mut out, &mut err);
@@ -625,6 +627,8 @@ fn refusals_change_nothing() {
             vars: BTreeMap::new(),
             paths: paths(t),
             config: Config::default(),
+            default_loadout_set: false,
+            git: None,
         };
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let code = up::testing::run_with(&u, &mut out, &mut err);
@@ -1345,7 +1349,7 @@ fn signals_cancel_drains_and_restore_once() {
         let (code, _, err) = run(&o, &h);
         assert_eq!(disps(), before);
         assert_eq!(code, 1, "{err}");
-        assert_eq!(count(&err, "zygo: [workspace] drain_timeout \"ten\" is not <n>s, <n>m or <n>h; using 10m"), 1);
+        assert_eq!(count(&err, "zygo: [workspace] drain_timeout \"ten\" is not <n>s, <n>m, <n>h or <n>d; using 10m"), 1);
         assert_eq!(*last.lock().unwrap(), Duration::from_secs(600));
         l.child.kill().unwrap();
     }

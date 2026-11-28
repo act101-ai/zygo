@@ -101,12 +101,24 @@ On Windows, including Git Bash, set `ZYGO_NERD_FONT=1` after you install the fon
 - Workspaces have shared mailboxes for inter-agent communication — **COMING SOON**.
 - Gracefully pause and restart your workspaces.
 * A workspace is one git repository: the main checkout and all its worktrees. It has one tmux session, `zygo-<name>`.
+* Panes start in folders based on the main worktree: the first worktree in git's list that is not bare, not marked prunable and not inside zygo's workspaces cache folder. A workspace keeps its saved main worktree while it is valid; when it is not, `zygo up` takes the first valid worktree and prints `zygo: the main worktree <old> is gone; panes start in <new>`.
 * `zygo up` starts the workspace of this repository and attaches to it (`--loadout <name>`, `--reset` to start from the loadout and not from the snapshot, `--no-attach`, `--all` to restore every workspace that was up).
 * `zygo down` waits until each agent has ended its turn and its subagents, saves the snapshot, then stops the agents (`--now` to skip the wait, `--timeout <n>s|<n>m|<n>h`, default 10m, `--wait`, `--all`). A drain that times out stops nothing: the workspace is up again, and `zygo down` names each busy pane and exits 1. From inside Claude Code, run `/zygo:down`.
 * After `zygo down`, a reboot or a crash of the tmux server, `zygo up` brings back the layout and resumes each agent in its own conversation, with its launch flags, its session settings and its compaction window. Shell panes come back as a shell in their folder; zygo never runs a saved shell command again. Prompt text and inline flag values (for example inline JSON for `--mcp-config`) are not restored; `zygo up` names each flag that it did not restore.
 * `zygo ls` lists the workspaces, `zygo attach` attaches to a running one, `zygo workspace` shows the members of this one, `zygo ws forget <name>` deletes a workspace that is not up, and `zygo ws forget-pane <key>` deletes one pane's record.
-* Loadouts are `[loadout.<name>]` tables in the user config (`~/.config/zygo/config.toml`) only; a repository's `.zygo.toml` cannot set them. The built-in `solo` loadout is one Claude Code pane. Panes are `claude-code`, `opencode` or `shell`. `zygo loadout list` and `zygo loadout show <name>` show them.
+* Loadouts are `[loadout.<name>]` tables in the user config (`~/.config/zygo/config.toml`), and the `repository` loadout that approved workspace files add (see [Workspace files](#workspace-files-zygo)); a repository's `.zygo.toml` cannot set them. The built-in `solo` loadout is one Claude Code pane. Panes are `claude-code`, `opencode` or `shell`. An agent pane can also set `name`, `job` (`orchestrator` or `worker`) and `pool = true` (`claude-code` only, not with `config_dir`; see [docs/passthrough.md](docs/passthrough.md#a-pool-of-logins-for-workspace-members)). `zygo loadout list` and `zygo loadout show <name>` show them.
 * Workspaces need tmux 3.2 or newer (`zygo doctor` shows the version). On Windows, run zygo in WSL.
+
+### Workspace files (`.zygo/`)
+
+A repository can define its workspace members in `.zygo/workspace.toml` and model profiles in `.zygo/profiles/<name>.toml`, so each person and each machine starts the same workspace.
+
+* zygo reads these files from git objects on the default branch only. An edit in the working tree, and a commit on another branch, have no effect.
+* Nothing in them applies on a machine until you read them and approve them there, in your own shell, with `zygo workspace approve`. A new commit that changes them needs a new approval.
+* Approved files add the `repository` loadout, which `zygo up` starts when you set no `--loadout` and no `[workspace] default_loadout`, and the repository profiles.
+* A repository file cannot set a provider, a key, an endpoint, `args`, `config_dir`, `yolo`, `passthrough`, `server`, a prompt or a shell pane.
+
+The keys, the approval, how `zygo up` chooses a loadout, and what each command shows: [docs/workspace-files.md](docs/workspace-files.md).
 
 ### Session Commands
 
@@ -136,7 +148,7 @@ Requirements: Claude Code 2.1.328 or newer, or OpenCode 1.18.16 or newer; tmux 3
 
 Update check: `zygo claude`, `zygo opencode` and `zygo up` check for a new release at most once in 24 hours and ask `Update now? [y/N/s]` (`s` skips that version). The check runs only in a terminal, and never inside a zygo session or a workspace pane. It reads the release's public `VERSION` file and sends nothing else. To turn it off, set `[update] check = false` in user config or `ZYGO_NO_UPDATE_CHECK=1`.
 
-Passthrough (`zygo claude --passthrough`) runs Claude Code on your claude.ai login, in local mode only. The vendor's consumer terms restrict routing subscription credentials through third-party software; your own account carries that risk. See [docs/passthrough.md](docs/passthrough.md).
+Passthrough (`zygo claude --passthrough`) runs Claude Code on your claude.ai login, in local mode only. The vendor's consumer terms restrict routing subscription credentials through third-party software; your own account carries that risk. See [docs/passthrough.md](docs/passthrough.md). Workspace members can each run on their own login from a pool of config directories: see [docs/passthrough.md](docs/passthrough.md#a-pool-of-logins-for-workspace-members).
 
 Build: `cargo build --release`
 

@@ -1,0 +1,34 @@
+# Phase 4 Work Graph — History
+
+Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
+
+## Nodes
+
+| ID | Node | Depends | State | Capability | Refs |
+|----|------|---------|-------|------------|------|
+| CF-1 | Conformance input model and check: `Agent::ALL`, registry and grade parsing with the input rules, evidence kinds, check items 1-9 on fixture inputs | — | DONE | judgment | PR #87 merged 74562e3b; acceptance 65 check_/input_ tests pass @ 3aceaac3; CI run 45605170068 green (ubuntu, macos, windows) |
+| CF-2 | Conformance derived values: cell, tier and total score, bar, rollup, release state, on fixture inputs | CF-1 | DONE | implementation | PR #100 merged 3e98ae7c; acceptance 15 derive_ tests, conformance 84 pass @ 11c0dd70; CI run 45610449986 green (ubuntu, macos, windows) |
+| CF-3 | Conformance outputs: feature matrix, rollup and score in Markdown and JSON, the write mode and check item 10, on fixture inputs | CF-2 | DONE | implementation | PR #102 merged 1c147219; acceptance 25 render_ tests, conformance 109 pass @ 80118dc2; CI run 45618690411 green (ubuntu, macos, windows) |
+| CF-4 | Registry `capabilities.toml`, grade files for Claude Code and OpenCode, generated `docs/conformance.md` and `.json`, the tree test, CI paths, old scripts deleted (PR stops for the operator, K-D26) | CF-3, OC-1 | DONE | judgment | PR #104 merged 278f2cd4; acceptance exit 0 on merged tree (conformance 120 pass); CI run 45707423597 green (ubuntu, macos, windows) |
+| OC-1 | OpenCode: session token out of the environment and config (apiKey from the token file), providers limited to zygo | — | DONE | judgment | PR #128 merged 53eabe25; acceptance exit 0 on merged tree; CI run 45693613400 green (ubuntu, macos, windows) |
+| PC-1 | `scripts/check-premises.sh` driven by data, with `scripts/test-check-premises.sh` | — | DONE | judgment | PR #91 merged adac6bc0; acceptance exit 0 @ 54039f94 (test-check-premises 50 cases); CI run 45678686867 green (ubuntu, macos, windows) |
+| PC-2 | Codex premise harness: every mock and scrub change of PC-3 to PC-6, codex-only `lib.sh` with an isolation record, `run-codex.sh`, help and schema captures | PC-1 | DONE | judgment | PR #126 merged 1206befa; acceptance exit 0 @ 4784e06b (real codex 0.172.0 run, ~/.codex unchanged); CI run 45698780636 green (ubuntu, macos, windows) |
+| PC-3 | Codex proxy-facing captures: PC1, PC2, PC7, PC13, PC14 (requests, hosts, headers, models, injected items, context error) | PC-2, PC-10 | DONE | implementation | PR #137 merged 0d665799; acceptance exit 0 @ e554d2ca (real codex 0.172.0; PC1 PC2 PC7 PC13 PC14 verified); CI run 45725231426 green (ubuntu, macos, windows) |
+| PC-4 | Codex config, trust and hook captures: PC3, PC4, PC5, PC12; the `--strict-config` run of a config with zygo's keys | PC-2, PC-10 | DONE | implementation | PR #155 merged d4ac5d2f; acceptance: real codex 0.172.0 run @ 685d55ef (PC3 PC12 verified; PC4 partial, replay only, Observed failed; PC5 failed on the replacement shape); CI run 45781607906 green on f16762a7 |
+| PC-5 | Codex agents, compaction, MCP, status line and skills captures: PC6, PC8, PC9, PC11, PC15 | PC-2, PC-10 | DONE | implementation | PR #147 merged 08774771; acceptance exit 0 @ 6cbfc673 (real codex 0.172.0; PC6 PC8 PC9 PC11 verified, PC15 failed); CI run 45735709999 green (ubuntu, macos, windows) |
+| PC-8 | check-premises.sh: the name scan exempts the verbatim schemas; an indented table row is not a premise row | PC-1 | DONE | implementation | PR #127 merged 73a4ff40; acceptance exit 0 on merged tree (test-check-premises 99 cases); CI run 45704926916 green (ubuntu, macos, windows) |
+| RS-1 | Responses → Messages request translator and the zygo mark on reasoning items (`translate/responses_client.rs`, `translate/reasoning.rs`) | PC-3 | DONE | judgment | PR #152 merged fe18f3dd; acceptance exit 0 on merged tree (responses_request 49, translate 48); CI run 45733206649 green (ubuntu, macos, windows) |
+| PC-10 | Premise harness privacy: TZ=UTC for Codex runs; scrub OS in user agents and double-slash scratch paths | PC-2 | DONE | implementation | PR #141 merged a1c0ce8a; acceptance exit 0 on merged tree (scrub 70, lib 156, mock 56); CI run 45716982108 green (ubuntu, macos, windows) |
+| PC-9 | `scripts/premises/ver_test.sh`: its repo copy includes every evidence path the premise rows cite | PC-1 | DONE | mechanical | PR #136 merged 256e5cae; acceptance exit 0 on merged tree (ver_test 62, test-check-premises 102); CI run 45716799629 green (ubuntu, macos, windows) |
+| PC-6 | Codex resume and update captures: PC10, PC16 | PC-2, PC-10 | DONE | implementation | PR #138 merged 7ecef460; acceptance exit 0 @ 86ddb8e3 (real codex 0.172.0; PC10 PC16 verified); CI run 45735047521 green (ubuntu, macos, windows) |
+| RS-2 | Messages → Responses encoder: SSE stream and JSON response (`translate/responses_client.rs`) | RS-1 | DONE | judgment | PR #156 merged 1ad733f0; acceptance exit 0 on merged tree (responses_stream 29); CI run 45738657210 green (ubuntu, macos, windows) |
+| RS-3 | `POST /openai/v1/responses` route, test harness, request side of forward, errors before the first byte, redaction on `input` | RS-1 | DONE | judgment | PR #157 merged f37bba43; acceptance exit 0 on merged tree (responses_route 20); CI run 45740502290 green (ubuntu, macos, windows) |
+| RS-9 | Codex namespace tools: flatten into function tools for Anthropic and chat upstreams, map their calls back | RS-1, RS-2, PC-5 | DONE | judgment | PR #161 merged 01d4b522; acceptance pass on merged tree (responses_request 59, responses_stream 34; workspace: only the 2 known guard_hook failures) |
+| RS-8 | `GET /openai/v1/models` in the PC7 shape, other PC1 paths, chat route stays 404 | RS-3 | DONE | implementation | PR #164 merged 62740dc2; acceptance exit 0 on merged tree (responses_models 7); CI run 45744874257 green (ubuntu, macos, windows) |
+| PC-12 | Codex premise: the Responses event sequence zygo's encoder emits (empty terminal output, extra item and delta events) is accepted | PC-10, RS-2 | DONE | judgment | PR #163 merged 59b43e33; acceptance exit 0 on merged tree (real codex 0.172.0 run @ cdabba5b, PC17 PC18 verified; no PC-12 path changed since; check-premises ok; zygo-proxy tests pass); CI run 45756027133 green (ubuntu, macos, windows) |
+| RS-4 | Response side for Anthropic and chat upstreams: stream order with the encoder after the tee, non-streaming path, errors after the first event | RS-2, RS-3, PC-12 | DONE | judgment | PR #165 merged da0c0387; acceptance exit 0 on merged tree (responses_forward 23; zygo-proxy 521 passed, 0 failed); CI run 45758838881 green (ubuntu, macos, windows); DDR-01M8B3A7JCGK6YAE2VZ7P6QZ3C |
+
+## Log
+
+| Date | Event |
+|------|-------|

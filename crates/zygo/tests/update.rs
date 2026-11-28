@@ -8,6 +8,7 @@ use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 
 mod common;
+mod dead_port;
 
 /// Held while a copy of the binary is written and while a child is spawned, so no other test's `fork` holds a write
 /// descriptor of an executable that is being exec'd (ETXTBSY).
@@ -262,10 +263,7 @@ fn bad_version_is_a_usage_error() {
 
 #[test]
 fn unreachable_server_exits_1_and_changes_nothing() {
-    let port = {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    let port = dead_port::closed_port();
     let s = setup();
     let before = snapshot(&s.copy);
     let o = run(&s, &format!("http://127.0.0.1:{port}"), &["update"]);
@@ -331,10 +329,7 @@ fn check_with_version_reports_and_installs_nothing() {
 #[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
 fn system_proxy_is_not_used() {
     let f = Fixture::start(vec![version_file(NEW)]);
-    let port = {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    let port = dead_port::closed_port();
     let proxy = format!("http://127.0.0.1:{port}");
     let s = setup();
     let o = run_env(
@@ -664,10 +659,7 @@ mod start {
     #[ignore = "timing: asserts elapsed time against the 2 s check bound"]
     fn an_unreachable_server_is_silent_and_bounded() {
         // Nothing listens: the connection is refused.
-        let closed = {
-            let l = TcpListener::bind("127.0.0.1:0").unwrap();
-            l.local_addr().unwrap().port()
-        };
+        let closed = dead_port::closed_port();
         // Listens and never accepts: the connection opens (backlog) and no reply comes.
         let silent = TcpListener::bind("127.0.0.1:0").unwrap();
         let stalled = silent.local_addr().unwrap().port();
@@ -740,6 +732,7 @@ mod start {
         let s = setup();
         let empty = s.dir.path().join("no-agents");
         std::fs::create_dir(&empty).unwrap();
+        std::fs::write(s.dir.path().join("config.toml"), common::NO_MARKETPLACE).unwrap();
         let mut cmd = Command::new(&s.copy);
         cmd.arg(agent)
             .env("ZYGO_RELEASE_BASE", f.base())
@@ -751,19 +744,20 @@ mod start {
             .env_remove("ZYGO_SESSION")
             .env_remove("ZYGO_WORKSPACE")
             .env_remove("ZYGO_NO_UPDATE_CHECK")
-            .env_remove("ZYGO_CONFIG")
+            .env("ZYGO_CONFIG", s.dir.path().join("config.toml"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let g = COPY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut child = cmd.spawn().unwrap();
         drop(g);
-        child.stdin.take().unwrap().write_all(b"y\n").unwrap();
+        common::write_stdin(child.stdin.take().unwrap(), b"y\n");
         let o = child.wait_with_output().unwrap();
         assert_eq!(o.status.code(), Some(0), "{}", err(&o));
         assert_eq!(err(&o), format!("{} updated to {NEW}; relaunch zygo\n", prompt(NEW)));
         assert_eq!(out(&o), "");
         assert_eq!(std::fs::read(&s.copy).unwrap(), b"fixture-binary");
+        common::assert_no_marketplace_sync(s.dir.path());
     }
 
     /// `zygo <agent>` with an empty `ZYGO_SESSION`, on a TTY (`ZYGO_TEST_ASSUME_TTY=1`): the check skips (M5 round 2
@@ -773,6 +767,7 @@ mod start {
         let dir = tempfile::tempdir().unwrap();
         let empty = dir.path().join("no-agents");
         std::fs::create_dir(&empty).unwrap();
+        std::fs::write(dir.path().join("config.toml"), common::NO_MARKETPLACE).unwrap();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
         cmd.arg(agent)
             .env("ZYGO_RELEASE_BASE", f.base())
@@ -784,7 +779,7 @@ mod start {
             .env("PATH", &empty)
             .env_remove("ZYGO_WORKSPACE")
             .env_remove("ZYGO_NO_UPDATE_CHECK")
-            .env_remove("ZYGO_CONFIG")
+            .env("ZYGO_CONFIG", dir.path().join("config.toml"))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -795,6 +790,7 @@ mod start {
         assert!(!err(&o).contains("is available"), "{}", err(&o));
         assert!(f.requests().is_empty(), "{:?}", f.requests());
         assert!(!dir.path().join(".cache/zygo/update.json").exists());
+        common::assert_no_marketplace_sync(dir.path());
     }
 
     #[test]
@@ -930,7 +926,7 @@ mod workspace_check {
         assert!(locked(|| srv.run(&["list-sessions"])).is_err(), "a pane started before the answer");
         assert_eq!(state_entries(&h), 0);
         assert!(!out.exists());
-        stdin.write_all(b"n\n").unwrap();
+        common::write_stdin(&mut stdin, b"n\n");
         drop(stdin);
         let o = g.output("zygo up");
         assert_eq!(o.status.code(), Some(0), "{}", err(&o));
@@ -956,7 +952,7 @@ mod workspace_check {
         let mut c = checked(c, &base);
         c.current_dir(h.repo()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = locked(|| Guarded::spawn(c));
-        child.stdin().unwrap().write_all(b"y\n").unwrap();
+        common::write_stdin(child.stdin().unwrap(), b"y\n");
         let o = child.output("zygo up");
         assert_eq!(o.status.code(), Some(0), "{}", err(&o));
         assert_eq!(err(&o), format!("{} updated to {NEW}; relaunch zygo\n", prompt(NEW)));
@@ -995,7 +991,7 @@ mod workspace_check {
         let mut c = checked(h.zygo(&["up", "--all"], &[("TMUX", tmux.as_os_str()), ("SHELL", sh)]), &base);
         c.current_dir(h.root()).stdin(Stdio::piped());
         let mut g = locked(|| Guarded::spawn(c));
-        g.stdin().unwrap().write_all(b"n\n").unwrap();
+        common::write_stdin(g.stdin().unwrap(), b"n\n");
         let o = g.output("zygo up --all");
         assert_eq!(o.status.code(), Some(0), "{}", err(&o));
         assert_eq!(err(&o).matches(&prompt(NEW)).count(), 1, "{}", err(&o));
@@ -1103,7 +1099,7 @@ mod workspace_check {
         c.current_dir(h.root()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let t0 = std::time::Instant::now();
         let mut child = locked(|| Guarded::spawn(c));
-        child.stdin().unwrap().write_all(answer).unwrap();
+        common::write_stdin(child.stdin().unwrap(), answer);
         let o = child.output("ws run");
         Run { o, out, took: t0.elapsed() }
     }

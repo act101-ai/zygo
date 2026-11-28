@@ -1,0 +1,443 @@
+{
+  "events": {
+    "SessionStart": [
+      "pc5-probe",
+      "pc5-shell",
+      "pc5-mcp",
+      "pc5-mcp-noapprove",
+      "pc5-sub",
+      "pc5-match",
+      "pc5-ctx-start",
+      "pc5-ctx-prompt",
+      "pc5-deny",
+      "pc5-deny-block",
+      "pc5-stop-block",
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
+    ],
+    "UserPromptSubmit": [
+      "pc5-probe",
+      "pc5-shell",
+      "pc5-mcp",
+      "pc5-mcp-noapprove",
+      "pc5-sub",
+      "pc5-match",
+      "pc5-ctx-start",
+      "pc5-ctx-prompt",
+      "pc5-deny",
+      "pc5-deny-block",
+      "pc5-stop-block",
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
+    ],
+    "PreToolUse": [
+      "pc5-shell",
+      "pc5-mcp",
+      "pc5-mcp-noapprove",
+      "pc5-sub",
+      "pc5-match",
+      "pc5-deny",
+      "pc5-deny-block",
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
+    ],
+    "PermissionRequest": [
+      "pc5-mcp-noapprove"
+    ],
+    "PostToolUse": [
+      "pc5-shell",
+      "pc5-mcp",
+      "pc5-sub",
+      "pc5-match",
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
+    ],
+    "PreModelRequest": [
+      "pc5-probe",
+      "pc5-shell",
+      "pc5-mcp",
+      "pc5-mcp-noapprove",
+      "pc5-sub",
+      "pc5-match",
+      "pc5-ctx-start",
+      "pc5-ctx-prompt",
+      "pc5-deny",
+      "pc5-deny-block",
+      "pc5-stop-block",
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
+    ],
+    "PostModelRequest": [
+      "pc5-probe",
+      "pc5-shell",
+      "pc5-mcp",
+      "pc5-mcp-noapprove",
+      "pc5-sub",
+      "pc5-match",
+      "pc5-ctx-start",
+      "pc5-ctx-prompt",
+      "pc5-deny",
+      "pc5-deny-block",
+      "pc5-stop-block",
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
+    ],
+    "PreCompact": "not seen",
+    "PostCompact": "not seen",
+    "SubagentStart": [
+      "pc5-sub"
+    ],
+    "SubagentStop": [
+      "pc5-sub"
+    ],
+    "Stop": [
+      "pc5-probe",
+      "pc5-shell",
+      "pc5-mcp",
+      "pc5-mcp-noapprove",
+      "pc5-sub",
+      "pc5-match",
+      "pc5-ctx-start",
+      "pc5-ctx-prompt",
+      "pc5-deny",
+      "pc5-deny-block",
+      "pc5-stop-block",
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
+    ],
+    "Interrupt": "not triggered (exec has no interrupt)",
+    "SessionEnd": [
+      "pc5-probe",
+      "pc5-shell",
+      "pc5-mcp",
+      "pc5-mcp-noapprove",
+      "pc5-sub",
+      "pc5-match",
+      "pc5-ctx-start",
+      "pc5-ctx-prompt",
+      "pc5-deny",
+      "pc5-deny-block",
+      "pc5-stop-block",
+      "pc5-post-block",
+      "pc5-rep-shell-str",
+      "pc5-rep-shell-obj",
+      "pc5-rep-shell-mcp",
+      "pc5-rep-mcp-str",
+      "pc5-rep-mcp-obj",
+      "pc5-rep-mcp-mcp"
+    ]
+  },
+  "shapes": {
+    "pc5-ctx-start": {
+      "kind": "context",
+      "event": "SessionStart",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "SessionStart",
+          "additionalContext": "zp-ctx-start"
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 1,
+      "accepted": true,
+      "evidence": "zp-ctx-start in request 1: True"
+    },
+    "pc5-ctx-prompt": {
+      "kind": "context",
+      "event": "UserPromptSubmit",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "UserPromptSubmit",
+          "additionalContext": "zp-ctx-prompt"
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 1,
+      "accepted": true,
+      "evidence": "zp-ctx-prompt in request 1: True"
+    },
+    "pc5-deny": {
+      "kind": "deny",
+      "event": "PreToolUse",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "PreToolUse",
+          "permissionDecision": "deny",
+          "permissionDecisionReason": "zp-deny"
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": true,
+      "evidence": "command ran: False; zp-deny in request 2: True"
+    },
+    "pc5-deny-block": {
+      "kind": "deny",
+      "event": "PreToolUse",
+      "output": {
+        "decision": "block",
+        "reason": "zp-deny2"
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": true,
+      "evidence": "command ran: False; zp-deny2 in request 2: True"
+    },
+    "pc5-stop-block": {
+      "kind": "block",
+      "event": "Stop",
+      "output": {
+        "decision": "block",
+        "reason": "zp-block"
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": true,
+      "evidence": "zp-block in request(s) [2]"
+    },
+    "pc5-post-block": {
+      "kind": "block",
+      "event": "PostToolUse",
+      "output": {
+        "decision": "block",
+        "reason": "zp-post"
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": true,
+      "evidence": "zp-post in request 2: True"
+    },
+    "pc5-rep-shell-str": {
+      "kind": "replacement",
+      "event": "PostToolUse",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "PostToolUse",
+          "updatedToolOutput": "zp-replaced"
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": false,
+      "codex_status": [
+        "Failed"
+      ],
+      "codex_reason": [
+        "hook: PostToolUse Failed"
+      ],
+      "evidence": "request 2 tool output holds zp-replaced: False, zp-orig: True; hook status ['Failed']"
+    },
+    "pc5-rep-shell-obj": {
+      "kind": "replacement",
+      "event": "PostToolUse",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "PostToolUse",
+          "updatedToolOutput": {
+            "content": [
+              {
+                "type": "text",
+                "text": "zp-replaced"
+              }
+            ]
+          }
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": false,
+      "codex_status": [
+        "Failed"
+      ],
+      "codex_reason": [
+        "hook: PostToolUse Failed"
+      ],
+      "evidence": "request 2 tool output holds zp-replaced: False, zp-orig: True; hook status ['Failed']"
+    },
+    "pc5-rep-shell-mcp": {
+      "kind": "replacement",
+      "event": "PostToolUse",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "PostToolUse",
+          "updatedMCPToolOutput": {
+            "content": [
+              {
+                "type": "text",
+                "text": "zp-replaced"
+              }
+            ]
+          }
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": false,
+      "codex_status": [
+        "Failed"
+      ],
+      "codex_reason": [
+        "hook: PostToolUse Failed"
+      ],
+      "evidence": "request 2 tool output holds zp-replaced: False, zp-orig: True; hook status ['Failed']"
+    },
+    "pc5-rep-mcp-str": {
+      "kind": "replacement",
+      "event": "PostToolUse",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "PostToolUse",
+          "updatedToolOutput": "zp-replaced"
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": false,
+      "codex_status": [
+        "Failed"
+      ],
+      "codex_reason": [
+        "hook: PostToolUse Failed"
+      ],
+      "evidence": "request 2 tool output holds zp-replaced: False, tracer-mcp-probe-result: True; hook status ['Failed']"
+    },
+    "pc5-rep-mcp-obj": {
+      "kind": "replacement",
+      "event": "PostToolUse",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "PostToolUse",
+          "updatedToolOutput": {
+            "content": [
+              {
+                "type": "text",
+                "text": "zp-replaced"
+              }
+            ]
+          }
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": false,
+      "codex_status": [
+        "Failed"
+      ],
+      "codex_reason": [
+        "hook: PostToolUse Failed"
+      ],
+      "evidence": "request 2 tool output holds zp-replaced: False, tracer-mcp-probe-result: True; hook status ['Failed']"
+    },
+    "pc5-rep-mcp-mcp": {
+      "kind": "replacement",
+      "event": "PostToolUse",
+      "output": {
+        "hookSpecificOutput": {
+          "hookEventName": "PostToolUse",
+          "updatedMCPToolOutput": {
+            "content": [
+              {
+                "type": "text",
+                "text": "zp-replaced"
+              }
+            ]
+          }
+        }
+      },
+      "hook_output_sent": true,
+      "requests": 2,
+      "accepted": false,
+      "codex_status": [
+        "Failed"
+      ],
+      "codex_reason": [
+        "hook: PostToolUse Failed"
+      ],
+      "evidence": "request 2 tool output holds zp-replaced: False, tracer-mcp-probe-result: True; hook status ['Failed']"
+    }
+  },
+  "replacement": {
+    "shell": {
+      "str": false,
+      "obj": false,
+      "mcp": false
+    },
+    "mcp": {
+      "str": false,
+      "obj": false,
+      "mcp": false
+    }
+  },
+  "replacement_note": "each shape is the hookSpecificOutput of a PostToolUse output",
+  "matchers": {
+    "PreToolUse": {
+      "exact (Bash)": true,
+      "model (exec_command)": false,
+      "alt (Bash|Write)": true,
+      "regex (^Ba.*)": true,
+      "none (NoSuchTool)": false,
+      "star (*)": true,
+      "no matcher": true
+    },
+    "PostToolUse": {
+      "exact (Bash)": true,
+      "model (exec_command)": false,
+      "alt (Bash|Write)": true,
+      "regex (^Ba.*)": true,
+      "none (NoSuchTool)": false,
+      "star (*)": true,
+      "no matcher": true
+    }
+  },
+  "mcp_without_approval_mode": {
+    "PermissionRequest_payload": true,
+    "tool_output": "Wall time: 0.0670 seconds\nOutput:\nMCP tool call requires approval, but approval policy is never",
+    "refusal_text_seen": true
+  },
+  "subagent": {
+    "attempts": [
+      "pc5-sub"
+    ],
+    "parent_kept_alive": "a exec_command call of sleep 15 after the spawn (rule pc5-sub-wait)",
+    "parent_requests": 4,
+    "SubagentStart": true,
+    "SubagentStop": true
+  },
+  "result": "failed",
+  "why": "missing: replacement shape"
+}

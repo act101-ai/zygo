@@ -22,7 +22,7 @@ pub struct DownArgs {
     /// Stop at once: no drain
     #[arg(long)]
     pub now: bool,
-    /// The drain timeout: <n>s, <n>m or <n>h
+    /// The drain timeout: <n>s, <n>m, <n>h or <n>d
     #[arg(long, value_name = "DUR")]
     pub timeout: Option<String>,
     /// Wait in the foreground until the down ends
@@ -46,7 +46,7 @@ pub fn run(a: &DownArgs) -> i32 {
         Some(v) => match zygo_config::parse_duration(v) {
             Some(d) => Some(d),
             None => {
-                print_err(&format!("zygo: bad --timeout value {}: use <n>s, <n>m or <n>h\n", zygo_core::esc(v)));
+                print_err(&format!("zygo: bad --timeout value {}: use <n>s, <n>m, <n>h or <n>d\n", zygo_core::esc(v)));
                 return 2;
             }
         },
@@ -308,19 +308,25 @@ mod tests {
     fn slash_down_does_not_need_the_current_folder() {
         let o = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "cmd::down::tests::slash_down_in_a_removed_folder", "--ignored", "--nocapture", "--test-threads=1"])
+            .env("ZYGO_TEST_CHILD", "cmd::down::tests::slash_down_in_a_removed_folder")
             .stdin(std::process::Stdio::null())
             .output()
             .unwrap();
         let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
         assert!(o.status.success(), "{text}");
         assert!(text.contains("test result: ok. 1 passed"), "{text}");
+        assert!(text.contains("child ran: slash_down_in_a_removed_folder"), "{text}");
     }
 
-    /// The child of `slash_down_does_not_need_the_current_folder`: its cwd is a folder that it removed.
+    /// The child of `slash_down_does_not_need_the_current_folder`: its cwd is a folder that it removed. Outside its
+    /// parent (`--include-ignored`) it does nothing.
     #[cfg(unix)]
     #[test]
     #[ignore = "child process of slash_down_does_not_need_the_current_folder"]
     fn slash_down_in_a_removed_folder() {
+        if std::env::var("ZYGO_TEST_CHILD").as_deref() != Ok("cmd::down::tests::slash_down_in_a_removed_folder") {
+            return;
+        }
         let t = tempfile::tempdir().unwrap();
         let gone = t.path().join("gone");
         std::fs::create_dir(&gone).unwrap();
@@ -331,6 +337,7 @@ mod tests {
         ctx.slash = true;
         let e = super::verb(&ctx, &[]).unwrap_err();
         assert_eq!(zygo_config::display::error_text(&e), "this session is not in a workspace");
+        println!("child ran: slash_down_in_a_removed_folder");
     }
 
     /// D8: an empty `ZYGO_SESSION` counts as unset in the CLI form too. Kills: the CLI form passing `Some("")`.

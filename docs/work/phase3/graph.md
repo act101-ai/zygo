@@ -5,7 +5,7 @@
 **Goal:** Build Phase 3 of zygo (workspace mail, mail sync, output shaping and saving accounting, decision records, workspace definition, session run time and session text) as the seven approved specs specify.
 **Authority:** `docs/specs/2026-11-22-workspace-mail-design.md` (M§n; P3-1), `docs/specs/2026-11-24-decision-records-design.md` (D§n; P3-8 to P3-10), `docs/specs/2026-11-24-mail-sync-design.md` (S§n; P3-2 to P3-4), `docs/specs/2026-11-24-output-shaping-design.md` (O§n; P3-5 to P3-7), `docs/specs/2026-11-24-workspace-definition-design.md` (R§n; P3-11, P3-12), `docs/specs/2026-11-24-session-runtime-design.md` (T§n in RT nodes; P3-13), `docs/specs/2026-11-24-session-text-design.md` (T§n in SX nodes; P3-14, P3-15), each approved by the operator (P3-1 on 2026-11-22, the others on 2026-11-24); base specs `docs/specs/2026-11-18-zygo-design.md` (§n), `docs/specs/2026-11-20-workspaces-design.md` (W§n), `docs/specs/2026-11-21-statusline-hud-design.md` (H§n); order of work `docs/roadmap/phase-3.md`
 **Run:** parallel=3 · worktrees=.worktrees/phase3/ · disk-per-node=—
-**Workflows:** (1) Each node gets its own review gate of up to 3 rounds; every finding ends as fixed (a commit in the node range), rejected (with a reason) or recorded (a DDR id), per `docs/specs/2026-11-24-decision-records-design.md` — operator, 2026-11-24 (`docs/roadmap/phase-3.md` "Plan of work" item 3). (2) Each node is delivered in its own pull request to `main`; a node is DONE when its pull request is merged, and each dependent node branches from `main` after that — operator, 2026-11-24 ("we PR after every row, including planning"). (3) DDR first: every node with no other dependency depends on DR-1 (the record format), so DR-1 is the only root — operator, "P3-8 comes first in the order of work" (`docs/roadmap/phase-3.md` "Intent"). (4) The act-lite/act101 skill changes that the DDR spec names are made in their own repositories (`~/Work/act-lite`, `~/Work/act`, `~/Work/act101-marketplace`), not in this graph; no zygo release that contains DR-13's `dispositions` guard at `enforce` ships before those skill changes ship — `docs/specs/2026-11-24-decision-records-design.md` D§12.
+**Workflows:** (1) Each node gets its own review gate of up to 3 rounds; every finding ends as fixed (a commit in the node range), rejected (with a reason) or recorded (a DDR id), per `docs/specs/2026-11-24-decision-records-design.md` — operator, 2026-11-24 (`docs/roadmap/phase-3.md` "Plan of work" item 3). (2) Rows are delivered as GitHub stacked pull requests on the trunk `phase-3`: a row's branch is created on top of the open stack's top branch, so every dependency sits in the same layer or a lower one, and its pull request is one layer of that stack (`gh stack link --base phase-3 …`); the controller merges a stack, or its bottom part, into `phase-3` (`gh stack merge`) once every layer in it has passed its review gate and its CI is green; a node is DONE when its layer merges; `phase-3` reaches `main` only when the operator says so — operator, 2026-11-24 ("we PR after every row, including planning"; "we need a phase-3 rendezvous branch, each row merges to that branch so you can be autonomous") and 2026-11-25 ("in the future i prefer you use stacked prs instead of this slow process"; "graph header is fine"; GitHub "About stacked pull requests"). (3) DDR first: every node with no other dependency depends on DR-1 (the record format), so DR-1 is the only root — operator, "P3-8 comes first in the order of work" (`docs/roadmap/phase-3.md` "Intent"). (4) The act-lite/act101 skill changes that the DDR spec names are made in their own repositories (`~/Work/act-lite`, `~/Work/act`, `~/Work/act101-marketplace`), not in this graph; no zygo release that contains DR-13's `dispositions` guard at `enforce` ships before those skill changes ship — `docs/specs/2026-11-24-decision-records-design.md` D§12.
 
 To continue in any session: "resume the work in `docs/work/phase3/graph.md`".
 
@@ -33,7 +33,7 @@ Decision records (D):
 - No record text, finding text, label or disposition reason in the usage store, a log or a session file; no hook reads a record file; the slash form reads none; the verdict check is in the MCP tool — `docs/specs/2026-11-24-decision-records-design.md` D-C1, D-C2, D§3, D§10.1
 - The record file is the only owner of a record's state (no index); a record is never deleted or renamed; an agent never writes an operator key or status — D-C3, D-C4, D-C5
 - Record id `^DDR-[0-9A-HJKMNP-TV-Z]{26}$`; file `docs/decisions/<id>.md`; TOML front matter between `+++` lines; zygo edits with `toml_edit` and keeps unknown keys, comments and the body byte-equal — D§6.1, D§6.2
-- Bounds: each git process 2 s; one verdict at most 4 git processes and 10 s; `--batch` at most 2,048 objects and 16 MiB; node range at most 10,000 commits; at most 1,000 record changes read; record file at most 64 KiB, front matter closed within 8 KiB; directory at most 10,000 entries; `work_verdict` arguments at most 256 KiB, `dispositions` at most 256 entries, `finding` 1–200 bytes, `reason` 1–2,000 bytes; `title` 1–120 bytes; `unit` at most 128 bytes; `depends_on` at most 64 ids; `review_note` at most 2,000 bytes; `promotion` at most 500 bytes; `<problems>` at most 10 then `; and <n> more`, at most 4 KiB; `show` at most 50 commits, `review` at most 20 — D-C6, D§9.3, D§10.1, D§11.2
+- Bounds: each git process 2 s; one verdict at most 4 git processes and 10 s; `--batch` at most 2,048 objects and 16 MiB; node range at most 10,000 commits; at most 1,000 record changes read; record file at most 64 KiB, front matter closed within 8 KiB; directory at most 10,000 entries; `work_verdict` arguments at most 256 KiB, `dispositions` at most 256 entries, `finding` 1–200 characters, `reason` 1–2,000 characters; `title` 1–120 bytes; `unit` at most 128 bytes; `depends_on` at most 64 ids; `review_note` at most 2,000 bytes; `promotion` at most 500 bytes; `<problems>` at most 10 then `; and <n> more`, at most 4 KiB; `show` at most 50 commits, `review` at most 20 — D-C6, D§9.3, D§10.1, D§11.2
 - The `dispositions` guard follows the §13.4 levels and §13.5 resolution, default `enforce` — D-C7, D§9.3
 - Text from a record or from git is printed one line at a time through `zygo_core::esc` — D§10.1
 - Not a security boundary against an agent that runs as the same OS user; no code or text claims more — D-C9
@@ -51,7 +51,7 @@ Workspace mail (M):
 
 Mail sync (S):
 
-- No subject, body, address, host name, member name or path that holds one in a log, `workspace.json`, a usage row, a commit message or a ref name; a log line names ULIDs, pattern ids, check names, blob ids and counts only — S§4 S-C2
+- No subject, body, address, host name, member name or path that holds one in a log, a usage row, a commit message or a ref name; `workspace.json` holds none of them but its own members' M§6 names; a log line names ULIDs, pattern ids, check names, blob ids and counts only — S§4 S-C2
 - zygo writes only `refs/heads/zygo/<x>` on the remote; a force push only to that branch, only with the S§9 lease; branch form `^zygo/[a-z0-9][a-z0-9-]{0,31}$` — S§4 S-C3, S§11
 - Every git call is `git_command` (`crates/zygo-plugins/src/sync.rs:32`) plus `-c gc.auto=0 -c maintenance.auto=false`, under the S§8.7 runner, with a deadline; never `git worktree prune`, `git merge` or `rebase` — S§4 S-C4, S§6.3, S§12
 - All remote content is untrusted and validated before use; zygo never writes a file at a path the remote chose; no checkout of the side branch — S§4 S-C5, S§6.3
@@ -191,139 +191,37 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| DR-1 | Record format: parse and validate one DDR file, and `docs/decisions/` in place (README with a valid example) | — | TODO | judgment | — |
-| DR-2 | Record set: directory reader, set checks and the dependency graph | DR-1 | TODO | implementation | — |
-| DR-3 | `zygo decision` verb: `ls`, `show`, `deps`, `check` and the slash form | DR-2 | TODO | implementation | — |
-| DR-4 | `zygo decision new`: write a record template | DR-3 | TODO | implementation | — |
-| DR-5 | Operator verbs `ratify` and `overturn`: byte-preserving outcome writes | DR-4 | TODO | judgment | — |
-| DR-6 | `zygo decision review`: the phase-end review | DR-5 | TODO | implementation | — |
-| DR-7 | `zygo work report`: the two record lines | DR-2, DR-3, RT-2 | TODO | implementation | — |
-| DR-8 | Session view `repo_root`, written by the launcher | DR-1 | TODO | mechanical | — |
-| DR-9 | The `dispositions` guard key, default `enforce` | DR-1 | TODO | mechanical | — |
-| DR-10 | Agent transitions: the D§6.6 rule for one record change | DR-1 | TODO | judgment | — |
-| DR-11 | Verdict git reader: four bounded git processes behind an injectable trait (PD1) | DR-10, MS-1 | TODO | judgment | — |
-| DR-12 | Keep check: the D§9.4 steps over the node range | DR-11 | TODO | judgment | — |
-| DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
-| DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
-| DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
-| ML-1 | Mail config keys, the loadout pane `name` and the member-name grammar | DR-9, DR-8 | TODO | implementation | — |
-| ML-2 | Maildir store: message file, atomic send, read by rename, limits, sweep | DR-1 | TODO | judgment | — |
-| ML-16 | Live-check script for PM1-PM3 and acceptance #12 | DR-1 | TODO | implementation | — |
-| OS-1 | Result meta records the session that stored it | DR-1 | TODO | implementation | — |
-| OS-6 | Carry computation for one event over its context's requests | DR-1 | TODO | judgment | — |
-| OS-10 | `shape` module: step names, shaper names and byte bounds | DR-1 | TODO | mechanical | — |
-| OS-16 | Shaping fixture harness: byte-exact files, capture script, format and secret checks | DR-1 | TODO | implementation | — |
-| MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | TODO | judgment | — |
-| MS-3 | Mail sync config keys, forms and per-workspace resolution | ML-1, WD-5 | TODO | implementation | — |
-| WD-1 | Git read of `.zygo/` from the default branch and at a pinned commit | DR-1 | TODO | judgment | — |
-| WD-5 | Config keys: pane `job`/`pool`, `[workspace] pool`, `[limits] max_members`, `.zygo.toml` filter, `config check` rules | DR-3, ML-1, RT-1 | TODO | implementation | — |
-| RT-1 | Member record `first_started_at`, set by each commit of a pending start | DR-1 | TODO | implementation | — |
-| RT-2 | Run-time start rule, `<form>` text, and the `runtime:` line of `zygo status` | ML-1, WD-5 | TODO | implementation | — |
-| SX-1 | Claude Code subagent branch of `hook session-start`: mechanics text on `SubagentStart` for every non-`zygo-` subagent (T§6.3 item 2) | DR-1 | TODO | implementation | — |
-| SX-3 | `hook pre-compact` sets `reinject/<agent_id>` for a non-`zygo-` subagent (T§9.2 item 1) | DR-1 | TODO | implementation | — |
-| SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
-| SX-8 | `docs/live-checks.md` section P3-15 (T§12.2) | DR-1 | TODO | mechanical | — |
-| ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
-| MS-2 | zygo-mail-sync crate: hardened git calls and test seams | MS-1, ML-2 | TODO | implementation | — |
-| OS-2 | Usage store: `readbacks` table and three additive `trims` columns | OS-1 | TODO | judgment | — |
-| OS-11 | Command parse: segments, file printers, stored name, runners, reuse text | OS-10 | TODO | judgment | — |
-| OS-14 | Size view over any text, and the shaped marker | OS-1, OS-10 | TODO | implementation | — |
-| OS-17 | Capture clean and dedup fixtures from real command output | OS-16 | TODO | implementation | — |
-| OS-18 | Capture diff, json and log fixtures from real command output | OS-16 | TODO | implementation | — |
-| OS-19 | Capture libtest fixtures from a scratch crate | OS-16 | TODO | implementation | — |
-| OS-20 | Capture pytest fixtures from a scratch project | OS-16 | TODO | implementation | — |
-| OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
-| OS-22 | Premise script for PO1 to PO4 | OS-16 | TODO | implementation | — |
-| WD-2 | Typed shapes, allow-list validation and digest of the workspace files; PR3 | WD-1 | TODO | judgment | — |
-| SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | TODO | implementation | — |
-| SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
-| ML-3 | Member name in the plan, the member record and `panes[]` | ML-1, RT-1 | TODO | implementation | — |
-| MS-7 | Secret pass on one message | MS-2 | TODO | implementation | — |
-| OS-3 | Bounded usage-store open for the hook and the MCP server | OS-2 | TODO | judgment | — |
-| OS-7 | Savings read: net figures, per-context carry, breakdown and ratio | OS-2, OS-6 | TODO | judgment | — |
-| OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
-| OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
-| WD-3 | Workspace approvals in `approvals.toml` | WD-2 | TODO | judgment | — |
-| SX-6 | OpenCode plugin transform: `--event subagent` for non-main `zygo/` models (T§7.2 item 1) | SX-2 | TODO | implementation | — |
-| ML-4 | Address resolution and the send operation | ML-2, ML-3 | TODO | implementation | — |
-| ML-5 | Multiplexer operations for the wake: literal keys and Enter | ML-3 | TODO | implementation | — |
-| ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8 | TODO | implementation | — |
-| MS-5 | Sync state files: paths, identity, state.json, imported log, marks | MS-2, WD-5 | TODO | judgment | — |
-| OS-4 | Trim hook writes `result_id` and `shaper`, opens the store bounded | OS-3 | TODO | implementation | — |
-| OS-5 | MCP result tools record one read-back row per successful reply | OS-3 | TODO | implementation | — |
-| OS-8 | `zygo usage` prints the net figures, breakdown and ratio | OS-7 | TODO | implementation | — |
-| OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
-| OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
-| WD-4 | Checked use: one read, one digest, one store lookup per use; `Pin` | WD-3 | TODO | judgment | — |
-| WD-9 | Pool directory listing, assignment and shared lines | WD-5, ML-2 | TODO | judgment | — |
-| ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
-| ML-8 | `zygo ws name <key> <name>` | ML-5, ML-7 | TODO | judgment | — |
-| ML-9 | Session text item 8 (workspace mail) at main-loop SessionStart | ML-4, ML-7, DR-8, RT-1 | TODO | implementation | — |
-| ML-15 | HUD segments: member name and unread mail | ML-7, RT-2 | TODO | implementation | — |
-| MS-4 | Address grammar and the ULID file form | MS-2, MS-3 | TODO | implementation | — |
-| MS-8 | Public check: URL map, anonymous probe, verdict lists, cache | MS-5 | TODO | judgment | — |
-| MS-10 | Side branch plumbing: index-only worktree, fetch, bootstrap, commit, push | MS-5 | TODO | judgment | — |
-| OS-15 | Shaping pipeline: step order, reuse rule, byte bound | OS-13 | TODO | judgment | — |
-| OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
-| WD-6 | The repository loadout from `[members]`, with the default set | WD-4, WD-5 | TODO | implementation | — |
-| WD-8 | Member record fields `launch.job` and `launch.definition` | WD-4, ML-3 | TODO | mechanical | — |
-| ML-10 | Delivery by hooks: Stop block, prompt line, SessionStart line, OpenCode per-request line | ML-9, ML-17 | TODO | judgment | — |
-| ML-11 | MCP tools `mail_send`, `mail_read`, `mail_list` | ML-6, ML-7 | TODO | implementation | — |
-| ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | TODO | implementation | — |
-| ML-14 | Unread counts in `zygo workspace`, `zygo ls` and `up`; `forget-pane` removes the maildir | ML-2, ML-8 | TODO | judgment | — |
-| MS-6 | Registry and ack files, validation, member cache | MS-4, MS-5 | TODO | judgment | — |
-| MS-24 | Live premise SP2: anonymous probe on github.com and gitlab.com | MS-8 | TODO | lookup | — |
-| OS-9 | `[results] shape` in config and the session view | OS-4, ML-9, MS-3 | TODO | mechanical | — |
-| OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
-| OS-29 | Kind views for diff, json and log (pipeline step 4) | OS-15, OS-18 | TODO | judgment | — |
-| WD-7 | Approved definition added to the merged config with source `workspace-files` | WD-6, MS-3 | TODO | judgment | — |
-| WD-10 | Plan panes carry `job`, `pool` and the pin; `Source::Repository` | WD-6, ML-3 | TODO | implementation | — |
-| RT-3 | Run-time HUD segment in compact and verbose, with its place in the width-removal order | RT-2, ML-15 | TODO | implementation | — |
-| ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
-| MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | TODO | judgment | — |
-| MS-11 | Tip metadata, own hosts, collision and twin checks | MS-6, MS-10 | TODO | judgment | — |
-| MS-12 | Import: candidates, checks, crash-safe delivery | MS-6, MS-10, ML-2, ML-4 | TODO | judgment | — |
-| MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10 | TODO | implementation | — |
-| OS-27 | Shape-off baseline: hook output and stored file of the `97d8767` behavior | OS-9, OS-17, OS-18, OS-19, OS-20, OS-21 | TODO | implementation | — |
-| OS-30 | Runner views: dispatch and the libtest view (pipeline step 3) | OS-29, OS-19 | TODO | judgment | — |
-| WD-11 | `zygo up`: loadout choice, checked read, pin, member maximum | WD-7, WD-8, WD-10, ML-14, MS-5 | TODO | judgment | — |
-| WD-13 | Launcher: repository profile by a default-branch read (not pinned) | WD-7, DR-13, OS-9 | TODO | judgment | — |
-| WD-17 | `zygo doctor` lines: workspace files, pool, member maximum | WD-7, WD-9 | TODO | implementation | — |
-| ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | TODO | implementation | — |
-| MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | TODO | judgment | — |
-| OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | TODO | judgment | — |
-| OS-31 | pytest runner view | OS-30, OS-20 | TODO | judgment | — |
-| WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | TODO | judgment | — |
-| ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | TODO | mechanical | — |
-| MS-14 | Prune: orphan rewrite of acknowledged files, lease push | MS-13 | TODO | judgment | — |
-| MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | TODO | mechanical | — |
-| OS-32 | go test runner view with interleaved parallel output | OS-31, OS-21 | TODO | judgment | — |
-| OS-33 | Failed Bash calls on Claude Code, as PO1 decided | OS-28, OS-23 | TODO | judgment | — |
-| MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | TODO | judgment | — |
-| OS-34 | Set the stderr branch as PO2 decided | OS-33, OS-24 | TODO | mechanical | — |
-| WD-18 | Session text: each member's job and the job sentence | WD-11, ML-9, ML-10, MS-20 | TODO | implementation | — |
-| MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | TODO | implementation | — |
-| OS-35 | Fixture views through the hook: goldens, floors, recovery, bless guard | OS-34, OS-32 | TODO | judgment | — |
-| SX-4 | `hook trim` takes the flag and adds `additionalContext` = mechanics text, once (T§9.2 item 2) | SX-1, SX-3, OS-34 | TODO | judgment | — |
-| MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | TODO | implementation | — |
+| MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | DONE | implementation | 37139e44^..e21d5e0b · acceptance pass (mail_remote 16 passed) · PR #212 |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
-| OS-36 | The never-worse check over every case and the built inputs | OS-35 | TODO | judgment | — |
-| OS-37 | On-demand latency test, ignored in CI | OS-35 | TODO | implementation | — |
-| WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17 | TODO | judgment | — |
-| MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17 | TODO | implementation | — |
-| MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | TODO | implementation | — |
-| MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26 | TODO | mechanical | — |
-| OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37 | TODO | lookup | — |
-| WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | TODO | implementation | — |
+| WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | DONE | judgment | 1324716e^..e1276ac2 · acceptance pass (workspace_definition 23 passed with tmux) · PR #214 |
+| MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17, FX-15 | DONE | implementation | 5e2be987^..1de15e3e · acceptance pass (mail_remote_cli 20 passed) · PR #215 |
+| MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | DONE | implementation | e887478a^..a9ed0c7b · acceptance pass (mail_sync_forget 9 passed, admin 31 passed) · PR #217 |
+| MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | TODO | mechanical | — |
+| OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45, OS-47 | DONE | lookup | 5 passed, release, 01855abf · PR #239 |
+| WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | DONE | implementation | 15ea1e5b^..9a264b0a · acceptance pass (definition_hooks 11 passed) · PR #218 |
 | WD-21 | PR1 live check (operator): two pool members send two logins | WD-14, ML-19 | TODO | mechanical | — |
 | WD-22 | PR2 live check (operator): per-session settings act the same on a pool directory | WD-14, WD-21 | TODO | mechanical | — |
-| MS-22 | No mail content in logs, state, usage rows, commits or refs | MS-18, MS-19, MS-21 | TODO | implementation | — |
-| WD-15 | `zygo workspace approve [--yes] [--digest <hex>]` | WD-14, DR-3, MS-21 | TODO | judgment | — |
-| WD-16 | `config show/check`, `profile list/show`, `loadout list/show` show the repository files | WD-15 | TODO | implementation | — |
-| WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | TODO | mechanical | — |
-| SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | TODO | implementation | — |
-| OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
+| MS-22 | No mail content in logs, state, usage rows, commits or refs | MS-18, MS-19, MS-21 | DONE | judgment | e2b744fe^..91edeada · acceptance pass (mail_sync_no_content 2 passed) · PR #222 |
+| WD-15 | `zygo workspace approve [--yes] [--digest <hex>]` | WD-14, DR-3, MS-21 | DONE | judgment | a923b915^..fe86a15d · acceptance pass (workspace_approve 28 passed) · PR #223 |
+| WD-16 | `config show/check`, `profile list/show`, `loadout list/show` show the repository files | WD-15, WD-24 | DONE | implementation | 4e0686e5^..b5991ee0 · acceptance pass (definition_surfaces 22 passed) · PR #225 |
+| WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | DONE | mechanical | cff91852^..b884b0b7 · acceptance pass (docs_readme_and_passthrough_md 1 passed, cli_surface 21 passed) · PR #228 |
+| SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | DONE | implementation | 1b49483c^..7b96c5b5 · acceptance pass (builtin 13, check-premises ok) · PR #227 |
+| OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | DONE | mechanical | fc991ad1^..7018a2f3 · acceptance pass (builtin 13, check-premises ok) · PR #229 |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
+| FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
+| FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | DONE | judgment | 87a292d6^..da0207f1 · acceptance pass (mail_lifecycle 23 passed) · PR #219 |
+| FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | DONE | implementation | 19fbf580^..b0212f6c · acceptance pass (shape_clean 29 passed) · PR #209 |
+| FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | DONE | implementation | 569e61a9^..9ac65902 · acceptance pass (shape_clean 35 passed) · PR #211 |
+| FX-22 | Built-in marketplace pin: the act101 tag v2.9.2 no longer points at the pinned commit | WD-14 | DONE | implementation | 1b51e77f^..08e9750e · acceptance pass (v2.9.2 = 9d82bd97) · PR #221 |
+| FX-23 | Binary tests launch with the built-in marketplace on and reach the network | WD-14 | DONE | implementation | bb21eadf^..c99eeb95 · acceptance pass (offline: 7 test files, 0 failed) · PR #220 |
+| FX-24 | Mail sync deliveries and ws forget take the M§5 mail lock | FX-13, MS-21 | DONE | judgment | f1661e09^..f20d5502 · acceptance pass (import 32, sync_pass 57, admin 40) · PR #224 |
+| FX-25 | `zygo up` reads the definition at the current checkout; `find_checkout` keeps a failed or timed-out `git worktree list` (exit 1) | WD-15 | DONE | implementation | a8092a70^..3c511812 · acceptance pass (up_definition 42, up 82, workspace_approve 29) · PR #226 |
+| FX-26 | No-content walk covers the remaining S§19 scenarios | MS-22, FX-27 | DONE | judgment | ccb3aaec^..336d5654 · acceptance pass (mail_sync_no_content 5 passed) · PR #236 |
+| FX-27 | Acked link or gitlink entry keeps the old host's ack forever | MS-22, FX-24 | DONE | judgment | 343897e2^..a9b6f61c · acceptance pass (renamed_host_ack_goes_with_only_acked_link_and_gitlink_entries 1 passed) · PR #231 |
+| FX-28 | A remote send during `ws forget` is lost uncounted | FX-24, FX-26 | DONE | judgment | 6392c45c^..781e5ee6 · acceptance pass (remote_send_during_forget_is_never_lost_uncounted 1 passed; mail_sync_forget 13 passed) · PR #234 |
+| FX-29 | config check rejects default_loadout = "repository" that zygo up accepts | WD-20 | DONE | implementation | cf92636c^..2f28c271 · acceptance pass (config_check_default_loadout_repository_follows_zygo_up 1 passed, zygo-config all pass) · PR #237 |
+| FX-30 | A crash-recovered delivery gets no wake and no count | FX-26, FX-28 | DONE | judgment | 1f871269^..c0675e47 · acceptance pass (crash_recovery_wake 11 passed, mail_sync_no_content 5 passed) · PR #240 |
+| FX-31 | R§11 says a gone or withdrawn pin stops the member; the code stops only a repository-profile member | WD-20, FX-29 | DONE | judgment | 3279f092^..4bae96ba · acceptance pass (pin_gone_stops_exactly_the_r11_members 1 passed, workspace_definition 17 passed + 9 ignored passed) · PR #238 |
 
 ## Log
 
@@ -331,3 +229,248 @@ Session text (T, SX nodes):
 |------|-------|
 | 2026-11-24 | Graph assembled from seven track fragments (DR, ML, MS, OS, WD, RT, SX); 133 nodes; DR-1 root. |
 | 2026-11-24 | Audit round 1 remediated (9 findings): golden test target, operator nodes mechanical with Files, byte-preserving mail delivery, SX-4 tools, test counts, ML-8/ML-14 judgment, DR-11 bounds, runnable live commands, citations. |
+| 2026-11-24 | DR-1 done. Review round 1, 7 findings: F1, F2, F3, F6, F7 fixed (9612477); F4a, F4b, F5 rejected (reasons in nodes/DR-1.md). D§6.2 example commit fixed to 40 hex (3511ad5). Windows-only code compiles only in CI. |
+| 2026-11-24 | DR-8 done: launcher writes `SessionView.repo_root`. Review round 1, 6 findings: 4 fixed (clock-free outside-repo test, TMPDIR independence, doc comment, non-UTF-8 test); 2 rejected (in-repo git test needs the 2 s clock bound; bad field fails the load like all fields). Floor green. |
+| 2026-11-24 | DR-2 done: record set reader, set checks, dependency graph. D§17 #4 corrected to 4 dependents (depths 1, 2, 3, 3). Review round 1, 7 findings: 5 fixed (count speed, deepest_chain order, duplicate lines, non-UTF-8 names, linked docs); 2 rejected (DFS cycle_at; races). Floor green. |
+| 2026-11-24 | DR-9 done: key `dispositions`, default `enforce`. Round 1, 5 findings: 1 fixed (CI tests read no git); 3 rejected (repo-file, serve_cli: ignored timing tests, pass locally; trailer per session rule); 1 out of scope (agents, repos lower the gate; D§9.3 allows; DR-13). Floor green. |
+| 2026-11-24 | DR-10 done: agent_change, the D§6.6 rule for one record change. Review round 1, 8 findings, all fixed: malformed old refused, self-supersede, model/commit/date/supersedes frozen, name escaped, Writes column exhaustive, id match. Floor green. |
+| 2026-11-24 | DR-3 done: zygo decision ls\|show\|deps\|check, trailer commits, slash reply. Review 7 findings: 6 fixed (git config independence, linear ls, unborn HEAD, --help, test split, slash args), 1 refuted (D-C9). PR #22. |
+| 2026-11-24 | ML-1 done: [mail] keys, pane name, member-name grammar, d duration unit. Review 6 findings: 5 fixed (pane name scrubbed, pane-key-form names reserved (M§6 author's call), no name on shell panes, profile features.mail test, note), 1 left to ML-6/ML-12 (checked arithmetic). PR #23. |
+| 2026-11-24 | ML-2 planned (016912f); Files += zygo-workspace/Cargo.toml, Cargo.lock for the ulid dep. PR #24. |
+| 2026-11-24 | ML-2 done: maildir store, link send, link read to cur/, limits, sweep. Review 16 findings: 11 fixed (no-replace, O_NOFOLLOW, 8 MiB cap, 0700 root, cur mtime, fsync, tmp=Duplicate, sweep, unparsable, M-C3 link); 5 deferred (MS-17, ML-15, ML-14 notes; 500 race; ULID order). PR #24. |
+| 2026-11-24 | OS-1 planned (149d9ed); Files += zygo-hooks/tests/hooks_basic.rs for the trim_session test. PR #27. |
+| 2026-11-24 | DR-4 done: zygo decision new. Round 1, 6 confirmed: --help as title, fill marker in TOML comment, no ## Finding for stop class, 3 test gaps, git test isolation; top-level help (cmd/mod.rs:361) omits `new`, carried to first of ML-7/ML-12/MS-17/WD-14 to edit it. 3 rejected. PR #25. |
+| 2026-11-24 | OS-1 done: result meta records the session (`Store::put` takes `session: Option<&str>`, trim passes it). Review 4 findings: 3 fixed; 1 rejected (non-string session; no writer produces one, O-C8 fixes the type). PR #27. |
+| 2026-11-24 | DR-5 planned (d6efc16): 11 steps, two test-first cycles; Files widened (zygo-work Cargo.toml, Cargo.lock, decision_cli/decision_new USAGE); MS-2 and MS-16 now depend on DR-5 (Cargo.lock overlap). PR #29. |
+| 2026-11-24 | OS-6 planned (9f6b378): 6 steps, 13 tests. PR #30. |
+| 2026-11-24 | OS-6 done (32286a7 2ac0b35): carry 19p/0f; review 5 confirmed, fixed; floor green. PR #30. |
+| 2026-11-24 | DR-5 done (397edc5 aba92f9 d3e3ff7): ratify and overturn, byte-preserving writes; decision_verbs 22p/0f. Review round 1, 6 findings: 4 fixed (record lock, mixed line endings refused, empty texts in allowed, test gaps); 2 refuted. Floor green. PR #29. |
+| 2026-11-24 | OS-10 planned: 5 steps, 3 tests (Step/Shaper as_str, byte bounds); no collision in zygo-results · PR #31 |
+| 2026-11-24 | OS-10 done: Step/Shaper/SHAPE_MAX_BYTES/MIN_SAVING_BYTES in zygo-results::shape; 0 confirmed findings (1 refuted); note to OS-28: cast before subtracting u64 bytes · PR #31 |
+| 2026-11-24 | ML-16 done (a8add6a 3b33343 957db39): live selftest ok (76); review 10 confirmed, fixed; floor green. PR #26. |
+| 2026-11-24 | DR-5 round 2 (0db609f 4f86964 2b072a7): Windows os error 33 fixed with a sidecar writer lock at <git common dir>/zygo-decisions.lock; lock span tested both ends; failure-path tests. Review: 4 fixed, 1 refuted (shared-repo write access, same as zygo-work). PR #29. |
+| 2026-11-24 | MS-1 planned (454e92e): 15 steps; run_whole uses the cut mode with no cut for the process group · PR #33 |
+| 2026-11-24 | MS-1 done (e7d5023 821a65f 7017674 ab87c30): run_whole/run_stream public in zygo-work; review 4 fixed (stream deadline, leader exit, panic guard, 2-entry memory), 2 refuted; floor green · PR #33 |
+| 2026-11-24 | DR-6 planned (897ee78): 10 steps; tty checks stdin and stdout; USAGE line unchanged, review added later with new/ratify/overturn · PR #34 |
+| 2026-11-24 | DR-6 done (732af80 82d2e65 cb609a4): zygo decision review; tty needs stdin and stdout; USAGE lists review; review 4 fixed (usage, over-limit text re-asked, cycle re-queue, HashSet), 3 refuted; floor green · PR #34 |
+| 2026-11-24 | DR-11 planned (4e482f0); contract: one persistent `--batch` process (D§9.4), `run_piped` replaces the stdin form; author's call · PR #35 |
+| 2026-11-24 | DR-11 done (52a5006 b306476 5e3b797 196e814 0add171): VerdictGit: 1 `--batch`, run_piped; review 8 fixed (tree cache/rev, 1 proc/kind, log `--ignore-submodules=none --encoding=UTF-8`, range revs, closing NUL, test HOME+tests); F5 (2 s bound runs idle): spec gap; floor green · PR #35 |
+| 2026-11-24 | WD-1 planned (7e304a9): 6 steps; contract change Read::Absent { full_ref: Option<String> } (read_at needs it, R§7.4); lead's call: SystemGit reuses repo_file::git_out (now pub(crate)), GitOut widened to ExitStatus, no copy · PR #36 |
+| 2026-11-24 | WD-1 done (repo definition reader; review round 1 fixed 8) · PR #36 |
+| 2026-11-24 | DR-12 planned (1cffa68): 18 steps · PR #37 |
+| 2026-11-24 | DR-12 in progress: node branch `phase3/DR-12--DR-12` at 3374eea, worktree `.worktrees/phase3/DR-12-node` · PR #37 |
+| 2026-11-24 | DR-12 done: check_keep D§9.4 steps 1-9; review round 1 fixed 6 (merge paths, session line, stop problems); floor 2560/0 · PR #37 |
+| 2026-11-24 | SX-1 planned (cf52550): 7 steps · PR #39 |
+| 2026-11-24 | SX-1 in progress: node branch `phase3/SX-1--SX-1` at 0f7034f, worktree `.worktrees/phase3/SX-1-node` · PR #39 |
+| 2026-11-24 | SX-1 done: mechanics text on SubagentStart for non-zygo subagents; review round 1 (3 confirmed, 1 refuted); floor 2570 passed 0 failed · PR #39 |
+| 2026-11-24 | OS-16 planned (6ba122f): 6 test-first tasks; mod common { pub mod shaping; } per test binary; scripts/fixtures/ created; ZYGO_FIXTURES_DIR redirect; scrub order run dir, HOME, user, host. PR #32. |
+| 2026-11-24 | OS-16 done: shaping fixture harness and capture script; review round 1 (10 confirmed); floor 2582 passed 0 failed · PR #32 |
+| 2026-11-24 | FX-1 added (b5acf60): found in the RT-1 floor, a 24-min hang of git_runner stream_stop_kills_the_process_group; root cause Darwin FIFO lost wakeup; git_runner and decision_git kill tests use an anonymous pipe; tests only; 8 steps |
+| 2026-11-24 | FX-1 in progress: node branch `phase3/FX-1--FX-1`, worktree `.worktrees/phase3/FX-1-node` · PR #40 |
+| 2026-11-24 | FX-1 done: pipe replaces FIFO in the two process-group kill tests; review round 1 (0 confirmed, 4 refuted); floor 2570 passed 0 failed · PR #40 |
+| 2026-11-24 | SX-8 DONE: P3-15 section copied into docs/live-checks.md from T§12.2; round 1 fixed 4 findings (Results row, mktemp, step 7 ids, backup delete), T§12.2 rewritten (author's call) · PR #44 |
+| 2026-11-24 | FX-3 added: CI BrokenPipe flake on PRs #41 and #42 (statusline_without_a_session_dir_prints_nothing); the hook exits before it reads stdin (H§6.8, AU24, PH11), so the test write gets EPIPE; fix in test helpers (common::feed_stdin); tests only; 9 steps |
+| 2026-11-24 | FX-3 DONE: `feed_stdin` tolerates BrokenPipe in three zygo test helpers; the new test fails first, with no clock; review 0 confirmed (hang-on-regression trade-off kept under focus 75); floor green (ws 2593/0) · PR #46 |
+| 2026-11-24 | FX-2 added (20347a0): found in RT-1's CI (ubuntu run 45530476489), edit.rs:297 lock still held after apply; a child forked by another thread keeps the flock past the close; Held guard unlocks on drop; fork test; no production impact; 5 steps |
+| 2026-11-24 | FX-2 in progress: node branch `phase3/FX-2--FX-2`, worktree `.worktrees/phase3/FX-2-node` · PR #42 |
+| 2026-11-24 | FX-2 done: decision lock unlocked before close so a child's inherited descriptor cannot keep it; review round 1 (2 confirmed, 3 refuted); floor 2593 passed 0 failed · PR #42 |
+| 2026-11-24 | OS-14 DONE: `size_view` and `shaped_view` in zygo-results view.rs; review round 1 (0 confirmed; F1 empty steps and F2 empty text refuted, spec O§7.3 line 227 and O§7.8); floor green (ws 2596/0) · PR #45 |
+| 2026-11-24 | SX-2 done: `subagent_text()` in crates/zygo-hooks/src/session_start.rs prints mechanics only for an opencode `--event subagent`; review round 1 (2 confirmed, fixed: CLI test, doc sentence); floor green · PR #47 |
+| 2026-11-24 | SX-3 planned (65accaf): 7 steps · PR #41 |
+| 2026-11-24 | SX-3 in progress: node branch `phase3/SX-3--SX-3` at d55d51c, worktree `.worktrees/phase3/SX-3-node` · PR #41 |
+| 2026-11-24 | SX-3 done: pre-compact sets reinject/<agent_id> (0600 in 0700 dir) for a non-zygo subagent; review round 1 (4 confirmed, 4 refuted); floor 2602 passed 0 failed · PR #41 |
+| 2026-11-24 | FX-4 DONE: rows-bound test waits for `usage_written(1, …)` before the complete-flag GET (Windows race, CI run 45543172599; product correct per the N37 note); review 0 confirmed; floor green · PR #50 |
+| 2026-11-24 | FX-5 done: piped send test asserts send-then-read fails (Linux foreign-reader race, CI run 45544809983); dash-safe foreign-reader test; single-test `piped_epipe` binary keeps the EPIPE check; review round 1 (3 confirmed, fixed); floor green · PR #51 |
+| 2026-11-24 | RT-1 planned (6d70796): 11 steps, 10 first_started_at tests · PR #38 |
+| 2026-11-24 | RT-1 in progress: node worktree .worktrees/phase3/RT-1-node, branch phase3/RT-1--RT-1 · PR #38 |
+| 2026-11-24 | RT-1 done (7efa8d9 441e170 ff23c48): member record first_started_at; review round 1: 1 confirmed, 3 refuted; floor 2529 passed, 0 failed · PR #38 |
+| 2026-11-24 | MS-2 done: zygo-mail-sync crate with hardened git calls and test seams, 13 empty module files; review round 1 (5 confirmed, fixed; S-C4 rewritten for fetch.writeCommitGraph=false); floor green · PR #48 |
+| 2026-11-24 | OS-2 DONE: `readbacks` table; three `trims` columns added on the full open; seven-column insert fallback; round 1 fixed 2 (`table_xinfo`, `open` doc), O§6.5 item 3 rewritten (author's call); floor green · PR #49 |
+| 2026-11-24 | OS-17 DONE: five clean/dedup fixtures captured; spec O§8.1 clean-row commands corrected (author's call); review round 1: larger CRLF diff case, O§7.4 rewrite reverted to operator, must_keep without escape bytes · PR #52 |
+| 2026-11-24 | OS-11 done: command parse (crates/zygo-results/src/shape/command.rs); review round 1 fixed 9 findings (A1-A5, C1, C2, C4; C3 refuted); floor: workspace 2657 passed, 0 failed · PR #53 |
+| 2026-11-24 | SX-6 DONE: the OpenCode plugin transform calls `--event subagent` for non-main `zygo/` models (T§7.2 item 1); review round 1 fixed 4 (anthropic case, per-call stdin, malformed model, missing output.system); floor: workspace 2652 passed, 0 failed · PR #54 |
+| 2026-11-24 | OS-19 done: 4 libtest cases (passing 120, failing-nocapture, signal-crash SIGABRT, compile-error); failing cases labeled opencode; O§8.2/O§8.3 item 4: a case with no runner summary is checked against the none row (author's call); PR #56 |
+| 2026-11-24 | FX-6, WD-23, WD-24 added: FX-6 dead-port test helpers (CI run 45557591675); WD-23 config check refuses job on a non-agent pane (operator, R§9.1); WD-24 job through hide_secrets (W§12). Files-overlap edges: ML-7 on FX-6, WD-16 on WD-24, WD-23 on MS-3. |
+| 2026-11-24 | OS-18 DONE: diff, json and log fixtures; operator ratified the O§8.1 diff must_keep rule; review round 1 fixed 6 findings; floor: workspace 2652 passed, 0 failed · PR #55 |
+| 2026-11-24 | OS-20 done: 3 pytest cases (passing 12 files, failing-verbose -v 2 failed, collection-error with --continue-on-collection-errors); review round 1 fixed floor-reachability and must_keep; PR #57 |
+| 2026-11-24 | WD-5 done: config keys job, pool, [workspace] pool, [limits] max_members (default 8); review round fixed .zygo.toml max_members invalidating the file (repo_file::from_text); floor green (ws 2681 passed); PR #58. |
+| 2026-11-24 | OS-40 done; O§7.1/O§7.2 command forms widened (pipeline newline, backtick/`0<`/`$(<f)`, `eval --`, `builtin` wrapper, `-c` option scan, redirect-only file printer); review: 6 confirmed fixed, 1 kept as safe; floor green (ws 2695 passed) |
+| 2026-11-24 | OS-22 done; scripts/premises/live-shaping.sh po1-po4 (mock upstream, scrub, stand-in MCP for PO4); publishes only the five OS-23..26 evidence files; review: 2 confirmed + 4 plausible fixed; not run live (operator only); floor green (ws 2670) |
+| 2026-11-24 | WD-24 DONE — hide_secrets scrubs pane job; two older field tests now cover job and name; W§12 scrub list names pane job and name (author's call); review F1, F2 fixed, F3 (loadout name is a table key, outside WD-24) dropped; floor 2681p 0f. |
+| 2026-11-24 | MS-5 DONE: mail-sync state files (paths, identity, state.json, imported log, marks); fix round 1 closed 9 review findings; floor green (ws 2724/0). PR #69. |
+| 2026-11-24 | MS-3 done: mail sync config keys (host, sync_gap, mail.workspace.<n>.sync/remote), sync_for, form checks incl. W§5 workspace-name keys; review: 4 fixed, 2 dropped (unknown keys: crate norm; remote: pass-time per S§11, carried to MS-10). PR #68. |
+| 2026-11-24 | RT-2 done: run time on the HUD and the status runtime: line (ulid_secs, T§2.2 start rule, run_time_text); review: 3 fixed (read keeps phase when members does not parse; rule-5 pending test; plan ignore count). PR #67. |
+| 2026-11-25 | MS-8 DONE — public-repository check with 1 h cache (S§8.2); review round 1 fixed 8 findings (cache tests, esc of server text, `--` before remote, test env); floor green ws 2773/0. |
+| 2026-11-24 | WD-9 DONE: pool listing, assignment and shared lines; shared ~ rule and pool::home used by --config-dir; fix round 1 closed 6 review findings; floor green (ws 2722/0). PR #70. |
+| 2026-11-24 | OS-7 done: savings read (crates/zygo-usage/src/savings.rs) with 17 tests; fix round 1 closed 4 findings; floor green, ws 2723 passed, 0 failed · PR #71 |
+| 2026-11-25 | WD-2 done — repo_def shapes, allow-list validation, digest; review round 1 fixed OS-independent cwd check and added pool/layout tests; 12 tests; floor green (2736 passed). |
+| 2026-11-25 | WD-23 DONE — config check refuses job on a non-agent pane (R§9.1 rule 5, operator 2026-11-24); review found no defect; carry-forward: the launch-time job node must apply the same rule; floor green ws 2740/0. |
+| 2026-11-25 | MS-4 DONE — address grammar and ULID file form; review round 1 reserved `zygo` in zygo-core RESERVED_MEMBER_NAMES (M§6, S§7.2; scope widened to zygo-core ids.rs and two tests); floor green ws 2766/0. |
+| 2026-11-25 | MS-10 DONE — side-branch plumbing (fetch, bootstrap, commit, push); review round 1 fixed 7 (--no-tags, --force-remove, push.gpgSign off, stale worktree re-add without prune per S§6.3, local-only no-branch match, 0700 temp dir); floor green ws 2789/0. |
+| 2026-11-25 | DR-7 DONE — `zygo work report` record lines (unit `decisions:` line, trailing `decision records:` line; CLI only, slash form reads none per D-C2); review round 1 fixed 3 (one `git rev-parse --show-toplevel` call, args parsed before lookup, wiring tests); floor green ws 2819/0. |
+| 2026-11-24 | MS-7 done; zygo_mail_sync::secret::check/check_with (Clear, Finding, CouldNotRun); scans every key and string leaf; block+redact ids unioned; finding on any match count; review: 3 confirmed + 3 fixed; floor green (ws 2691). |
+| 2026-11-24 | ML-3 DONE: member/pane `name` fields in zygo-workspace (plan, member record, `panes[]`); node head 863b6b05; floor green: workspace 2682 passed, 0 failed · PR #62 |
+| 2026-11-24 | OS-3 DONE: bounded usage-store open `open_bounded` + `HOOK_DB_BOUND`; node head c403338f; review 3 findings fixed; floor green: workspace 2677 passed, 0 failed · PR #64 |
+| 2026-11-24 | FX-6 DONE: dead-port helpers point at fixed port 1 via shared `tests/dead_port`; plan revised after macOS bound-not-listening connect timed out; review found the same race in update.rs, fixed; floor: workspace 2671 passed, 0 failed · PR #65 |
+| 2026-11-25 | MS-26 done; state::load now refuses values check_state refuses (InvalidData, file unchanged); review: 2 test gaps closed (probe beside fresh cache; public without verdict); floor ws 2944/0. |
+| 2026-11-25 | DR-16 DONE: unreadable docs/decisions has its own DirError::Unreadable and line "cannot read docs/decisions"; review: 2 test gaps closed (operator verbs with docs at 000; new writes nothing); floor ws 2949/0 · PR #84 |
+| 2026-11-25 | DR-13 DONE: work_verdict head/base/dispositions + dispositions guard (monitor/notify/enforce); review: short id shadowed by a ref now refused, config warning shown, dispatch tests; bounds header bytes→characters (D§9.2); floor ws 2966/0 · PR #85 |
+| 2026-11-25 | WD-3 DONE: workspace approvals in approvals.toml (repo_def::store; [[workspace]] id+digest; plugin approvals still parse); review: F2 fixed (failed rename drops temp file), F1 refuted (per-section read by design), F3-F5 to operator (approve.rs protocol); floor ws 2961/0 · PR #88 |
+| 2026-11-25 | DR-14 DONE: end-to-end decision gate (in-process stop path + merged-node keep; binary flow over zygo mcp stdio; no stored text). Review: R1/R3/R4 fixed (no mcp stderr marker; Win \\?\ canon; one env strip list), R2/R6 accepted, R5 refuted; floor ws 2977/1 pre-existing flake · PR #90 |
+| 2026-11-25 | ML-4 DONE: member names + mail::send by name/key/all (names::resolve; reserved cli/zygo). Review: F1 fixed (SendReport; delivers past a refused target), F3 fixed (limits once, before resolve), F5 fixed (reserved name test), F4 refuted, F2 consumers fixed; floor ws 2967/0 · PR #89 |
+| 2026-11-25 | ML-5 DONE: wake sends literal keys then Enter. Review: 3 of 6 findings confirmed and fixed (F1, F4, F5: a final ";" sent as "\;", docs for the two-call leftover state, sentinel-ordered wake test); F2, F3, F6 refuted. Floor ws 2976 passed, 0 failed. |
+| 2026-11-25 | OS-4 DONE: trim rows carry result_id and shaper; hook opens usage.db bounded. Review: F2 (Read row test), F3 (Store::open doc) fixed; F1 dropped (needs a timing test), F4 dropped (node file in scope). MS-16 now depends on OS-4 (Cargo.lock, zygo-hooks Cargo.toml). |
+| 2026-11-25 | OS-5 DONE: result_view/search/tree write one read-back row per successful reply; store opened bounded, kept, reopened after a failure. Review: F2 (stderr line test), F3 (positive control), F4 (Store::open doc) fixed; F1 dropped (O§6.4 keeps the store). |
+| 2026-11-25 | FX-7 added from the zygo lib flake triage (`ws p=2977 f=1`): a failed exec in the test process frees the swapped environ, so parallel git spawns lose PATH; fix runs it in a child process. Files-overlap edges: ML-7 and WD-14 on FX-7. |
+| 2026-11-25 | FX-7 DONE: exec-failure relaunch test runs in a child process; flake 7/20 before, 0/20 after. Review F1 fixed: child tests in ws.rs and down.rs do nothing unless their parent ran them (--include-ignored 2/20 to 0/20); down.rs added to Files. |
+| 2026-11-25 | WD-4 DONE: checked use of the workspace definition (repo_def::check; one read, digest, store lookup per use; Pin). Review: F1, F3 fixed with tests; F2 refuted (contract: NotApproved has no why); floor ws 3017/0 · PR #98 |
+| 2026-11-25 | MS-6 DONE: registry and ack files, validation, member cache; review 5 minor: F1 fixed (typed parse, no Value tree), F3 part (limits pub), F5 tests; F4 refuted; F2 (members.json read uncapped) to operator; MS-13/MS-14 notes carried; floor ws 3035/0 · PR #99 |
+| 2026-11-25 | OS-8 DONE: zygo usage prints savings lines (net figures, breakdown, ratio). Review: F1 fixed (amounts unknown when config does not load), F2 fixed (no sign on zero), F4 tests added, F3 to FX-8 (added: one read snapshot); floor ws 3016/0 · PR #101 |
+| 2026-11-25 | ML-7 DONE: member name in the session view marker; hand start takes `--name`. Review: 5 confirmed findings, all fixed. The DR-4 help line fix (top-level help omits `decision new`) landed · PR #103 |
+| 2026-11-25 | FX-8 DONE: zygo usage reads summary and savings in one read transaction via new `Store::report` (savings first). Review: F1 confirmed (test sees the defect only in savings-first order; documented on `Store::report`), F2 refuted (no seam to write mid-report without a timing test) |
+| 2026-11-25 | ML-8 DONE (2fc1f821 64486e85 0bfa1c6d): zygo ws name; review 1 important (hand-start rename race, fixed in hand_join) + 2 nits fixed; lock-wait test ignored as timing; floor green · PR #107 |
+| 2026-11-25 | WD-6 done: `repo_def::repository_loadout` builds the `repository` loadout from `[members]` with the default set; review added a loadout-check test and edge tests. |
+| 2026-11-25 | ML-9 done (ed8193ef 4bed6315): session text item 8; review 1 important (no-record pane told it is reachable; item now omitted) + 2 test gaps, dup names fixed; FX-9 added (OpenCode per-request rebuild). Floor green. PR #106. |
+| 2026-11-25 | ML-15 done (0128c7fa 63b94dd8): HUD member name + unread mail; review 2 important (mail scan starved git/status workers: fixed; width rule kept) + 2 test gaps fixed; FX-10 (HUD spec), FX-11 (doctor ✉) added. Floor green. PR #108. |
+| 2026-11-25 | WD-8 done: `state::Launch` gains `job` and `definition`; review found `Pin` dropped unknown keys (AU78), fixed with `Pin.extra` and `Pin::new` · PR #110 |
+| 2026-11-25 | MS-9 DONE (e7987782 f30700e9 bec4c680): outbox kept: send rules, secret pass, refuse with notice, counts, sweep; round-2 review fixes applied; outbox 29/0; floor green · PR #111 |
+| 2026-11-25 | WD-7 DONE: `Merged::with_definition` adds the approved definition as the `workspace-files` source; a second call replaces the first. Review round 2: 5 findings fixed · PR #112 |
+| 2026-11-25 | MS-11 DONE: identity registry/ack checks and moved-workspace scan; review: 7 findings fixed; F1 (no cap on registry/ack file count) to operator as a proposed rule; F9 (twin false positive after crash at tip) is a contract note for MS-13 · PR #113 |
+| 2026-11-25 | MS-12 done: import checks (reader-equal json), crash-safe delivery via incoming/, torn staged files re-imported, per-target inbox room; S§8.5 step 5 and Candidates rewritten (author's call). |
+| 2026-11-25 | WD-17 DONE: `zygo doctor` prints the workspace-files, pool, shared-pool and member-maximum lines; it finds the checkout the same way `up` does. 2 rounds, 9 findings: 5 fixed, 1 closed by a fix, 1 carried forward, 2 dropped · PR #119 |
+| 2026-11-25 | WD-10 done: plan panes carry job, pool and the definition pin; Source::Repository; list labels repository as workspace-files only when the definition added it (CLI passes false until WD-16). WD-12 contract note: job/pool from user loadouts are unchecked. |
+| 2026-11-25 | ML-14 done: unread counts in zygo workspace, zygo ls and up; forget-pane removes mail/<key>/ (file, folder or link); FX-12 (HUD count) and FX-13 (maildir lifecycle) added from review. Floor green · PR #116. |
+| 2026-11-25 | OS-9 DONE (80d820d0 04a9d343): `[results] shape` (default true) in config, the session view and the launcher; trim passes it on; review round 2 fixed 2 test gaps; floor green · PR #117 |
+| 2026-11-25 | RT-3 DONE (fab29ce1 72c3d03a da38c41a): run-time HUD segment in compact and verbose with its width order; collect reads workspace.json once via member_read; review round 2 fixed 2; FX-11 widened to add the 󰅐 clock glyph to the doctor table. Floor green · PR #118 |
+| 2026-11-25 | FX-11 DONE: the doctor icon line holds 21 glyphs, adding mail (U+2709) and clock (U+F0150); mail follows reflection, clock sits between trimmed and truncation. FX-10 must add the H§6.5 Mail row after Reflection · PR #122 |
+| 2026-11-25 | FX-10 DONE: the HUD spec names the member name and unread mail segments and the `✉` glyph (AU4, AU20, AU25; H§6.2, H§6.4, H§6.5, H§6.6, H§6.7, H§6.8) · PR #123 |
+| 2026-11-25 | WD-11 DONE: `up` reads definitions; a team config read failure degrades to the user config `max_members` with a printed line; `up --all` with a repository default prints the solo line. Round-3 non-blocking findings to FX-14 · PR #120 |
+| 2026-11-25 | WD-13 DONE: launcher reads a repo profile from the default branch only for a name in neither user nor team config; prints not-approved, invalid, not-read lines; passthrough: no profile from any source, one line. L6 (duplicate precedence sentence, base §11.1) left to WD-14 · PR #121 |
+| 2026-11-25 | FX-12 DONE: HUD unread counts only regular <ULID>.json files in new/; a missing new/ is 0, same as the mail store; review round 2 added I/L/O alphabet fixtures and narrowed the module doc · PR #124 |
+| 2026-11-25 | WD-12 DONE: `zygo up` checks and assigns the config-directory pool round-robin; members run in passthrough; user-loadout job/pool values pass config check. Review round 2 moved the pool line after the step-8 write and added tests. FX-15 added (doctor pool filter) · PR #125 |
+| 2026-11-25 | FX-15 DONE: doctor pool lines use the `zygo up` member filter (server user info skipped via has_user_info) and its kept member names (agent kinds, valid_member_name, first holder); review F1 fixed in round 2; F2/F3 to operator report · PR #129 |
+| 2026-11-25 | MS-24 DONE: SP2 verified on github.com and gitlab.com with well-known private repos; both private probes fail with `could not read Username` (in PRIVATE_TEXT); result for MS-25 · PR #130 |
+| 2026-11-25 | OS-21 done: go test fixtures (passing-verbose, failing-parallel, panic) captured from a scratch module; round 2 kept the full panic trace in must_keep and a fail_fetch log line right after its CONT. |
+| 2026-11-25 | OS-12 DONE: merged 6e1b9387 5ff2466e; clean removes CSI, 8-bit CSI, OSC (OSC 8 keeps text) and CR overwrites, line count kept. Review F4 (`ESC ( B` leaves `B`) and F5 (`ESC ESC [31m` leaves `[31m`) to FX-16; O§7.4 rewritten, pending ratification · PR #132 |
+| 2026-11-25 | ML-17 DONE: PM1-PM3 verified live (Claude Code 2.1.332, OpenCode 1.18.16, macOS); fixtures and premises rows added; live-checks entry added; check-premises has no PM arm (needs operator approval); run by the lead under the operator's instruction · PR #134 |
+| 2026-11-25 | DR-15 DONE: PD2 and PD3 verified live on Claude Code 2.1.332 (mock upstream, stub zygo MCP); review fixes: chunked delivery, raw-byte check, limits stated; run by the lead under the operator's instruction · PR #133 |
+| 2026-11-25 | SX-9 DONE: live premises ST1-ST4 verified; review findings F1-F3 fixed in round 2; OpenCode ran on glm/Z.AI, not OpenRouter (deviation in nodes/SX-9.md) · PR #135 |
+| 2026-11-25 | OS-27 DONE: 22 shaping-off goldens (19 hook_stdout, 3 stored); review F1–F4, F6 fixed; F5 rejected (.gitattributes outside node files, no golden holds `\r`) · PR #140 |
+| 2026-11-25 | OS-13 DONE: dedup step folds runs of equal consecutive lines, lossless. Review round 2 added 5 edge-input tests; F1 (expand count limit) rejected, needs an operator-approved threshold; F3 rejected · PR #139 |
+| 2026-11-25 | OS-15 DONE: shape::run pipeline (steps 1-2, reuse rule, 4 MiB bound, size_view); review R1, R3, R4 fixed in tests; R2 (sniff of colored diff/json) held for operator ratification of O§7.3 (lead) · PR #145 |
+| 2026-11-25 | OS-23 DONE: PO1 failed live (Claude Code 2.1.332): error holds stdout before stderr; no hook output replaced the text; OS-33 takes the "If PO1 fails" branch of O§7.13. Failed-Bash fixture and 2 failure cases. Review: 5 findings, 4 fixed, 1 carried to report · PR #142 |
+| 2026-11-25 | ML-6 DONE: wake of an idle member after a send (M§7.3); Files widened with state.rs (Store::live_session, plan drift D1); after_send_with for injected probe and clock (MS-13); keys woken in parallel; lock waits, no added gate. Review: 9 findings, 8 fixed, 1 in part · PR #143 |
+| 2026-11-25 | ML-10 DONE: Stop block (once, not while draining/stopping), prompt and SessionStart line, OpenCode per-request line; all off when [features] mail is off; unreadable mail/ changes no decision. Spec M§7.1, M§7.2, M§9 rewritten (author's call). Review: 6 fixed · PR #144 |
+| 2026-11-25 | ML-11 DONE: MCP tools mail_send, mail_read, mail_list; review H2 fixed (stopping block follows AU83), H1/M1/L2-L4 carried, M2/L1 refuted; PR #146. |
+| 2026-11-25 | MS-16 DONE: sync child start and rate limit; member hooks start it. Review fixes: session-start trigger for Claude Code; a future last_start counts as due; S§8.4 rewritten (author's call) · PR #148 |
+| 2026-11-25 | OS-29 DONE: kind views diff/json/log (step 4); review 7: F1 (view larger than input → None), F2 (plain-diff hunk counts), F4 (must_keep whole-line rule), F7 tests fixed; F3 (8 KiB incl. marker → OS-28), F5, F6 carried · PR #153 |
+| 2026-11-25 | MS-13 DONE (PR #150): sync pass with outbox, lock, wake and secret check; review R1-R7 fixed; lock tests made deterministic (spawn guard: fork-held flock fds made the retake busy). |
+| 2026-11-25 | OS-28 DONE (PR #154): trim hook runs the shaping pipeline on Bash output; review R1-R4 fixed (opencode test input, kind sniffed on stdout, non-string stderr kept, 4 MiB bound on raw text); new node OS-41 for marker room in kind views. |
+| 2026-11-25 | ML-12 DONE: zygo mail send\|read\|ls, /zygo:mail, mail sweep at command start. Review fixes: the sweep skips linked folders, a partial read prints what it has, a 2 s slash bound, a list-only fallback body, help args · PR #149 |
+| 2026-11-25 | OS-24 DONE: PO2 verified on Claude Code 2.1.332 (stderr arrives merged into stdout; the replaced stdout removed err-line); hook fixture + empty shape-off golden added; review 7: F1/F2/F4-F7 fixed (first reading "not shown" reversed), F3 refuted · PR #151 |
+| 2026-11-25 | OS-30 DONE: libtest runner view and dispatch as pipeline step 3; review round 2 fixed F1-F4 (failure sections, binary boundary, dedup lines, ASCII/CR whitespace); F5 is FX-16; F6 fixed in the OS-36 contract. |
+| 2026-11-25 | FX-14 DONE: `zygo up` prints only team-layer warnings; CLI test of `with_team`, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code. 2 rounds; review F1, F2 fixed; F3 nit kept; F4 (max_members range) is new node FX-17 · PR #162 |
+| 2026-11-25 | FX-17 added from FX-14 review F4: `zygo up` takes `[limits] max_members` from the team or user layer with no 1-32 range check; contract reuses the `config check` rule via the `check_jobs` path (check.rs:119-120, up.rs:797-808) |
+| 2026-11-25 | MS-13 DONE (round 3): commit batching (dba2a089) and chunking by ARGV_BUDGET 16000 / BODY_BUDGET 64 MiB with the commit contract doc and tests T1/T2 (5dd04b76). Review: 6 findings (F1, F2/F3, F4, T1, T2) · PR #150 |
+| 2026-11-25 | ML-13 DONE: zygo mail watch (exit 0 on any file in new/, 1 at timeout, default 25m, 500ms poll). Review R1-R7: wake on unparsable files, write error exits 1, help/cli_surface, duplicate-name and poll-bound tests · PR #159 |
+| 2026-11-25 | OS-25 DONE: PO3 verified on OpenCode 1.18.16 (live-shaping.sh po3, mock upstream): output.output holds stdout then stderr. Review R1-R3: run-opencode.sh keeps fixtures it does not write; test name match exact; spec records PO3. F2 (no PO arm in check-premises) awaits operator OK. |
+| 2026-11-25 | OS-26 DONE: PO4 verified on Claude Code 2.1.332 and OpenCode 1.18.16 (wrapper 0 bytes up to 5199-byte replies); review findings 5: 3 confirmed and fixed, 2 refuted; new node OS-44 for read-back bytes above the agent's cut limits · PR #170 |
+| 2026-11-25 | OS-33 DONE (kept, round 1): PO1 failed, so the O§7.13 "If PO1 fails" branch was taken: no trim on failed Bash. Review 3, all fixed: F1 vacuous hook fixtures (a tool_response input added); F2 step 13 clippy note; F3 trailer text · PR #168 |
+| 2026-11-25 | OS-41 DONE: shaped marker room 341 B reserved in kind views, Step::ALL holds all 8 steps, hook tests per kind. Review: 4 findings, 2 fixed, 1 refuted, 1 → OS-43 (shaped view with no kind view has no 8 KiB cap) · PR #167 |
+| 2026-11-25 | OS-31 DONE: pytest runner view; review R2 fixed F1 (-s live output), F3 (last line), F4 (PASSES kept), F5 (change log); F2 is OS-42 · PR #166 |
+| 2026-11-25 | OS-42 added: wrapper dispatch and unseen pytest live output (OS-31 review F2, R2 report); OS-35 now depends on it |
+| 2026-11-25 | FX-17 DONE (kept, round 1). Review 4: F1 and F2 (test gaps: other check errors; team warnings before the range line) fixed; F3 and F4 refuted (spec R§9.4 :271 fallback; existing exit 11 load error) · PR #169 |
+| 2026-11-25 | ML-18 DONE: end-to-end mail on tmux with stub agents. Review findings 6: 4 confirmed and fixed, 2 refuted · PR #171 |
+| 2026-11-25 | MS-14 DONE, kept, round 1. Fixed F1 (non-lease failure: `prune skipped (<check>)`; S§9 Push rewritten, lead's call; D11), F2 (`pruned <n> files` / `prune skipped: the branch moved; run again`), F6 (regular files only), F7 (`--max-count=1000`). Refuted F3, F4 (D8 gap), F5 · PR #179 |
+| 2026-11-25 | ML-19 DONE (live run by the lead, override "YOU BUILD YOU TEST"). R1: 9 findings; 6 confirmed (F1 Method bullets, F2 line 3 M§14, F4 plan deviations, F6 beta's turn stopped by cleanup, F8 bounds, F9 exit-1 list); F3 → FX-18; 2 refuted (F5 operator override, F7 new checks) · PR #178 |
+| 2026-11-25 | MS-20 DONE: review round 1: 7 findings, 4 confirmed (F2 consumer contracts FX-9/WD-18, F4 duplicate remote addresses, F6 two tests, F7 S§10.4/S§17 text), 3 refuted (F1 mail_list remote is MS-19, F3 per-request rebuild is FX-9, F5 cache size cap would be a new rule) · PR #177 |
+| 2026-11-26 | SX-5 DONE, kept, round 1. Fixed F2 (step 9 ran 0 tests: workspace_down all #[ignore] timing; recorded). Refuted F1 (SubagentStart without agent_id: spec T§6.3 item 2 covers agent_id input only; a guard is a new check), F3 (settings order only) · PR #181 |
+| 2026-11-26 | OS-32 DONE, kept, round 1. Fixed F1 (panic/race/teardown after a passed test hidden; O-C9), F2 (unparsed mark), F3 (go test rules 1-3 rewritten, lead's call, O§15 decision record). Refuted F4 (fixed step set), F5, F6 (OS-36 seam) · PR #182 |
+| 2026-11-26 | OS-34 DONE, kept, round 1. Fixed F1 (test follows the PO2 row to failed), F3 (no prose assertion). F2 → FX-19 (PO2 run had stderr merged into stdout). Refuted F4 (fixed acceptance; --exact used), F5 (no failure) · PR #184 |
+| 2026-11-26 | FX-19 added: PO2 row states what its run observed (OS-34 review F2); OS-42 and MS-25 now depend on it (shared files: output-shaping spec, premises.md) |
+| 2026-11-26 | FX-18 DONE: M12 head line names zygo once (`${ZV:-zygo ?}`), stub-agent selftest case; live selftest ok (77). FX-20 added: live-detach.sh PW15 record line doubles the word zygo (FX-18 review F3) · PR #187 |
+| 2026-11-26 | SX-4 DONE: hook trim takes the subagent's re-inject flag first and adds additionalContext once (T§9.2 item 2); review F1 (run entry test), F3 (stat error) and a doc nit fixed; F2 refuted (any remove/print order has a kill window; at-most-once holds). |
+| 2026-11-26 | FX-19 DONE: PO2 row and O§7.8/O§17 restated to what the 2.1.332 run observed (stderr merged into stdout; stderr "" removal of non-empty stderr not observed); review F1, F4 fixed; author's call (lead), awaiting operator ratification. |
+| 2026-11-26 | FX-20 DONE: live-detach.sh PW15 record line and result text name zygo once (`launch ${ZV:-zygo ?}`); stub-agent selftest cases for a version and an empty version; live selftest ok (85). Review F1 refuted (clap prints "zygo <version>"), F2 fixed (empty-version case) · PR #194 |
+| 2026-11-26 | WD-18 DONE: item 8 lists each member's job and ends with the member's job sentence (R§9.3); review F1 (mail sync M-C6 restatement) and F2 part 1 (non-JOBS value) fixed in spec text; F2 part 2 refuted (one orchestrator per loadout, check.rs:241) |
+| 2026-11-26 | OS-42 DONE: no view hides another runner's failure section; a wrapper at any depth, a PYTEST_ADDOPTS word, -p no:capture or an -o addopts override turns the pytest view off; O§7.6 (lead) awaiting operator ratification · PR #196 |
+| 2026-11-26 | OS-35 DONE: 20 fixture views through the hook, id masked; floors, row bytes, recovery and bless guard tested; PO1-failed cases checked as none, their failing floor on the runner view; review F1-F6, F8 fixed, F7, F9 refuted · PR #198 |
+| 2026-11-26 | OS-36 DONE: O§8.3 never-worse check over every case and 11 built inputs; bless refuses a failing view; item 5 rejects hidden failure-section lines; review F1, F3, F4 fixed, F2 refuted (contract oracle) · PR #201 |
+| 2026-11-26 | OS-37 DONE: 4 O§8.5 budget tests and the child process, ignored in CI; sized inputs keep each case's shaping path; shape-on and shape-off rows asserted; review F1-F3, F5 fixed, F4 wording, F5 timeout refuted · PR #200 |
+| 2026-11-26 | OS-45 added: OS-38 run failed O§8.5 budget 4 (lock held p95 159.27 ms > 150 ms); SQLite busy_timeout counts requested sleep, macOS sleeps ~1.5x, breaking O-C10; OS-38 now depends on OS-45 |
+| 2026-11-26 | OS-45 DONE: bounded open uses its own elapsed-time busy handler; lock-held hook p95 159.27 → 128.05 ms (release, macOS); review F1, F2, F4 fixed; F3 (O-C10 per call on a non-WAL db) open for a new row · PR #203 |
+| 2026-11-26 | OS-46 added: OS-45 review F3; O-C10 bounds each Bash call but O§7.11 bounds each statement, so on a rollback-journal db the hook's read and write can each wait HOOK_DB_BOUND |
+| 2026-11-26 | OS-46 DONE: hook uses open_bounded_total (one wait budget per Bash call); MCP keeps per-statement open; OS-43 now depends on OS-46 (both change trim.rs); review F1-F6, F8 fixed, F7 recorded here · PR #205 |
+| 2026-11-26 | OS-47 added: OS-38 rerun failed O§8.5 budget 2 under load (libtest 4 MiB p95 105.87 / 106.64 ms, p50 62-73 ms); runner view is ~90% of steps 1-4; OS-38 now depends on OS-47 |
+| 2026-11-26 | OS-47 DONE: runner view pre-checks, output byte-identical (differential probe 0 diffs); 4 MiB libtest/go test p50 60-75 → 20-22 ms, p95 ≤ 22.53 ms (release, load 4-6); review F1 fixed, F2 cost only · PR #206 |
+| 2026-11-26 | FX-16 BLOCKED: its fix makes clean remove more; O§15 item 2 needs the operator's ratification of the O§7.4 text and a decision record first |
+| 2026-11-26 | OS-44 DROPPED: kept_bytes modelled each agent's cut, but OpenCode keeps whole lines under user-config limits and Claude Code cuts by an API token count and keeps characters; no premise states what is kept; O§6.4 Size limit stated as permanent · PR #207 |
+| 2026-11-26 | OS-43 DROPPED: O§8.2 floors are per shaper, so the clean-shaped log case has no 8 KiB floor; the log view under the threshold dropped failure and ERROR lines (O-C9, O§8.1); spec re-plan withdrawn · PR #195 |
+| 2026-11-26 | FX-16 unblocked: the "ratification first" gate in its contract was written by an agent without operator approval; deleted |
+| 2026-11-26 | Operator: unsupervised run of 24-48 h; authorized to install build tools and to coordinate with the other zygo agent; make and record decisions so the work completes autonomously; decisions are reviewed after the fact. gh-stack v0.3.0 installed for workflow (2) |
+| 2026-11-26 | MS-15 DONE: review R1 F1-F6, R2 F1-F3, R3 R2-1 fixed (operator commands stop in a twin state, S§7.6); R2-2 recorded (single-call rm not observable on unix); author's call: drop_host runs only the twin check · PR #190 |
+| 2026-11-26 | FX-16 DONE: clean removes ESC ( / ESC ) plus one final byte 0x30-0x7E, else only 2 bytes; lone ESC alone before a line end or ESC; review R1-R3 fixed (R3 F1 trailer recorded in DDR-01M8CMTAGQEDD71MNHY0CZJC76); cargo-test-color recaptured (120 tests), graded libtest-passing · PR #209 |
+| 2026-11-26 | FX-21 added: FX-16 review R1 F4, R3 F2: ESC *, ESC +, ESC $ multi-byte and intermediates before the final byte leave residue (O§7.4, O-C9) |
+| 2026-11-26 | Author's call (lead): FX-16 review R1 F1 first rejected, then fixed: the OS-43 change-log row grades a view by its own shaper, so the clean color case meets the libtest-passing floor; recorded in O§8.2 |
+| 2026-11-26 | MS-17 plan: premise drift: S§6.6 CI note recorded by the pass under the lock (Report.ci_note); S§8.2 unknown line printed at the end of a sync that does not stop; Files widened (sync.rs, plugins.rs, cli_surface.rs, spec) |
+| 2026-11-26 | MS-17 DONE: zygo mail sync verb, options, hidden --background form; review R1 F1 (shared admin::named name rule) F2 (CI note) F3 (one panic line) T1 fixed, T2 recorded; R2 R1-B fixed (S§6.6), R1-A recorded · PR #210 |
+| 2026-11-26 | FX-21 DONE: clean removes an nF escape (ESC, 1-4 intermediates 0x20-0x2F, final 0x30-0x7E) whole, else only ESC; replaces FX-16's ESC ( / ESC ) arm (DDR-01M8CRQH44Y37WS3MAAV2G0DP4 depends on the FX-16 record); review R1 F1-F5 fixed · PR #211 |
+| 2026-11-26 | Author's call (lead), for operator review: O§15 item 2 "hiding" and O-C9 read as text a terminal would display; FX-21 removes bytes FX-16 kept only where a terminal consumes them as one nF escape (DDR-01M8CRQH44Y37WS3MAAV2G0DP4) |
+| 2026-11-26 | MS-19 plan: premise drift: S§7.2 a send knows only the host in config (old own hosts are remote, refused by the member cache); two S§7.2 refusal lines fixed; S§10.4 mail_list gains remote |
+| 2026-11-26 | MS-19 DONE: mail_send addresses, send-time secret pass and sync child, mail_list remote; review R1 F1 (zygo mcp left one zombie per remote send; ChildSpawner reaps in a detached thread) F2-F4 fixed · PR #212 |
+| 2026-11-26 | WD-14 plan: premise drift: up writes the pin into the fresh member record (callback keeps it); R§7.4 stop line text, exit 1, escaped commit/digest, launch outside a checkout stops |
+| 2026-11-26 | WD-14 DONE: ws run, restore and hand resume launch from the saved pin; review R1 F1 (tests cloned the act101 marketplace) F2 F3 F5 fixed, F4 race recorded in R§7.4; R2 R2-1 (serve-mode refusal kept the pin) fixed · PR #214 |
+| 2026-11-26 | FX-22, FX-23 added: WD-14 review: built-in act101 tag v2.9.2 moved upstream (every launch prints the tag-moved line); six binary test files launch with the built-in marketplace on and reach the network |
+| 2026-11-26 | MS-18 plan: premise drift: S§7.2 not-local line for read/ls/watch; S§7.5 doctor twin line on last_error twin; S§10.3 ls sync line form; S§8.1 row 3 watch sync |
+| 2026-11-26 | MS-18 DONE: CLI send/read/ls/watch with addresses, ls sync line, doctor twin line; review R1 F1/F3 (watch synced in process, a hang blocked it) → watch starts the child; R2 F1 per-workspace rate limit, F2 F3 fixed, F4 F5 recorded · PR #215 |
+| 2026-11-26 | WD-19 plan: premise held: hooks, MCP and status line read nothing from .zygo/; node adds tests only; R§8 and R§18 item 20 restated against the code |
+| 2026-11-26 | WD-19 DONE: scans, repo_def tripwire (test-hooks feature, test builds only), inotify watch and git output canary prove no .zygo/ read on hook, MCP and status-line paths; R1 F1-F7, R2 F1 F2 fixed, F3 recorded · PR #218 |
+| 2026-11-26 | FX-22 PLANNED: tag v2.9.2 moved 409b9da→9d82bd9 (rewritten history); author's call: re-pin v2.9.2 (tree, act-lite digest unchanged) not v2.9.5; tags lightweight, so acceptance reads plain ref line; act-lite not found = binary off PATH (§15.3), not pin |
+| 2026-11-26 | FX-22 DONE: built-in act101 v2.9.2 re-pinned to the tag's current commit 9d82bd97 (upstream rewrote history; same tree and act-lite 1.2.3 digest); Acceptance self-checking, author's call: lightweight tags have no ^{} line · PR #221 |
+| 2026-11-26 | MS-21 plan: premise drift: S§14 forget order (checks, sync lock, question, worktree, then state and cache); S§6.3 git runs only when the worktree folder and main_root exist |
+| 2026-11-26 | MS-21 DONE: ws forget asks for unsent and refused mail and removes the sync worktree; R1 F1 (a waiting sync rebuilt what forget deleted) F2-F5 fixed; R2 R2-1..R2-4 fixed, R2-5 refuted (OP5) · PR #217 |
+| 2026-11-26 | FX-13: agent-written operator gate in the node contract deleted (no operator citation; same kind as FX-16's, PR #208); P1 mail/lock and P2 split taken as author's call (lead) for operator review |
+| 2026-11-26 | FX-13 DONE: deliveries, reads and maildir removals take mail/lock (shared/exclusive) and read records under it; no maildir without a record; R1 F1-F5, R2 R1-2..R1-5 fixed, R1-1 recorded · PR #219 |
+| 2026-11-26 | FX-24 added: FX-13 P2: mail-sync deliveries (sync.rs, import.rs) and ws forget take the M§5 mail lock |
+| 2026-11-26 | FX-23 DONE: shared harness turns the built-in marketplace off by default (NO_MARKETPLACE) and fails any run that syncs; 90 tests in 6 files had synced; R1 F1 F2 F4 F5 fixed, F3 DNS leak of the offline form recorded · PR #220 |
+| 2026-11-26 | WD-15 PLANNED: R§18 item 7 rewritten (ESC/lone CR invalid in TOML comments; checked via ignored names); R§6.5: R§7.1 lines show the full digest; read moved to cmd/workspace_approve.rs (definition_hooks p2); no pool listing in approve |
+| 2026-11-26 | WD-15 DONE: zygo workspace approve lists the repository files escaped, stores the digest of what was shown; R1 F1–F6 and R2 1–4 fixed (--digest checked first, quoted free text, read at the current checkout); FX-25 added · PR #223 |
+| 2026-11-26 | MS-22 PLANNED: drift: own member names in workspace.json, own hosts in state.json keys (S-C2, S§19 #24 rewritten); author's calls: sends in process (no detached child), binary syncs empty outbox only, trim hook writes the usage row |
+| 2026-11-26 | MS-22 DONE: no mail content in any store, log, commit or ref after the walked S§19 scenarios on three machines; R1 fixed stale host keys in state.json (forget_hosts); S-C2, S§7.5, S§19 #24 rewritten; FX-26, FX-27 added · PR #222 |
+| 2026-11-26 | WD-16 PLANNED: R§10 loadout row follows the `<name>  <source>` format; /zygo:profile reads nothing (R-C8); one CLI-only read module for config, profile, loadout and doctor; workspace_approve.rs left to FX-25 (shared file) |
+| 2026-11-26 | WD-16 DONE: config show/check, profile list/show and loadout list/show show the repository files through one CLI-only read (workspace_files.rs); unapproved files show only ref, digest and state; R1 F1–F5 fixed · PR #225 |
+| 2026-11-26 | WD-20 PLANNED: README section and passthrough.md pool section, exact text checked on a hermetic fixture; R§6.2 names and R§10 up row follow the code (default_loadout=repository refuses); no new doc page or test; FX-25 behaviour left out |
+| 2026-11-26 | SX-7 PLANNED: 11 steps; T§13 rewritten to the merged code (author's call): OpenCode zygo-<role> prompt kept until ST4, trim gives the post-compaction copy, no-main-role case, flag skips zygo- and bad ids; stale reinject.rs:22 line citation added to Files |
+| 2026-11-26 | SX-7 DONE: base spec §8.5, §8.6 item 7 and last paragraph, §8.7 N33, §10.6 state what the merged session-text code does (effective role, ST4-conditional OpenCode delivery, trim after compaction); T§13 rewritten to the code; W§9.1 aligned · PR #227 |
+| 2026-11-26 | FX-24 PLANNED: d1-d4 hold at 6b283c74; import, incoming finish, notice under mail/lock per delivery; forget holds it excl across rename, after before_remove; order op<sync<mail<state; S§8.5/8.6/7.6, M§5 rewritten; author's calls in node |
+| 2026-11-26 | FX-24 DONE: mail-sync import, staged retry, refusal notice and ws forget take mail/lock in the lock order; every taker checks the lock inode; R1–R3 fixed (no lost staged mail, notice only to the same key); FX-28 added · PR #224 |
+| 2026-11-26 | OS-39 PLANNED: 16 steps; §10.1, §10.7, §14 final text from the merged code; O§12, O§6.5 item 3, O§6.6 rewritten (author's call): OpenCode trims bash only, shaped view over 8 KiB below threshold, results on/off override, full open users, usage none/unknown lines |
+| 2026-11-26 | OS-39 DONE: base spec §10.1, §10.7, §14 state the merged output shaping and saving accounting (views, raw text, measure, net figures, read-backs, retention); O§12 and O§6.5 rewritten to the code; §20 item 14 names its input · PR #229 |
+| 2026-11-26 | FX-25 PLANNED: R§10 up row and W§8.1 step 3 rewritten; author's calls: up reads at Target.top (by name: main_root); worktrees returns ListError, git's "not a git repository" alone is exit 2; failed/timed-out list, no git, gone main worktree exit 1 |
+| 2026-11-26 | FX-25 DONE: zygo up reads at the current checkout; main worktree = first valid (not prunable, not zygo's sync worktree) and a valid saved one wins, moves announced; failed or timed-out worktree list exits 1 with git's reason · PR #226 |
+| 2026-11-26 | FX-27 BLOCKED: failed 3 review rounds; round 3: the member-gated prune (R2 D-B) leaves delivered mail after a member rename, a cross-pass member duplicate is never acked, member_names is quadratic; branch discarded, re-plan · PR #230 closed |
+| 2026-11-26 | FX-27 PLANNED (re-plan), author's call: R1 ack = (old ∪ acked ∪ own-ack union) ∩ folder ULIDs; R2 old ack goes with no message file, every ULID listed, registry gone; R3 prune unchanged; R4 drop-host counts message files; invariant: one delivery per ULID |
+| 2026-11-26 | FX-27 DONE: ULID-keyed re-plan R1–R4; review rounds 1–2 fixed tests and spec text; author's calls: non-address folders are documented as operator-only removal; planner's call: non-ULID names do not keep the ack. |
+| 2026-11-27 | FX-28 BLOCKED: failed 3 review rounds; round 3: mail/lock released after the remote_send_before_link hook passes every test; CI definition_hooks p2: outbox.rs names zygo_workspace::up; branch discarded, diff saved · PR #232 closed |
+| 2026-11-27 | FX-28 PLANNED (re-plan): send hooks before Delivery::begin and both sides of the link; timing-free tests; fire_point in zygo_workspace::mail, not up; open_regular/activity name the path; CLI lines start with zygo:; review rounds reset to 0 |
+| 2026-11-27 | FX-26 BLOCKED: failed 3 review rounds; round 3: the sweep skips unreadable folders, the deadline seam test misses the injected clock, FX-30 leaves S§19 #24 stale, no edges between mail-sync spec nodes; #233 closed; diff saved in ~/.cache/fx26-old |
+| 2026-11-27 | FX-26 PLANNED (re-plan): step 0 applies the reviewed diff (patches 0003-0005, no docs/work), steps 1-10 fix R3-1..R3-13 (sweep errors, seam test and test-hooks gate, S-C9, far deadline, proxies, #14 states, FX-30 contract), step 11 floor |
+| 2026-11-27 | FX-30 created from FX-26 review round 2 F-1; deps FX-26, FX-28 (author's call: every node that edits the mail-sync spec is on one dependency path); the FX-28 → FX-26 edge is added on phase3/FX-28 (PR #234) |
+| 2026-11-27 | FX-28 deps FX-26 added on phase3/FX-26 (FX-26 re-plan review round 1 F2): both change the mail-sync spec; author's call: phase3/FX-28 (PR #234) takes this row when it re-syncs, so phase-3 stays valid when FX-26 merges |
+| 2026-11-27 | Correction of the FX-30 line: the FX-28 → FX-26 edge is set on phase3/FX-26 (graph row and nodes/FX-28.md Row), not on phase3/FX-28; author's call: FX-28's implementation waits until FX-26 merges (FX-26 re-plan review round 2 F6) |
+| 2026-11-27 | FX-26 BLOCKED (re-plan 1: 3 rounds; #235 closed); round 3: the sweep's name allowance in the sync worktree, S§19 #24 contradicted itself, FX-30 cited a lost commit; saved in ~/.cache/fx26-old2 |
+| 2026-11-27 | FX-26 re-plan 2: sweep allows no marked name (S§6.3 no-checkout); reviewed work re-applied (patches 0001-0012 of 86ed9358, no docs/work); steps a-f done |
+| 2026-11-27 | FX-26 IN-PROGRESS: re-plan 2 review round 1 fixes (exact #4 notice; #5, #9, #15 fully walked; FX-28 merge note for both orders; change-log rounds; S-C9 live-premise build; run_with keeps 120 s; CI permission-case check) |
+| 2026-11-27 | FX-26 IN-PROGRESS: re-plan 2 review round 2 fixes (#12 none delivered and its write set; run_with lower bound; test-hooks comment); author's call: no Row line in nodes/FX-28.md and FX-30.md (graph-format §3: deps live in this table) |
+| 2026-11-27 | FX-26 DONE: the walk covers S§19 except the SP2 premise and FX-30 (the #14 count and wake); author's calls: no marked name anywhere (S§6.3 no-checkout), the test-hooks pass-deadline seam (S-C9); round 3 fixed F1-F8 · PR #236 |
+| 2026-11-27 | Author's correction: execute-work §4: a stage passes once every confirmed finding is fixed; earlier re-plans of FX-27/FX-28/FX-26 counted a re-review after the fixes as a failed round (author's error, recorded for operator review) |
+| 2026-11-27 | WD-20 DONE: user docs for workspace files, approval, members, pool, passthrough; R1 fixed H1-H2, M1-M4, L1-L9; C6 (L9 split into docs/workspace-files.md); FX-29 and FX-31 created from the found issues; MS-15 row archived · PR #228 |
+| 2026-11-27 | FX-29 PLANNED: config check reads as up does; check_with(cfg, RepositoryLoadout); approved files with workspace.toml accept, other read states keep the error; author's call: no read (outside, unread) is a warning, not an error; R§10, W§11, workspace-files.md rewritten |
+| 2026-11-27 | FX-29 DONE: config check decides default_loadout = "repository" from the read, as up does; review F1-F4 fixed; author's calls: no read (outside, unread) is a warning, not an error; zygo serve reads no files and checks with NotRead at start and reload; FX-20 row archived · PR #237 |
+| 2026-11-27 | FX-31 PLANNED: author's call: R§11 names the R§7.4 conditions; a gone, withdrawn or unread pin stops only a launch that makes the pinned read; no profile, user or team profile, passthrough start; launcher unchanged; R§11, R§7.4, R§18 item 16, workspace-files.md rewritten |
+| 2026-11-27 | FX-31 IN-PROGRESS: plan steps 1-4 done; pin_gone_stops_exactly_the_r11_members 1 passed; mutations Gone→NotFound and passthrough pinned read each fail it; floor green; waits for review · PR #238 |
+| 2026-11-27 | FX-31 DONE; author's call: a withdrawal stops every pinned member, and a gone or unread pin stops only a launch that does the pinned read; review F1-F6 fixed; OS-45 row archived · PR #238 |
+| 2026-11-27 | Correction of the FX-28 re-plan line ("CLI lines start with zygo:"): only the two no-workspace lines of mail workspace_of get the prefix, at their source; finish and the other verbs do not change, so N42 holds (FX-28 review round 4 F3, author's call) |
+| 2026-11-27 | FX-28 DONE: rule B (send holds mail/lock shared; forget counts again under it and refuses on a higher count); review round 4 F1-F4 fixed; author's calls: step 10 fixed at the source line (workspace_of), N42 kept; F4 recorded as the FX-24 same-user limit · PR #234 |
+| 2026-11-27 | OS-38 DONE: 5 passed, release 01855abf, operator machine; p95 vs O§8.5: hook on 13.20/off 13.10 ms (+50); 4 MiB max json/cargo-metadata 54.03 ms (≤ 100); write lock 105.71 ms (≤ 150; 159.27 before OS-45); 64 KiB max gotest/passing-verbose 1.16 ms (≤ 5); OS-46 row archived · PR #239 |
+| 2026-11-27 | FX-30 DONE: pending-wake record in state.json; review F1-F4 fixed; author's calls: count `cur/` but wake only `new/`; clear at the step-10 write; recorded limit: one state write (a crash between wake and write wakes again). PR #240 |

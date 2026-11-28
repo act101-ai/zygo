@@ -185,7 +185,7 @@ impl Stage for RedactStage {
             }
         }
         // An absent class admits; a header that is not UTF-8 is a class that is not admitted.
-        let class = ctx.headers.get("x-claude-code-request-class").map(|v| v.to_str().unwrap_or(""));
+        let class = ctx.session.agent.spec().request_class_header.and_then(|h| ctx.headers.get(h)).map(|v| v.to_str().unwrap_or(""));
         if features.redaction.content && admits(class) {
             let t0 = Instant::now();
             let layout = if ctx.dialect == Dialect::Openai { Layout::Input } else { Layout::Messages };

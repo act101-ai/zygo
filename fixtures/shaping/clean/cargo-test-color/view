@@ -1,0 +1,17 @@
+[zygo shaped this output: color codes removed, passed tests hidden, build progress hidden. The full output (135 lines, 5288 bytes) is saved as result 00000000000000000000000000; read it with result_view, result_search or result_tree.]
+
+running 120 tests
+[zygo: 120 passed and 0 ignored test lines hidden]
+
+test result: ok. 120 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[stderr]
+[zygo: 1 build progress lines hidden]
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.23s
+     Running unittests src/lib.rs (target/debug/deps/scratch-8a410b8008eed53d)
+   Doc-tests scratch

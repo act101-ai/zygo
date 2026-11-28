@@ -1,0 +1,25 @@
+codex 0.172.0 --strict-config
+control zp_unknown_key: refused: config.toml:3:1: unknown configuration field `zp_unknown_key`
+control zp_unknown_key without --strict-config: accepted
+model_provider = "zygo": accepted
+model = "code": accepted
+model_context_window = 200000: accepted
+model_auto_compact_token_limit = 180000: accepted
+developer_instructions = "zp-dev": accepted
+compact_prompt = "zp-compact": accepted
+tui.status_line = ["model-with-reasoning", "current-dir"]: accepted
+skills.config = [{ path = "/tmp/run/skills/zp-skill/SKILL.md", enabled = true }]: accepted
+shell_environment_policy.inherit = "all": accepted
+shell_environment_policy.exclude = ["ANTHROPIC_*", "OPENAI_*", "OPENROUTER_*", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "ZYGO_TEAM_TOKEN", "CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_BRIDGE_SESSION_ID"]: accepted
+mcp_servers.zygo.command = "python3": accepted
+mcp_servers.zygo.args = ["-I", "/zygo/scripts/premises/mcp_probe.py"]: accepted
+mcp_servers.zygo.default_tools_approval_mode = "approve": accepted
+model_providers.zygo.name = "zygo": accepted
+model_providers.zygo.wire_api = "responses": accepted
+model_providers.zygo.base_url = "http://127.0.0.1:52881/v1": accepted
+model_providers.zygo.auth = { command = "printf", args = [omitted] }: accepted
+model_providers.zygo.http_headers = { X-Zygo-Session = "zp-session", X-Zygo-Agent-Version = "0.0.0", X-Zygo-Repo = "zp-repo", X-Zygo-Work = "zp-work" }: accepted
+model_providers.zygo.supports_websockets = false: accepted
+model_providers.zygo.capabilities.remote_compaction = false: refused: config.toml:30:38: invalid type: unit variant, expected string only
+hooks.state = [omitted]: accepted
+capabilities.remote_compaction = "unsupported": accepted

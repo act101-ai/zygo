@@ -27,6 +27,34 @@ fn mark_last(body: &mut Value, field: &str) -> bool {
     true
 }
 
+/// A `cache_control` key where Anthropic accepts a marker: on a `system` block, on a content block of a `messages`
+/// entry, or at the top level of a `tools` entry. A key inside a user value (a schema, a `tool_use` input) is not one.
+fn has_placed_marker(body: &Value) -> bool {
+    fn all(v: Option<&Value>) -> impl Iterator<Item = &Value> {
+        v.and_then(Value::as_array).into_iter().flatten()
+    }
+    let marked = |v: &Value| v.get("cache_control").is_some();
+    all(body.get("system")).any(marked)
+        || all(body.get("tools")).any(marked)
+        || all(body.get("messages")).any(|m| all(m.get("content")).any(marked))
+}
+
+/// A Messages body built for an Anthropic upstream (K§6.4.2, base §10.4): with no marker where Anthropic accepts one
+/// (`has_placed_marker`), a string `system` becomes one text block, then the last `system` block and the last tool get
+/// `{"type":"ephemeral","ttl":"1h"}`. `true` when it added a marker.
+pub fn mark_upstream(body: &mut Value) -> bool {
+    if has_placed_marker(body) {
+        return false;
+    }
+    if let Some(system) = body.get_mut("system").filter(|s| s.is_string()) {
+        let text = system.take();
+        *system = json!([{ "type": "text", "text": text }]);
+    }
+    let system = mark_last(body, "system");
+    let tools = mark_last(body, "tools");
+    system || tools
+}
+
 impl Stage for CacheStage {
     /// Messages route, Anthropic client dialect, `[cache] insert_markers.<agent>`, no `cache_control` anywhere: the
     /// last `system` block (only an array) and the last tool definition get the marker; every other byte as received.
@@ -39,5 +67,71 @@ impl Stage for CacheStage {
         let tools = mark_last(&mut ctx.body, "tools");
         ctx.changed |= system || tools;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mark() -> Value {
+        json!({"type":"ephemeral","ttl":"1h"})
+    }
+
+    #[test]
+    fn mark_upstream_wraps_string_system_and_marks_last_tool() {
+        let mut b = json!({"system":"S","tools":[{"name":"a"},{"name":"b"}],"messages":[]});
+        assert!(mark_upstream(&mut b));
+        assert_eq!(
+            b,
+            json!({"system":[{"type":"text","text":"S","cache_control":mark()}],
+                   "tools":[{"name":"a"},{"name":"b","cache_control":mark()}],"messages":[]})
+        );
+    }
+
+    #[test]
+    fn mark_upstream_marks_last_block_of_array_system() {
+        let mut b = json!({"system":[{"type":"text","text":"a"},{"type":"text","text":"b"}]});
+        assert!(mark_upstream(&mut b));
+        assert_eq!(b, json!({"system":[{"type":"text","text":"a"},{"type":"text","text":"b","cache_control":mark()}]}));
+    }
+
+    #[test]
+    fn mark_upstream_leaves_a_marked_body() {
+        let before = json!({"system":"S","tools":[{"name":"a"}],
+            "messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]});
+        let mut b = before.clone();
+        assert!(!mark_upstream(&mut b));
+        assert_eq!(b, before);
+    }
+
+    #[test]
+    fn mark_upstream_without_system_or_tools_is_false() {
+        let before = json!({"messages":[{"role":"user","content":"hi"}]});
+        let mut b = before.clone();
+        assert!(!mark_upstream(&mut b));
+        assert_eq!(b, before);
+    }
+
+    /// Round 1 review F3: a `cache_control` key that a user wrote inside a tool parameter schema, the
+    /// `output_config.format` schema or a `tool_use` input is not a marker.
+    #[test]
+    fn mark_upstream_ignores_cache_control_in_user_values() {
+        let cc = json!({"type":"object","properties":{"cache_control":{"type":"string"}}});
+        let mut b = json!({"system":"S","tools":[{"name":"a","input_schema":cc}],
+            "output_config":{"format":{"type":"json_schema","schema":cc}},
+            "messages":[{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"a","input":{"cache_control":"x"}}]}]});
+        assert!(mark_upstream(&mut b));
+        assert_eq!(b["system"], json!([{"type":"text","text":"S","cache_control":mark()}]));
+        assert_eq!(b["tools"][0]["cache_control"], mark());
+    }
+
+    #[test]
+    fn mark_upstream_leaves_a_marked_system_block() {
+        let before = json!({"system":[{"type":"text","text":"a","cache_control":{"type":"ephemeral"}},{"type":"text","text":"b"}],
+            "tools":[{"name":"a"}]});
+        let mut b = before.clone();
+        assert!(!mark_upstream(&mut b));
+        assert_eq!(b, before);
     }
 }

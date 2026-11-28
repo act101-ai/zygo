@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use zygo_core::Agent;
 use zygo_usage::{RequestRow, WorkUnitRow};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -10,11 +11,13 @@ pub struct Joined {
     pub requests: Vec<RequestRow>,
 }
 
-/// Per session and agent (`main` = no `agent_id`; OpenCode: the whole session), unit *k* owns the requests with
-/// `began_at` of *k* < `ts` ≤ `began_at` of *k+1*. One `Joined` per unit, in input order; requests by `ts`.
+/// Per session and agent (`main` = no `agent_id`; a session with a request of a client that sends no per-agent id,
+/// `ClientSpec::agent_id_header` `None`: the whole session; an id of no client: per agent id), unit *k* owns the
+/// requests with `began_at` of *k* < `ts` ≤ `began_at` of *k+1*. One `Joined` per unit, in input order; requests by `ts`.
 pub fn join(units: &[WorkUnitRow], requests: &[RequestRow]) -> Vec<Joined> {
-    let opencode: BTreeSet<&str> = requests.iter().filter(|r| r.agent == "opencode").map(|r| r.session.as_str()).collect();
-    let key = |session: &str, agent: &str| (session.to_string(), if opencode.contains(session) { String::new() } else { agent.to_string() });
+    let whole_session = |r: &RequestRow| r.agent.parse::<Agent>().is_ok_and(|a| a.spec().agent_id_header.is_none());
+    let whole: BTreeSet<&str> = requests.iter().filter(|r| whole_session(r)).map(|r| r.session.as_str()).collect();
+    let key = |session: &str, agent: &str| (session.to_string(), if whole.contains(session) { String::new() } else { agent.to_string() });
     let mut groups: BTreeMap<(String, String), Vec<usize>> = BTreeMap::new();
     for (i, u) in units.iter().enumerate() {
         groups.entry(key(&u.session, &u.agent_id)).or_default().push(i);

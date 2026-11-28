@@ -1,40 +1,100 @@
 #!/bin/sh
 # Tests of the scratch dir that scripts/premises/lib.sh makes (node PRB-2): removed after exit 0,
 # kept and named after an error or a signal, never inherited and never exported; with live.sh's
-# live_traps and live_end, and under run-all.sh.
+# live_traps and live_end, and under run-all.sh; the Codex helpers and run-codex.sh (node PC-2).
 # Usage: sh scripts/premises/lib_test.sh   ->  "lib tests: ok (<n>)", exit 0
-# No agent, no network; not run by CI. Each child runs with PATH = a dir of stub claude and
-# opencode programs and links to the few tools lib.sh needs, and TMPDIR = a dir of its own.
+# LIB_TEST_SH: the shell the children run under (default dash when installed, else sh).
+# No agent, no network; CI runs it on ubuntu and macOS. Each child runs with PATH = a dir of stub
+# claude, opencode and codex programs and links to the few tools lib.sh needs, and TMPDIR = a dir of
+# its own.
+# Do not run two copies at once on one host (G2c/G2d and the n2_procs cases fail closed on the other run's helpers).
 set -u
 unset N2_SCRATCH N2_SCRATCH_OWN
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
-SH=$(command -v dash || command -v sh)
+SH=${LIB_TEST_SH:-$(command -v dash || command -v sh)}
 T=$(mktemp -d)
-trap 'chmod -R u+rwx "$T"; rm -rf "$T"' EXIT
+# PC-10: each child script sources $T/seam.sh right after lib.sh (unless NOSEAM=1): it redefines
+# n2_procs to scan only processes of this test's folder and points N2_DAEMON_DIRS under it, so the
+# host's own Codex daemon or another session's run does not change a result. The environment
+# cannot do this (lib.sh assigns both at source time).
+# $T/stop.sh: the traps, on exit and on INT and TERM (exit 130, 143; the exit runs the EXIT trap).
+# They stop each process a case starts that can outlive it: a pid in $T/*.dpid (stub daemons,
+# servers) and a process group in $T/*.pgid (sigrun, R5, B4: the group holds the child shell and
+# what it started). A case removes its file once it has stopped the process. G1 sources the same
+# file in a driver of its own. A .pgid record is written right after the fork, before the child's
+# setpgrp: stopall also sends TERM to the recorded pid itself, so a child that has no group yet ends
+# before it can form one (J6). A trap that runs between the fork and the record still misses it.
+# G1 and J6 also record their driver ($T/<case>-drv.dpid) and the driver's helper in $T, so a
+# signal to lib_test during G1 or J6 stops them too.
+cat >"$T/stop.sh" <<'EOF'
+stopall() {
+  for p in $(cat "$T"/*.dpid 2>/dev/null); do kill "$p" 2>/dev/null; done
+  for g in $(cat "$T"/*.pgid 2>/dev/null); do kill -s TERM -- "-$g" 2>/dev/null; kill -s TERM "$g" 2>/dev/null; done
+  chmod -R u+rwx "$T"; rm -rf "$T"
+}
+trap stopall EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+EOF
+. "$T/stop.sh"
+cat >"$T/seam.sh" <<EOF
+N2_DAEMON_DIRS="$T/private/tmp $T/tmp"
+n2_procs() { n2_scan "\$1" "$T"; }
+EOF
 n=0 bad=0
 ok() { n=$((n + 1)); printf 'ok: %s\n' "$1"; }
 no() { n=$((n + 1)); bad=$((bad + 1)); printf 'FAIL: %s (%s)\n' "$1" "$2"; }
 
-# mkbin <dir> <with claude: 0|1>
+# mkcx <file> <version>: a stub codex, a compiled program (lib.sh refuses a #! script, F3).
+# --version prints "codex-cli <version>" (fixed at build time: env -i drops any variable); any other
+# call writes its environment, argv[0] and arguments under $HOME and prints "stub". Compiled, because
+# a shell adds PWD, SHLVL and _ to the environment it reports.
+cat >"$T/stub.c" <<'C'
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+extern char **environ;
+static int cmp(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
+static FILE *out(const char *name) {
+  char p[4096]; const char *h = getenv("HOME");
+  snprintf(p, sizeof p, "%s/%s", h ? h : ".", name);
+  FILE *f = fopen(p, "w"); if (!f) { perror("stub"); exit(2); } return f;
+}
+int main(int argc, char **argv) {
+  if (argc == 2 && strcmp(argv[1], "--version") == 0) { printf("codex-cli %s\n", VER); return 0; }
+  int n = 0; while (environ[n]) n++;
+  qsort(environ, n, sizeof *environ, cmp);
+  FILE *f = out("stub-env.txt"); for (int i = 0; i < n; i++) fprintf(f, "%s\n", environ[i]); fclose(f);
+  f = out("stub-exe.txt"); fprintf(f, "%s\n", argv[0]); fclose(f);
+  f = out("stub-args.txt"); for (int i = 1; i < argc; i++) fprintf(f, "%s%s", i > 1 ? " " : "", argv[i]); fprintf(f, "\n"); fclose(f);
+  printf("stub\n"); return 0;
+}
+C
+mkcx() { cc -DVER="\"$2\"" -o "$1" "$T/stub.c" || { echo "lib tests: cc failed"; exit 1; }; }
+# mkbin <dir> <with claude: 0|1> [<stub codex version>]
 mkbin() {
   mkdir -p "$1"
-  for t in mktemp rm mkdir chmod dirname sleep cat cp sed head env grep tee; do ln -s "$(command -v "$t")" "$1/$t"; done
+  for t in mktemp rm mkdir chmod dirname sleep cat cp mv rmdir sed head env grep tee python3 git cut tr ls shasum date file uname ps; do ln -s "$(command -v "$t")" "$1/$t"; done
+  # lsof: lib.sh reads a process's working folder with it where there is no /proc (PC-10).
+  if command -v lsof >/dev/null; then ln -s "$(command -v lsof)" "$1/lsof"; fi
   ln -s "$SH" "$1/sh"
   printf '#!/bin/sh\necho 0\n' >"$1/opencode"
   chmod +x "$1/opencode"
   if [ "$2" = 1 ]; then printf '#!/bin/sh\necho 0\n' >"$1/claude"; chmod +x "$1/claude"; fi
+  mkcx "$1/codex" "${3:-0.172.0}"
 }
 mkbin "$T/bin" 1
 mkbin "$T/nocc" 0
+mkbin "$T/nocx" 1
+rm "$T/nocx/codex"
 
 # prep <case> <own|caller>: TMPDIR=$T/tmp-<case> always; caller: N2_SCRATCH=$T/keep-<case> (with
-# a file mine). Sets XENV (extra env words; no path here holds a blank) and resets CP and NR.
+# a file mine). Sets XENV (extra env words; no path here holds a blank) and resets PRE (lines the
+# child runs before it sources lib.sh: a runner sets N2_AGENTS itself), CP and NR.
 prep() {
   mkdir -p "$T/tmp-$1"
-  XENV="" CP=$T/bin NR=0
+  XENV="" PRE="" CP=$T/bin NR=0 NOSEAM=0
   if [ "$2" = caller ]; then
     mkdir -p "$T/keep-$1"
     : >"$T/keep-$1/mine"
@@ -45,7 +105,9 @@ prep() {
 child() {
   {
     echo "PREMISES_DIR='$HERE'"
+    [ -z "$PRE" ] || printf '%s\n' "$PRE"
     echo ". '$HERE/lib.sh'"
+    [ "$NOSEAM" = 1 ] || echo ". '$T/seam.sh'"
     if [ "$2" = 1 ]; then echo ". '$HERE/live.sh'"; echo "live_traps"; fi
     echo "echo \"\$N2_SCRATCH\" >'$T/$1.dir'"
     printf '%s\n' "$3"
@@ -57,27 +119,42 @@ run() {
   env PATH="$CP" TMPDIR="$T/tmp-$1" $XENV "$SH" "$T/$1.sh" >"$T/$1.out" 2>"$T/$1.err"
   rc=$?
 }
-# sigact <case>: the action of a signal case.
-sigact() { printf '%s' "echo \$\$ >'$T/$1.pid'; sleep 30 & echo \$! >'$T/$1.sleep'; : >'$T/$1.ready'; wait"; }
-# waitready <file>: at most 50 polls, 0.1 s apart.
+# sigact <case>: the action of a signal case. The child waits on a process that runs until it is
+# signalled (no time bound); sigrun stops it after the case.
+sigact() { printf '%s' "echo \$\$ >'$T/$1.pid'; python3 -I -c 'import signal; signal.pause()' & echo \$! >'$T/$1.sleep'; : >'$T/$1.ready'; wait"; }
+# waitready <file> <pid>: poll 0.1 s apart until the file exists or the producer <pid> is dead, with
+# no count limit (TF-2: no case passes or fails by wall-clock time). When the pid is dead, the file
+# is checked once more: 0 if it exists, else 1.
 waitready() {
-  i=0
   while [ ! -f "$1" ]; do
-    i=$((i + 1))
-    [ "$i" -le 50 ] || return 1
+    kill -0 "$2" 2>/dev/null || { [ -f "$1" ]; return; }
     sleep 0.1
   done
 }
+# waitin <file> <pid file> <name>: the same wait as the text of a child's loop; the producer's pid is
+# read from <pid file>. A producer dead with no file exits the child with 2 and says so on stderr.
+waitin() {
+  printf '%s' "while [ ! -f '$1' ]; do if ! kill -0 \"\$(cat '$2')\" 2>/dev/null; then [ -f '$1' ] || { echo '$3 exited before it was ready' >&2; exit 2; }; break; fi; sleep 0.1; done"
+}
 # sigrun <case> <signal>: run $T/<case>.sh in the background, signal it when ready; sets rc and NR.
 # perl resets INT to its default first: a background command of a non-interactive shell starts with
-# INT ignored, and a shell cannot trap a signal that was ignored when it started.
+# INT ignored, and a shell cannot trap a signal that was ignored when it started. The child leads a
+# process group of its own ($T/<case>.pgid), so lib_test's traps stop it and its helper (G1).
+# <signal> STOPALL (J3a): check the record (pgrec) and stop the child as lib_test's traps do (stoprec).
 sigrun() {
   # shellcheck disable=SC2086
-  perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die' \
+  perl -e '$SIG{INT} = "DEFAULT"; setpgrp(0, 0); exec @ARGV or die' \
     env PATH="$CP" TMPDIR="$T/tmp-$1" $XENV "$SH" "$T/$1.sh" >"$T/$1.out" 2>"$T/$1.err" &
   bp=$!
-  if waitready "$T/$1.ready"; then
-    kill -s "$2" "$(cat "$T/$1.pid")"
+  echo "$bp" >"$T/$1.pgid"
+  if waitready "$T/$1.ready" "$bp"; then
+    if [ "$2" != STOPALL ]; then
+      kill -s "$2" "$(cat "$T/$1.pid")"
+    elif pgrec "$1" "$bp"; then
+      stoprec "$1"; ok "$1 sigrun records the child's process group; the traps' stopall ends it"
+    else
+      no "$1 sigrun records the child's process group; the traps' stopall ends it" "$why"; kill -s TERM -- "-$bp"
+    fi
     wait "$bp"
     rc=$?
   else
@@ -87,11 +164,27 @@ sigrun() {
     rc=$?
   fi
   [ ! -f "$T/$1.sleep" ] || kill "$(cat "$T/$1.sleep")" 2>/dev/null
+  endgrp "$T/$1.pgid"
+}
+# endgrp <pgid file>: TERM to the recorded process group (what is left of it), then remove the file.
+endgrp() { kill -s TERM -- "-$(cat "$1")" 2>/dev/null; rm -f "$1"; }
+# pgrec <case> <pid> (J3): $T/<case>.pgid names <pid>, and <pid> leads a live process group of its own.
+pgrec() {
+  [ "$(cat "$T/$1.pgid" 2>/dev/null)" = "$2" ] || { why="$T/$1.pgid holds '$(cat "$T/$1.pgid" 2>/dev/null)', want $2"; return 1; }
+  [ "$(ps -o pgid= -p "$2" | tr -d ' ')" = "$2" ] || { why="pid $2 does not lead a live process group"; return 1; }
+}
+# stoprec <case> (J3): stop what $T/<case>.pgid records as lib_test's traps do: a shell sources
+# $T/stop.sh with T = a folder that holds only a copy of the record, and exits (its EXIT trap).
+stoprec() {
+  mkdir "$T/stop-$1" && cp "$T/$1.pgid" "$T/stop-$1/" && T="$T/stop-$1" "$SH" -c '. "$0"; exit 0' "$T/stop.sh"
 }
 # piperun <case>: run $T/<case>.sh with stdout to a pipe whose reader has exited; sets rc.
+# perl resets PIPE to its default first: an ignored SIGPIPE is inherited (GitHub's Linux runner starts
+# jobs with it ignored), and dash cannot undo an ignore it started with; the child then gets EPIPE.
 piperun() {
   # shellcheck disable=SC2086
-  { env PATH="$CP" TMPDIR="$T/tmp-$1" $XENV "$SH" "$T/$1.sh" 2>"$T/$1.err"; echo $? >"$T/$1.rc"; } | true
+  { perl -e '$SIG{PIPE} = "DEFAULT"; exec @ARGV or die' \
+    env PATH="$CP" TMPDIR="$T/tmp-$1" $XENV "$SH" "$T/$1.sh" 2>"$T/$1.err"; echo $? >"$T/$1.rc"; } | true
   rc=$(cat "$T/$1.rc")
 }
 # PIPE_ACT: write to stdout until the closed pipe stops the script.
@@ -101,7 +194,7 @@ res() {
   name=$1 want=$2
   shift 2
   why=""
-  if [ "$NR" = 1 ]; then no "$name" "not ready in 5 s"; return; fi
+  if [ "$NR" = 1 ]; then no "$name" "exited before it was ready; stderr: $(tr '\n' '|' <"$ERR")"; return; fi
   if [ "$rc" -ne "$want" ]; then no "$name" "exit $rc, want $want; stderr: $(tr '\n' '|' <"$ERR")"; return; fi
   if "$@"; then ok "$name"; else no "$name" "$why"; fi
 }
@@ -292,8 +385,8 @@ fi
 # rall <case>: a copy of run-all.sh and lib.sh with a stub run-<id>.sh for each id it runs.
 rall() {
   mkdir -p "$T/$1-pd"
-  cp "$HERE/run-all.sh" "$HERE/lib.sh" "$T/$1-pd/"
-  for id in smoke P1 P1-interactive P2 P3 Q1 Q4 Q6 Q7-claude Q5 opencode P6; do
+  cp "$HERE/run-all.sh" "$HERE/lib.sh" "$HERE/ver.sh" "$T/$1-pd/"
+  for id in smoke P1 P1-interactive P2 P3 Q1 Q4 Q6 Q7-claude Q5 opencode P6 codex; do
     printf '%s\n' "echo \"\$N2_SCRATCH\" >>'$T/$1.seen'" >"$T/$1-pd/run-$id.sh"
   done
 }
@@ -310,7 +403,7 @@ seen() {
 first_seen() { head -n 1 "$T/$1.seen" 2>/dev/null; }
 
 c=R1; prep $c own; ERR=$T/$c.err; rall $c; rrun $c
-r1() { D1=$(first_seen R1); seen R1 12 "$D1" && removed R1 "$D1"; }
+r1() { D1=$(first_seen R1); seen R1 13 "$D1" && removed R1 "$D1"; }
 res "R1 run-all own dir removed after exit 0" 0 r1
 
 c=R2; prep $c own; ERR=$T/$c.err; rall $c; echo 'exit 3' >>"$T/$c-pd/run-P2.sh"; rrun $c
@@ -318,7 +411,7 @@ r2() { D1=$(first_seen R2); seen R2 4 "$D1" && kept_n R2 3 "$D1"; }
 res "R2 run-all own dir kept after a failed child" 3 r2
 
 c=R3; prep $c caller; ERR=$T/$c.err; rall $c; rrun $c
-r3() { seen R3 12 "$T/keep-R3" && kept R3; }
+r3() { seen R3 13 "$T/keep-R3" && kept R3; }
 res "R3 run-all caller dir kept" 0 r3
 
 c=R4; prep $c own; ERR=$T/$c.err; rall $c
@@ -327,16 +420,21 @@ printf '%s\n' "[ -f \"\$N2_SCRATCH/child-mark\" ] && echo kept >'$T/R4.kept'" >>
 rrun $c
 r4() {
   [ "$(cat "$T/R4.kept" 2>/dev/null)" = kept ] || { why="a child sourcing lib.sh removed the dir"; return 1; }
-  D1=$(first_seen R4); seen R4 12 "$D1" && removed R4 "$D1"
+  D1=$(first_seen R4); seen R4 13 "$D1" && removed R4 "$D1"
 }
 res "R4 a child that sources lib.sh keeps run-all's dir" 0 r4
 
 c=R5; prep $c own; ERR=$T/$c.err; rall $c
-printf '%s\n' ": >'$T/R5.ready'; sleep 30" >"$T/$c-pd/run-smoke.sh"
+printf '%s\n' ": >'$T/R5.ready'; exec python3 -I -c 'import signal; signal.pause()'" >"$T/$c-pd/run-smoke.sh"
 perl -e 'setpgrp(0, 0); exec @ARGV or die' env PATH="$CP" TMPDIR="$T/tmp-$c" "$SH" "$T/$c-pd/run-all.sh" >"$T/$c.out" 2>"$T/$c.err" &
 bp=$!
-if waitready "$T/R5.ready"; then
-  kill -s TERM -- "-$bp"
+echo "$bp" >"$T/$c.pgid"
+if waitready "$T/R5.ready" "$bp"; then
+  if pgrec $c "$bp"; then
+    stoprec $c; ok "J3b R5 records run-all's process group; the traps' stopall ends it"
+  else
+    no "J3b R5 records run-all's process group; the traps' stopall ends it" "$why"; kill -s TERM -- "-$bp"
+  fi
   wait "$bp"
   rc=$?
 else
@@ -345,11 +443,1209 @@ else
   wait "$bp"
   rc=$?
 fi
+endgrp "$T/$c.pgid"
 r5() {
   [ "$(ls -A "$T/tmp-R5" | wc -l | tr -d ' ')" = 1 ] || { why="$T/tmp-R5 does not hold exactly one entry"; return 1; }
   kept_n R5 143 "$T/tmp-R5/$(ls -A "$T/tmp-R5")"
 }
 res "R5 run-all own dir kept after TERM to the process group" 143 r5
+
+# --- X: Codex runs (node PC-2): codex_env, run_codex, codex_record --------------------------------
+# Each X case: N2_AGENTS=codex, CODEX_FX=$T/fx-<case>, a stub codex (mkcx); no real agent runs.
+DK="dummy-""key"
+CX_NAMES="ALL_PROXY CODEX_HOME HOME HTTPS_PROXY HTTP_PROXY MOCK_API_KEY PATH TERM TMPDIR TZ XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME "
+mkbin "$T/cxonly" 0
+rm "$T/cxonly/opencode"
+mkbin "$T/cx171" 1 0.171.9
+mkbin "$T/cx173" 1 0.173.0
+cat >"$T/connect.py" <<'PY'
+import socket, sys
+s = socket.create_connection(("127.0.0.1", int(sys.argv[1])))
+s.sendall(b"CONNECT example.invalid:443 HTTP/1.1\r\nHost: example.invalid:443\r\n\r\n")
+while s.recv(4096):
+    pass
+PY
+# cxprep <case> <own|caller>: prep, then the Codex words in XENV.
+cxprep() { prep "$1" "$2"; ERR=$T/$1.err; PRE="N2_AGENTS=codex"; XENV="$XENV CODEX_FX=$T/fx-$1"; }
+# MOCKREC <case>: action text that records the mock's pid, so a failed case's mock is stopped here.
+mockrec() { printf '%s' "echo \"\$MOCK_PID\" >'$T/$1.mock'"; }
+killmock() { [ ! -f "$T/$1.mock" ] || kill "$(cat "$T/$1.mock")" 2>/dev/null; }
+# out_has <case> <line>: stdout holds the line.
+out_has() { grep -qxF -- "$2" "$T/$1.out" || { why="stdout: $(tr '\n' '|' <"$T/$1.out")"; return 1; }; }
+# no_stub_env <dir>...: no stub-env.txt under any dir.
+no_stub_env() {
+  for d in "$@"; do
+    [ -z "$(find "$d" -name stub-env.txt 2>/dev/null)" ] || { why="stub-env.txt under $d"; return 1; }
+  done
+}
+# envval <file> <name>: the value of NAME in a stub-env.txt.
+envval() { sed -n "s/^$2=//p" "$1"; }
+# cxcopy <run folder>: the one codex copy folder (codex-pkg.XXXXXX) in it, else exit 1.
+cxcopy() { [ "$(ls -d "$1"/codex-pkg.* 2>/dev/null | wc -l | tr -d ' ')" = 1 ] && ls -d "$1"/codex-pkg.*; }
+# isolation_is <case> <version> [<run versions, default: the version>]
+isolation_is() {
+  f=$T/fx-$1/runs/base/isolation.txt
+  [ "$(cat "$f" 2>/dev/null)" = "home=scratch
+codex_home=scratch
+codex_version=$2
+run_versions=${3:-$2}
+codex_exe=scratch
+env_names=${CX_NAMES% }
+proxy=mock
+daemon=none" ] || { why="isolation.txt: $(tr '\n' '|' <"$f" 2>/dev/null)"; return 1; }
+}
+
+c=X1; cxprep $c own; CP=$T/cxonly; child $c 0 'exit 0'; run $c
+res "X1 a codex-only run needs only codex on PATH" 0 removed $c
+
+c=X2; cxprep $c own; CP=$T/nocx; child $c 0 'exit 0'; run $c
+x2() {
+  out_has X2 'premises: codex is not on PATH' || return 1
+  [ -z "$(ls -A "$T/tmp-X2")" ] || { why="$T/tmp-X2 holds: $(ls -A "$T/tmp-X2")"; return 1; }
+}
+res "X2 no dir made when codex is not on PATH" 1 x2
+
+X3ACT="new_run x; start_mock; $(mockrec X3); run_codex exec hi; python3 -I '$T/connect.py' \"\$(cat \"\$RUN/port\")\"; stop_mock; codex_record base; exit 0"
+c=X3; cxprep $c caller; XENV="$XENV TERM=dumb TZ=America/Los_Angeles"; child $c 0 "$X3ACT"; run $c; killmock $c
+x3() {
+  E=$T/keep-X3/x/home/stub-env.txt
+  [ -f "$E" ] || { why="no $E"; return 1; }
+  names=$(cut -d= -f1 "$E" | LC_ALL=C sort | tr '\n' ' ')
+  [ "$names" = "$CX_NAMES" ] || { why="names: $names"; return 1; }
+  [ "$(envval "$E" HOME)" = "$T/keep-X3/x/home" ] || { why="HOME=$(envval "$E" HOME)"; return 1; }
+  [ "$(envval "$E" CODEX_HOME)" = "$T/keep-X3/x/home/.codex" ] || { why="CODEX_HOME=$(envval "$E" CODEX_HOME)"; return 1; }
+  [ "$(envval "$E" TERM)" = xterm-256color ] || { why="TERM=$(envval "$E" TERM) (the caller's TERM is dumb)"; return 1; }
+  [ "$(envval "$E" TZ)" = UTC ] || { why="TZ=$(envval "$E" TZ) (the caller's TZ is America/Los_Angeles)"; return 1; }
+  P=$(envval "$E" HTTPS_PROXY)
+  printf '%s\n' "$P" | grep -Eqx 'http://127\.0\.0\.1:[0-9]+' || { why="HTTPS_PROXY=$P"; return 1; }
+  [ "$(envval "$E" HTTP_PROXY)" = "$P" ] && [ "$(envval "$E" ALL_PROXY)" = "$P" ] || { why="HTTP_PROXY or ALL_PROXY is not $P"; return 1; }
+  [ "$(envval "$E" MOCK_API_KEY)" = "$DK" ] || { why="MOCK_API_KEY is not the dummy"; return 1; }
+  ! grep -qF -- "$HOME" "$E" || { why="a value holds the tester's HOME"; return 1; }
+  C=$T/keep-X3/x/home/.codex/config.toml
+  grep -qxF "base_url = \"$P/v1\"" "$C" && grep -qxF 'env_key = "MOCK_API_KEY"' "$C" || { why="config.toml: $(tr '\n' '|' <"$C")"; return 1; }
+  isolation_is X3 0.172.0 || return 1
+  [ "$(cat "$T/fx-X3/runs/base/connect.txt")" = "example.invalid:443 refused" ] || { why="connect.txt: $(tr '\n' '|' <"$T/fx-X3/runs/base/connect.txt")"; return 1; }
+}
+res "X3 codex runs isolated, the mock as proxy and base_url, isolation and CONNECT recorded" 0 x3
+
+c=X4; cxprep $c caller; CP=$T/cx171; child $c 0 "new_run x; start_mock; $(mockrec X4); run_codex exec hi"; run $c; killmock $c
+x4() { out_has X4 'premises: codex 0.171.9 is below the minimum 0.172.0' && no_stub_env "$T/keep-X4"; }
+res "X4 a codex below the minimum does not run" 1 x4
+
+c=X5; cxprep $c caller; CP=$T/cx173
+child $c 0 "new_run x; start_mock; $(mockrec X5); run_codex exec hi; stop_mock; codex_record base; exit 0"; run $c; killmock $c
+res "X5 a later codex runs and its version is recorded" 0 isolation_is X5 0.173.0
+
+c=X6; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X6); H='$T/elsewhere-X6'; run_codex exec hi"; run $c; killmock $c
+x6() { out_has X6 'premises: codex HOME is not under the run folder' && no_stub_env "$T/keep-X6" "$T/elsewhere-X6"; }
+res "X6 HOME outside the run folder stops before codex starts" 1 x6
+
+c=X7; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X7); CX_HOME='$T/elsewhere-X7'; run_codex exec hi"; run $c; killmock $c
+x7() { out_has X7 'premises: CODEX_HOME is not under the run folder' && no_stub_env "$T/keep-X7" "$T/elsewhere-X7"; }
+res "X7 CODEX_HOME outside the run folder stops before codex starts" 1 x7
+
+# X8: codex on PATH is a link into the owner's ~/.codex package; the harness runs a scratch copy.
+c=X8; cxprep $c caller
+PK=$T/hX8/.codex/packages/standalone
+mkdir -p "$PK/releases/v/bin" "$T/hX8/.local/bin"
+mkcx "$PK/releases/v/bin/codex" 0.172.0
+: >"$PK/releases/v/codex-package.json"
+ln -s releases/v "$PK/current"
+ln -s "$PK/current/bin/codex" "$T/hX8/.local/bin/codex"
+mkbin "$T/cx8" 1
+rm "$T/cx8/codex"
+CP=$T/hX8/.local/bin:$T/cx8; XENV="$XENV HOME=$T/hX8"
+child $c 0 "new_run x; start_mock; $(mockrec X8); run_codex exec hi; stop_mock; codex_record base; exit 0"; run $c; killmock $c
+x8() {
+  E=$T/keep-X8/x/home/stub-env.txt
+  K=$(cxcopy "$T/keep-X8/x") || { why="not one codex-pkg.* folder"; return 1; }
+  [ "$(cat "$T/keep-X8/x/home/stub-exe.txt" 2>/dev/null)" = "$K/p/bin/codex" ] ||
+    { why="stub-exe.txt: $(cat "$T/keep-X8/x/home/stub-exe.txt" 2>/dev/null)"; return 1; }
+  [ -f "$K/p/codex-package.json" ] || { why="no codex-package.json in the copy"; return 1; }
+  python3 -I -c 'import os, sys
+b = os.path.realpath(sys.argv[2])
+sys.exit(any(os.path.realpath(p) == b or os.path.realpath(p).startswith(b + "/") for p in sys.argv[1].split(":")))' \
+    "$(envval "$E" PATH)" "$T/hX8/.codex" || { why="a PATH entry is under ~/.codex: $(envval "$E" PATH)"; return 1; }
+}
+res "X8 a codex under ~/.codex runs from a scratch copy of its package" 0 x8
+
+c=X9; cxprep $c caller; mkdir -p "$T/hX9/.codex/scr"; XENV="CODEX_FX=$T/fx-$c HOME=$T/hX9 N2_SCRATCH=$T/hX9/.codex/scr"
+child $c 0 "new_run x; start_mock; $(mockrec X9); run_codex exec hi"; run $c; killmock $c
+x9() { out_has X9 'premises: the run folder is under ~/.codex' && no_stub_env "$T/hX9"; }
+res "X9 a run folder under ~/.codex stops before codex starts" 1 x9
+
+c=X10; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X10); EXTRA_ENV='HOME=$T/elsewhere-X10'; run_codex exec hi"; run $c; killmock $c
+x10() { out_has X10 'premises: EXTRA_ENV may not set HOME' && no_stub_env "$T/keep-X10"; }
+res "X10 EXTRA_ENV may not set HOME" 1 x10
+
+c=X11; cxprep $c caller; child $c 0 'new_run x; run_codex exec hi'; run $c
+x11() { out_has X11 'premises: codex_env needs start_mock first' && no_stub_env "$T/keep-X11"; }
+res "X11 run_codex needs start_mock first" 1 x11
+
+c=X12; cxprep $c caller; child $c 0 'new_run x; codex_record base'; run $c
+x12() {
+  out_has X12 'premises: codex_record: no codex run in this run folder' || return 1
+  [ ! -e "$T/fx-X12/runs/base" ] || { why="$T/fx-X12/runs/base was made"; return 1; }
+}
+res "X12 codex_record needs a codex run in this run folder" 1 x12
+
+c=X13; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X13); run_codex exec hi; stop_mock; codex_record ../x"; run $c; killmock $c
+x13() { out_has X13 "premises: bad part name '../x'" && [ ! -e "$T/fx-X13" ] || { why="${why:-$T/fx-X13 was made}"; return 1; }; }
+res "X13 codex_record refuses a bad part name" 1 x13
+
+# --- Review round 1 (F1-F11) -------------------------------------------------------------------
+# X14 (F1): EXTRA_ENV may not set a name codex_env sets, a proxy or CA name in either case, any
+# XDG_* or CODEX_* name, TMPDIR, TZ (PC-10). The check comes before the mock check, so no mock runs.
+for w in CODEX_HOME=x PATH=x TERM=x TZ=x tz=x TMPDIR=x MOCK_API_KEY=x HTTPS_PROXY= HTTP_PROXY= ALL_PROXY= \
+  https_proxy=x http_proxy=x all_proxy=x 'NO_PROXY=*' 'no_proxy=*' SSL_CERT_FILE=x SSL_CERT_DIR=x \
+  CURL_CA_BUNDLE=x REQUESTS_CA_BUNDLE=x XDG_CONFIG_HOME=x XDG_RUNTIME_DIR=x CODEX_SQLITE_HOME=x; do
+  c=X14; cxprep $c caller; child $c 0 "new_run x; EXTRA_ENV='$w'; run_codex exec hi"; run $c
+  x14() { out_has X14 "premises: EXTRA_ENV may not set ${w%%=*}" && no_stub_env "$T/keep-X14"; }
+  res "X14 EXTRA_ENV may not set ${w%%=*}" 1 x14
+  rm -rf "$T/keep-X14"
+done
+c=X14b; cxprep $c caller; child $c 0 "new_run x; EXTRA_ENV='RUST_LOG=1 justaword'; run_codex exec hi"; run $c
+x14b() { out_has X14b "premises: EXTRA_ENV word 'justaword' is not NAME=value" && no_stub_env "$T/keep-X14b"; }
+res "X14b EXTRA_ENV words are NAME=value" 1 x14b
+
+# X15 (F1, G2): an allowed name with a plain value runs; a value that names a path is refused
+# (review round 2: no /, \, ~ or .., so no path at all: absolute, relative or prefixed).
+c=X15; cxprep $c caller; XENV="$XENV HOME=$T"
+child $c 0 "new_run x; start_mock; $(mockrec X15); EXTRA_ENV='RUST_LOG=codex_core=debug,info'; run_codex exec hi; EXTRA_ENV='RUST_LOG=/usr:$T/other-X15'; run_codex exec hi"
+run $c; killmock $c
+x15() {
+  out_has X15 "premises: EXTRA_ENV RUST_LOG value may hold only A-Za-z0-9_.:@%+,=- and no ..: '/usr:$T/other-X15'" || return 1
+  E=$T/keep-X15/x/home/stub-env.txt
+  [ "$(envval "$E" RUST_LOG)" = "codex_core=debug,info" ] || { why="first run: RUST_LOG=$(envval "$E" RUST_LOG)"; return 1; }
+}
+res "X15 an EXTRA_ENV value with a path is refused, a plain value runs" 1 x15
+# X15b (F1, G2): relative, prefixed, home, backslash and .. values are refused before codex starts.
+for v in '../../../owner/.codex' 'x@/owner/.codex' '~x' 'a\b' 'a..b'; do
+  c=X15b; cxprep $c caller; mkdir -p "$T/hX15b"; XENV="$XENV HOME=$T/hX15b"
+  child $c 0 "new_run x; EXTRA_ENV='RUST_LOG=$v'; run_codex exec hi"; run $c
+  res "X15b EXTRA_ENV value '$v' is refused" 1 out_has X15b "premises: EXTRA_ENV RUST_LOG value may hold only A-Za-z0-9_.:@%+,=- and no ..: '$v'"
+  rm -rf "$T/keep-X15b"
+done
+# X15c (G2): a name that is not on the allow-list (EXTRA_ENV_ALLOW in lib.sh) is refused.
+for w in ZDOTDIR=x SHELL=zsh OK1=1; do
+  c=X15c; cxprep $c caller; child $c 0 "new_run x; EXTRA_ENV='$w'; run_codex exec hi"; run $c
+  res "X15c EXTRA_ENV name ${w%%=*} is not on the allow-list" 1 out_has X15c "premises: EXTRA_ENV name ${w%%=*} is not in EXTRA_ENV_ALLOW"
+  rm -rf "$T/keep-X15c"
+done
+
+# X16, X17 (F2): codex_record derives each line from what the runs used ($RUN/cx-used.d): a HOME outside
+# the run folder or a proxy that is not the mock is written as such, and codex_record exits 1.
+c=X16; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X16); run_codex exec hi; stop_mock; for f in \"\$RUN\"/cx-used.d/*; do sed 's| HOME=[^ ]*| HOME=$T/elsewhere-X16|' \"\$f\" >\"\$RUN/u\"; mv \"\$RUN/u\" \"\$f\"; done; codex_record base"
+run $c; killmock $c
+x16() {
+  out_has X16 "premises: codex_record: HOME $T/elsewhere-X16 is not under the run folder" || return 1
+  grep -qx 'home=outside-run' "$T/fx-X16/runs/base/isolation.txt" || { why="isolation.txt: $(tr '\n' '|' <"$T/fx-X16/runs/base/isolation.txt")"; return 1; }
+}
+res "X16 codex_record records a HOME outside the run folder and exits 1" 1 x16
+c=X17; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X17); run_codex exec hi; stop_mock; for f in \"\$RUN\"/cx-used.d/*; do sed 's| HTTP_PROXY=[^ ]*| HTTP_PROXY=http://127.0.0.1:1|' \"\$f\" >\"\$RUN/u\"; mv \"\$RUN/u\" \"\$f\"; done; codex_record base"
+run $c; killmock $c
+x17() {
+  out_has X17 "premises: codex_record: HTTP_PROXY is not the mock" || return 1
+  grep -qx 'proxy=other' "$T/fx-X17/runs/base/isolation.txt" || { why="isolation.txt: $(tr '\n' '|' <"$T/fx-X17/runs/base/isolation.txt")"; return 1; }
+}
+res "X17 codex_record records a proxy that is not the mock and exits 1" 1 x17
+
+# X18 (F3, G1): the codex that runs must be a native program (Mach-O, ELF or PE magic bytes); a
+# script is refused before anything runs, with or without #!, after a BOM or a blank line.
+mkbin "$T/cx18" 1; rm "$T/cx18/codex"
+for k in shebang plain bom blank text mz-text elf-text; do
+  case $k in
+    shebang) printf '#!/bin/sh\nexec "$HOME/.codex/bin/codex" "$@"\n' ;;
+    plain) printf 'exec "$HOME/.codex/bin/codex" "$@"\n' ;;
+    bom) printf '\357\273\277#!/bin/sh\nexec "$HOME/.codex/bin/codex" "$@"\n' ;;
+    blank) printf '\n#!/bin/sh\nexec "$HOME/.codex/bin/codex" "$@"\n' ;;
+    text) printf 'MZ' | cut -c1 ;;
+    # H1: macOS answers ENOEXEC for these and env runs them with /bin/sh.
+    mz-text) printf 'MZ=1\n: >"$HOME/ran-by-sh"\necho "codex-cli 0.172.0"\n' ;;
+    elf-text) printf '\177ELF\n: >"$HOME/ran-by-sh"\necho "codex-cli 0.172.0"\n' ;;
+  esac >"$T/cx18/codex"
+  chmod +x "$T/cx18/codex"
+  c=X18; cxprep $c caller; CP=$T/cx18; child $c 0 "new_run x; start_mock; $(mockrec X18); run_codex exec hi"; run $c; killmock $c
+  x18() {
+    out_has X18 "premises: codex at $T/cx18/codex is not a native program (Mach-O, ELF or PE)" && no_stub_env "$T/keep-X18" || return 1
+    [ -z "$(find "$T/keep-X18" -name ran-by-sh)" ] || { why="the text ran under sh"; return 1; }
+  }
+  res "X18 a codex that is not a native program is refused ($k)" 1 x18
+  rm -rf "$T/keep-X18"
+done
+# X18b (H1): the magic bytes alone are not enough. `file -b` must name an executable of the host's
+# own format (Mach-O on Darwin, ELF on Linux, PE32 on Windows): ELF and PE headers that are not
+# whole programs are refused before anything runs.
+for k in elf pe; do
+  case $k in elf) printf '\177ELF\002\001\001' ;; pe) printf 'MZ\220\000' ;; esac >"$T/cx18/codex"
+  c=X18b; cxprep $c caller; CP=$T/cx18; child $c 0 "new_run x; start_mock; $(mockrec X18b); run_codex exec hi"; run $c; killmock $c
+  res "X18b $k magic bytes alone are refused" 1 out_has X18b "premises: codex at $T/cx18/codex is not a native program (Mach-O, ELF or PE)"
+  rm -rf "$T/keep-X18b"
+done
+# X18c (H1): the compiled stub (a native executable of this host) passes n2_native.
+c=X18c; cxprep $c caller; child $c 0 'if n2_native "$CODEX_BIN"; then echo native=0; fi; exit 0'; run $c
+res "X18c a compiled program of this host passes the native check" 0 out_has X18c "native=0"
+# X18d (H1): a native program of the other host format is refused (a stub uname names the other
+# system: Linux on Darwin, Darwin elsewhere).
+mkbin "$T/cx18d" 1
+case "$(uname -s)" in Darwin) _o=Linux ;; *) _o=Darwin ;; esac
+rm "$T/cx18d/uname"; printf '#!/bin/sh\necho %s\n' "$_o" >"$T/cx18d/uname"; chmod +x "$T/cx18d/uname"
+c=X18d; cxprep $c caller; CP=$T/cx18d; child $c 0 "new_run x; start_mock; $(mockrec X18d); run_codex exec hi"; run $c; killmock $c
+x18d() { out_has X18d "premises: codex at $T/cx18d/codex is not a native program (Mach-O, ELF or PE)" && no_stub_env "$T/keep-X18d"; }
+res "X18d a native program of another host format ($_o) is refused" 1 x18d
+
+# X19 (F3, G9): a codex outside ~/.codex also runs from a copy in the run folder; PATH's first entry is
+# that copy (each run folder has its own: no copy is shared between runs or processes).
+c=X19; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X19); run_codex exec hi; stop_mock; exit 0"; run $c; killmock $c
+x19() {
+  E=$T/keep-X19/x/home/stub-env.txt
+  K=$(cxcopy "$T/keep-X19/x") || { why="not one codex-pkg.* folder"; return 1; }
+  [ "$(cat "$T/keep-X19/x/home/stub-exe.txt" 2>/dev/null)" = "$K/p/codex" ] ||
+    { why="stub-exe.txt: $(cat "$T/keep-X19/x/home/stub-exe.txt" 2>/dev/null)"; return 1; }
+  [ "$(envval "$E" PATH | cut -d: -f1)" = "$K/p" ] || { why="PATH=$(envval "$E" PATH)"; return 1; }
+}
+res "X19 a codex outside ~/.codex runs from a copy in the run folder, first on PATH" 0 x19
+
+# X20 (F4): a package whose copy holds a link out of the copy is refused and the copy removed.
+c=X20; cxprep $c caller
+PK=$T/hX20/.codex/packages/standalone/releases/v
+mkdir -p "$PK/bin" "$T/hX20/.local/bin"; mkcx "$PK/bin/codex" 0.172.0
+ln -s "$T/hX20/.codex" "$PK/owner"; ln -s bin/codex "$PK/codex"
+ln -s "$PK/bin/codex" "$T/hX20/.local/bin/codex"
+CP=$T/hX20/.local/bin:$T/cx8; XENV="$XENV HOME=$T/hX20"
+child $c 0 "new_run x; start_mock; $(mockrec X20); run_codex exec hi"; run $c; killmock $c
+x20() {
+  out_has X20 "premises: the codex package copy holds a link out of it: owner" || return 1
+  [ -z "$(ls -A "$T/keep-X20/x" | grep '^codex-pkg')" ] || { why="left: $(ls -A "$T/keep-X20/x" | tr '\n' ' ')"; return 1; }
+  no_stub_env "$T/keep-X20" "$T/hX20"
+}
+res "X20 a package copy with a link out of it is refused and removed" 1 x20
+
+# X21-X23 (F5): a run that fails after start_mock leaves no mock running (start_mock's EXIT trap).
+# alive <pid file>: 0 when the process named in it still runs.
+alive() { [ -s "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
+c=X21; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X21); H='$T/elsewhere-X21'; run_codex exec hi"; run $c
+x21() { [ -s "$T/X21.mock" ] || { why="no pid"; return 1; }; ! alive "$T/X21.mock" || { why="mock $(cat "$T/X21.mock") still runs"; return 1; }; }
+res "X21 codex_env failing after start_mock stops the mock (caller dir)" 1 x21
+killmock X21
+c=X22; cxprep $c own; child $c 0 "new_run x; start_mock; $(mockrec X22); H='$T/elsewhere-X22'; run_codex exec hi"; run $c
+x22() { ! alive "$T/X22.mock" || { why="mock still runs"; return 1; }; kept_n X22 1; }
+res "X22 codex_env failing after start_mock stops the mock, own dir kept" 1 x22
+killmock X22
+c=X23; cxprep $c caller
+child $c 0 "trap 'echo prev \$? >\"$T/X23.prev\"' EXIT; new_run x; start_mock; $(mockrec X23); H='$T/elsewhere-X23'; run_codex exec hi"; run $c
+x23() {
+  ! alive "$T/X23.mock" || { why="mock still runs"; return 1; }
+  [ "$(cat "$T/X23.prev" 2>/dev/null)" = "prev 1" ] || { why="earlier EXIT trap: $(cat "$T/X23.prev" 2>/dev/null)"; return 1; }
+}
+res "X23 start_mock chains an earlier EXIT trap" 1 x23
+killmock X23
+
+# X24 (F6): an existing config.toml whose base_url is not the running mock is refused.
+c=X24; cxprep $c caller
+child $c 0 "new_run x; mkdir -p \"\$H/.codex\"; echo 'base_url = \"http://127.0.0.1:1/v1\"' >\"\$H/.codex/config.toml\"; start_mock; $(mockrec X24); run_codex exec hi"
+run $c; killmock $c
+x24() {
+  P=$(cat "$T/keep-X24/x/port" 2>/dev/null)
+  out_has X24 "premises: config.toml base_url is 'http://127.0.0.1:1/v1', not 'http://127.0.0.1:$P/v1'" && no_stub_env "$T/keep-X24"
+}
+res "X24 a config.toml base_url that is not the mock is refused" 1 x24
+c=X24b; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X24b); run_codex exec hi; stop_mock; start_mock; run_codex exec hi"
+run $c; killmock $c
+x24b() { grep -q "^premises: config.toml base_url is 'http://127.0.0.1:[0-9]*/v1', not 'http://127.0.0.1:[0-9]*/v1'\$" "$T/X24b.out" || { why="stdout: $(tr '\n' '|' <"$T/X24b.out")"; return 1; }; }
+res "X24b a mock restart in one run is refused (old base_url)" 1 x24b
+
+# X25 (F9, H7): TERM is the constant xterm-256color; the caller's TERM (here with a blank) is not used.
+c=X25; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X25); TERM='xterm 256'; run_codex exec hi; stop_mock; exit 0"; run $c; killmock $c
+x25() { [ "$(envval "$T/keep-X25/x/home/stub-env.txt" TERM)" = xterm-256color ] || { why="TERM=$(envval "$T/keep-X25/x/home/stub-env.txt" TERM)"; return 1; }; }
+res "X25 codex gets TERM=xterm-256color, not the caller's TERM" 0 x25
+
+# X26 (F10, G5): a codex-pkg left in N2_SCRATCH (here a script) is never used: each codex_env
+# copies the program fresh into the run folder.
+c=X26; cxprep $c caller; mkdir -p "$T/keep-X26/codex-pkg"
+printf '#!/bin/sh\n: >"$HOME/X26-script-ran"\n' >"$T/keep-X26/codex-pkg/codex"; chmod +x "$T/keep-X26/codex-pkg/codex"
+child $c 0 "new_run x; start_mock; $(mockrec X26); run_codex exec hi; stop_mock; exit 0"; run $c; killmock $c
+x26() {
+  K=$(cxcopy "$T/keep-X26/x") || { why="not one codex-pkg.* folder"; return 1; }
+  [ "$(cat "$T/keep-X26/x/home/stub-exe.txt" 2>/dev/null)" = "$K/p/codex" ] || { why="codex did not run from the run folder's copy"; return 1; }
+  [ ! -e "$T/keep-X26/x/home/X26-script-ran" ] || { why="the old codex-pkg ran"; return 1; }
+}
+res "X26 an old codex-pkg in N2_SCRATCH is not used" 0 x26
+# X26b (G5): a copy changed after a run (here replaced by a script) is copied fresh for the next run.
+c=X26b; cxprep $c caller; XENV="$XENV HOME=$T/hX8"; CP=$T/hX8/.local/bin:$T/cx8
+child $c 0 "new_run x; start_mock; $(mockrec X26b); run_codex exec a; printf '#!/bin/sh\\n: >\"\$HOME/X26b-script-ran\"\\n' >\"\$CODEX_EXE\"; run_codex exec b; stop_mock; exit 0"
+run $c; killmock $c
+x26b() {
+  [ "$(cat "$T/keep-X26b/x/home/stub-args.txt" 2>/dev/null)" = "exec b" ] || { why="the second run did not run the stub: $(cat "$T/keep-X26b/x/home/stub-args.txt" 2>/dev/null)"; return 1; }
+  [ ! -e "$T/keep-X26b/x/home/X26b-script-ran" ] || { why="the changed copy ran"; return 1; }
+  [ "$(ls -d "$T/keep-X26b/x"/codex-pkg.* | wc -l | tr -d ' ')" = 2 ] || { why="not one copy folder per run"; return 1; }
+  for K in "$T/keep-X26b/x"/codex-pkg.*; do [ -f "$K/p/codex-package.json" ] || { why="the package copy $K is not complete"; return 1; }; done
+}
+res "X26b each run_codex copies the package fresh" 0 x26b
+
+# X27 (F11): N2_AGENTS from the environment is refused; only the runner's own setting counts.
+c=X27; prep $c own; ERR=$T/$c.err; XENV="N2_AGENTS=codex"; CP=$T/cxonly; child $c 0 'exit 0'; run $c
+x27() {
+  out_has X27 'premises: N2_AGENTS comes from the environment; only the runner sets it (unset N2_AGENTS)' || return 1
+  [ -z "$(ls -A "$T/tmp-X27")" ] || { why="$T/tmp-X27 holds: $(ls -A "$T/tmp-X27")"; return 1; }
+}
+res "X27 an exported N2_AGENTS is refused" 1 x27
+
+# --- Review round 2 (G1-G10) -------------------------------------------------------------------
+# X28 (G3): the owner's ~/.codex in another letter case is still the owner's ~/.codex (the checks
+# that keep a path out of it compare case-folded; macOS folders ignore case).
+c=X28; cxprep $c caller; mkdir -p "$T/hX28/.codex/scr"; XENV="CODEX_FX=$T/fx-$c HOME=$T/hX28 N2_SCRATCH=$T/HX28/.CODEX/scr"
+child $c 0 "new_run x; start_mock; $(mockrec X28); run_codex exec hi"; run $c; killmock $c
+x28() { out_has X28 'premises: the run folder is under ~/.codex' && no_stub_env "$T/hX28"; }
+res "X28 an N2_SCRATCH under an upper-cased ~/.codex is refused" 1 x28
+c=X28b; cxprep $c caller; mkdir -p "$T/hX28b/.codex"; XENV="$XENV HOME=$T/hX28b"
+child $c 0 "new_run x; start_mock; $(mockrec X28b); RUN='$T/HX28B/.CODEX/run'; mkdir -p \"\$RUN/home\"; H=\$RUN/home; CX_HOME=\$H/.codex; run_codex exec hi"
+run $c; killmock $c
+x28b() { out_has X28b 'premises: the run folder is under ~/.codex' && no_stub_env "$T/hX28b"; }
+res "X28b a run folder under an upper-cased ~/.codex is refused" 1 x28b
+
+# X29 (G4): a run_codex inside $(...) or a pipeline (a subshell) is in the record too: each run
+# appends its line to $RUN/cx-used, and codex_record reads that file.
+c=X29; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X29); EXTRA_ENV=RUST_LOG=trace; out=\$(run_codex exec a); EXTRA_ENV=RUST_BACKTRACE=1; run_codex exec b | cat >/dev/null; EXTRA_ENV=; stop_mock; codex_record base; exit 0"
+run $c; killmock $c
+x29() {
+  f=$T/fx-X29/runs/base/isolation.txt
+  grep -qx 'codex_version=0.172.0' "$f" 2>/dev/null || { why="isolation.txt: $(tr '\n' '|' <"$f" 2>/dev/null)"; return 1; }
+  grep -qx "env_names=ALL_PROXY CODEX_HOME HOME HTTPS_PROXY HTTP_PROXY MOCK_API_KEY PATH RUST_BACKTRACE RUST_LOG TERM TMPDIR TZ XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME" "$f" ||
+    { why="isolation.txt: $(tr '\n' '|' <"$f")"; return 1; }
+}
+res "X29 runs in \$(...) and in a pipeline are recorded" 0 x29
+
+# X30 (G6): a second start_mock while the first mock runs is refused; the first mock is stopped.
+c=X30; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X30); start_mock; echo second >'$T/X30.second'"; run $c
+x30() {
+  grep -q '^premises: start_mock: the mock (pid [0-9]*) still runs; stop_mock first$' "$T/X30.out" || { why="stdout: $(tr '\n' '|' <"$T/X30.out")"; return 1; }
+  [ ! -e "$T/X30.second" ] || { why="the second start_mock went on"; return 1; }
+  ! alive "$T/X30.mock" || { why="the first mock still runs"; return 1; }
+}
+res "X30 a second start_mock is refused and the first mock stopped" 1 x30
+killmock X30
+
+# X21sh (G10): the mock trap path under /bin/sh (the other cases run under LIB_TEST_SH or dash).
+c=X21sh; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X21sh); H='$T/elsewhere-X21sh'; run_codex exec hi"
+_sh=$SH; SH=/bin/sh; run $c; SH=$_sh
+x21sh() { [ -s "$T/X21sh.mock" ] || { why="no pid"; return 1; }; ! alive "$T/X21sh.mock" || { why="mock still runs"; return 1; }; }
+res "X21sh codex_env failing after start_mock stops the mock under /bin/sh" 1 x21sh
+killmock X21sh
+
+# --- Review round 3 (H1-H7) -------------------------------------------------------------------
+# X28c (H5): the owner's ~/.codex spelled in NFD is the same folder as in NFC (APFS ignores the
+# normalization form): n2_under_fold compares NFC, case-folded real paths.
+NFC=$(printf 'Jos\303\251') NFD=$(printf 'Jose\314\201')
+mkdir -p "$T/h$NFC/.codex/packages"
+c=X28c; cxprep $c caller
+child $c 0 "if n2_under_fold '$T/h$NFD/.codex/packages/x' '$T/h$NFC/.codex'; then echo nfd=0; fi; if n2_under_fold '$T/h$NFC/.codex/packages/x' '$T/h$NFD/.codex'; then echo nfc=0; fi; exit 0"; run $c
+x28c() { out_has X28c "nfd=0" && out_has X28c "nfc=0"; }
+res "X28c a path under ~/.codex in NFD is under the NFC spelling (and back)" 0 x28c
+
+# X31 (H2): the version is checked on every codex_env (each copies the program fresh), each record
+# holds its own version, and codex_record exits 1 when the records hold more than one version.
+# The install changes between two runs (a link on PATH swapped to another program).
+mkdir -p "$T/cx31/bin" "$T/cx31/v172" "$T/cx31/v173" "$T/cx31/v171"
+mkcx "$T/cx31/v172/codex" 0.172.0; mkcx "$T/cx31/v173/codex" 0.173.0; mkcx "$T/cx31/v171/codex" 0.171.9
+mkbin "$T/cx31p" 1; rm "$T/cx31p/codex"
+LN=$(command -v ln)
+c=X31; cxprep $c caller; ln -sfn "$T/cx31/v172/codex" "$T/cx31/bin/codex"; CP=$T/cx31/bin:$T/cx31p
+child $c 0 "new_run x; start_mock; $(mockrec X31); run_codex exec a; $LN -sfn '$T/cx31/v173/codex' '$T/cx31/bin/codex'; run_codex exec b; stop_mock; codex_record base"
+run $c; killmock $c
+x31() {
+  out_has X31 "premises: codex_record: more than one codex version: 0.172.0,0.173.0" || return 1
+  grep -qx 'run_versions=0.172.0,0.173.0' "$T/fx-X31/runs/base/isolation.txt" || { why="isolation.txt: $(tr '\n' '|' <"$T/fx-X31/runs/base/isolation.txt")"; return 1; }
+}
+res "X31 a codex that changes between runs is recorded and codex_record exits 1" 1 x31
+c=X31b; cxprep $c caller; ln -sfn "$T/cx31/v172/codex" "$T/cx31/bin/codex"; CP=$T/cx31/bin:$T/cx31p
+child $c 0 "new_run x; start_mock; $(mockrec X31b); run_codex exec a; $LN -sfn '$T/cx31/v171/codex' '$T/cx31/bin/codex'; run_codex exec b"
+run $c; killmock $c
+x31b() { out_has X31b 'premises: codex 0.171.9 is below the minimum 0.172.0' && [ "$(cat "$T/keep-X31b/x/home/stub-args.txt")" = "exec a" ] || { why="${why:-the second run ran}"; return 1; }; }
+res "X31b a codex below the minimum at the second run does not run" 1 x31b
+c=X31c; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X31c); run_codex exec hi; stop_mock; for f in \"\$RUN\"/cx-used.d/*; do sed 's|^0.172.0 |0.100.0 |' \"\$f\" >\"\$RUN/u\"; mv \"\$RUN/u\" \"\$f\"; done; codex_record base"
+run $c; killmock $c
+res "X31c a record with a version below the minimum makes codex_record exit 1" 1 out_has X31c "premises: codex_record: codex 0.100.0 is below the minimum 0.172.0"
+
+# X32 (H4): two run_codex at once in one run folder (records longer than one pipe write): each
+# writes its own record file and runs its own copy (no copy is removed by the other). No timing is
+# asserted.
+LONG=$(python3 -I -c 'print("a" * 1400)')
+c=X32; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X32); EXTRA_ENV=RUST_LOG=$LONG; run_codex exec a & _a=\$!; run_codex exec b & _b=\$!; wait \$_a; wait \$_b; stop_mock; codex_record base; exit 0"
+run $c; killmock $c
+x32() {
+  D=$T/keep-X32/x/cx-used.d
+  [ "$(ls "$D" 2>/dev/null | wc -l | tr -d ' ')" = 2 ] || { why="records: $(ls "$D" 2>/dev/null | tr '\n' ' ')"; return 1; }
+  for f in "$D"/*; do
+    [ "$(wc -l <"$f" | tr -d ' ')" = 1 ] || { why="$f does not hold one line"; return 1; }
+    grep -q "^0\.172\.0 http://127\.0\.0\.1:[0-9]* [^ ]*/codex-pkg\.[^ /]*/p/codex env -i .* RUST_LOG=$LONG\$" "$f" || { why="$f: $(cut -c1-200 "$f")"; return 1; }
+    [ -f "$(cut -d' ' -f3 "$f")" ] || { why="the copy of $f was removed"; return 1; }
+  done
+  [ "$(cut -d' ' -f3 "$D"/* | sort -u | wc -l | tr -d ' ')" = 2 ] || { why="the two runs share a copy"; return 1; }
+  grep -qx 'run_versions=0.172.0,0.172.0' "$T/fx-X32/runs/base/isolation.txt" || { why="isolation.txt: $(tr '\n' '|' <"$T/fx-X32/runs/base/isolation.txt" 2>/dev/null)"; return 1; }
+}
+res "X32 two concurrent run_codex keep both records and copies intact" 0 x32
+
+# X33 (H6): the EXIT trap of a chain of three holds no earlier trap twice (the old chain copied the
+# earlier trap into both branches of an if: 4 copies of the first at the third level); the chain
+# runs newest first and the first trap gets the script's status.
+c=X33; cxprep $c caller
+child $c 0 "new_run x; trap 'echo \"base \$?\" >>\"$T/X33.log\"' EXIT; n2_trap_chain 'echo a >>\"$T/X33.log\"'; n2_trap_chain 'echo b >>\"$T/X33.log\"'; n2_trap_chain 'echo c >>\"$T/X33.log\"'; trap >'$T/X33.traps'; exit 3"
+run $c
+x33() {
+  [ "$(tr '\n' ' ' <"$T/X33.log" 2>/dev/null)" = "c b a base 3 " ] || { why="log: $(tr '\n' ' ' <"$T/X33.log" 2>/dev/null)"; return 1; }
+  for w in 'echo a' 'echo b' 'base'; do
+    k=$(grep 'EXIT$' "$T/X33.traps" | grep -o "$w" | wc -l | tr -d ' ')
+    [ "$k" -le 1 ] || { why="'$w' is in the EXIT trap $k times"; return 1; }
+  done
+}
+res "X33 a chain of three holds no earlier trap twice" 3 x33
+
+# --- B: codex/base.sh schema pin (F8) -------------------------------------------------------------
+# A copy of the part with lib.sh, ver.sh, scrub.py and mock_upstream.py; CODEX_FX holds a schema.
+mkdir -p "$T/B-pd/codex"
+cp "$HERE/lib.sh" "$HERE/ver.sh" "$HERE/scrub.py" "$HERE/mock_upstream.py" "$T/B-pd/"
+sed "/^\\. \"\\\$PREMISES_DIR\\/lib.sh\"\$/a\\
+. '$T/seam.sh'" "$HERE/codex/base.sh" >"$T/B-pd/codex/base.sh"
+grep -qxF ". '$T/seam.sh'" "$T/B-pd/codex/base.sh" || echo "lib tests: B: the seam line was not added to base.sh"
+SCHEMA=$REPO/fixtures/codex/config.schema.json SRC=$REPO/fixtures/codex/config.schema.source.txt
+PIN=52fb96b1ff79a51bf9ce31695a4a22d4e80f57591d91bad5747b657f4e612bac
+# bprep <case>: CODEX_FX=$T/fx-<case> with the real schema and source file.
+bprep() { prep "$1" caller; ERR=$T/$1.err; mkdir -p "$T/fx-$1"; cp "$SCHEMA" "$SRC" "$T/fx-$1/"; XENV="$XENV CODEX_FX=$T/fx-$1"; }
+brun() {
+  # shellcheck disable=SC2086
+  env PATH="$CP" TMPDIR="$T/tmp-$1" $XENV "$SH" "$T/B-pd/codex/base.sh" >"$T/$1.out" 2>"$T/$1.err"
+  rc=$?
+}
+c=B1; bprep $c; brun $c
+b1() { out_has B1 'codex base: ok (codex 0.172.0)' && isolation_is B1 0.172.0 0.172.0,0.172.0,0.172.0,0.172.0; }
+res "B1 base passes with the pinned schema" 0 b1
+c=B2; bprep $c; printf 'x' >>"$T/fx-$c/config.schema.json"; brun $c
+b2() {
+  grep -q "^premises: config.schema.json sha256 is [0-9a-f]*, not the pinned $PIN\$" "$T/B2.out" || { why="stdout: $(tr '\n' '|' <"$T/B2.out")"; return 1; }
+  [ ! -e "$T/fx-B2/runs" ] || { why="runs/ was written"; return 1; }
+}
+res "B2 a schema fixture that is not the pinned file fails" 1 b2
+c=B3; bprep $c; sed 's/^sha256: .*/sha256: 00/' "$SRC" >"$T/fx-$c/config.schema.source.txt"; brun $c
+res "B3 a source file with another sha256 fails" 1 out_has B3 "premises: config.schema.source.txt sha256 is '00', not the pinned $PIN"
+
+# B4, B5 (G7): the schema fetch goes to a temporary file in the run folder, removed on a signal or a
+# failed check; the fixture folder never holds a partial file. A local server stands in for the URL.
+cat >"$T/srv.py" <<'PY'
+import os, signal, socket, sys
+mode, port_file, ready = sys.argv[1:4]
+s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(5)
+with open(port_file + ".tmp", "w") as f:
+    f.write(str(s.getsockname()[1]))
+os.rename(port_file + ".tmp", port_file)
+c, _ = s.accept(); c.recv(4096)
+if mode == "hang":
+    c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n{\"partial\": ")
+    open(ready, "w").close()
+    signal.pause()  # until lib_test kills it after the case (no time bound)
+else:
+    c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+    c.close()
+PY
+# fprep <case> <hang|bad>: an empty CODEX_FX, a server, and a copy of base.sh that fetches from it.
+fprep() {
+  prep "$1" caller; ERR=$T/$1.err; mkdir -p "$T/fx-$1" "$T/$1-pd/codex"; XENV="$XENV CODEX_FX=$T/fx-$1"
+  cp "$T/B-pd/lib.sh" "$T/B-pd/ver.sh" "$T/B-pd/scrub.py" "$T/B-pd/mock_upstream.py" "$T/$1-pd/"
+  python3 -I "$T/srv.py" "$2" "$T/$1.port" "$T/$1.ready" & SRV=$!
+  echo "$SRV" >"$T/$1-srv.dpid"
+  # The server writes the port file to a temporary name and renames it, so it is whole once it exists.
+  waitready "$T/$1.port" "$SRV" || NR=1
+  sed "s|^URL=.*|URL=http://127.0.0.1:$(cat "$T/$1.port")/s|" "$T/B-pd/codex/base.sh" >"$T/$1-pd/codex/base.sh"
+}
+# no_partial <case>: no file in CODEX_FX and no schema temporary in the run folder.
+no_partial() {
+  [ -z "$(ls -A "$T/fx-$1")" ] || { why="CODEX_FX holds: $(ls -A "$T/fx-$1" | tr '\n' ' ')"; return 1; }
+  [ -z "$(ls -A "$T/keep-$1/codex-base" 2>/dev/null | grep '^schema')" ] || { why="run folder holds: $(ls -A "$T/keep-$1/codex-base" | tr '\n' ' ')"; return 1; }
+}
+c=B4; fprep $c hang
+# shellcheck disable=SC2086
+perl -e 'setpgrp(0, 0); exec @ARGV or die' env PATH="$CP" TMPDIR="$T/tmp-$c" $XENV "$SH" "$T/$c-pd/codex/base.sh" >"$T/$c.out" 2>"$T/$c.err" &
+bp=$!
+echo "$bp" >"$T/$c.pgid"
+# The server writes B4.ready after it has accepted base.sh's request and sent the partial body: by
+# then base.sh has made its schema temporary and set its trap, and curl is reading the body.
+if waitready "$T/$c.ready" "$bp"; then
+  if pgrec $c "$bp"; then
+    stoprec $c; ok "J3c B4 records base.sh's process group; the traps' stopall ends it"
+  else
+    no "J3c B4 records base.sh's process group; the traps' stopall ends it" "$why"; kill -s TERM -- "-$bp"
+  fi
+  wait "$bp"; rc=$?
+else
+  NR=1; kill -s KILL -- "-$bp" 2>/dev/null; wait "$bp"; rc=$?
+fi
+endgrp "$T/$c.pgid"
+kill "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null; rm -f "$T/$c-srv.dpid"
+res "B4 a TERM during the schema fetch leaves no partial file" 143 no_partial B4
+c=B5; fprep $c bad
+# shellcheck disable=SC2086
+env PATH="$CP" TMPDIR="$T/tmp-$c" $XENV "$SH" "$T/$c-pd/codex/base.sh" >"$T/$c.out" 2>"$T/$c.err"; rc=$?
+kill "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null; rm -f "$T/$c-srv.dpid"
+b5() { grep -q "^premises: the fetched schema sha256 is [0-9a-f]*, not the pinned $PIN\$" "$T/B5.out" || { why="stdout: $(tr '\n' '|' <"$T/B5.out")"; return 1; }; no_partial B5; }
+res "B5 a fetched schema that is not the pinned file leaves no file" 1 b5
+
+# --- K: run-codex.sh --------------------------------------------------------------------------
+mkdir -p "$T/K-pd/codex"
+cp "$HERE/run-codex.sh" "$HERE/lib.sh" "$HERE/ver.sh" "$T/K-pd/"
+for p in a b; do printf '%s\n' "echo $p >>'$T/K.seen'" >"$T/K-pd/codex/$p.sh"; done
+# krun <case> [<part>]: run the copied run-codex.sh; sets rc.
+krun() {
+  rm -f "$T/K.seen"
+  c=$1; shift
+  # shellcheck disable=SC2086
+  env PATH="$CP" TMPDIR="$T/tmp-$c" $XENV "$SH" "$T/K-pd/run-codex.sh" "$@" >"$T/$c.out" 2>"$T/$c.err"
+  rc=$?
+}
+kseen() { [ "$(cat "$T/K.seen" 2>/dev/null | tr '\n' ' ')" = "$1" ] || { why="K.seen: $(tr '\n' ' ' <"$T/K.seen" 2>/dev/null)"; return 1; }; }
+
+c=K1; prep $c caller; ERR=$T/$c.err; krun $c
+res "K1 run-codex runs every part in name order" 0 kseen "a b "
+c=K2; prep $c caller; ERR=$T/$c.err; krun $c b
+res "K2 run-codex runs one part" 0 kseen "b "
+c=K3; prep $c caller; ERR=$T/$c.err; krun $c zz
+res "K3 run-codex names a missing part" 1 out_has K3 'run-codex: no part zz'
+c=K4; prep $c caller; ERR=$T/$c.err; krun $c ../a
+res "K4 run-codex refuses a bad part name" 1 out_has K4 "run-codex: bad part name '../a'"
+
+# --- PC-10: Codex daemons ------------------------------------------------------------------------
+# A stub daemon: a compiled program that creates the file $N2D_READY and then waits until it is
+# killed. A Codex TUI run can start "codex app-server --listen unix:// --managed-daemon" that
+# outlives the run, with its socket in /private/tmp/codex-daemon-<uid> (or /tmp/...).
+cat >"$T/dmn.c" <<'C'
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+int main(void) {
+  const char *r = getenv("N2D_READY"); FILE *f = r ? fopen(r, "w") : NULL; if (f) fclose(f);
+  for (;;) pause();
+}
+C
+mkdir -p "$T/dmn"
+cc -o "$T/dmn/codex" "$T/dmn.c" || { echo "lib tests: cc failed"; exit 1; }
+# X34: a codex app-server outside the run folder: run_codex refuses before any codex starts, names
+# its pid, and leaves it running.
+N2D_READY=$T/X34.ready "$T/dmn/codex" app-server --listen unix:// --managed-daemon &
+echo $! >"$T/X34.dpid"
+waitready "$T/X34.ready" "$(cat "$T/X34.dpid")" || no "X34 stub daemon" "exited before it was ready"
+c=X34; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X34); run_codex exec hi"; run $c; killmock $c
+x34() {
+  dpid=$(cat "$T/X34.dpid")
+  out_has X34 "premises: a codex app-server runs outside this run folder (pid $dpid, $T/dmn/codex); codex not started; it is left running" || return 1
+  no_stub_env "$T/keep-X34" || return 1
+  kill -0 "$dpid" 2>/dev/null || { why="the stub daemon was stopped"; return 1; }
+}
+res "X34 a codex app-server outside the run folder: run_codex refuses and leaves it running" 1 x34
+kill "$(cat "$T/X34.dpid")" 2>/dev/null; rm -f "$T/X34.dpid"
+# X35: a socket in the per-uid daemon folder (/private/tmp and /tmp forms, under $T by the seam).
+for f in private/tmp tmp; do
+  c=X35; cxprep $c caller; rm -rf "$T/private" "$T/tmp"
+  D=$T/$f/codex-daemon-$(id -u)
+  mkdir -p "$D"
+  python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$D/s"
+  child $c 0 "new_run x; start_mock; $(mockrec X35); run_codex exec hi"; run $c; killmock $c
+  x35() { out_has X35 "premises: $D/s is a socket (a Codex daemon, or a stale socket of one; not deleted); codex not started" && [ -S "$D/s" ] && no_stub_env "$T/keep-X35"; }
+  res "X35 a socket in $f/codex-daemon-<uid>: run_codex refuses" 1 x35
+  rm -rf "$T/private" "$T/tmp" "$T/keep-X35"
+done
+# X36: a process of the run folder still runs after the part (a daemon left by a TUI run):
+# codex_record exits 1 and names its pid.
+c=X36; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X36); run_codex exec hi; mkdir -p \"\$RUN/pk\"; cp '$T/dmn/codex' \"\$RUN/pk/codex\"; N2D_READY='$T/X36.ready' \"\$RUN/pk/codex\" app-server --managed-daemon & echo \$! >'$T/X36.dpid'; $(waitin "$T/X36.ready" "$T/X36.dpid" 'X36 stub daemon'); stop_mock; codex_record base"
+run $c; killmock $c
+x36() { out_has X36 "premises: codex_record: a process of this run folder still runs (pid $(cat "$T/X36.dpid"), $T/keep-X36/x/pk/codex); stop it (TUI runs pass --no-daemon)"; }
+res "X36 a process of the run folder left running: codex_record exits 1 and names it" 1 x36
+kill "$(cat "$T/X36.dpid")" 2>/dev/null; rm -f "$T/X36.dpid"
+
+# X37 (PC-10): start_mock hands MOCK_ALT_KEY (a shell variable, built at run time) to the mock,
+# which accepts it and records credential "alt"; without it the same request aborts the mock.
+ALT="dummy-""alt-key"
+cat >"$T/alt.py" <<'PY'
+import http.client, sys, urllib.parse
+u = urllib.parse.urlsplit(sys.argv[1])
+c = http.client.HTTPConnection(u.hostname, u.port)
+c.request("POST", "/v1/responses", body=b'{"model":"m","input":"x"}',
+          headers={"authorization": "Bearer " + sys.argv[2], "content-type": "application/json"})
+print(c.getresponse().status)
+PY
+c=X37; cxprep $c caller
+child $c 0 "new_run x; MOCK_ALT_KEY='$ALT'; start_mock; $(mockrec X37); python3 -I '$T/alt.py' \"\$MOCK_URL\" '$ALT' >'$T/X37.status'; stop_mock"
+run $c; killmock $c
+x37() {
+  [ "$(cat "$T/X37.status")" = 200 ] || { why="status $(cat "$T/X37.status")"; return 1; }
+  f=$T/keep-X37/x/rec/0001.json
+  python3 -I -c 'import json, sys; sys.exit(json.load(open(sys.argv[1])).get("credential") != "alt")' "$f" ||
+    { why="record: $(tr '\n' ' ' <"$f" 2>/dev/null | cut -c1-200)"; return 1; }
+  ! grep -qF "$ALT" "$f" || { why="the record holds the alt key"; return 1; }
+}
+res "X37 start_mock passes MOCK_ALT_KEY; the mock accepts it and records credential alt" 0 x37
+c=X37b; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X37b); python3 -I '$T/alt.py' \"\$MOCK_URL\" '$ALT' >'$T/X37b.status'; stop_mock"
+run $c; killmock $c
+x37b() { [ "$(cat "$T/X37b.status")" = 401 ] && [ -f "$T/keep-X37b/x/rec/ABORT" ] || { why="status $(cat "$T/X37b.status"), no ABORT"; return 1; }; }
+res "X37b without MOCK_ALT_KEY the alt key aborts the mock (check_abort: exit 3)" 3 x37b
+
+# --- PC-10 review round 1 -------------------------------------------------------------------------
+# X38 (F1; round 2, G1): N2_TEST_ROOT is gone: one from the environment has no effect (the run
+# and codex_record pass, isolation.txt has no test_root line); exported N2_DAEMON_DIRS and a
+# n2_procs function cannot replace lib.sh's (it assigns both at source time).
+c=X38; cxprep $c caller; NOSEAM=1; XENV="$XENV N2_TEST_ROOT=/nonexistent-root N2_DAEMON_DIRS=/nonexistent-dirs"
+child $c 0 "[ \"\$N2_DAEMON_DIRS\" = '/private/tmp /tmp' ] || echo 'N2_DAEMON_DIRS kept' >'$T/X38.bad'; new_run x; echo done >'$T/X38.ran'"; run $c
+x38() { [ -e "$T/X38.ran" ] && [ ! -e "$T/X38.bad" ] || { why="the run stopped or N2_DAEMON_DIRS came from the environment"; return 1; }; }
+res "X38 exported N2_TEST_ROOT and N2_DAEMON_DIRS have no effect" 0 x38
+c=X38b; cxprep $c caller; XENV="$XENV N2_TEST_ROOT=/nonexistent-root"
+child $c 0 "new_run x; start_mock; $(mockrec X38b); run_codex exec hi; stop_mock; codex_record base"; run $c; killmock $c
+res "X38b with an exported N2_TEST_ROOT codex_record passes and writes no test_root line" 0 isolation_is X38b 0.172.0
+
+# X39 (F2, F7): a process of the run found by its working folder only: a copy elsewhere (its path
+# outside the run folder), and a bare argv[0] (found on PATH). codex_record exits 1, names each pid
+# and says "cwd"; isolation.txt says daemon=found.
+mkdir -p "$T/dmn2"
+cp "$T/dmn/codex" "$T/dmn2/codex"
+c=X39; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X39); run_codex exec hi; (cd \"\$RUN\" && export N2D_READY='$T/X39a.ready' && exec '$T/dmn/codex' daemon pid-update-loop) & echo \$! >'$T/X39a.dpid'; (cd \"\$R\" && export PATH='$T/dmn2':\$PATH N2D_READY='$T/X39b.ready' && exec codex app-server) & echo \$! >'$T/X39b.dpid'; $(waitin "$T/X39a.ready" "$T/X39a.dpid" 'X39a stub daemon'); $(waitin "$T/X39b.ready" "$T/X39b.dpid" 'X39b stub daemon'); stop_mock; codex_record base"
+run $c; killmock $c
+x39() {
+  out_has X39 "premises: codex_record: a process with its cwd in this run folder still runs (pid $(cat "$T/X39a.dpid"), $T/dmn/codex); stop it (TUI runs pass --no-daemon)" || return 1
+  out_has X39 "premises: codex_record: a process with its cwd in this run folder still runs (pid $(cat "$T/X39b.dpid"), codex); stop it (TUI runs pass --no-daemon)" || return 1
+  grep -qx 'daemon=found' "$T/fx-X39/runs/base/isolation.txt" || { why="isolation.txt: $(tr '\n' '|' <"$T/fx-X39/runs/base/isolation.txt" 2>/dev/null)"; return 1; }
+}
+res "X39 processes with their cwd in the run folder: codex_record exits 1 and names them" 1 x39
+for f in X39a X39b; do kill "$(cat "$T/$f.dpid")" 2>/dev/null; rm -f "$T/$f.dpid"; done
+
+# X40 (F2): a socket that appears in a daemon folder during the part: codex_record exits 1 and
+# names it; isolation.txt says daemon=found. The socket is not deleted.
+c=X40; cxprep $c caller; rm -rf "$T/private" "$T/tmp"
+D=$T/private/tmp/codex-daemon-$(id -u)
+child $c 0 "new_run x; start_mock; $(mockrec X40); run_codex exec hi; mkdir -p '$D'; python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' '$D/s'; stop_mock; codex_record base"
+run $c; killmock $c
+x40() {
+  out_has X40 "premises: codex_record: $D/s is a socket (a Codex daemon, or a stale socket of one; not deleted)" || return 1
+  [ -S "$D/s" ] || { why="the socket was removed"; return 1; }
+  grep -qx 'daemon=found' "$T/fx-X40/runs/base/isolation.txt" || { why="isolation.txt: $(tr '\n' '|' <"$T/fx-X40/runs/base/isolation.txt" 2>/dev/null)"; return 1; }
+}
+res "X40 a socket that appeared during the part: codex_record exits 1" 1 x40
+rm -rf "$T/private" "$T/tmp"
+
+# X41 (F8): a daemon folder that cannot be read: run_codex refuses (fail closed).
+c=X41; cxprep $c caller
+D=$T/private/tmp/codex-daemon-$(id -u)
+mkdir -p "$D"; chmod 000 "$D"
+child $c 0 "new_run x; start_mock; $(mockrec X41); run_codex exec hi"; run $c; killmock $c
+x41() { out_has X41 "premises: cannot read $D (Permission denied); codex not started" && no_stub_env "$T/keep-X41"; }
+if [ -r "$D" ]; then ok "X41 skipped: a folder with mode 000 is readable here (root)"; else res "X41 an unreadable daemon folder: run_codex refuses" 1 x41; fi
+chmod 700 "$D"; rm -rf "$T/private" "$T/tmp"
+
+# X42 (F2): no /proc and no lsof: the working folders cannot be read, so codex_record fails closed.
+if [ ! -d /proc/self/fd ]; then
+  mkbin "$T/nolsof" 1; rm -f "$T/nolsof/lsof"
+  c=X42; cxprep $c caller; CP=$T/nolsof
+  child $c 0 "new_run x; start_mock; $(mockrec X42); run_codex exec hi; stop_mock; codex_record base"; run $c; killmock $c
+  res "X42 no /proc and no lsof: run_codex fails closed" 1 out_has X42 "premises: cannot read process working folders (no /proc, no lsof); codex not started"
+fi
+
+# X43 (F6): a TUI run (plain codex, resume) without --no-daemon is refused before codex_env; with
+# --no-daemon, or a help or version call, it runs.
+for a in "" "resume" "resume --last"; do
+  c=X43; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X43); run_codex $a"; run $c; killmock $c
+  x43() { out_has X43 "premises: run_codex: 'codex${a:+ ${a%% *}}' is a TUI run; pass --no-daemon" && no_stub_env "$T/keep-X43"; }
+  res "X43 run_codex '$a' without --no-daemon is refused" 1 x43
+  rm -rf "$T/keep-X43"
+done
+for a in "--no-daemon" "resume --no-daemon --last" "resume --help" "--version"; do
+  c=X43b; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X43b); run_codex $a >/dev/null; stop_mock"; run $c; killmock $c
+  res "X43b run_codex '$a' runs" 0 true
+  rm -rf "$T/keep-X43b"
+done
+
+# X44 (F3; round 2, G6): a raw capture in the run folder with a <timezone> other than UTC (plain,
+# JSON-escaped slashes, HTML entities): codex_record exits 1 before it writes the fixture and
+# names the file and the value; UTC in any case, Etc/UTC, Etc/GMT, GMT, UTC+0 and UTC+00:00 pass.
+c=X44; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X44); run_codex exec hi; stop_mock; printf '%s' '{\"input\":\"<timezone>America\/Los_Angeles<\/timezone> &lt;timezone&gt;Europe/Paris&lt;/timezone&gt; <timezone>utc</timezone> <timezone>Etc/UTC</timezone> <timezone>Etc/GMT</timezone> <timezone>GMT</timezone> <timezone>UTC+0</timezone> <timezone>UTC+00:00</timezone>\"}' >\"\$RUN/rec/0099.json\"; codex_record base"
+run $c; killmock $c
+x44() {
+  out_has X44 "premises: codex_record: rec/0099.json holds <timezone>America/Los_Angeles</timezone>, not UTC" || return 1
+  out_has X44 "premises: codex_record: rec/0099.json holds <timezone>Europe/Paris</timezone>, not UTC" || return 1
+  [ "$(grep -c 'not UTC' "$T/X44.out")" = 2 ] || { why="stdout: $(tr '\n' '|' <"$T/X44.out")"; return 1; }
+  [ ! -e "$T/fx-X44/runs/base" ] || { why="the fixture was written"; return 1; }
+}
+res "X44 a <timezone> other than UTC in a capture: codex_record exits 1 before writing and names it" 1 x44
+# X44b (G6): a file in the run folder that cannot be read: codex_record fails closed before it
+# writes the fixture.
+c=X44b; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X44b); run_codex exec hi; stop_mock; echo x >\"\$RUN/rec/0098.json\"; chmod 000 \"\$RUN/rec/0098.json\"; codex_record base"
+run $c; killmock $c
+x44b() { out_has X44b "premises: codex_record: cannot read rec/0098.json (Permission denied)" && [ ! -e "$T/fx-X44b/runs/base" ] || { why="${why:-the fixture was written}"; return 1; }; }
+if [ "$(id -u)" = 0 ]; then ok "X44b skipped: root reads a file with mode 000"; else res "X44b an unreadable file in the run folder: codex_record fails closed" 1 x44b; fi
+
+# X45 (F10; round 2, G9): a MOCK_ALT_KEY from the environment is refused when lib.sh is sourced.
+c=X45; cxprep $c caller; XENV="$XENV MOCK_ALT_KEY=$ALT"; child $c 0 "echo sourced >'$T/X45.ran'"; run $c
+x45() { out_has X45 "premises: MOCK_ALT_KEY comes from the environment; a part sets it as a shell variable at run time (unset MOCK_ALT_KEY)" && [ ! -e "$T/X45.ran" ] || { why="${why:-the script went on}"; return 1; }; }
+res "X45 an exported MOCK_ALT_KEY is refused at source time" 1 x45
+
+# --- PC-10 review round 2 -------------------------------------------------------------------------
+# X46 (G4): lib.sh's own n2_procs (no seam) in left mode: a stub process with its cwd in the run
+# folder is named and the call returns 1.
+c=X46; cxprep $c caller; NOSEAM=1
+child $c 0 "new_run x; (cd \"\$RUN\" && export N2D_READY='$T/X46.ready' && exec '$T/dmn/codex' sleeper) & echo \$! >'$T/X46.dpid'; $(waitin "$T/X46.ready" "$T/X46.dpid" 'X46 stub daemon'); n2_procs left"
+run $c
+x46() { out_has X46 "premises: codex_record: a process with its cwd in this run folder still runs (pid $(cat "$T/X46.dpid"), $T/dmn/codex); stop it (TUI runs pass --no-daemon)"; }
+res "X46 the real n2_procs left names a process with its cwd in the run folder" 1 x46
+kill "$(cat "$T/X46.dpid")" 2>/dev/null; rm -f "$T/X46.dpid"
+
+# X47 (G2): the working-folder lookup fails closed: an lsof that exits 1 with no output, and an
+# lsof that prints nothing (no working folder for the scanning shell itself).
+if [ ! -d /proc/self/fd ]; then
+  mkdir -p "$T/lsof1" "$T/lsof0"
+  printf '#!/bin/sh\nexit 1\n' >"$T/lsof1/lsof"; printf '#!/bin/sh\nexit 0\n' >"$T/lsof0/lsof"; chmod +x "$T/lsof1/lsof" "$T/lsof0/lsof"
+  c=X47; cxprep $c caller; CP=$T/lsof1:$T/bin; child $c 0 "new_run x; start_mock; $(mockrec X47); run_codex exec hi"; run $c; killmock $c
+  res "X47 an lsof that exits 1 with no output: run_codex refuses" 1 out_has X47 "premises: cannot read process working folders (lsof exit 1, no output); codex not started"
+  c=X47b; cxprep $c caller; CP=$T/lsof0:$T/bin; child $c 0 "new_run x; start_mock; $(mockrec X47b); run_codex exec hi"; run $c; killmock $c
+  x47b() { grep -qx "premises: cannot read process working folders (no working folder for this shell, pid [0-9]*); codex not started" "$T/X47b.out" && no_stub_env "$T/keep-X47b" || { why="stdout: $(tr '\n' '|' <"$T/X47b.out")"; return 1; }; }
+  res "X47b an lsof that prints nothing: run_codex refuses" 1 x47b
+fi
+
+# X48 (G5): an app-server whose program path holds a blank (argv[0] "<T>/pc10 sp/bin/codex") is
+# found by the path in its command line.
+N2D_READY=$T/X48.ready perl -e 'exec { shift } @ARGV' "$T/dmn/codex" "$T/pc10 sp/bin/codex" app-server &
+echo $! >"$T/X48.dpid"
+waitready "$T/X48.ready" "$(cat "$T/X48.dpid")" || no "X48 stub daemon" "exited before it was ready"
+c=X48; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X48); run_codex exec hi"; run $c; killmock $c
+res "X48 an app-server with a blank in its path: run_codex refuses" 1 out_has X48 "premises: a codex app-server runs outside this run folder (pid $(cat "$T/X48.dpid"), $T/pc10 sp/bin/codex); codex not started; it is left running"
+kill "$(cat "$T/X48.dpid")" 2>/dev/null; rm -f "$T/X48.dpid"
+
+# X49 (G7): the subcommand is found after global options (help.txt); e is exec; --help and
+# --version count only at the subcommand position or right after the subcommand.
+for a in "-c k=v resume|resume" "--strict-config|" "-m --help|" "resume --last --help|resume" "-C /tmp --enable x resume|resume" "--model=m fork|fork"; do
+  args=${a%|*} sub=${a#*|}
+  c=X49; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X49); run_codex $args"; run $c; killmock $c
+  x49() { out_has X49 "premises: run_codex: 'codex${sub:+ $sub}' is a TUI run; pass --no-daemon" && no_stub_env "$T/keep-X49"; }
+  res "X49 run_codex '$args' is refused" 1 x49
+  rm -rf "$T/keep-X49"
+done
+for a in "-c k=v exec hi" "e hi" "--strict-config exec hi" "-c k=v --help" "-C /tmp resume --no-daemon" "--enable x app-server --help"; do
+  c=X49b; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X49b); run_codex $a >/dev/null; stop_mock"; run $c; killmock $c
+  res "X49b run_codex '$a' runs" 0 true
+  rm -rf "$T/keep-X49b"
+done
+
+# X50 (G3): codex_record called from a subshell whose working folder is in the run folder does
+# not name its own shells (the scanner's parents are skipped).
+c=X50; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X50); run_codex exec hi; stop_mock; (cd \"\$RUN\" && codex_record base)"; run $c; killmock $c
+res "X50 codex_record from a subshell in the run folder passes" 0 isolation_is X50 0.172.0
+
+# S1 (PC-11 review round 1 F2, round 2 G5): scrub shares one Codex item-id map across one part's
+# files ($N2_SCRATCH/scrub-ids-<part>.json): the same id gets the same placeholder in two files, a
+# different id a different one. A second part (S1p) in the same scratch dir starts its own map.
+I1=da690f77-7707-5fdf-97a5-850943e7a34c I2=8e32dd58-d565-50b3-83f4-72b17fc59ae7
+printf '{"a":"msg_%s"}\n' "$I1" >"$T/S1a.json"
+printf '{"a":"msg_%s","b":"msg_%s"}\n' "$I2" "$I1" >"$T/S1b.json"
+c=S1; prep $c caller; ERR=$T/$c.err
+child $c 0 "new_run x; scrub '$T/S1a.json' >'$T/S1a.out'; new_run y; scrub '$T/S1b.json' >'$T/S1b.out'; exit 0"; run $c
+rc1=$rc
+mkdir -p "$T/tmp-S1p"
+child S1p 0 "new_run z; scrub '$T/S1b.json' >'$T/S1p.out'; exit 0"; run S1p
+[ "$rc1" -eq 0 ] || rc=$rc1
+s1() {
+  grep -qF '"a": "msg_placeholder0001"' "$T/S1a.out" && grep -qF '"a": "msg_placeholder0002"' "$T/S1b.out" &&
+    grep -qF '"b": "msg_placeholder0001"' "$T/S1b.out" || { why="$(tr '\n' ' ' <"$T/S1a.out")| $(tr '\n' ' ' <"$T/S1b.out")"; return 1; }
+  grep -qF '"a": "msg_placeholder0001"' "$T/S1p.out" && grep -qF '"b": "msg_placeholder0002"' "$T/S1p.out" ||
+    { why="second part: $(tr '\n' ' ' <"$T/S1p.out")"; return 1; }
+  [ -f "$T/keep-S1/scrub-ids-S1.json" ] && [ -f "$T/keep-S1/scrub-ids-S1p.json" ] && [ ! -e "$T/keep-S1/scrub-ids.json" ] ||
+    { why="maps: $(ls "$T/keep-S1")"; return 1; }
+}
+res "S1 scrub maps Codex item ids with one map per part (scrub-ids-<part>.json)" 0 s1
+
+# --- TF-2: waits end when the producer dies ------------------------------------------------------
+# W1: a producer that exits at once without the file: waitready returns 1 (no count limit, no time).
+true & wp=$!
+if waitready "$T/W1.never" "$wp"; then no "W1 waitready returns 1 when the producer exits without the file" "it returned 0"; else ok "W1 waitready returns 1 when the producer exits without the file"; fi
+# W2: a producer that writes the file and exits: waitready returns 0 (the file is checked again).
+: >"$T/W2.ready" & wp=$!
+if waitready "$T/W2.ready" "$wp"; then ok "W2 waitready returns 0 when the producer wrote the file and exited"; else no "W2 waitready returns 0 when the producer wrote the file and exited" "it returned 1"; fi
+# W3: the child's loop (waitin): a producer that exits without the file stops the child with 2.
+c=W3; prep $c own; ERR=$T/$c.err
+child $c 0 "true & echo \$! >'$T/W3.dpid'; $(waitin "$T/W3.never" "$T/W3.dpid" 'W3 producer'); exit 0"; run $c
+res "W3 a child's wait exits 2 when the producer exits without the file" 2 grep -qxF 'W3 producer exited before it was ready' "$ERR"
+# W4: a mock that dies before it writes its port file (a missing rules file): start_mock fails at once.
+c=W4; cxprep $c caller; child $c 0 "new_run x; start_mock '$T/W4-none.json'; echo went-on >'$T/W4.on'"; run $c
+w4() { out_has W4 "mock did not start" && [ ! -e "$T/W4.on" ] || { why="${why:-the script went on}"; return 1; }; }
+res "W4 start_mock: a mock that dies says mock did not start, exit 1" 1 w4
+# W5: a web server that dies before it writes its port file (no certificate: a stub openssl).
+mkdir -p "$T/ossl"; printf '#!/bin/sh\nexit 0\n' >"$T/ossl/openssl"; chmod +x "$T/ossl/openssl"
+c=W5; cxprep $c caller; CP=$T/ossl:$T/bin; child $c 0 "new_run x; start_web '$T'; echo went-on >'$T/W5.on'"; run $c
+w5() { out_has W5 "web did not start" && [ ! -e "$T/W5.on" ] || { why="${why:-the script went on}"; return 1; }; }
+res "W5 start_web: a server that dies says web did not start, exit 1" 1 w5
+# W6: sigrun's not-ready branch: a child that exits 0 without the ready file sets NR=1, signals nothing.
+c=W6; prep $c own; ERR=$T/$c.err; child $c 0 'exit 0'; sigrun $c TERM
+if [ "$NR" = 1 ] && [ "$rc" = 0 ]; then ok "W6 sigrun: a child that exits before it is ready sets NR=1"; else no "W6 sigrun: a child that exits before it is ready sets NR=1" "NR=$NR rc=$rc"; fi
+# J3a: sigrun's process group record, checked and used by stop.sh while the child waits on its helper.
+c=J3a; prep $c own; ERR=$T/$c.err; child $c 0 "$(sigact $c)"; sigrun $c STOPALL
+res "J3a own dir kept after the traps' stopall stops sigrun's process group" 143 kept_n $c 143
+# W7, W8 (TF-2): the mock and the web server start with no host name lookup: they run with a
+# socket.getfqdn that raises (http.server's server_bind calls it, and it can stall on a runner).
+cat >"$T/nofqdn.py" <<'PY'
+import runpy, socket, sys
+def no(*a, **k):
+    raise RuntimeError("socket.getfqdn was called")
+socket.getfqdn = no
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+PY
+MOCK_KEY=x python3 -I "$T/nofqdn.py" "$HERE/mock_upstream.py" --dir "$T/W7rec" --port-file "$T/W7.port" 2>"$T/W7.err" &
+wp=$!
+echo "$wp" >"$T/W7.dpid"
+if waitready "$T/W7.port" "$wp"; then ok "W7 the mock starts with no host name lookup"; else no "W7 the mock starts with no host name lookup" "stderr: $(tr '\n' '|' <"$T/W7.err")"; fi
+kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null; rm -f "$T/W7.dpid"
+if command -v openssl >/dev/null; then
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout "$T/W8-key.pem" -out "$T/W8-cert.pem" -days 2 -subj "/CN=127.0.0.1" >/dev/null 2>&1
+  mkdir -p "$T/W8web"
+  python3 -I "$T/nofqdn.py" "$HERE/https_static.py" "$T/W8web" "$T/W8-cert.pem" "$T/W8-key.pem" "$T/W8.port" 2>"$T/W8.err" &
+  wp=$!
+  echo "$wp" >"$T/W8.dpid"
+  if waitready "$T/W8.port" "$wp"; then ok "W8 the web server starts with no host name lookup"; else no "W8 the web server starts with no host name lookup" "stderr: $(tr '\n' '|' <"$T/W8.err")"; fi
+  kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null; rm -f "$T/W8.dpid"
+else
+  ok "W8 skipped: no openssl"
+fi
+# Y1, Y2 (TF-2 CI): n2_scan on a stub proc tree (N2_PROC=$T/fp-<case>). A stub daemon of this user is
+# a candidate; its stub cwd entry cannot be read (a plain file: readlink fails). The child links its
+# own cwd entry. Y1: its status says another uid (as for a root process on a Linux runner): skipped,
+# the scan passes. Y2: its status says this uid: the scan fails closed and names it.
+cat >"$T/fpself.py" <<'PY'
+import os, sys
+os.makedirs(sys.argv[1]); os.symlink(os.getcwd(), sys.argv[1] + "/cwd")
+PY
+N2D_READY=$T/Y.ready "$T/dmn/codex" &
+echo $! >"$T/Y.dpid"
+YP=$(cat "$T/Y.dpid")
+waitready "$T/Y.ready" "$YP" || no "Y stub daemon" "exited before it was ready"
+for c in Y1 Y2; do
+  mkdir -p "$T/fp-$c/self/fd" "$T/fp-$c/$YP"; : >"$T/fp-$c/$YP/cwd"
+  if [ $c = Y1 ]; then u=0; else u=$(id -u); fi
+  printf 'Name:\tcodex\nUid:\t%s\t%s\t%s\t%s\n' "$u" "$u" "$u" "$u" >"$T/fp-$c/$YP/status"
+  cxprep $c caller
+  child $c 0 "new_run x; N2_PROC='$T/fp-$c'; python3 -I '$T/fpself.py' '$T/fp-$c/'\$\$; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+  run $c
+done
+y1() { [ "$(cat "$T/Y1.rc")" = 0 ] && [ ! -s "$T/Y1.out" ] || { why="rc $(cat "$T/Y1.rc"), stdout: $(tr '\n' '|' <"$T/Y1.out")"; return 1; }; }
+res "Y1 n2_scan skips another uid's process whose cwd cannot be read" 0 y1
+y2() {
+  [ "$(cat "$T/Y2.rc")" = 1 ] && grep -q "^premises: codex_record: cannot read process working folders (pid $YP, .*: Invalid argument)\$" "$T/Y2.out" ||
+    { why="rc $(cat "$T/Y2.rc"), stdout: $(tr '\n' '|' <"$T/Y2.out")"; return 1; }
+}
+res "Y2 n2_scan fails closed on this user's process whose cwd cannot be read" 0 y2
+# Y3, Y4: the same unreadable process of this user, with a start time (stat field 22, clock ticks
+# since boot) before the part's start mark (N2_PART_MARK, set by new_run; here set to 1000): skipped
+# (Y3, as for the runner's own systemd --user); after it: fails closed (Y4, a leftover of the run).
+for c in Y3 Y4; do
+  mkdir -p "$T/fp-$c/self/fd" "$T/fp-$c/$YP"; : >"$T/fp-$c/$YP/cwd"
+  u=$(id -u); printf 'Name:\tcodex\nUid:\t%s\t%s\t%s\t%s\n' "$u" "$u" "$u" "$u" >"$T/fp-$c/$YP/status"
+  if [ $c = Y3 ]; then st=500; else st=2000; fi
+  printf '%s (co dex) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 %s 0 0\n' "$YP" "$st" >"$T/fp-$c/$YP/stat"
+  cxprep $c caller
+  child $c 0 "new_run x; N2_PROC='$T/fp-$c'; N2_PART_MARK=1000; python3 -I '$T/fpself.py' '$T/fp-$c/'\$\$; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+  run $c
+done
+y3() { [ "$(cat "$T/Y3.rc")" = 0 ] && [ ! -s "$T/Y3.out" ] || { why="rc $(cat "$T/Y3.rc"), stdout: $(tr '\n' '|' <"$T/Y3.out")"; return 1; }; }
+res "Y3 n2_scan skips this user's unreadable process that started before the part" 0 y3
+y4() {
+  [ "$(cat "$T/Y4.rc")" = 1 ] && grep -q "^premises: codex_record: cannot read process working folders (pid $YP, .*: Invalid argument)\$" "$T/Y4.out" ||
+    { why="rc $(cat "$T/Y4.rc"), stdout: $(tr '\n' '|' <"$T/Y4.out")"; return 1; }
+}
+res "Y4 n2_scan fails closed on this user's unreadable process that started during the part" 0 y4
+# Y5, Y6: the lsof path (N2_PROC with no self/fd), with a stub lsof that gives the working folder of
+# the scanning shell only, so every other process of this user has none. Y5: the mark is far after
+# now (every such process started before the part): skipped, the scan passes. Y6: the mark is 0
+# (every such process started during the part): the scan fails closed and names one.
+mkdir -p "$T/lsofy"
+printf '#!/bin/sh\ng=$(ps -o ppid= -p "$PPID" | tr -d " ")\nprintf "p%%s\\nn/\\n" "$g"\n' >"$T/lsofy/lsof"; chmod +x "$T/lsofy/lsof"
+for c in Y5 Y6; do
+  if [ $c = Y5 ]; then mk=$(($(date +%s) + 100000)); else mk=0; fi
+  cxprep $c caller; CP=$T/lsofy:$T/bin
+  child $c 0 "new_run x; N2_PROC='$T/noproc'; N2_PART_MARK=$mk; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+  run $c
+done
+y5() { [ "$(cat "$T/Y5.rc")" = 0 ] && [ ! -s "$T/Y5.out" ] || { why="rc $(cat "$T/Y5.rc"), stdout: $(tr '\n' '|' <"$T/Y5.out")"; return 1; }; }
+res "Y5 lsof path: this user's processes with no working folder that started before the part are skipped" 0 y5
+y6() {
+  [ "$(cat "$T/Y6.rc")" = 1 ] && grep -q "^premises: codex_record: cannot read process working folders (pid [0-9]*, .*: no working folder from lsof)\$" "$T/Y6.out" ||
+    { why="rc $(cat "$T/Y6.rc"), stdout: $(tr '\n' '|' <"$T/Y6.out")"; return 1; }
+}
+res "Y6 lsof path: this user's process with no working folder that started during the part fails closed" 0 y6
+kill "$YP" 2>/dev/null; rm -f "$T/Y.dpid"
+
+# --- TF-2 round 2 -------------------------------------------------------------------------------
+# gone <pid>: wait, with no count limit, until <pid> has ended (or is a zombie: its parent may not
+# reap it at once).
+gone() {
+  while kill -0 "$1" 2>/dev/null; do
+    case "$(ps -o stat= -p "$1" 2>/dev/null)" in Z*) return ;; esac
+    sleep 0.1
+  done
+}
+# G1 (TERM, INT): a driver sources $T/stop.sh (lib_test's own traps), starts a process group as the
+# cases do (a sh that waits on a helper that runs until it is signalled) and records it as they do,
+# then waits. lib_test signals the driver; when the driver has ended, lib_test sends WINCH to the
+# helper. The helper writes the name of the first signal it gets and exits: SIGTERM when the
+# driver's trap stopped it, SIGWINCH when the trap left it running. It blocks TERM and WINCH and
+# takes one with sigwait: with both pending, the lower number (TERM 15 before WINCH 28, on Linux and
+# macOS), and no later signal can overwrite the name (J2). So no wait is timed. lib_test records the
+# driver ($T/<case>-drv.dpid) and the driver records the helper's group in $T too ($T/<case>-h.pgid),
+# so lib_test's own traps stop them if lib_test is signalled during G1.
+cat >"$T/g1h.py" <<'PY'
+import os, signal, sys
+got, pidf = sys.argv[1:3]
+sigs = {signal.SIGTERM, signal.SIGWINCH}
+signal.pthread_sigmask(signal.SIG_BLOCK, sigs)
+with open(pidf + ".tmp", "w") as f:
+    f.write(str(os.getpid()))
+os.rename(pidf + ".tmp", pidf)
+n = signal.sigwait(sigs)
+with open(got + ".tmp", "w") as fh:
+    fh.write(signal.Signals(n).name)
+os.rename(got + ".tmp", got)
+PY
+for s in TERM INT; do
+  c=G1$s
+  if [ $s = TERM ]; then want=143; else want=130; fi
+  {
+    echo "T='$T/$c-d'; mkdir -p \"\$T\""
+    echo ". '$T/stop.sh'"
+    echo "perl -e 'setpgrp(0, 0); exec @ARGV or die' sh -c 'python3 -I \"\$1\" \"\$2\" \"\$3\" & wait' sh '$T/g1h.py' '$T/$c.got' '$T/$c.hpid' &"
+    echo "g=\$!; echo \"\$g\" >\"\$T/$c.pgid\"; echo \"\$g\" >'$T/$c-h.pgid'"
+    echo "while [ ! -f '$T/$c.hpid' ]; do kill -0 \"\$g\" 2>/dev/null || exit 3; sleep 0.1; done"
+    echo ": >'$T/$c.ready'"
+    echo "wait"
+  } >"$T/$c.sh"
+  # perl resets INT to its default (a background command starts with INT ignored).
+  perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die' "$SH" "$T/$c.sh" >"$T/$c.out" 2>"$T/$c.err" &
+  gp=$!
+  echo "$gp" >"$T/$c-drv.dpid"
+  if waitready "$T/$c.ready" "$gp"; then
+    kill -s $s "$gp"; wait "$gp"; grc=$?
+    hp=$(cat "$T/$c.hpid")
+    kill -s WINCH "$hp" 2>/dev/null
+    waitready "$T/$c.got" "$hp"
+    gone "$hp"; gone "$(cat "$T/$c-h.pgid")"
+    got=$(cat "$T/$c.got" 2>/dev/null)
+    if [ "$grc" = "$want" ] && [ "$got" = SIGTERM ] && [ ! -e "$T/$c-d" ]; then
+      ok "$c the traps stop a case's process group on $s (exit $want)"
+    else
+      no "$c the traps stop a case's process group on $s (exit $want)" "exit $grc; the helper got ${got:-nothing}; driver folder $(ls -d "$T/$c-d" 2>/dev/null)"
+    fi
+  else
+    wait "$gp"
+    no "$c the traps stop a case's process group on $s (exit $want)" "the driver exited before it was ready; stderr: $(tr '\n' '|' <"$T/$c.err")"
+  fi
+  endgrp "$T/$c-h.pgid"; rm -f "$T/$c-drv.dpid"
+done
+# J2: the G1 helper names the first signal it gets when a later one is pending with it: the helper is
+# stopped, gets TERM and then WINCH, and is continued. It must name SIGTERM.
+c=J2
+python3 -I "$T/g1h.py" "$T/$c.got" "$T/$c.hpid" &
+hp=$!
+echo "$hp" >"$T/$c.dpid"
+if waitready "$T/$c.hpid" "$hp"; then
+  kill -s STOP "$hp"; kill -s TERM "$hp"; kill -s WINCH "$hp"; kill -s CONT "$hp"
+  wait "$hp"
+  got=$(cat "$T/$c.got" 2>/dev/null)
+  if [ "$got" = SIGTERM ]; then ok "J2 the G1 helper names the first of two pending signals"; else no "J2 the G1 helper names the first of two pending signals" "the helper wrote ${got:-nothing}"; fi
+else
+  no "J2 the G1 helper names the first of two pending signals" "the helper exited before it was ready"
+fi
+rm -f "$T/$c.dpid"
+# J6: stopall signals a recorded pid that does not (yet) lead a process group. The driver records
+# the pid of a helper in its own process group (as a case does before the child's setpgrp runs) and
+# waits; lib_test TERMs the driver, waits for it, then sends WINCH to the helper. The helper names
+# SIGTERM when stopall signalled it, SIGWINCH when it did not.
+c=J6
+{
+  echo "T='$T/$c-d'; mkdir -p \"\$T\""
+  echo ". '$T/stop.sh'"
+  echo "python3 -I '$T/g1h.py' '$T/$c.got' '$T/$c.hpid' &"
+  echo "echo \$! >\"\$T/$c.pgid\""
+  echo "while [ ! -f '$T/$c.hpid' ]; do kill -0 \$! 2>/dev/null || exit 3; sleep 0.1; done"
+  echo ": >'$T/$c.ready'"
+  echo "wait"
+} >"$T/$c.sh"
+"$SH" "$T/$c.sh" >"$T/$c.out" 2>"$T/$c.err" &
+gp=$!
+echo "$gp" >"$T/$c-drv.dpid"
+if waitready "$T/$c.ready" "$gp"; then
+  hp=$(cat "$T/$c.hpid")
+  echo "$hp" >"$T/$c.dpid"
+  kill -s TERM "$gp"; wait "$gp"
+  kill -s WINCH "$hp" 2>/dev/null
+  waitready "$T/$c.got" "$hp"
+  gone "$hp"
+  got=$(cat "$T/$c.got" 2>/dev/null)
+  if [ "$got" = SIGTERM ]; then ok "J6 the traps signal a recorded pid that leads no process group"; else no "J6 the traps signal a recorded pid that leads no process group" "the helper got ${got:-nothing}"; fi
+else
+  wait "$gp"
+  no "J6 the traps signal a recorded pid that leads no process group" "the driver exited before it was ready; stderr: $(tr '\n' '|' <"$T/$c.err")"
+fi
+rm -f "$T/$c-drv.dpid" "$T/$c.dpid"
+
+# G2: n2_mark and the start time n2_scan reads use one clock. Real processes, the real n2_mark (in
+# new_run), the real ps. A process that started before new_run is skipped; one that started after it
+# fails closed. g2tick waits (no count limit) until the clock has passed its value at the call, so
+# a process that is ready before the call started before the mark that follows it.
+cat >"$T/g2tick.py" <<'PY'
+import os, sys, time
+def now():
+    if sys.argv[1] == "proc":
+        with open("/proc/uptime") as f:
+            return int(float(f.read().split()[0]) * os.sysconf("SC_CLK_TCK"))
+    return int(time.time())
+v = now() + (1 if sys.argv[1] == "proc" else 0)  # proc: one tick more for float rounding
+while now() <= v:
+    time.sleep(0.01)
+PY
+# The lsof path, where the host has no /proc (macOS: ps lstart is the wall clock the epoch mark uses;
+# Linux procps derives lstart from the boot time and can be a second or more behind it, but n2_scan
+# takes the lsof path only with no /proc). The real ps; the mark in epoch seconds; a stub lsof gives
+# every process the working folder / except the pid in $T/lsofx.pid (G3 uses it too).
+mkdir -p "$T/lsofg"
+printf '#!/bin/sh\nx=$(cat %s 2>/dev/null)\nfor p in $(ps -A -o pid=); do [ "$p" = "$x" ] || printf "p%%s\\nn/\\n" "$p"; done\n' "'$T/lsofx.pid'" >"$T/lsofg/lsof"
+chmod +x "$T/lsofg/lsof"
+if [ ! -d /proc/self/fd ]; then
+  c=G2a; cxprep $c caller; CP=$T/lsofg:$T/bin
+  N2D_READY=$T/$c.ready "$T/dmn/codex" &
+  echo $! >"$T/$c.dpid"
+  GP=$(cat "$T/$c.dpid")
+  waitready "$T/$c.ready" "$GP" || no "G2a stub" "exited before it was ready"
+  echo "$GP" >"$T/lsofx.pid"
+  python3 -I "$T/g2tick.py" epoch
+  child $c 0 "N2_PROC='$T/noproc'; new_run x; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+  run $c
+  kill "$GP" 2>/dev/null; rm -f "$T/$c.dpid"
+  g2a() { [ "$(cat "$T/G2a.rc")" = 0 ] && [ ! -s "$T/G2a.out" ] || { why="rc $(cat "$T/G2a.rc"), stdout: $(tr '\n' '|' <"$T/G2a.out")"; return 1; }; }
+  res "G2a lsof path, real n2_mark: a process with no working folder that started before new_run is skipped" 0 g2a
+  c=G2b; cxprep $c caller; CP=$T/lsofg:$T/bin
+  child $c 0 "N2_PROC='$T/noproc'; new_run x; N2D_READY='$T/$c.ready' '$T/dmn/codex' & echo \$! >'$T/$c.dpid'; $(waitin "$T/$c.ready" "$T/$c.dpid" 'G2b stub'); cat '$T/$c.dpid' >'$T/lsofx.pid'; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+  run $c
+  g2b() {
+    [ "$(cat "$T/G2b.rc")" = 1 ] && grep -q "^premises: codex_record: cannot read process working folders (pid $(cat "$T/G2b.dpid"), .*: no working folder from lsof)\$" "$T/G2b.out" ||
+      { why="rc $(cat "$T/G2b.rc"), stdout: $(tr '\n' '|' <"$T/G2b.out")"; return 1; }
+  }
+  res "G2b lsof path, real n2_mark: a process with no working folder that started after new_run fails closed" 0 g2b
+  kill "$(cat "$T/G2b.dpid")" 2>/dev/null; rm -f "$T/G2b.dpid" "$T/lsofx.pid"
+else
+  ok "G2a, G2b skipped: this host has /proc (the /proc path is G2c, G2d)"
+fi
+# The /proc path, where the host has one (the real /proc; the mark in clock ticks since boot): a
+# helper that makes itself non-dumpable, so Linux refuses its /proc/<pid>/cwd to this user.
+cat >"$T/g2nd.py" <<'PY'
+import ctypes, signal, sys
+ctypes.CDLL(None).prctl(4, 0, 0, 0, 0)  # PR_SET_DUMPABLE, 0
+open(sys.argv[1], "w").close()
+while True:
+    signal.pause()
+PY
+if [ -d /proc/self/fd ]; then
+  c=G2c; cxprep $c caller
+  python3 -I "$T/g2nd.py" "$T/$c.ready" &
+  echo $! >"$T/$c.dpid"
+  GP=$(cat "$T/$c.dpid")
+  waitready "$T/$c.ready" "$GP" || no "G2c helper" "exited before it was ready"
+  if python3 -I -c 'import os, sys; os.readlink("/proc/%s/cwd" % sys.argv[1])' "$GP" 2>/dev/null; then
+    kill "$GP" 2>/dev/null; rm -f "$T/$c.dpid"
+    ok "G2c, G2d skipped: this user can read a non-dumpable process's /proc/<pid>/cwd"
+  else
+    python3 -I "$T/g2tick.py" proc
+    child $c 0 "new_run x; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+    run $c
+    kill "$GP" 2>/dev/null; rm -f "$T/$c.dpid"
+    g2c() { [ "$(cat "$T/G2c.rc")" = 0 ] && [ ! -s "$T/G2c.out" ] || { why="rc $(cat "$T/G2c.rc"), stdout: $(tr '\n' '|' <"$T/G2c.out")"; return 1; }; }
+    res "G2c /proc path, real n2_mark: an unreadable process that started before new_run is skipped" 0 g2c
+    c=G2d; cxprep $c caller
+    child $c 0 "new_run x; python3 -I '$T/g2nd.py' '$T/$c.ready' & echo \$! >'$T/$c.dpid'; $(waitin "$T/$c.ready" "$T/$c.dpid" 'G2d helper'); if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+    run $c
+    g2d() {
+      [ "$(cat "$T/G2d.rc")" = 1 ] && grep -q "^premises: codex_record: cannot read process working folders (pid $(cat "$T/G2d.dpid"), .*: Permission denied)\$" "$T/G2d.out" ||
+        { why="rc $(cat "$T/G2d.rc"), stdout: $(tr '\n' '|' <"$T/G2d.out")"; return 1; }
+    }
+    res "G2d /proc path, real n2_mark: an unreadable process that started after new_run fails closed" 0 g2d
+    kill "$(cat "$T/G2d.dpid")" 2>/dev/null; rm -f "$T/G2d.dpid"
+  fi
+else
+  ok "G2c, G2d skipped: no /proc (the lsof path is G2a, G2b)"
+fi
+
+# G3: the lsof path in the repeated hour at the end of daylight saving time. TZ=America/New_York; the
+# mark is 2026-11-01 01:30 EST (06:30 UTC); a stub ps gives the process a start of 01:40 EST (06:40
+# UTC) in the time zone ps runs with. The start is after the mark: the scan fails closed.
+cat >"$T/g3ps.py" <<'PY'
+import sys, time
+x = open(sys.argv[1]).read().strip()
+for line in sys.stdin:
+    t = line.split(None, 2)
+    if len(t) == 3 and t[0] == x:
+        line = "%s %s %s\n" % (t[0], t[1], time.strftime("%a %b %e %H:%M:%S %Y", time.localtime(int(sys.argv[2]))))
+    sys.stdout.write(line)
+PY
+mkdir -p "$T/psdst"
+printf '#!/bin/sh\ncase "$*" in *lstart=*) ;; *) exec %s "$@" ;; esac\n%s "$@" | exec python3 -I %s %s 1793515200\n' \
+  "'$(command -v ps)'" "'$(command -v ps)'" "'$T/g3ps.py'" "'$T/lsofx.pid'" >"$T/psdst/ps"
+chmod +x "$T/psdst/ps"
+# G3b (J4): the same mark and start with TZ=Europe/Berlin, east of UTC (CET, UTC+1 on that day): a
+# conversion in the local time zone (time.mktime) makes the start an hour earlier, before the mark.
+g3() {
+  [ "$(cat "$T/$c.rc")" = 1 ] && grep -q "^premises: codex_record: cannot read process working folders (pid $(cat "$T/$c.dpid"), .*: no working folder from lsof)\$" "$T/$c.out" ||
+    { why="rc $(cat "$T/$c.rc"), stdout: $(tr '\n' '|' <"$T/$c.out")"; return 1; }
+}
+for c in G3 G3b; do
+  if [ $c = G3 ]; then
+    tz=America/New_York; d="G3 lsof path: a start in the repeated DST hour after the mark is not before it"
+  else
+    tz=Europe/Berlin; d="G3b lsof path, TZ=Europe/Berlin (east of UTC): a start after the mark is not before it"
+  fi
+  cxprep $c caller; CP=$T/psdst:$T/lsofg:$T/bin; XENV="$XENV TZ=$tz"
+  child $c 0 "N2_PROC='$T/noproc'; new_run x; N2_PART_MARK=1793514600; N2D_READY='$T/$c.ready' '$T/dmn/codex' & echo \$! >'$T/$c.dpid'; $(waitin "$T/$c.ready" "$T/$c.dpid" "$c stub"); cat '$T/$c.dpid' >'$T/lsofx.pid'; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+  run $c
+  res "$d" 0 g3
+  kill "$(cat "$T/$c.dpid")" 2>/dev/null; rm -f "$T/$c.dpid" "$T/lsofx.pid"
+done
+
+# G4: an N2_PART_MARK from the environment is not used (lib.sh unsets it; new_run sets it).
+c=G4; prep $c own; ERR=$T/$c.err; PRE="export N2_PART_MARK=9999999999"
+child $c 0 "if [ -z \"\${N2_PART_MARK+x}\" ]; then echo unset >'$T/$c.v'; else echo \"set:\$N2_PART_MARK\" >'$T/$c.v'; fi"
+run $c
+g4() { [ "$(cat "$T/G4.v")" = unset ] || { why="N2_PART_MARK after lib.sh: $(cat "$T/G4.v")"; return 1; }; }
+res "G4 lib.sh unsets an N2_PART_MARK from the environment" 0 g4
+
+# G5: daemon mode names a codex app-server whose cwd cannot be read and that the scan skips (another
+# uid in a stub proc tree, as Y1): its working folder is unknown, so it is outside the run folder.
+N2D_READY=$T/G5.ready "$T/dmn/codex" app-server &
+echo $! >"$T/G5.dpid"
+GP=$(cat "$T/G5.dpid")
+waitready "$T/G5.ready" "$GP" || no "G5 stub daemon" "exited before it was ready"
+c=G5; mkdir -p "$T/fp-$c/self/fd" "$T/fp-$c/$GP"; : >"$T/fp-$c/$GP/cwd"
+printf 'Name:\tcodex\nUid:\t0\t0\t0\t0\n' >"$T/fp-$c/$GP/status"
+cxprep $c caller
+child $c 0 "new_run x; N2_PROC='$T/fp-$c'; python3 -I '$T/fpself.py' '$T/fp-$c/'\$\$; if n2_procs daemon; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+run $c
+g5() {
+  [ "$(cat "$T/G5.rc")" = 1 ] && out_has G5 "premises: a codex app-server runs outside this run folder (pid $GP, $T/dmn/codex); codex not started; it is left running" ||
+    { why="rc $(cat "$T/G5.rc"), stdout: $(tr '\n' '|' <"$T/G5.out")"; return 1; }
+}
+res "G5 daemon mode still names a skipped app-server (another uid, cwd not readable)" 0 g5
+kill "$GP" 2>/dev/null; rm -f "$T/G5.dpid"
 
 if [ "$bad" -eq 0 ]; then echo "lib tests: ok ($n)"; exit 0; fi
 echo "lib tests: $bad failed"

@@ -1,0 +1,170 @@
+== pc4-tui: CODEX_HOME/config.toml, before the run -> after (unified diff)
+--- before
++++ after
+@@ -27,3 +27,38 @@
+ [[hooks.SessionStart.hooks]]
+ type = "command"
+ command = "echo home-inline >>/tmp/run/trust-pc4-tui"
++
++[hooks.state]
++
++[hooks.state."/tmp/run/cxh-pc4-tui/hooks.json:session_start:0:0"]
++trusted_hash = "sha256:94c3b802ff31763dd08af518b0d06009606df4f2046163dcc8941d2ee49fc430"
++
++[hooks.state."/tmp/run/cxh-pc4-tui/hooks.json:session_start:1:0"]
++trusted_hash = "sha256:0300424cb70daec7e1a284f497402bf1009eb59d1ddab6f62b4dafc3b767ce5a"
++
++[hooks.state."/tmp/run/cxh-pc4-tui/hooks.json:session_start:2:0"]
++trusted_hash = "sha256:65811a568587ace310741849194530e52f2eaa7e1017a1c561afdc4c5a6dc3c6"
++
++[hooks.state."/tmp/run/cxh-pc4-tui/hooks.json:session_start:3:0"]
++trusted_hash = "sha256:1a1a967297c9ad94b17a24f2a9d73d79b48c54833367fcdae0cf526cff6580bf"
++
++[hooks.state."/tmp/run/cxh-pc4-tui/hooks.json:user_prompt_submit:0:0"]
++trusted_hash = "sha256:f1cb9569547b5a00d9a0afce76b07ea7ecdfc1ab8a83927217de47d5a4870abe"
++
++[hooks.state."/tmp/run/cxh-pc4-tui/config.toml:session_start:0:0"]
++trusted_hash = "sha256:67961ac180de7d8043bc2ca96f6ab979a8986229f8a38a4859feea49f54cc416"
++
++[hooks.state."/repo/.codex/hooks.json:session_start:0:0"]
++trusted_hash = "sha256:6d682ffea869604fcac02c0ce6018ecf976091d843a54034b08e7a9f1c068061"
++
++[hooks.state."/repo/.codex/hooks.json:session_start:1:0"]
++trusted_hash = "sha256:0300424cb70daec7e1a284f497402bf1009eb59d1ddab6f62b4dafc3b767ce5a"
++
++[hooks.state."/repo/.codex/config.toml:session_start:0:0"]
++trusted_hash = "sha256:ebd8448c4c4b5ef6998188a400d1ff891e1babba4f7994cf973f5b75bdce9cf5"
++
++[tui]
++screen_reader_detection_done = true
++
++[tui.model_availability_nux]
++"gpt-6.1-sol" = 1
+== SQLite under CODEX_HOME (every table; values that mention hook, trust, approv, a hook command or its sha256)
+db goals_1.sqlite
+table _sqlx_migrations
+table thread_goal_continuation_deferrals
+table thread_goals
+db logs_2.sqlite
+table _sqlx_migrations
+table logs
+table sqlite_sequence
+db memories_1.sqlite
+table _sqlx_migrations
+table consolidation_progress
+table jobs
+table stage1_outputs
+db queue_1.sqlite
+table _sqlx_migrations
+table queued_items
+table queued_thread_revisions
+table sqlite_sequence
+db state_5.sqlite
+table _sqlx_migrations
+table backfill_state
+table external_agent_config_imports
+table guardian_review_feedback
+table project_idempotency_keys
+table project_roots
+table projects
+table remote_control_enrollments
+table rollout_migration_skipped_rollouts
+table rollout_migration_state
+table session_model_ids
+table sqlite_sequence
+table thread_attachments
+table thread_dynamic_tools
+table thread_read_receipts
+table thread_sections
+table thread_spawn_edges
+table threads
+db thread_history_1.sqlite
+table _sqlx_migrations
+table thread_history_projection_state
+table thread_items
+table thread_realtime_items
+table thread_turns
+== CODEX_HOME files (size path)
+3 .sandbox_migration
+0 .tmp/.staging.lock
+0 .tmp/plugins.sync.lock
+3088 config.toml
+32768 goals_1.sqlite
+32768 goals_1.sqlite-shm
+32992 goals_1.sqlite-wal
+90 history.jsonl
+849 hooks.json
+36 installation_id
+49152 logs_2.sqlite
+45056 memories_1.sqlite
+40960 queue_1.sqlite
+32768 queue_1.sqlite-shm
+41232 queue_1.sqlite-wal
+116 session_index.jsonl
+0 session_index.jsonl.lock
+45613 sessions/2026/11/26/rollout-2026-11-26T08-11-12-00000000-0000-4000-8000-000000000001.jsonl
+17 skills/.system/.codex-system-skills.marker
+2781 skills/.system/create-statusline/SKILL.md
+43 skills/.system/create-statusline/agents/openai.yaml
+3329 skills/.system/create-statusline/assets/statusline.py
+5391 skills/.system/create-statusline/references/statusline.d.ts
+10776 skills/.system/imagegen/LICENSE.txt
+19201 skills/.system/imagegen/SKILL.md
+275 skills/.system/imagegen/agents/openai.yaml
+2889 skills/.system/imagegen/assets/imagegen-small.svg
+1711 skills/.system/imagegen/assets/imagegen.png
+9655 skills/.system/imagegen/references/cli.md
+1779 skills/.system/imagegen/references/codex-network.md
+6072 skills/.system/imagegen/references/image-api.md
+8282 skills/.system/imagegen/references/prompting.md
+17617 skills/.system/imagegen/references/sample-prompts.md
+34667 skills/.system/imagegen/scripts/image_gen.py
+13905 skills/.system/imagegen/scripts/remove_chroma_key.py
+10776 skills/.system/openai-docs/LICENSE.txt
+3064 skills/.system/openai-docs/SKILL.md
+361 skills/.system/openai-docs/agents/openai.yaml
+1091 skills/.system/openai-docs/assets/openai-small.svg
+1429 skills/.system/openai-docs/assets/openai.png
+7417 skills/.system/openai-docs/references/codex-self-knowledge.md
+1578 skills/.system/openai-docs/references/latest-model.md
+2318 skills/.system/openai-docs/references/mcp-diagnostics.md
+6244 skills/.system/openai-docs/references/model-migration.md
+1344 skills/.system/openai-docs/references/model-selection.md
+3337 skills/.system/openai-docs/references/official-docs.md
+10128 skills/.system/openai-docs/references/prompting-guide.md
+1833 skills/.system/openai-docs/references/upgrade-guide.md
+19676 skills/.system/openai-docs/references/upgrading-to-gpt-6-astra.md
+15668 skills/.system/openai-docs/scripts/fetch-codex-manual.mjs
+1038 skills/.system/openai-docs/scripts/resolve-latest-model-info
+3916 skills/.system/openai-docs/scripts/resolve-latest-model-info.cjs
+2661 skills/.system/review-agent/SKILL.md
+252 skills/.system/review-agent/agents/openai.yaml
+15311 skills/.system/skill-creator/SKILL.md
+183 skills/.system/skill-creator/agents/openai.yaml
+1319 skills/.system/skill-creator/assets/skill-creator-small.svg
+1563 skills/.system/skill-creator/assets/skill-creator.png
+11358 skills/.system/skill-creator/license.txt
+2356 skills/.system/skill-creator/references/openai_yaml.md
+6669 skills/.system/skill-creator/scripts/generate_openai_yaml.py
+10314 skills/.system/skill-creator/scripts/init_skill.py
+4249 skills/.system/skill-creator/scripts/quick_validate.py
+11358 skills/.system/skill-installer/LICENSE.txt
+3367 skills/.system/skill-installer/SKILL.md
+221 skills/.system/skill-installer/agents/openai.yaml
+923 skills/.system/skill-installer/assets/skill-installer-small.svg
+1086 skills/.system/skill-installer/assets/skill-installer.png
+659 skills/.system/skill-installer/scripts/github_utils.py
+11917 skills/.system/skill-installer/scripts/install-skill-from-github.py
+2948 skills/.system/skill-installer/scripts/list-skills.py
+4096 state_5.sqlite
+32768 state_5.sqlite-shm
+659232 state_5.sqlite-wal
+0 thread-writer-locks/.coordination.lock
+106496 thread_history_1.sqlite
+0 tui-thread-reference-capabilities/00000000-0000-4000-8000-000000000001
+== repo files (size path; .git/ left out)
+196 .codex/config.toml
+341 .codex/hooks.json
+== HOME files (size path)
+476 .claude/.claude.json
+177 .codex/config.toml

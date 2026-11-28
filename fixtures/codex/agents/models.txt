@@ -1,0 +1,17 @@
+pc6-probe 0001 gpt-mock other dev=none
+pc6-probe: sub_model=none
+pc6-a 0002 gpt-mock main dev=none
+pc6-a 0003 gpt-mock main dev=none
+pc6-a 0004 gpt-mock-pc6 sub dev=tracer-pc6-probe-dev
+pc6-a 0005 gpt-mock main dev=none
+pc6-a: sub_model=gpt-mock-pc6
+pc6-b 0006 gpt-mock main dev=none
+pc6-b 0007 gpt-mock main dev=none
+pc6-b 0008 gpt-mock-explorer sub dev=tracer-pc6-explorer-dev
+pc6-b 0009 gpt-mock main dev=none
+pc6-b: sub_model=gpt-mock-explorer
+pc6-c 0010 gpt-mock main dev=none
+pc6-c 0011 gpt-mock main dev=none
+pc6-c 0012 gpt-mock-disc sub dev=tracer-pc6-disc-dev
+pc6-c 0013 gpt-mock main dev=none
+pc6-c: sub_model=gpt-mock-disc

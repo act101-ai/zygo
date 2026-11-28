@@ -1,4 +1,5 @@
-use std::io::Write;
+mod common;
+
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use serde_json::{json, Value};
@@ -17,7 +18,7 @@ fn zygo(d: &Path, sd: &SessionDir, args: &[&str], input: &[u8]) -> Output {
         .env("HOME", d).env("LOCALAPPDATA", d.join("local")).env("APPDATA", d.join("roaming"))
         .env("ZYGO_SESSION_DIR", &sd.root).env_remove("ZYGO_AGENT").current_dir(d)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    c.stdin.take().unwrap().write_all(input).unwrap();
+    common::write_stdin(c.stdin.take().unwrap(), input);
     c.wait_with_output().unwrap()
 }
 fn post_bash(stdout: &str) -> Vec<u8> {     // fixture shape of PostToolUse-Bash-main.json
@@ -27,9 +28,11 @@ fn post_bash(stdout: &str) -> Vec<u8> {     // fixture shape of PostToolUse-Bash
 fn big() -> String { (0..5000).map(|i| format!("line {i:06} xxxxxxxx\n")).collect() }
 /// The data directory the usage database lives in, per Paths::from_env.
 fn data_dir(d: &Path) -> std::path::PathBuf { if cfg!(windows) { d.join("local").join("zygo") } else { d.join(".local/share/zygo") } }
+/// The usage database as the launcher leaves it (O§6.5 item 3).
+fn usage_ready(d: &Path) { drop(zygo_usage::Store::open(&data_dir(d).join("usage.db")).unwrap()); }
 
 #[test] fn trim_binary_trims_bash_over_threshold() {
-    let d = tempfile::tempdir().unwrap(); let sd = session(d.path());
+    let d = tempfile::tempdir().unwrap(); let sd = session(d.path()); usage_ready(d.path());
     let o = zygo(d.path(), &sd, &["hook", "trim"], &post_bash(&big()));
     assert_eq!(o.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&o.stderr), "");
@@ -63,7 +66,7 @@ fn data_dir(d: &Path) -> std::path::PathBuf { if cfg!(windows) { d.join("local")
     assert!(String::from_utf8_lossy(&o.stdout).contains("[zygo trimmed this output:"));
 }
 #[test] fn trim_binary_work_log_failure_keeps_view_with_one_fixed_line() {
-    let d = tempfile::tempdir().unwrap(); let sd = session(d.path());
+    let d = tempfile::tempdir().unwrap(); let sd = session(d.path()); usage_ready(d.path());
     std::fs::write(sd.work(), b"in the way").unwrap();                 // the work path is a file: append fails
     let o = zygo(d.path(), &sd, &["hook", "trim"], &post_bash(&big()));
     assert_eq!(o.status.code(), Some(0));

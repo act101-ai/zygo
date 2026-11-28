@@ -1,0 +1,15 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "turn_id": "00000000-0000-4000-8000-000000000002",
+  "transcript_path": "/tmp/run/cxh-pc5-sub/sessions/2026/11/26/rollout-2026-11-26T08-12-24-00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "hook_event_name": "PostToolUse",
+  "model": "gpt-mock",
+  "permission_mode": "bypassPermissions",
+  "tool_name": "spawn_agent",
+  "tool_input": {
+    "message": "zp-pc5-sub-child"
+  },
+  "tool_response": "{\"agent_id\":\"00000000-0000-4000-8000-000000000003\",\"nickname\":\"Laplace\"}",
+  "tool_use_id": "call_pc5_sub"
+}

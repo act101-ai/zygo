@@ -146,18 +146,18 @@ enum GitFail {
     Read(&'static str),
 }
 
-/// A finished `git` call: exit code (none when killed by a signal), stdout and up to 64 KiB of stderr.
-struct GitOut {
-    code: Option<i32>,
-    out: Vec<u8>,
-    err: Vec<u8>,
+/// A finished `git` call: exit status, stdout and up to 64 KiB of stderr.
+pub(crate) struct GitOut {
+    pub(crate) status: std::process::ExitStatus,
+    pub(crate) out: Vec<u8>,
+    pub(crate) err: Vec<u8>,
 }
 
 /// `git -C <repo> <args>` with `LC_ALL=C`: stdout on success; [`GitFail::Absent`] for a non-zero exit with a
 /// [`GIT_ABSENT`] message; else [`GitFail::Read`].
 fn git(repo: &Path, args: &[&str], deadline: Instant) -> Result<String, GitFail> {
     let o = git_out(repo, args, deadline).map_err(GitFail::Read)?;
-    if o.code != Some(0) {
+    if o.status.code() != Some(0) {
         let err = String::from_utf8_lossy(&o.err).into_owned();
         return Err(if git_absent(&err) { GitFail::Absent(err) } else { GitFail::Read("failed") });
     }
@@ -167,13 +167,18 @@ fn git(repo: &Path, args: &[&str], deadline: Instant) -> Result<String, GitFail>
 /// `git -C <repo> <args>` with `LC_ALL=C`, run to its end: a reason word when it does not start, does not finish by
 /// `deadline` (the child is killed and its pipe readers, which a grandchild may hold open, are left behind) or its
 /// stdout cannot be read.
-fn git_out(repo: &Path, args: &[&str], deadline: Instant) -> Result<GitOut, &'static str> {
+pub(crate) fn git_out(repo: &Path, args: &[&str], deadline: Instant) -> Result<GitOut, &'static str> {
+    git_out_with(git_command(), repo, args, deadline)
+}
+
+/// [`git_out`] with `git` as the command (a caller's [`git_command`] with more environment set).
+pub(crate) fn git_out_with(mut git: Command, repo: &Path, args: &[&str], deadline: Instant) -> Result<GitOut, &'static str> {
     let timed_out = "timed out";
     let left = deadline.saturating_duration_since(Instant::now());
     if left.is_zero() {
         return Err(timed_out);
     }
-    let mut child = git_command()
+    let mut child = git
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -218,7 +223,7 @@ fn git_out(repo: &Path, args: &[&str], deadline: Instant) -> Result<GitOut, &'st
         }
     };
     let err = erx.recv_timeout(deadline.saturating_duration_since(Instant::now())).map_err(|_| timed_out)?;
-    Ok(GitOut { code: status.code(), out: out.map_err(|_| "failed")?, err })
+    Ok(GitOut { status, out: out.map_err(|_| "failed")?, err })
 }
 
 /// `git show` said `.zygo.toml` or the branch is absent (`said`, git's one stderr line); a corrupt object or ref can say
@@ -226,10 +231,10 @@ fn git_out(repo: &Path, args: &[&str], deadline: Instant) -> Result<GitOut, &'st
 fn confirm_absent(repo: &Path, branch: &str, said: &str, deadline: Instant) -> Option<&'static str> {
     let (args, absent): (Vec<&str>, fn(&GitOut) -> bool) = if said.contains("invalid object name") {
         // No such ref: exit 1, nothing printed. A ref to a missing object resolves (exit 0); a broken one warns.
-        (vec!["rev-parse", "--verify", "--quiet", branch], |o| o.code == Some(1) && o.out.is_empty() && o.err.is_empty())
+        (vec!["rev-parse", "--verify", "--quiet", branch], |o| o.status.code() == Some(1) && o.out.is_empty() && o.err.is_empty())
     } else if said.contains("does not exist in") || said.contains("exists on disk, but not in") {
         // The branch's tree is readable and has no `.zygo.toml`: exit 0, nothing printed.
-        (vec!["ls-tree", "--name-only", branch, "--", ".zygo.toml"], |o| o.code == Some(0) && o.out.is_empty() && o.err.is_empty())
+        (vec!["ls-tree", "--name-only", branch, "--", ".zygo.toml"], |o| o.status.code() == Some(0) && o.out.is_empty() && o.err.is_empty())
     } else {
         // `not a git repository`: `repo` is no repository (the hooks find the checkout first and judge a `.git` entry).
         return None;
@@ -257,10 +262,15 @@ pub fn read_default_branch(repo: &Path) -> RepoFile {
         },
         Err(GitFail::Read(w)) => return RepoFile::Unread { why: format!("git show: {w}") },
     };
+    from_text(branch, &text)
+}
+
+/// The repository file read from `branch` with contents `text`: parsed, filtered to the kept tables and validated.
+pub fn from_text(branch: String, text: &str) -> RepoFile {
     let invalid = |why: String| RepoFile::Invalid { branch: branch.clone(), why };
     let parsed: Table = match text.parse() {
         Ok(t) => t,
-        Err(e) => return invalid(syntax_error(&text, e.message(), e.span())),
+        Err(e) => return invalid(syntax_error(text, e.message(), e.span())),
     };
     let mut table = Table::new();
     let mut ignored = Vec::new();
@@ -278,12 +288,15 @@ pub fn read_default_branch(repo: &Path) -> RepoFile {
     }
     let mut kept = table.clone();
     kept.remove("version");
-    // `load` drops `guards.min_level` with a warning; a bad value must not invalidate the file.
+    // `load` drops `guards.min_level` and `limits.max_members` with a warning; a bad value must not invalidate the file.
     if let Some(g) = kept.get_mut("guards").and_then(Value::as_table_mut) {
         g.remove("min_level");
     }
+    if let Some(l) = kept.get_mut("limits").and_then(Value::as_table_mut) {
+        l.remove("max_members");
+    }
     if let Err(e) = crate::typed::from_value::<Config>(Value::Table(kept)) {
-        return invalid(e.describe(Some(&text)));
+        return invalid(e.describe(Some(text)));
     }
     RepoFile::Found { branch, table, ignored }
 }

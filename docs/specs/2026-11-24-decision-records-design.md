@@ -90,7 +90,7 @@ unit = "phase-3:N12"
 round = 2
 role = "code"
 model = "claude-sonnet-4-5"
-commit = "6e7fe2f0c1d2e3f4a5b6c7d8e9f00112233445566"
+commit = "6e7fe2f0c1d2e3f4a5b6c7d8e9f0011223344556"
 date = "2026-11-24"
 depends_on = ["DDR-01JDQ2W0000000000000000000"]
 reverse_cost = "low"
@@ -209,7 +209,10 @@ No guard checks the trailer (D§9.6).
 
 ### 6.8 Limits
 
-**(author)** The directory: a reader `lstat`s `docs/decisions`. A link or a file that is not a directory is refused: the listing verbs exit 1 with `zygo decision: docs/decisions is not a directory`, `new` exits 1 with the same text, and the report prints `decision records: docs/decisions is not a directory`. Absent is not an error (D§14). A reader does not enter subdirectories.
+**(author)** The directory: a reader `lstat`s `docs` and `docs/decisions`. Absent is not an error (D§14). A reader does not enter subdirectories. Two cases refuse the directory, each with its own line:
+
+- A link or a file that is not a directory: the listing verbs (`ls`, `show`, `deps`, `check`), `new` and the operator verbs (`review`, `ratify`, `overturn`) exit 1 with `zygo decision: docs/decisions is not a directory`, and the report prints `decision records: docs/decisions is not a directory`.
+- A directory that cannot be read: an `lstat` that fails for a reason other than absent, a listing that cannot be opened (for example, no read permission), or an entry that gives an error while the listing is read. The same verbs exit 1 with `zygo decision: cannot read docs/decisions`, and the report prints `decision records: cannot read docs/decisions`. This case is never reported as not a directory, and no part of the listing is used.
 
 The names: a file is a record when its name matches `^DDR-[0-9A-HJKMNP-TV-Z]{26}\.md$`. A name that starts with `DDR-` and ends in `.md` but does not match is malformed. Every other name (`README.md`, `*.tmp`, other files) is not a record and is ignored. A reader considers at most 10,000 entries of the directory. Above that, a listing verb exits 1 with `zygo decision: more than 10,000 files in docs/decisions/`, and the report prints `decision records: over 10,000 files`.
 
@@ -344,20 +347,20 @@ A file written by the reviewer was rejected: `zygo-review` has no edit tool (`wr
 | dispositions | `work_verdict` with `verdict = "keep"` | any problem of D§9.4 | the verdict is recorded and the reply ends with `zygo: dispositions: <problems>` / the verdict is not recorded; the tool returns an error with `zygo: keep refused: <problems>` |
 
 - Default level: `enforce`. The other work guards default to `monitor`, except `trailers`, which defaults to `notify` (`crates/zygo-config/src/schema.rs:540-551`). The new default is added there.
-- At `monitor` the check does not run: the guard has no place to record an event (next item), and the tool behaves as today. A user or a repository can set this level, as for any guard, above the `min_level` floor.
+- At `monitor` the check does not run and none of the four verdict git processes of D§9.4 starts: the guard has no place to record an event (next item), and the tool behaves as today. Reading the level (the config load, including the `.zygo.toml` read from the default branch, §13.5) runs at every level, `monitor` included, and is outside the D§9.4 budget. A user or a repository can set this level, as for any guard, above the `min_level` floor.
 - The guard runs in the MCP tool, not in a hook. It records no `guard` line and no count in `guard_events`: that column is written by the fold, which replaces it on each fold (`crates/zygo-usage/src/store.rs:252`), so the tool cannot own a part of it. The reply is the only output.
 - A `keep` without `dispositions` is refused at `enforce`. Today's skill calls `work_verdict` without it (execute-work `SKILL.md:224-230`), so the skill change of D§12 ships before a zygo release with this guard. Until a binary with this item is installed, the skill applies the rule (plan of work, decision 3).
 - `<problems>` is at most 10 problems joined by `; `, then `; and <n> more`, at most 4 KiB.
 
 ### 9.4 The checks
 
-**(author)** The tool runs these steps in order and collects each problem. Git runs in the session's repository root (D§13 item 6). One verdict starts at most four git processes: one `git cat-file --batch` for all object reads, one `git merge-base`, one `git rev-list` and one `git log`. Each process has a 2 s bound, and all of them together a 10 s bound. The `--batch` process reads at most 2,048 objects and 16 MiB in all; past either bound the problem is `too much to read`. A step that needs a failed read gives its problem and the later steps that need the same read are skipped.
+**(author)** The tool runs these steps in order and collects each problem. Git runs in the session's repository root (D§13 item 6). The check of one verdict starts at most four git processes: one `git cat-file --batch` for all object reads, one `git merge-base`, one `git rev-list` and one `git log`. Reading the level (D§9.3) is outside this budget and runs at every level. Each process has a 2 s bound, and all of them together a 10 s bound. The `--batch` process reads at most 2,048 objects and 16 MiB in all; past either bound the problem is `too much to read`. A step that needs a failed read gives its problem and the later steps that need the same read are skipped.
 
-1. **Head.** `head` is present and `<head>^{commit}` resolves (`--batch`). Else: `no head commit`.
+1. **Head.** `head` is present and `<head>^{commit}` resolves (`--batch`) to a commit whose full id starts with `head`. Else: `no head commit` when `head` is absent or does not resolve, and `cannot check: head <head> is a ref name, not a commit id` when the resolved id does not start with `head`: git tries refs before an object prefix, so a ref of the same name resolved instead, and the check cannot know which commit the lead judged.
 2. **Dispositions.** `dispositions` is present. An empty array is valid (no findings). Else: `no dispositions`.
 3. **Uniqueness.** Each `finding` label is unique, and each `record` id is in one entry only. Else: `finding <label> has two dispositions` or `<id> serves two findings`.
-4. **Node range.** With `base`: `<base>^{commit}` resolves (`--batch`), else `no base commit`; and `git merge-base <base> <head>` must equal `base`, else `base is not an ancestor of head`. Without `base`: base is `git merge-base HEAD <head>`; when it equals `head`, the problem is `head is already in HEAD: call before the merge, or give base` and steps 5 to 9 are skipped. Then `git rev-list <base>..<head>` lists the node range R, at most 10,000 commits (else `node range too large`).
-5. **`fixed`.** `commit` is present, `<commit>^{commit}` resolves, and its full id is in R. Else: `<label>: commit <c> is not in the node range`.
+4. **Node range.** With `base`: `<base>^{commit}` resolves (`--batch`) to a commit whose full id starts with `base`, else `no base commit` when it does not resolve, and `cannot check: base <base> is a ref name, not a commit id` when the resolved id does not start with `base`; and `git merge-base <base> <head>` must equal `base`, else `base is not an ancestor of head`. Without `base`: base is `git merge-base HEAD <head>`; when it equals `head`, the problem is `head is already in HEAD: call before the merge, or give base` and steps 5 to 9 are skipped. Then `git rev-list <base>..<head>` lists the node range R, at most 10,000 commits (else `node range too large`).
+5. **`fixed`.** `commit` is present, else `<label>: no commit`. `<commit>^{commit}` resolves to a commit whose full id starts with `commit`, else `<label>: cannot check: commit <c> is a ref name, not a commit id` when the resolved id does not start with `commit`. That full id is in R. Else: `<label>: commit <c> is not in the node range`.
 6. **`rejected`.** `reason` is present. When `class` is not `none`: `<label>: class <class> needs a record for the operator` (D§8.2).
 7. **`recorded`.** All of these, else `<label>: <why>`:
    - with class `none`, the verdict's `round` is 3 or more (D§8.1);
@@ -366,7 +369,7 @@ A file written by the reviewer was rejected: `zygo-review` has no edit tool (`wr
    - its kind is `accepted-limit`, `compromise` or `open-finding`; or `decision` when the class is not `none` (D§8.2);
    - each id in its `depends_on` is a record at `head`;
    - its status: with class `none`, `open`; with a stop class, `ratified` passes, `open` gives `class <class> stops for the operator: ratify or overturn <id>`, and `overturned` gives `<id> overturned by the operator`.
-8. **New stop-class records.** `git log --no-renames --name-status -z --format=<id, parents, message> <base>..<head> -- docs/decisions/` gives the record paths that R touches. Each record at `head` that is missing at `base` and has a class other than `none` must be `ratified` or `fixed` (else `<id>: class <class> stops for the operator: ratify or overturn <id>`). This covers records that no finding names. `fixed` passes for the reason of D§8.2: the subject was removed by a commit in the node range (step 9 checks `fixed_by`); it is the end of the overturn flow of D§8.5 step 5.
+8. **New stop-class records.** `git log --no-renames --diff-merges=first-parent --name-status -z --format=<id, parents, message> <base>..<head> -- docs/decisions/` gives the record paths that R touches. Each record at `head` that is missing at `base` and has a class other than `none` must be `ratified` or `fixed` (else `<id>: class <class> stops for the operator: ratify or overturn <id>`). This covers records that no finding names. `fixed` passes for the reason of D§8.2: the subject was removed by a commit in the node range (step 9 checks `fixed_by`); it is the end of the overturn flow of D§8.5 step 5.
 9. **Agent transitions.** For each agent commit (D§5) in the same `git log` output, and each record path it changes, the old version (at its parent) and the new version are read (`--batch`). The change must be an agent transition of D§6.6: no frozen key changed; no operator key or operator status written; `fixed_by` and `promoted_by` in R; for `superseded`, a record added in R names it. A deleted or renamed record, a malformed new version, or a malformed name is a problem. At most 1,000 record changes are read (else `too many record changes`). Merge commits and commits without `Zygo-Session:` are not read: they are not the node's own agent work.
 
 No other files are read. A malformed record that the node did not touch is not the node's problem; `zygo decision check` reports it.
@@ -378,7 +381,7 @@ A git process that fails or passes its bound gives the problem `cannot check: <g
 **(operator)** `zygo work report` counts open records. **(author)** The output of `crates/zygo-work/src/report.rs` gains two lines. Records are read from the working tree of the repository at the current directory (`git rev-parse --show-toplevel`, 2 s bound).
 
 - In each unit block, after the `guard events:` line (`report.rs:82`), when at least one valid record has this `unit`, or this unit with a `:<part>`: `  decisions: <open> open, <total> total`.
-- After the last block, after one empty line, when `docs/decisions/` holds at least one record name: `decision records: <open> open, <total> total, deepest chain <d>`, then `, <m> malformed` when `m > 0`. `<d>` is the number of records on the longest `depends_on` path among valid records (a record with no `depends_on` counts 1; a cycle is cut at the first repeat). The two D§6.8 directory cases print their own line in place of this one.
+- After the last block, after one empty line, when `docs/decisions/` holds at least one record name: `decision records: <open> open, <total> total, deepest chain <d>`, then `, <m> malformed` when `m > 0`. `<d>` is the number of records on the longest `depends_on` path among valid records (a record with no `depends_on` counts 1; a cycle is cut at the first repeat). The three D§6.8 directory cases (not a directory, cannot be read, over 10,000 files) print their own line in place of this one.
 - With no units and at least one record, the report prints `no work units` and then the records line.
 - Outside a repository, or when the git call fails: no records lines. The report never fails because of a record.
 
@@ -461,7 +464,7 @@ A crash or `q` loses nothing: each outcome is in its file, and the next `review`
 
 **(operator)** A record never becomes a rule without this review. Only `ratify --promote rule` writes `promoted_to = "rule"`, and D§6.6 forbids agents to write it. The node that writes the rule cites the record and its `reviewed` date, which the rule clause of the skills accepts as the operator's approval (execute-work `SKILL.md:8-15`).
 
-**(author)** Before each write the verb reads the file again. When its bytes differ from what the verb showed, it writes nothing and prints `<id> changed since it was shown; skipped`. This covers two reviews at once and an edit during a review. The write is a temporary file in `docs/decisions/` and a rename, so a crash leaves the old file or the new one.
+**(author)** Before each write the verb reads the file again. When its bytes differ from what the verb showed, it writes nothing and prints `<id> changed since it was shown; skipped`. This covers two reviews at once and an edit during a review. The write is a temporary file in `docs/decisions/` and a rename, so a crash leaves the old file or the new one. The verb holds an exclusive lock on `<git common dir>/zygo-decisions.lock` from before the re-read until after the rename, so of two writers of one record only one writes; the other waits, reads the renamed file and skips it. The lock file is never written, renamed or removed, and it is not the record: the rename replaces the record, and on Windows a lock on the record blocks reads of it. `ratify` and `overturn` therefore need write access to the git common dir, the same as `zygo-work` in the git common dir; without it they print `zygo decision: cannot write <lock path>: <error>` and change nothing.
 
 ## 12. Changes outside this repository
 
@@ -509,6 +512,7 @@ A crash or `q` loses nothing: each outcome is in its file, and the next `review`
 |---|---|---|---|---|---|
 | `docs/decisions/` absent | a named `record` is missing: a problem; nothing else | no records lines | empty list, exit 0 | exit 0 | `no open records`, exit 0 |
 | `docs/decisions` a link or not a directory | in git: its paths are not record blobs, so a named record is missing | its D§6.8 line | exit 1 | exit 1 | exit 1 |
+| `docs/decisions` cannot be read (`lstat` error other than absent, listing or entry error) | not affected: it reads records from git (D§9.1) | its D§6.8 line | exit 1 | exit 1 | exit 1 |
 | A malformed file | a problem only when the node names it or changes it | counted in `malformed` | one stderr line per file, skipped | one line per fault, exit 1 | one stderr line; it cannot be reviewed or changed |
 | A file over 64 KiB, a link, a FIFO | as malformed, never opened | as malformed | as malformed | as malformed | as malformed |
 | A git process fails or passes its bound | `cannot check: …` (refused at `enforce`) | no records lines | the git-backed part (commits in `show`) is left out with one stderr line | as for `ls` | as for `show` |
@@ -557,7 +561,7 @@ The verdict tests use a git fixture repository with linked checkouts. The git-fa
 1. `zygo decision new` writes a file that `check` reports as malformed until the hint lines are replaced; after that `check` exits 0.
 2. Two records created at the same time in two linked checkouts get different ids; merging both branches gives no conflict.
 3. A record with a cycle in `depends_on`, a missing `depends_on` id, a file name that differs from `id`, a name `DDR-bad.md`, or a 65 KiB file makes `check` exit 1 with one line each; `ls` exits 0 and names each file on stderr. `README.md`, `x.tmp` and a subdirectory are ignored. A `docs/decisions` that is a link makes `ls` and `check` exit 1.
-4. `deps` on an assumption with a chain of 3 records and one record reached on two paths prints 3 lines with depths 1, 2, 3 and the shared record once.
+4. `deps` on an assumption with a chain of 3 records and a fourth record that depends on both the second and the third prints 4 lines with depths 1, 2, 3, 3; the fourth record, reached on two paths, is printed once, at depth 3.
 5. With the default level (`enforce`), `work_verdict` keep is refused, and the row's verdict is unchanged, for each of: no `head`; no `dispositions`; a duplicate label; one record for two findings; a `fixed` commit that is an ancestor of `base`; `recorded` in round 2; a recorded record that is absent at `head`, present at `base`, of another unit, or of another class than its entry; a `rejected` entry of class `security`; a recorded `open` record of class `security`; a new `open` record of class `contract` that no finding names; an agent commit that sets a record `ratified`; an agent commit that changes a record's `class`; an agent commit that sets `fixed` with a `fixed_by` outside the node range; an agent commit that deletes a record. Each refusal names its problem.
 6. At `enforce`, a keep with one `fixed` (commit in the node range), one `rejected` (class `none`), one `recorded` (round 3, class `none`, open, added in the node range, same unit) and an empty `findings` string is recorded. A keep with `dispositions: []` and no record changes is recorded.
 7. Stop path in a node checkout: a keep in round 1 with a recorded `security` record is refused with `stops for the operator` (not with the round limit); the operator runs `zygo decision ratify <id> --yes` in the node checkout without `ZYGO_SESSION_DIR` and commits without a `Zygo-Session:` line; the next keep with the new `head` is recorded. The same with `overturn`: the next keep is refused with `overturned by the operator`; after an agent commit that fixes the subject and sets the record `fixed` with that commit, a keep with the entry `fixed` is recorded. The same flow in one checkout, with `base` given, gives the same results.
@@ -576,3 +580,14 @@ The verdict tests use a git fixture repository with linked checkouts. The git-fa
 - **PD1** `git cat-file --batch`, `git merge-base`, `git rev-list` and `git log` run in the main checkout read commits made in a linked checkout of the same repository, before any merge.
 - **PD2** Claude Code passes a `work_verdict` argument object of 256 KiB to the MCP server unchanged.
 - **PD3** On Claude Code 2.1.328 the `PreToolUse` input for `work_verdict` from the main loop has no `agent_id` key, so the existing lead-only hook lets the signature through (the deny branch at `crates/zygo-work/src/hooks.rs:184-185`).
+
+## Change log
+
+- 2026-11-24 — D§6.2 — author's call — the example commit had 41 hex characters; D§6.3 allows 40 or 64, so it is cut to 40 (found while planning phase3 DR-1).
+- 2026-11-24 — D§17 #4 — author's call — with each record printed once at its smallest depth (D§11.2), 3 dependents at depths 1, 2, 3 cannot include one reached on two paths; the case now has a fourth record at depth 3 (found while planning phase3 DR-2).
+- 2026-11-24 — D§11.3 — author's call — name the writer lock and its location (Windows mandatory locks, DR-5 review round 2).
+- 2026-11-24 — D§9.4 step 8 — author's call — git log lists no paths for a merge commit, so a record added in a merge passed step 8; --diff-merges=first-parent lists them.
+- 2026-11-25 — D§6.8 (with D§9.5 and D§14) — author's call (the lead) — an unreadable directory was reported as not a directory; it now has its own case and line, `cannot read docs/decisions` (DR-7 review).
+- 2026-11-25 — D§9.4 steps 1, 4, 5 — author's call (DR-13 review) — a short id must resolve to a commit whose id starts with it; a ref of the same name is refused.
+- 2026-11-25 — D§9.3, D§9.4 — author's call (DR-13 review) — reading the level runs git for `.zygo.toml` at every level; `monitor` runs no check and none of the four verdict git processes, and the level read is outside the D§9.4 budget.
+- 2026-11-25 — D§9.4 step 5 — author's call (DR-13 review) — a `fixed` entry without `commit` gave `commit  is not in the node range` with an empty value; it now gives `<label>: no commit` (D§9.2 does not require `commit`).

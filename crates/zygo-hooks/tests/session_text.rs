@@ -7,10 +7,17 @@ use zygo_core::{
     Agent,
 };
 use zygo_hooks::{
-    pre_compact, session_start,
+    mail, pre_compact, session_start,
     session_text::{build, mechanics},
 };
 use zygo_work::log::{lock, Begin};
+use zygo_workspace::state::{MemberRecord, Workspace};
+#[cfg(unix)]
+use std::time::{Duration, SystemTime};
+#[cfg(unix)]
+use zygo_core::paths::Paths;
+#[cfg(unix)]
+use zygo_workspace::state::{Phase, Store};
 
 const REDACT: &str = "`[REDACTED:<id>]` marks a secret zygo removed; never write it into a file.";
 const ATTRIBUTION: &str = "Never add Claude attribution to commits, pull request titles or bodies, tags, release notes or comments: no `Co-Authored-By: Claude` trailer, no `noreply@anthropic.com` address, no `Generated with Claude Code` line and no Claude session link.";
@@ -465,4 +472,304 @@ fn session_start_work_units_override() {
     SessionView { work_units: true, ..view() }.save(&d).unwrap();
     Overrides { work_units: Some(false), ..Default::default() }.save(&d).unwrap();
     assert!(!context(&d).contains("Zygo-Session"));
+}
+
+const MAIL_TAIL: &str = "Send with mail_send (to a name, or `all`); read with mail_read; mail_list shows unread mail and the current members. zygo tells you when mail arrives: before your turn ends, at your next prompt, or with a wake line. Do not poll or wait for mail: end your turn, and you will be woken.";
+const WS_ID: &str = "0123456789abcdef";
+const OWN: &str = "kaaaaaaaa";
+const PEER: &str = "kbbbbbbbb";
+const LATE: &str = "kcccccccc";
+#[cfg(unix)]
+const U1: &str = "Units u-1 were closed when zygo stopped this session; call work_begin to open them again if work continues.";
+
+fn item8(first: &str, names: &str) -> String {
+    format!("Workspace mail: {first}. Members: `{names}`. {MAIL_TAIL}")
+}
+fn rec(name: Option<&str>) -> MemberRecord {
+    MemberRecord { name: name.map(String::from), ..MemberRecord::new(Agent::ClaudeCode) }
+}
+fn ws_of(name: &str, members: &[(&str, Option<&str>)]) -> Workspace {
+    let mut ws = Workspace::new(WS_ID);
+    ws.name = name.into();
+    ws.members = members.iter().map(|(k, n)| (k.to_string(), rec(*n))).collect();
+    ws
+}
+
+#[cfg(unix)]
+struct Mx {
+    t: tempfile::TempDir,
+    paths: Paths,
+    dir: SessionDir,
+}
+#[cfg(unix)]
+fn mx(agent: Agent, mail: bool, member: bool, note: Option<ResumeNote>, members: &[(&str, Option<&str>)]) -> Mx {
+    let t = tempfile::tempdir().unwrap();
+    let p = t.path();
+    let paths = Paths { config_file: p.join("config.toml"), cache_dir: p.join("cache"), data_dir: p.join("data"),
+        sessions_dir: p.join("cache/sessions"), marketplaces_dir: p.join("cache/marketplaces"),
+        plugin_store: p.join("data/plugins"), approvals_file: p.join("data/approvals.toml"), usage_db: p.join("data/usage.db") };
+    let dir = SessionDir::new(paths.sessions_dir.join("S1"));
+    dir.create().unwrap();
+    let workspace = member.then(|| ViewWorkspace {
+        member: Member { ws_id: WS_ID.into(), pane: OWN.into(), ..Default::default() },
+        resume_note: note,
+        ..Default::default()
+    });
+    SessionView { agent, mail, workspace, ..view() }.save(&dir).unwrap();
+    let x = Mx { t, paths, dir };
+    set_members(&x, members);
+    x
+}
+#[cfg(unix)]
+fn set_members(x: &Mx, members: &[(&str, Option<&str>)]) {
+    let root = x.t.path().join("app");
+    Store::open(&x.paths, WS_ID)
+        .update(Duration::from_secs(5), &mut |ws| {
+            ws.name = "app".into();
+            ws.tmux_session = "zygo-app".into();
+            ws.common_dir = root.join(".git");
+            ws.main_root = root.clone();
+            ws.loadout = "solo".into();
+            ws.phase = Phase::Up;
+            ws.members = members.iter().map(|(k, n)| (k.to_string(), rec(*n))).collect();
+            Ok(())
+        })
+        .unwrap();
+}
+#[cfg(unix)]
+fn member_text(x: &Mx, input: &HookInput) -> String {
+    let mut out = Vec::new();
+    let o = session_start::run_member(input, &x.dir, &x.paths, &x.t.path().join("missing"), &mut out).unwrap();
+    let ctx = |v: &Value| v["hookSpecificOutput"]["additionalContext"].as_str().unwrap().to_string();
+    match o {
+        HookOutput::None => ctx(&serde_json::from_slice(&out).unwrap()),
+        HookOutput::Json(v) => ctx(&v),
+        HookOutput::Text(t) => t,
+    }
+}
+#[cfg(unix)]
+fn start(agent: Agent) -> HookInput {
+    match agent {
+        Agent::ClaudeCode => hook("SessionStart-main"),
+        _ => HookInput::parse(Agent::OpenCode, b"{}").unwrap(),
+    }
+}
+const ORCHESTRATOR_JOB: &str = "Your job: orchestrator. Give work to the workers with mail_send, collect their results with mail_read, and check each result against its brief.";
+const JOB_LIST: &str = "orchestrator (orchestrator), worker-1 (worker), elena";
+fn worker_job(o: &str) -> String {
+    format!("Your job: worker. Take your work from {o} by mail, do it through your zygo-<role> subagents, and send the result to {o} with mail_send.")
+}
+/// `ws_of("app", ..)` with `launch.job` of each member: (key, name, job).
+fn ws_jobs(members: &[(&str, Option<&str>, Option<&str>)]) -> Workspace {
+    let mut ws = ws_of("app", &members.iter().map(|(k, n, _)| (*k, *n)).collect::<Vec<_>>());
+    for (k, _, j) in members {
+        ws.members.get_mut(*k).unwrap().launch.job = j.map(String::from);
+    }
+    ws
+}
+/// R§9.3's example: an orchestrator, a worker and a member with no job, in key order.
+fn team() -> Workspace {
+    ws_jobs(&[(OWN, Some("orchestrator"), Some("orchestrator")), (PEER, Some("worker-1"), Some("worker")), (LATE, Some("elena"), None)])
+}
+#[cfg(unix)]
+fn set_jobs(x: &Mx, jobs: &[(&str, &str)]) {
+    Store::open(&x.paths, WS_ID)
+        .update(Duration::from_secs(5), &mut |ws| {
+            for (k, j) in jobs {
+                ws.members.get_mut(*k).unwrap().launch.job = Some(j.to_string());
+            }
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test] // R§9.3 effect 3, R§18 item 19
+fn job_worker_text_lists_each_job_and_names_the_orchestrator() {
+    let want = format!("{} {}", item8("you are `worker-1` in workspace `app`", JOB_LIST), worker_job("orchestrator"));
+    assert_eq!(mail::session_item(&team(), PEER), Some(want));
+    // The S§10.4 clause keeps its place; the job sentence stays last.
+    let got = mail::session_item_with(&team(), PEER, &["bob@b".to_string()]).unwrap();
+    let tail = format!("Members: `{JOB_LIST}`. Other machines: bob@b; mail them by the full address. {MAIL_TAIL} {}", worker_job("orchestrator"));
+    assert!(got.ends_with(&tail), "{got}");
+}
+
+#[test] // R§9.3 effect 3
+fn job_orchestrator_text_gets_the_orchestrator_sentence() {
+    let want = format!("{} {ORCHESTRATOR_JOB}", item8("you are `orchestrator` in workspace `app`", JOB_LIST));
+    assert_eq!(mail::session_item(&team(), OWN), Some(want));
+}
+
+#[test] // R§9.3: no orchestrator in the workspace
+fn job_worker_with_no_orchestrator_names_the_member_that_gave_you_the_work() {
+    let ws = ws_jobs(&[(OWN, Some("worker-1"), Some("worker")), (PEER, Some("elena"), None)]);
+    let want = format!("{} {}", item8("you are `worker-1` in workspace `app`", "worker-1 (worker), elena"), worker_job("the member that gave you the work"));
+    assert_eq!(mail::session_item(&ws, OWN), Some(want));
+}
+
+#[test] // R§9.3 "no job: no sentence", R§18 item 19
+fn job_absent_member_is_listed_by_name_alone_and_gets_no_sentence() {
+    assert_eq!(mail::session_item(&team(), LATE), Some(item8("you are `elena` in workspace `app`", JOB_LIST)));
+    let ws = ws_jobs(&[(OWN, Some("elena"), None), (PEER, Some("kai"), None)]);
+    assert_eq!(mail::session_item(&ws, OWN), Some(item8("you are `elena` in workspace `app`", "elena, kai")));
+}
+
+#[test] // Reading 4: the orchestrator's mail address is names::sender
+fn job_orchestrator_with_no_name_is_named_by_its_pane_key() {
+    let ws = ws_jobs(&[(OWN, None, Some("orchestrator")), (PEER, Some("worker-1"), Some("worker"))]);
+    let want = format!("{} {}", item8("you are `worker-1` in workspace `app`", "worker-1 (worker)"), worker_job("kaaaaaaaa"));
+    assert_eq!(mail::session_item(&ws, PEER), Some(want));
+}
+
+#[test] // Reading 3: R§9.3 defines two jobs; the text holds names and tool names only
+fn job_value_outside_jobs_reads_as_no_job() {
+    let ws = ws_jobs(&[(OWN, Some("elena"), Some("lead\n")), (PEER, Some("kai"), Some("worker"))]);
+    assert_eq!(mail::session_item(&ws, OWN), Some(item8("you are `elena` in workspace `app`", "elena, kai (worker)")));
+}
+
+#[cfg(unix)]
+#[test] // R§12 row member.launch.job: read by the session-start hook
+fn job_sentence_at_session_start_from_the_member_record() {
+    for agent in [Agent::ClaudeCode, Agent::OpenCode] {
+        let x = mx(agent, true, true, None, &[(OWN, Some("worker-1")), (PEER, Some("orchestrator"))]);
+        set_jobs(&x, &[(OWN, "worker"), (PEER, "orchestrator")]);
+        let base = build(&SessionView::load(&x.dir).unwrap());
+        let item = item8("you are `worker-1` in workspace `app`", "worker-1 (worker), orchestrator (orchestrator)");
+        assert_eq!(member_text(&x, &start(agent)), format!("{base}\n\n{item} {}", worker_job("orchestrator")), "{agent:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test] // R§9.3 "with mail off there is no job sentence"
+fn job_sentence_absent_with_mail_off() {
+    let x = mx(Agent::ClaudeCode, false, true, None, &[(OWN, Some("worker-1")), (PEER, Some("orchestrator"))]);
+    set_jobs(&x, &[(OWN, "worker"), (PEER, "orchestrator")]);
+    let got = member_text(&x, &start(Agent::ClaudeCode));
+    assert_eq!(got, build(&SessionView::load(&x.dir).unwrap()));
+    assert!(!got.contains("Your job:"), "{got}");
+}
+
+#[test] // M§8a item 1
+fn mail_item_named_member_lists_every_member_name() {
+    let ws = ws_of("app", &[(OWN, Some("elena")), (PEER, Some("kai")), (LATE, None)]);
+    assert_eq!(mail::session_item(&ws, OWN), Some(item8("you are `elena` in workspace `app`", "elena, kai")));
+}
+
+#[test] // M§8a item 1, review round 2 F4: a name shared by two members is listed once, in key order of its first member
+fn mail_item_lists_each_name_once() {
+    let ws = ws_of("app", &[(OWN, Some("kai")), (PEER, Some("elena")), (LATE, Some("kai"))]);
+    assert_eq!(mail::session_item(&ws, OWN), Some(item8("you are `kai` in workspace `app`", "kai, elena")));
+}
+
+#[test] // M§8a item 1, no-name clause
+fn mail_item_member_with_no_name_gets_the_pane_clause() {
+    let ws = ws_of("app", &[(OWN, None), (PEER, Some("kai"))]);
+    assert_eq!(mail::session_item(&ws, OWN), Some(item8("you have no mail name; others reach you by pane kaaaaaaaa", "kai")));
+}
+
+#[test] // M§8a item 1, review round 2 F1: a pane with no member record is not a mail member (names::resolve)
+fn mail_item_absent_for_a_pane_with_no_member_record() {
+    let ws = ws_of("app", &[(OWN, None), (PEER, Some("kai"))]);
+    assert_eq!(mail::session_item(&ws, LATE), None);
+}
+
+#[cfg(unix)]
+#[test] // review round 2 F1, at session start
+fn mail_item_absent_at_session_start_for_a_pane_with_no_member_record() {
+    let x = mx(Agent::ClaudeCode, true, true, None, &[(PEER, Some("kai"))]);
+    assert_eq!(member_text(&x, &start(Agent::ClaudeCode)), build(&SessionView::load(&x.dir).unwrap()));
+}
+
+#[test] // AU84, esc
+fn mail_item_escapes_every_name_and_skips_invalid_names() {
+    let ws = ws_of("a\u{1b}[2J\nb", &[(OWN, Some("elena")), (PEER, Some("Kai\u{202e}x"))]);
+    assert_eq!(mail::session_item(&ws, OWN), Some(item8("you are `elena` in workspace `a\\u{1b}[2J\\nb`", "elena")));
+    let ws = ws_of("app", &[(OWN, Some("bad\nname")), (PEER, Some("kai")), ("k\u{7}", None)]);
+    assert_eq!(mail::session_item(&ws, OWN), Some(item8("you have no mail name; others reach you by pane kaaaaaaaa", "kai")));
+    assert_eq!(mail::session_item(&ws, "k\u{7}"), Some(item8("you have no mail name; others reach you by pane k\\u{07}", "kai")));
+}
+
+#[cfg(unix)]
+#[test] // M§8a item 1 order, §8.6 items 7 and 8; M§13 #12 second half
+fn mail_item_at_session_start_after_mechanics_before_resume_note() {
+    for agent in [Agent::ClaudeCode, Agent::OpenCode] {
+        let note = ResumeNote { clean_stop: true, closed_units: vec!["u-1".into()], ..Default::default() };
+        let x = mx(agent, true, true, Some(note), &[(OWN, Some("elena")), (PEER, Some("kai"))]);
+        let base = build(&SessionView::load(&x.dir).unwrap());
+        let first = "you are `elena` in workspace `app`";
+        assert_eq!(member_text(&x, &start(agent)), format!("{base}\n\n{}\n\n{U1}", item8(first, "elena, kai")), "{agent:?}");
+        set_members(&x, &[(OWN, Some("elena")), (PEER, Some("kai")), (LATE, Some("lena"))]);
+        let tail = if agent == Agent::ClaudeCode { String::new() } else { format!("\n\n{U1}") };
+        assert_eq!(member_text(&x, &start(agent)), format!("{base}\n\n{}{tail}", item8(first, "elena, kai, lena")), "{agent:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test] // graph review focus 58: item 8 only with `features.mail` on, only in a workspace
+fn mail_item_absent_when_mail_off_or_outside_a_workspace() {
+    let x = mx(Agent::ClaudeCode, false, true, None, &[(OWN, Some("elena"))]);
+    let got = member_text(&x, &start(Agent::ClaudeCode));
+    assert_eq!(got, build(&SessionView::load(&x.dir).unwrap()));
+    assert!(!got.contains("Workspace mail:"));
+    let x = mx(Agent::ClaudeCode, true, false, None, &[(OWN, Some("elena"))]);
+    assert_eq!(member_text(&x, &start(Agent::ClaudeCode)), build(&SessionView::load(&x.dir).unwrap()));
+}
+
+#[cfg(unix)]
+#[test] // M§8a item 1: not appended to subagent prompts
+fn mail_item_not_in_mechanics_or_subagent_text() {
+    assert_eq!(mechanics(&SessionView { mail: true, ..view() }), mechanics(&view()));
+    let x = mx(Agent::ClaudeCode, true, true, None, &[(OWN, Some("elena"))]);
+    let m = mechanics(&SessionView::load(&x.dir).unwrap());
+    assert_eq!(member_text(&x, &hook("SubagentStart-sub")), m);
+    let sub = HookInput { cli_event: Some("subagent".into()), ..HookInput::parse(Agent::OpenCode, b"{}").unwrap() };
+    assert_eq!(member_text(&x, &sub), m);
+}
+
+#[cfg(unix)]
+#[test] // review round 2 F2: a `workspace.json` that does not read gives no item 8; the rest is as with `mail` off
+fn mail_item_absent_when_workspace_state_is_unreadable() {
+    let note = || Some(ResumeNote { clean_stop: true, closed_units: vec!["u-1".into()], ..Default::default() });
+    for agent in [Agent::ClaudeCode, Agent::OpenCode] {
+        let text = |mail: bool| {
+            let x = mx(agent, mail, true, note(), &[(OWN, Some("elena"))]);
+            let state = x.paths.workspaces_dir().join(WS_ID);
+            std::fs::write(state.join("workspace.json"), b"{not json").unwrap();
+            let got = member_text(&x, &start(agent));
+            let errors = std::fs::read_to_string(state.join("errors.log")).unwrap_or_default();
+            (got, errors.lines().count(), build(&SessionView::load(&x.dir).unwrap()))
+        };
+        let (on, on_lines, base) = text(true);
+        let (off, off_lines, _) = text(false);
+        assert!(!on.contains("Workspace mail:"), "{agent:?}: {on}");
+        assert_eq!(on, off, "{agent:?}");
+        assert_eq!(on, format!("{base}\n\n{U1}"), "{agent:?}");
+        // Claude Code: record_session's read writes the one line (C6); OpenCode writes nothing (D10).
+        let lines = if agent == Agent::ClaudeCode { 1 } else { 0 };
+        assert_eq!((on_lines, off_lines), (lines, lines), "{agent:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test] // M§8a "names and tool names only", M-C2
+fn mail_item_holds_no_subject_or_body_text() {
+    let x = mx(Agent::ClaudeCode, true, true, None, &[(OWN, Some("elena")), (PEER, Some("kai"))]);
+    let ws = Store::open(&x.paths, WS_ID).read().unwrap().unwrap();
+    let r = zygo_workspace::mail::send(&x.paths, &ws, Some(PEER), "elena", "subj-7f3a", "body-9c1d", &zygo_config::MailConfig::default(), SystemTime::now()).unwrap();
+    assert_eq!(r.sent.len(), 1);
+    let got = member_text(&x, &start(Agent::ClaudeCode));
+    assert!(got.contains(&item8("you are `elena` in workspace `app`", "elena, kai")), "{got}");
+    assert!(!got.contains("subj-7f3a") && !got.contains("body-9c1d"), "{got}");
+}
+
+#[test] // Produces: `#[serde(default)]`
+fn mail_item_view_field_defaults_to_off() {
+    let (_t, d) = sd();
+    let mut json = serde_json::to_value(view()).unwrap();
+    json.as_object_mut().unwrap().remove("mail");
+    std::fs::write(d.view_json(), serde_json::to_vec(&json).unwrap()).unwrap();
+    assert!(!SessionView::load(&d).unwrap().mail);
+    assert!(!SessionView::default().mail);
+    SessionView { mail: true, ..view() }.save(&d).unwrap();
+    let raw: Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(raw["mail"], true);
 }

@@ -29,6 +29,18 @@ pub struct Adjustment(pub String);
 pub enum ModelRoute {
     Messages,
     CountTokens,
+    /// `POST /openai/v1/responses` (K§6.4).
+    Responses,
+}
+
+impl ModelRoute {
+    /// The client's dialect on this route.
+    pub fn dialect(self) -> Dialect {
+        match self {
+            ModelRoute::Responses => Dialect::Openai,
+            ModelRoute::Messages | ModelRoute::CountTokens => Dialect::Anthropic,
+        }
+    }
 }
 
 pub struct RequestCtx {
@@ -79,11 +91,16 @@ pub struct ResponseCtx {
     pub provider: String,
     /// The upstream dialect.
     pub dialect: Dialect,
+    /// The form of the body the tee and the response stages read: Openai only for a Responses upstream answering a
+    /// Responses client (K§6.4.2 C3), else Anthropic.
+    pub lines: Dialect,
     pub adjustments: Vec<Adjustment>,
     /// Upstream numbers, before any rewrite.
     pub usage: Usage,
     /// A zygo compact tool_use was seen (§10.2.3 trigger 2).
     pub compact_call: bool,
+    /// A Responses call item was seen in a streamed `response.output_item.added` or `.done` (K§6.4.5 end of turn).
+    pub call_item: bool,
 }
 
 /// C3: no header.
@@ -94,9 +111,11 @@ impl fmt::Debug for ResponseCtx {
             .field("resolved", &self.resolved)
             .field("provider", &self.provider)
             .field("dialect", &self.dialect)
+            .field("lines", &self.lines)
             .field("adjustments", &self.adjustments)
             .field("usage", &self.usage)
             .field("compact_call", &self.compact_call)
+            .field("call_item", &self.call_item)
             .finish()
     }
 }

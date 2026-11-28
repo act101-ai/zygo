@@ -18,11 +18,12 @@ hex.workspace = true
 walkdir.workspace = true
 fs4.workspace = true
 ulid.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
 which.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-toml.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

@@ -1,0 +1,241 @@
+{
+  "scenarios": {
+    "pc4-none": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [],
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-none.txt"
+    },
+    "pc4-bypass": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [
+        "home-inline",
+        "home-json",
+        "project-inline",
+        "project-json"
+      ],
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-bypass.txt"
+    },
+    "pc4-untrusted": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [
+        "home-inline",
+        "home-json"
+      ],
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-untrusted.txt"
+    },
+    "pc4-trust": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [],
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-trust.txt"
+    },
+    "pc4-trust-new": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [],
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-trust-new.txt"
+    },
+    "pc4-log": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [],
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-log.txt"
+    },
+    "pc4-feature-default": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [
+        "home-inline",
+        "home-json",
+        "project-inline",
+        "project-json"
+      ],
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-feature-default.txt"
+    },
+    "pc4-feature-legacy": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [
+        "home-inline",
+        "home-json",
+        "project-inline",
+        "project-json"
+      ],
+      "hooks_state_keys": [],
+      "evidence": "evidence-pc4-feature-legacy.txt"
+    },
+    "pc4-tui": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [
+        "home-inline",
+        "home-json",
+        "project-inline",
+        "project-json"
+      ],
+      "hooks_state_keys": [
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:0:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:1:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:2:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:3:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:user_prompt_submit:0:0",
+        "/tmp/run/cxh-pc4-tui/config.toml:session_start:0:0",
+        "/repo/.codex/hooks.json:session_start:0:0",
+        "/repo/.codex/hooks.json:session_start:1:0",
+        "/repo/.codex/config.toml:session_start:0:0"
+      ],
+      "evidence": "evidence-pc4-tui.txt"
+    },
+    "pc4-tui-after": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [
+        "home-inline",
+        "home-json",
+        "project-inline",
+        "project-json"
+      ],
+      "hooks_state_keys": [
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:0:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:1:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:2:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:3:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:user_prompt_submit:0:0",
+        "/tmp/run/cxh-pc4-tui/config.toml:session_start:0:0",
+        "/repo/.codex/hooks.json:session_start:0:0",
+        "/repo/.codex/hooks.json:session_start:1:0",
+        "/repo/.codex/config.toml:session_start:0:0"
+      ],
+      "evidence": "evidence-pc4-tui-after.txt"
+    },
+    "pc4-ctl-neg": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [],
+      "hooks_state_keys": [
+        "/tmp/run/cxh-pc4-ctl-neg/config.toml:session_start:0:0"
+      ],
+      "evidence": "evidence-pc4-ctl-neg.txt"
+    },
+    "pc4-ctl-pos": {
+      "ran": false,
+      "why": "not run"
+    },
+    "pc4-prewritten": {
+      "ran": true,
+      "exit": "0",
+      "request": true,
+      "sources_run": [
+        "home-inline",
+        "home-json",
+        "project-inline",
+        "project-json"
+      ],
+      "hooks_state_keys": [
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:0:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:1:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:2:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:session_start:3:0",
+        "/tmp/run/cxh-pc4-tui/hooks.json:user_prompt_submit:0:0",
+        "/tmp/run/cxh-pc4-tui/config.toml:session_start:0:0",
+        "/repo/.codex/hooks.json:session_start:0:0",
+        "/repo/.codex/hooks.json:session_start:1:0",
+        "/repo/.codex/config.toml:session_start:0:0"
+      ],
+      "evidence": "evidence-pc4-prewritten.txt",
+      "form_from": "pc4-tui"
+    }
+  },
+  "where_kept": [
+    "pc4-tui: CODEX_HOME/config.toml [hooks.state.\"<key>\"]",
+    "pc4-tui-after: CODEX_HOME/config.toml [hooks.state.\"<key>\"]",
+    "pc4-ctl-neg: CODEX_HOME/config.toml [hooks.state.\"<key>\"]",
+    "pc4-prewritten: CODEX_HOME/config.toml [hooks.state.\"<key>\"]"
+  ],
+  "bypass_effect": [
+    "home-inline",
+    "home-json",
+    "project-inline",
+    "project-json"
+  ],
+  "feature_flag": {
+    "none": [
+      "home-inline",
+      "home-json",
+      "project-inline",
+      "project-json"
+    ],
+    "codex_hooks": [
+      "home-inline",
+      "home-json",
+      "project-inline",
+      "project-json"
+    ],
+    "hooks": [
+      "home-inline",
+      "home-json",
+      "project-inline",
+      "project-json"
+    ],
+    "warnings": [
+      "deprecated: `[features].codex_hooks` is deprecated. Use `[features].hooks` instead."
+    ],
+    "note": "each run: --dangerously-bypass-hook-trust; every other scenario sets [features] hooks = true"
+  },
+  "trust_flag_on_project_without_entry": [],
+  "hash_rule": "not found (59383 candidates per record)",
+  "controls": {
+    "negative (wrong hash, must not run)": "did not run",
+    "positive (record computed by the rule for a command Codex never saw, must run)": "not-run: no hash rule found"
+  },
+  "tui": {
+    "driver": "prompt 'Hooks need review' seen, option 'Trust all and continue' chosen",
+    "keys_sent": [
+      "prompt 1: option 2 ('Trust all and continue'), then Enter"
+    ],
+    "sources_run_in_tui": [
+      "home-inline",
+      "home-json",
+      "project-inline",
+      "project-json"
+    ],
+    "sources_run_in_exec_after": [
+      "home-inline",
+      "home-json",
+      "project-inline",
+      "project-json"
+    ],
+    "captures": [
+      "tui-after-key-1.txt",
+      "tui-hooks-command.txt",
+      "tui-log-lines.txt",
+      "tui-prompt-1.txt",
+      "tui-start.txt",
+      "tui-turn.txt"
+    ]
+  },
+  "prewritten_honored": true,
+  "result": "partial: replay only",
+  "why": "records Codex wrote are honored when written before launch, but the hash rule is not found, so zygo cannot compute a record for its own command"
+}

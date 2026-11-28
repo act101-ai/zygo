@@ -8,9 +8,11 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use zygo_config::Config;
+use zygo_config::repo_def::{apply_to_config, check_default, short, Definition, GitRunner, SystemGit, Use, REPOSITORY_LOADOUT};
+use zygo_config::{Config, Severity, BUILTIN_LOADOUT};
 use zygo_core::esc;
 use zygo_core::paths::Paths;
 use zygo_work::repo::{checkout, Checkout};
@@ -18,9 +20,12 @@ use zygo_work::repo::{checkout, Checkout};
 use crate::args::{bypass_flags, filter_from, has_user_info};
 use crate::env::{cleaned, REMOVE_ALWAYS, REMOVE_INSIDE_AGENT};
 use crate::identity::{
-    main_worktree, new_pane_key, slug, unique_name, valid_name, valid_pane_key, workspace_id, worktrees, Worktree,
+    first_user_worktree, main_worktree, new_pane_key, slug, unique_name, valid_name, valid_pane_key, valid_worktree, workspace_id, worktrees_with,
+    ListError, Worktree,
 };
 use crate::loadout::{self, LoadoutError, PaneKind as PlanKind, PlanPane};
+use crate::mail::{self, MAIL_LOCK_WAIT, mail_dir, not_pruned_line, store as mail_store};
+use crate::pool;
 use crate::mux::tmux::Tmux;
 use crate::mux::{
     check_path, check_window_name, hook_command, parse_pane_line, session_target, window_target, HookScope, Multiplexer,
@@ -52,17 +57,20 @@ const SESSION_HOOKS: [&str; 4] = ["after-new-window", "after-split-window", "cli
 const WINDOW_HOOKS: [&str; 4] = ["window-layout-changed", "window-renamed", "pane-exited", "window-unlinked"];
 
 const NO_TMUX: &str = "zygo: workspaces need tmux; install tmux 3.2 or later";
-const NOT_A_REPO: &str = "zygo up needs a git repository";
+/// The `Exit.message` of [`find_checkout`] when the folder is not in a git repository; its other errors keep their
+/// own reason.
+pub const NOT_A_REPO: &str = "zygo up needs a git repository";
 const BARE: &str = "zygo up needs a worktree; this repository is bare";
 const NEWER: &str = "zygo: workspace state is from a newer zygo; run zygo update";
 const AU98: &str = "zygo: --server holds user info; this agent is not saved by the workspace";
 const NEW_SERVER: &str =
     "zygo: started a new tmux server from inside a zygo agent; its panes have no provider keys from the environment";
+const UP_ALL_NO_REPOSITORY: &str = "zygo: up --all reads no repository workspace files; using solo";
 const LOADOUT_IGNORED: &str = "zygo: --loadout applies only with --reset or to a new workspace; restoring the saved layout";
 
 /// The inputs of `zygo up` for one workspace. `tmux_env` is `$TMUX`, `zygo_session` is `ZYGO_SESSION` and `vars` is
 /// the caller environment; only the entry point reads them from the process.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct UpOpts {
     pub name: Option<String>,
     pub loadout: Option<String>,
@@ -76,6 +84,10 @@ pub struct UpOpts {
     pub vars: BTreeMap<OsString, OsString>,
     pub paths: Paths,
     pub config: Config,
+    /// True when the user config file sets `[workspace] default_loadout` (workspace definition design R§10).
+    pub default_loadout_set: bool,
+    /// The git runner of the default-branch read (R§7.3); `None`: `SystemGit`. A test passes a counting runner.
+    pub git: Option<Arc<dyn GitRunner + Send + Sync>>,
 }
 
 /// A refusal: the exit code and the whole line as printed, without `\n`.
@@ -92,7 +104,16 @@ pub struct Target {
     pub id: String,
     pub name: String,
     pub common_dir: PathBuf,
+    /// The main worktree (AU77), the base of the pane folders (W§11). For a workspace with a saved state, by name or
+    /// from any checkout of its repository: the saved `main_root` while it is a valid worktree
+    /// ([`crate::identity::valid_worktree`]), else the first valid worktree of the list (FX-25 review round 2 D2).
     pub main_root: PathBuf,
+    /// The saved `main_root` that is no longer a valid worktree, when `main_root` replaced it (D3): `zygo up` prints
+    /// `zygo: the main worktree <old> is gone; panes start in <new>`.
+    pub moved_from: Option<PathBuf>,
+    /// The folder of the definition read (workspace definition design R§10, `zygo up` row): `Checkout.top` of the
+    /// checkout found from the cwd; `main_root` for a workspace found by name.
+    pub top: PathBuf,
     pub worktrees: Vec<Worktree>,
     pub state: Result<Option<Workspace>, String>,
 }
@@ -126,9 +147,25 @@ pub mod testing {
     /// FIX-29 round 3); the admin
     /// points of W8 D21: `forget_before_op_lock`, `forget_before_state` (under both locks, before anything is
     /// removed), `forget_before_cache` (after the state rename, before the cache removal; an error there is the cache
-    /// error), `forget_before_tombstone_remove` (after the rename), `forget_pane_before_op_lock`,
+    /// error), `forget_before_tombstone_remove` (after the rename), `forget_before_mail_lock` (in `ws forget`, after
+    /// `before_remove`, right before `mail/lock` is taken; FX-24), `forget_pane_before_op_lock`,
     /// `forget_pane_before_cache`, `forget_pane_remove_results` and `forget_pane_remove_program` (right before the
-    /// removal of that cache; an error there is that cache's error).
+    /// removal of that cache; an error there is that cache's error); the mail points of FX-13 (M§5 P1):
+    /// `mail_delivery_after_lock` (in `mail::Delivery::begin`, after `mail/lock` is taken and before the check that
+    /// the locked file is still `mail/lock`; FX-24 review R2 F3; an error there is the delivery's `Io` error),
+    /// `mail_delivery_after_read` (in `mail::Delivery::begin`, after the state read under `mail/lock`; an error there
+    /// is the delivery's `Io` error), `mail_read_after_lock` (in `mail::store::read_within`, after `mail/lock` is
+    /// taken and before the check that the locked file is still `mail/lock`; FX-24 review R3 F2; the state folder is
+    /// the parent of `mail/`; an error there is the read's `Io` error), `mail_read_before_dirs` (in `mail::store::read`,
+    /// before it makes `cur/`; the state folder is the parent of `mail/`; an error there is the read's `Io` error) and
+    /// `mail_removal_after_lock` (in `mail::remove_maildir` and `mail::prune`, after `mail/lock` is taken exclusive and
+    /// before the check that the locked file is still `mail/lock`; FX-24 review R3 F2; an error there is the removal's
+    /// error); the points of another crate, fired through `mail::fire_point` (FX-28), in
+    /// `zygo_mail_sync::outbox::send_remote_with`: `remote_send_before_begin` (after the member cache read and the
+    /// secret pass, before `mail::Delivery::begin` takes `mail/lock` shared), `remote_send_before_link` (under
+    /// `mail/lock` shared, after the write in `outbox/tmp/` and right before the link into `outbox/`; an error there
+    /// removes the `tmp/` name) and `remote_send_after_link` (under `mail/lock` shared, after the link and its folder
+    /// sync); an error at each is the send's `Io` error, `zygo: mail: <text>`.
     /// An `Err(text)` of the hook becomes `MuxError::Failed { message: text }` at that point; at `before_undo` it is
     /// the undo's write error.
     pub fn hook(dir: &Path, point: &'static str, f: Option<Box<dyn Fn() -> Result<(), String> + Send + Sync>>) {
@@ -144,23 +181,51 @@ pub mod testing {
     }
 
     /// Runs the hook of (`point`, `dir`), if one is set, outside the lock of the hook table.
-    pub(super) fn fire(dir: &Path, point: &'static str) -> Result<(), String> {
+    pub(crate) fn fire(dir: &Path, point: &'static str) -> Result<(), String> {
         let hook = HOOKS.lock().unwrap_or_else(|e| e.into_inner()).get(&(point, dir.to_path_buf())).cloned();
         hook.map_or(Ok(()), |h| h())
     }
 
     /// [`super::up`] with the given writers.
-    pub fn run_with(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 { super::run(opts, out, err) }
+    pub fn run_with(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+        super::run(opts, OsStr::new("git"), out, err)
+    }
+
+    /// [`run_with`] with `git` as the program of each `git worktree list` of `preflight` (FX-25 close).
+    pub fn run_git_with(opts: &UpOpts, git: &OsStr, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+        super::run(opts, git, out, err)
+    }
 
     /// [`super::up_all`] with the given writers.
     pub fn run_all_with(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 { super::run_all(opts, out, err) }
+
+    /// [`super::fresh_member`]: the record that `up` writes for a fresh loadout member (ML-3).
+    pub fn fresh_member(agent: zygo_core::Agent, pp: &crate::loadout::PlanPane) -> crate::state::MemberRecord {
+        super::fresh_member(agent, pp)
+    }
+
+    /// The `panes[]` entry that a loadout `up` writes for `pp` as pane 0 of window 0 (ML-3 review round 1).
+    pub fn loadout_pane(pp: &crate::loadout::PlanPane) -> crate::state::Pane {
+        let (kind, member) = super::plan_pane(pp);
+        let b = super::BuildPane { key: "kaaaaaaaa".into(), shell: kind == crate::state::PaneKind::Shell, cwd: pp.cwd.clone(), active: true };
+        super::new_pane(&b, 0, 0, kind, member.as_ref())
+    }
 
     /// [`super::attach`] with the given writers.
     pub fn attach_with(
         paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path, out: &mut dyn Write,
         err: &mut dyn Write,
     ) -> i32 {
-        super::attach_to(paths, tmux, tmux_env, name, cwd, out, err)
+        super::attach_to(paths, tmux, tmux_env, name, cwd, OsStr::new("git"), out, err)
+    }
+
+    /// [`attach_with`] with `git` as the program of each `git worktree list` of the lookup (FX-25 close).
+    #[allow(clippy::too_many_arguments)]
+    pub fn attach_git_with(
+        paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path, git: &OsStr,
+        out: &mut dyn Write, err: &mut dyn Write,
+    ) -> i32 {
+        super::attach_to(paths, tmux, tmux_env, name, cwd, git, out, err)
     }
 }
 
@@ -329,25 +394,158 @@ pub fn socket_is_private(_path: &Path, _create_parent: bool) -> Result<(), Strin
 /// The checkout of `cwd`, the worktree list and the main worktree (AU25, AU77, D4). Every git call ends by
 /// `Instant::now() + bound` (W8 D23).
 /// Also used by zygo config check and show, and zygo loadout show (FIX-27).
-pub fn find_checkout(cwd: &Path, bound: Duration) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
+/// Exits (W§8.1 step 3, FX-25): code 2 [`NOT_A_REPO`] only for git's "not a git repository" answer or an empty list
+/// from the cwd, code 2 `BARE` for a list with no non-bare entry; code 1 with the reason for a failed or timed-out
+/// `git worktree list` (`git worktree list failed[: <text>]`, `git worktree list timed out`), no program `git`
+/// (`git not found`; another start error is `git worktree list failed: cannot start git: <error>`) and a main worktree
+/// with no checkout (`no checkout at the main worktree <path>`; when the deadline stopped that read, `git worktree list
+/// timed out`, FX-25 review round 2 F5). A code-1 message
+/// has no `zygo:` prefix and is not escaped: each caller adds its prefix and escapes.
+/// `cache` is zygo's workspaces cache folder (`Paths::workspace_cache_dir`): a worktree inside it (the mail-sync
+/// worktree) is never the main worktree (D1, [`crate::identity::valid_worktree`]).
+pub fn find_checkout(cwd: &Path, bound: Duration, cache: &Path) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
+    find_checkout_with(cwd, bound, OsStr::new("git"), cache)
+}
+
+/// [`find_checkout`] with `git` as the program of each `git worktree list` (`identity::worktrees_with`): the seam of
+/// a test's failing or missing `git` (FX-25), so no test changes the `PATH` of its own process. The `rev-parse` calls
+/// of `zygo_work::repo::checkout` keep the `git` of the `PATH`. Production calls go through [`find_checkout`].
+#[doc(hidden)]
+pub fn find_checkout_with(cwd: &Path, bound: Duration, git: &OsStr, cache: &Path) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
+    find_checkout_by(cwd, Bounds::all(bound), git, cache)
+}
+
+/// The deadlines of the git calls of [`find_checkout_by`]: the seam of a test that times out one call and not the
+/// others (FX-25 review round 2 F5, F8). Production calls use [`Bounds::all`], one shared deadline.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Bounds {
+    /// Every git call of the lookup ends by `Instant::now() + all`, taken once when the lookup starts.
+    pub all: Duration,
+    /// When set: the `rev-parse` of the main worktree (from a bare repository's own folder) ends by its own deadline,
+    /// `Instant::now() + main` taken when that call starts.
+    pub main: Option<Duration>,
+    /// When set: the `git worktree list` of the found checkout ends by its own deadline, `Instant::now() + list` taken
+    /// when that call starts.
+    pub list: Option<Duration>,
+}
+
+impl Bounds {
+    /// One deadline, `Instant::now() + bound` at the start, for every git call of the lookup.
+    pub fn all(bound: Duration) -> Bounds { Bounds { all: bound, main: None, list: None } }
+}
+
+/// [`find_checkout_with`] with the deadlines of `bounds`. Production calls go through [`find_checkout`].
+#[doc(hidden)]
+pub fn find_checkout_by(cwd: &Path, bounds: Bounds, git: &OsStr, cache: &Path) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
     let usage = |m: &str| Exit { code: 2, message: m.to_string() };
-    let deadline = Instant::now() + bound;
+    let failed = |e: ListError| fail(e.to_string());
+    let deadline = Instant::now() + bounds.all;
+    let own = |bound: Option<Duration>| bound.map_or(deadline, |b| Instant::now() + b);
     let co = match checkout(cwd, deadline) {
         Some(c) => c,
         None => {
             // A bare repository's own folder: `rev-parse --show-toplevel` fails there (finding 8).
             let probe = Checkout { top: cwd.to_path_buf(), common_dir: cwd.to_path_buf(), main_root: cwd.to_path_buf(), deadline };
-            let list = worktrees(&probe).map_err(|_| usage(NOT_A_REPO))?;
+            let list = match worktrees_with(git, &probe) {
+                Ok(list) => list,
+                Err(ListError::NotARepository(_)) => return Err(usage(NOT_A_REPO)),
+                Err(e) => return Err(failed(e)),
+            };
             if list.is_empty() {
                 return Err(usage(NOT_A_REPO));
             }
-            let main = main_worktree(&list).ok_or_else(|| usage(BARE))?;
-            checkout(&main.path, deadline).ok_or_else(|| usage(NOT_A_REPO))?
+            let main = main_of(&list, cache)?;
+            let main_deadline = own(bounds.main);
+            match checkout(&main, main_deadline) {
+                Some(c) => c,
+                // F5: a read that the deadline stopped is the timeout, not a main worktree with no checkout.
+                None if Instant::now() >= main_deadline => return Err(failed(ListError::TimedOut)),
+                None => return Err(no_checkout_at(&main)),
+            }
         }
     };
-    let list = worktrees(&co).map_err(|_| usage(NOT_A_REPO))?;
-    let main = main_worktree(&list).ok_or_else(|| usage(BARE))?.path.clone();
+    let co = Checkout { deadline: own(bounds.list), ..co };
+    // `rev-parse` found this checkout, so "not a git repository" here is a failed read (as `zygo_work::repo`), with
+    // git's text (F6).
+    let list = worktrees_with(git, &co).map_err(|e| match e {
+        ListError::NotARepository(text) => failed(ListError::Failed(text)),
+        e => failed(e),
+    })?;
+    let main = main_of(&list, cache)?;
     Ok((co, list, main))
+}
+
+/// The code-1 `Exit` of a main worktree with no checkout (W§8.1 step 3); no prefix, not escaped.
+fn no_checkout_at(main: &Path) -> Exit { fail(format!("no checkout at the main worktree {}", main.display())) }
+
+/// The main worktree of `list` (AU77, [`main_worktree`]: the first valid worktree, D1). With no entry that is neither
+/// bare nor inside `cache`: code 2 `BARE`. With such entries, all marked `prunable`: code 1, no checkout at the first.
+fn main_of(list: &[Worktree], cache: &Path) -> Result<PathBuf, Exit> {
+    if let Some(main) = main_worktree(list, cache) {
+        return Ok(main.path.clone());
+    }
+    match first_user_worktree(list, cache) {
+        Some(first) => Err(no_checkout_at(&first.path)),
+        None => Err(Exit { code: 2, message: BARE.to_string() }),
+    }
+}
+
+/// The main worktree of a workspace (D2): the saved `main_root` while it is a valid worktree of `list`
+/// ([`valid_worktree`]); else the first valid worktree ([`main_worktree`]), with the saved `main_root` that it replaces
+/// (D3). None when `list` has no valid worktree.
+fn keep_saved(saved: Option<&Path>, list: &[Worktree], cache: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
+    if let Some(s) = saved
+        && list.iter().any(|w| w.path == s && valid_worktree(w, cache))
+    {
+        return Some((s.to_path_buf(), None));
+    }
+    let first = main_worktree(list, cache)?.path.clone();
+    Some((first, saved.map(Path::to_path_buf)))
+}
+
+/// The D3 line of a saved `main_root` that is no longer a valid worktree; paths escaped.
+fn moved_line(old: &Path, new: &Path) -> String {
+    format!("zygo: the main worktree {} is gone; panes start in {}", esc(&old.to_string_lossy()), esc(&new.to_string_lossy()))
+}
+
+/// The code-1 `Exit` of [`find_checkout`] as `zygo up` prints it: `zygo: ` and the escaped message; code 2 as it is.
+fn prefixed(e: Exit) -> Exit { if e.code == 1 { fail(format!("zygo: {}", esc(&e.message))) } else { e } }
+
+/// What [`main_by_name`] found for a workspace found by name.
+struct ByName {
+    main_root: PathBuf,
+    worktrees: Vec<Worktree>,
+    moved_from: Option<PathBuf>,
+}
+
+/// Whether the lookup of a workspace found by name reads the worktree list of its saved `common_dir` (FX-25 close).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ByNameList {
+    /// `zygo up` and `zygo up --all`: the list gives the main worktree (D2, D3) and D4.
+    Read,
+    /// `zygo down` and `zygo attach`: the saved state only, so a user can always stop a workspace, also when its
+    /// folders are gone or the list fails or times out.
+    Skip,
+}
+
+/// The main worktree, the worktree list and the replaced `main_root` (D3) of a workspace found by name (W§8.1 step 3,
+/// AU20), from the list that git gives in the saved `common_dir` ([`keep_saved`], D2). D4: with no valid worktree in
+/// that list, exit 1 `zygo: no checkout at the main worktree <saved main_root>`; a list that fails or times out exits
+/// 1 with its reason, as from the cwd. With [`ByNameList::Skip`], or a saved `common_dir` that does not exist (the
+/// fallback of FX-25 review round 1, kept for states whose repository is not on this machine): the saved `main_root`
+/// and no list.
+fn main_by_name(git: &OsStr, common_dir: &Path, main_root: &Path, cache: &Path, list: ByNameList) -> Result<ByName, Exit> {
+    if list == ByNameList::Skip || !common_dir.exists() {
+        return Ok(ByName { main_root: main_root.to_path_buf(), worktrees: Vec::new(), moved_from: None });
+    }
+    let deadline = Instant::now() + GIT_BOUND;
+    let co = Checkout { top: common_dir.to_path_buf(), common_dir: common_dir.to_path_buf(), main_root: main_root.to_path_buf(), deadline };
+    let list = worktrees_with(git, &co).map_err(|e| prefixed(fail(e.to_string())))?;
+    match keep_saved(Some(main_root), &list, cache) {
+        Some((main, moved_from)) => Ok(ByName { main_root: main, worktrees: list, moved_from }),
+        None => Err(prefixed(no_checkout_at(main_root))),
+    }
 }
 
 /// The tmux version check of W§8.1 step 2 (code 2): tmux missing, older than 3.2, or a version that cannot be read
@@ -364,21 +562,37 @@ pub(crate) fn tmux_check(tmux: &Path) -> Result<(), Exit> {
 
 /// W§8.1 steps 2-3 and the id of step 4 (D1, D4, D5).
 pub fn preflight(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path) -> Result<Target, Exit> {
+    preflight_with(paths, tmux, name, cwd, OsStr::new("git"))
+}
+
+/// [`preflight`] with `git` as the program of each `git worktree list` (see [`find_checkout_with`]; FX-25). Production
+/// calls go through [`preflight`].
+#[doc(hidden)]
+pub fn preflight_with(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, git: &OsStr) -> Result<Target, Exit> {
+    preflight_by(paths, tmux, name, cwd, git, ByNameList::Read)
+}
+
+/// The lookup of `zygo down` and `zygo attach` (FX-25 close): as [`preflight_with`], but a workspace found by name
+/// uses its saved state and runs no `git worktree list` (`main_root` and `top` are the saved `main_root`, `worktrees`
+/// is empty), so neither a list that fails or times out nor D4 stops it. From the cwd, as [`preflight_with`].
+pub(crate) fn preflight_saved(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, git: &OsStr) -> Result<Target, Exit> {
+    preflight_by(paths, tmux, name, cwd, git, ByNameList::Skip)
+}
+
+fn preflight_by(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, git: &OsStr, by_name: ByNameList) -> Result<Target, Exit> {
     tmux_check(tmux)?;
     let all = list_all(paths);
     if let Some(n) = name {
-        let tree = |common_dir: &Path, main_root: &Path| {
-            let deadline = Instant::now() + GIT_BOUND;
-            let co = Checkout { top: main_root.to_path_buf(), common_dir: common_dir.to_path_buf(), main_root: main_root.to_path_buf(), deadline };
-            worktrees(&co).unwrap_or_default()
-        };
         if let Some(ws) = all.iter().find_map(|(_, r)| r.as_ref().ok().filter(|ws| ws.name == n)) {
+            let b = main_by_name(git, &ws.common_dir, &ws.main_root, &paths.workspace_cache_dir(), by_name)?;
             return Ok(Target {
                 id: ws.id.clone(),
                 name: ws.name.clone(),
                 common_dir: ws.common_dir.clone(),
-                main_root: ws.main_root.clone(),
-                worktrees: tree(&ws.common_dir, &ws.main_root),
+                top: b.main_root.clone(),
+                main_root: b.main_root,
+                moved_from: b.moved_from,
+                worktrees: b.worktrees,
                 state: Ok(Some(ws.clone())),
             });
         }
@@ -417,13 +631,17 @@ pub fn preflight(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path) -> 
             [] => return Err(fail(format!("zygo: no workspace named {}", esc(n)))),
             [(_, StateError::Newer { .. }, _, _)] => return Err(fail(NEWER.into())),
             [(id, e, _, v)] => {
-                let (common_dir, main_root) = (PathBuf::from(text_of(v, "common_dir")), PathBuf::from(text_of(v, "main_root")));
+                let common_dir = PathBuf::from(text_of(v, "common_dir"));
+                let main_root = text_of(v, "main_root");
+                let b = main_by_name(git, &common_dir, Path::new(&main_root), &paths.workspace_cache_dir(), by_name)?;
                 return Ok(Target {
                     id: (*id).clone(),
                     name: n.to_string(),
-                    worktrees: tree(&common_dir, &main_root),
+                    worktrees: b.worktrees,
                     common_dir,
-                    main_root,
+                    top: b.main_root.clone(),
+                    main_root: b.main_root,
+                    moved_from: b.moved_from,
                     state: Err(e.to_string()),
                 });
             }
@@ -433,11 +651,13 @@ pub fn preflight(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path) -> 
             }
         }
     }
-    let (co, list, main_root) = find_checkout(cwd, GIT_BOUND)?;
+    let cache = paths.workspace_cache_dir();
+    let (co, list, first) = find_checkout_with(cwd, GIT_BOUND, git, &cache).map_err(prefixed)?;
     let id = workspace_id(&co.common_dir);
     let taken: BTreeSet<String> =
         all.iter().filter(|(i, _)| *i != id).filter_map(|(_, r)| r.as_ref().ok().map(|w| w.name.clone())).collect();
-    let folder = main_root.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+    // A new workspace is named after its main worktree, the first valid one (AU2); a name, once given, does not change.
+    let folder = first.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
     let fresh_name = || unique_name(&slug(&folder), &|n| taken.contains(n));
     let (name, state) = match Store::open(paths, &id).read() {
         Ok(Some(ws)) => (ws.name.clone(), Ok(Some(ws))),
@@ -446,7 +666,10 @@ pub fn preflight(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path) -> 
         Err(e @ StateError::Invalid { .. }) => (fresh_name(), Err(e.to_string())),
         Err(e) => return Err(fail(format!("zygo: {e}"))),
     };
-    Ok(Target { id, name, common_dir: co.common_dir, main_root, worktrees: list, state })
+    // D2: a saved `main_root` wins while it is valid, from any checkout of the repository (the same workspace id).
+    let saved = state.as_ref().ok().and_then(|s| s.as_ref()).map(|ws| ws.main_root.as_path());
+    let (main_root, moved_from) = keep_saved(saved, &list, &cache).unwrap_or((first, None));
+    Ok(Target { id, name, common_dir: co.common_dir, main_root, moved_from, top: co.top, worktrees: list, state })
 }
 
 /// `<zygo> ws run --ws-id <id> --pane <key>`, then `--shell` for a shell pane (AU15, AU46).
@@ -661,16 +884,47 @@ impl Builder<'_> {
 fn fresh_member(agent: zygo_core::Agent, pp: &PlanPane) -> MemberRecord {
     let mut m = MemberRecord::new(agent);
     m.state = MemberState::Running;
+    m.name = pp.name.clone();
     m.launch.profile = pp.profile.clone();
     m.launch.yolo = pp.yolo;
     m.launch.passthrough = pp.passthrough;
     m.launch.server = pp.server.clone();
     m.launch.compact = pp.compact.clone();
     m.launch.config_dir = pp.config_dir.clone();
+    // R§9.5: a pool member's directory, set at plan time (the launcher callback writes the same value, AU92).
+    if pp.pool {
+        m.config_dir = pp.config_dir.as_ref().map(PathBuf::from);
+    }
+    m.launch.job = pp.job.clone();
+    m.launch.definition = pp.definition.clone();
     let f = filter_from(agent, &pp.args, &pp.cwd);
     m.launch.args = f.kept;
     m.dropped_flags = f.dropped_flags;
     m
+}
+
+/// The kind and the fresh member record of one loadout pane (D30): a shell pane and an agent pane whose server has user
+/// info (AU98) start a shell and get no record.
+fn plan_pane(pp: &PlanPane) -> (PaneKind, Option<MemberRecord>) {
+    match pp.kind {
+        PlanKind::Agent(a) if !pp.server.as_deref().is_some_and(has_user_info) => (agent_kind(a), Some(fresh_member(a, pp))),
+        _ => (PaneKind::Shell, None),
+    }
+}
+
+/// The `panes[]` entry that a loadout `up` writes for `b` (W§7.2). The name comes from the pane's fresh record (M§6), so
+/// a shell pane and an AU98 pane get none.
+fn new_pane(b: &BuildPane, window: u32, index: u32, kind: PaneKind, fresh: Option<&MemberRecord>) -> Pane {
+    Pane {
+        key: b.key.clone(),
+        window,
+        index,
+        active: b.active,
+        cwd: b.cwd.clone(),
+        kind,
+        name: fresh.and_then(|m| m.name.clone()),
+        ..Pane::default()
+    }
 }
 
 fn agent_kind(agent: zygo_core::Agent) -> PaneKind {
@@ -695,6 +949,8 @@ struct Plan {
     forget: Vec<String>,
     loadout: String,
     from_loadout: bool,
+    /// The R§9.5 pool line, printed once the step 8 write succeeds (a later refusal starts nothing).
+    pool_line: Option<String>,
 }
 
 /// The lines of step 12, by group (D23).
@@ -708,15 +964,193 @@ struct Report {
 
 fn kind_name(m: &MemberRecord) -> &'static str { m.launch.kind.as_str() }
 
-/// The loadout plan (W§8.1 step 7, first case).
-fn loadout_plan(opts: &UpOpts, t: &Target, ws: Option<&Workspace>, report: &mut Report, err: &mut dyn Write) -> Result<Plan, Exit> {
-    let plan = loadout::resolve(&opts.config, opts.loadout.as_deref(), &t.main_root, &t.worktrees).map_err(|e| Exit {
+/// R§10 `up` row: the workspace files are not approved.
+fn not_approved_line(full_ref: &str, digest: &str) -> String {
+    format!(
+        "zygo: this repository's workspace files ({}, digest {}) are not approved on this machine; nothing from them was applied; see zygo workspace approve",
+        esc(full_ref),
+        short(digest)
+    )
+}
+
+/// R§10 `up` row: the workspace files are invalid (an invalid read has no digest).
+fn invalid_line(full_ref: &str, why: &str) -> String {
+    format!("zygo: this repository's workspace files ({}) are invalid ({}); nothing from them was applied", esc(full_ref), esc(why))
+}
+
+/// R§10 `up` row: the workspace files could not be read.
+fn unread_line(why: &str) -> String {
+    format!("zygo: this repository's workspace files are unread ({}); nothing from them was applied", esc(why))
+}
+
+/// R§9.4: the agent panes of the repository loadout against `[limits] max_members`, before any write.
+fn check_max(plan: &loadout::Plan, max: u32) -> Result<(), Exit> {
+    let n = plan.windows.iter().flat_map(|w| &w.panes).filter(|p| matches!(p.kind, PlanKind::Agent(_))).count();
+    if n > max as usize {
+        return Err(fail(format!(
+            "zygo: this repository's workspace files start {n} agents; [limits] max_members is {max}; nothing started"
+        )));
+    }
+    Ok(())
+}
+
+/// WD-10 F3, R§9.1: the `config check` rules of `job` and `pool` on the user loadout `name`, before any write (`zygo up`
+/// does not run `config check`). A repository loadout is checked when its members are read.
+fn check_jobs(cfg: &Config, name: &str) -> Result<(), Exit> {
+    let Some(l) = cfg.loadout.get(name) else { return Ok(()) };
+    let mut one = Config::default();
+    one.loadout.insert(name.into(), l.clone());
+    let bad = zygo_config::check(&one).into_iter().find(|v| {
+        v.severity == Severity::Error && v.path.starts_with("loadout.") && (v.path.ends_with(".job") || v.path.ends_with(".pool"))
+    });
+    match bad {
+        Some(v) => Err(fail(format!("zygo: {}; nothing started", esc(&v.to_string())))),
+        None => Ok(()),
+    }
+}
+
+/// R§9.5: true when a pane takes a pool directory and runs in passthrough at a fresh build: `pool = true` on a
+/// claude-code pane whose server holds no user info. The rule of `apply_pool`, also used by the approve summary.
+pub fn pool_member(pool: bool, claude_code: bool, server: Option<&str>) -> bool {
+    pool && claude_code && !server.is_some_and(has_user_info)
+}
+
+/// R§9.5 "Local mode only": the reason `zygo up` refuses a pool with at least one member, or `None` when it does not.
+pub fn pool_refused(config: &Config) -> Option<&'static str> {
+    config.server.url.is_some().then_some("passthrough is local mode only, and [server] url is set")
+}
+
+/// R§9.5: the refusal of a `[workspace] pool` that `pool::expand` refuses with `why`, as `pool <text>: <why>`. `zygo up`
+/// ends it with `; nothing started`; the approve summary with `; zygo up starts nothing`.
+pub fn pool_unexpanded(text: &str, why: &str) -> String {
+    format!("pool {}: {}", esc(text), esc(why))
+}
+
+/// R§9.5 at a fresh build: the pool members (`pool = true` on a claude-code pane that gets a member record) take the
+/// directories of `[workspace] pool` in turn and run in passthrough. Checks the pool before any write; `Some` is the
+/// line for the operator. No pool member, or no pool: the pool is not read.
+fn apply_pool(opts: &UpOpts, plan: &mut loadout::Plan) -> Result<Option<String>, Exit> {
+    let mut members: Vec<(usize, &mut PlanPane)> = plan
+        .windows
+        .iter_mut()
+        .flat_map(|w| w.panes.iter_mut())
+        .enumerate()
+        .filter(|(_, pp)| {
+            pool_member(pp.pool, pp.kind == PlanKind::Agent(zygo_core::Agent::ClaudeCode), pp.server.as_deref())
+        })
+        .collect();
+    let Some(text) = opts.config.workspace.pool.as_deref().filter(|_| !members.is_empty()) else { return Ok(None) };
+    let home = pool::home_in(|k| opts.vars.get(OsStr::new(k)).cloned());
+    let dir = pool::expand(text, home.as_deref()).map_err(|r| fail(format!("zygo: {}; nothing started", pool_unexpanded(text, &r))))?;
+    let shown = esc(&dir.to_string_lossy());
+    if let Some(why) = pool_refused(&opts.config) {
+        return Err(fail(format!("zygo: pool {shown}: {why}; nothing started")));
+    }
+    let dirs = pool::list(&dir).map_err(|r| fail(format!("zygo: pool {shown}: {}; nothing started", esc(&r))))?;
+    let names: Vec<Option<String>> = members.iter().map(|(_, pp)| pp.name.clone()).collect();
+    for ((_, pp), k) in members.iter_mut().zip(pool::assign(&names, dirs.len())) {
+        let Some(d) = dirs[k].to_str() else {
+            return Err(fail(format!("zygo: pool {shown}: a directory name is not UTF-8; nothing started")));
+        };
+        pp.config_dir = Some(d.into());
+        pp.passthrough = true;
+    }
+    // D3: an unnamed member is `pane <n>`, `n` its 1-based ordinal in the plan.
+    let label = |i: usize| match &members[i].1.name {
+        Some(n) => esc(n),
+        None => format!("pane {}", members[i].0 + 1),
+    };
+    let order = pool::order(&names);
+    let labels: Vec<String> = order.iter().map(|&i| label(i)).collect();
+    let mut line = format!("zygo: {} run in passthrough on pool {shown}", labels.join(", "));
+    for &i in &order {
+        if let Some(p) = &members[i].1.profile {
+            line.push_str(&format!("; profile {} of {} does not apply in passthrough", esc(p), label(i)));
+        }
+    }
+    Ok(Some(line))
+}
+
+/// R§10: true when the user config has `[loadout.repository]`, which replaces the repository loadout of the approved
+/// `def`, so `zygo up` plans the user loadout. The decision of `choose`, also used by the approve summary.
+pub fn loadout_shadowed(config: &Config, def: &Definition) -> bool {
+    apply_to_config(&mut config.clone(), def).loadout_shadowed
+}
+
+/// The loadout of W§8.1 step 7, first case (R§10 `up` row): `--loadout`; else `[workspace] default_loadout` when the
+/// user config file sets it; else `repository` when the default branch has an approved `.zygo/workspace.toml`; else
+/// `solo`. The repository plan comes from one checked read (R§7.3) and each pane gets its pin (R§7.4). A choice by
+/// `--loadout repository` or a user `default_loadout = "repository"` refuses where the default choice plans `solo`.
+/// `repo_read` is false for `zygo up --all`, which makes no read.
+fn choose(opts: &UpOpts, t: &Target, repo_read: bool, err: &mut dyn Write) -> Result<loadout::Plan, Exit> {
+    let resolve_err = |e: LoadoutError| Exit {
         code: if matches!(e, LoadoutError::Unknown { .. }) { 2 } else { 1 },
         message: format!("zygo: {e}"),
-    })?;
+    };
+    let user = |name: &str| {
+        let plan = loadout::resolve(&opts.config, Some(name), &t.main_root, &t.worktrees).map_err(resolve_err)?;
+        check_jobs(&opts.config, name)?;
+        Ok(plan)
+    };
+    let name = opts.loadout.as_deref().or(opts.default_loadout_set.then_some(opts.config.workspace.default_loadout.as_str()));
+    let explicit = name.is_some();
+    if let Some(n) = name
+        && (n != REPOSITORY_LOADOUT || opts.config.loadout.contains_key(REPOSITORY_LOADOUT))
+    {
+        return user(n);
+    }
+    // R§10 `zygo up --all` row (AU10): no default-branch read; the user default, else `solo`. A user default
+    // `repository` with no user table (the early return above takes one) plans `solo` with one line.
+    if !repo_read {
+        if name == Some(REPOSITORY_LOADOUT) {
+            say(err, UP_ALL_NO_REPOSITORY);
+            return user(BUILTIN_LOADOUT);
+        }
+        return user(name.unwrap_or(BUILTIN_LOADOUT));
+    }
+    let git: &dyn GitRunner = match &opts.git {
+        Some(g) => g.as_ref(),
+        None => &SystemGit,
+    };
+    let line = match check_default(&t.top, &t.id, &opts.paths.approvals_file, git) {
+        Use::Approved { pin, def, .. } if def.workspace.is_some() => {
+            if loadout_shadowed(&opts.config, &def) {
+                return user(REPOSITORY_LOADOUT);
+            }
+            let mut cfg = opts.config.clone();
+            apply_to_config(&mut cfg, &def);
+            let plan = loadout::resolve_repository(&cfg.loadout[REPOSITORY_LOADOUT], &pin, &t.main_root, &t.worktrees)
+                .map_err(resolve_err)?;
+            check_max(&plan, opts.config.limits.max_members)?;
+            return Ok(plan);
+        }
+        Use::Approved { full_ref, .. } if explicit => {
+            format!("zygo: this repository's workspace files at {} have no .zygo/workspace.toml; nothing started", esc(&full_ref))
+        }
+        Use::NotApproved { full_ref, digest, def, .. } if explicit || def.workspace.is_some() => {
+            not_approved_line(&full_ref, &digest)
+        }
+        Use::Invalid { full_ref, why, .. } => invalid_line(full_ref.as_deref().unwrap_or_default(), &why),
+        Use::Unread { why } => unread_line(&why),
+        Use::Absent { full_ref } if explicit => format!("zygo: this repository has no workspace files at {}", esc(&full_ref)),
+        Use::Approved { .. } | Use::NotApproved { .. } | Use::Absent { .. } => return user(BUILTIN_LOADOUT),
+    };
+    if explicit {
+        return Err(fail(line));
+    }
+    say(err, &line);
+    user(BUILTIN_LOADOUT)
+}
+
+/// The loadout plan (W§8.1 step 7, first case).
+fn loadout_plan(
+    opts: &UpOpts, t: &Target, ws: Option<&Workspace>, repo_read: bool, report: &mut Report, err: &mut dyn Write,
+) -> Result<Plan, Exit> {
+    let mut plan = choose(opts, t, repo_read, err)?;
     for w in &plan.warnings {
         say(err, &format!("zygo: {w}"));
     }
+    let pool_line = apply_pool(opts, &mut plan)?;
     let mut taken: BTreeSet<String> = match ws {
         Some(w) if !opts.reset => w.members.keys().chain(w.panes.iter().map(|p| &p.key)).cloned().collect(),
         _ => BTreeSet::new(),
@@ -730,6 +1164,7 @@ fn loadout_plan(opts: &UpOpts, t: &Target, ws: Option<&Workspace>, report: &mut 
         forget: vec![],
         loadout: plan.loadout.clone(),
         from_loadout: true,
+        pool_line,
     };
     for (wi, pw) in plan.windows.iter().enumerate() {
         let mut panes = Vec::with_capacity(pw.panes.len());
@@ -739,20 +1174,14 @@ fn loadout_plan(opts: &UpOpts, t: &Target, ws: Option<&Workspace>, report: &mut 
                 key = new_pane_key();
             }
             taken.insert(key.clone());
-            let shell = match pp.kind {
-                PlanKind::Shell => true,
-                PlanKind::Agent(_) if pp.server.as_deref().is_some_and(has_user_info) => {
-                    report.au98.push(AU98.into());
-                    true
-                }
-                PlanKind::Agent(a) => {
-                    out.fresh.insert(key.clone(), fresh_member(a, pp));
-                    out.kinds.insert(key.clone(), agent_kind(a));
-                    false
-                }
-            };
-            if shell {
-                out.kinds.insert(key.clone(), PaneKind::Shell);
+            let (kind, member) = plan_pane(pp);
+            if member.is_none() && matches!(pp.kind, PlanKind::Agent(_)) {
+                report.au98.push(AU98.into());
+            }
+            let shell = kind == PaneKind::Shell;
+            out.kinds.insert(key.clone(), kind);
+            if let Some(m) = member {
+                out.fresh.insert(key.clone(), m);
             }
             panes.push(BuildPane { key, shell, cwd: pp.cwd.clone(), active: pi == 0 });
         }
@@ -781,6 +1210,7 @@ fn restore_plan(store: &Store, cur: &Workspace, report: &mut Report) -> Plan {
         forget: vec![],
         loadout: cur.loadout.clone(),
         from_loadout: false,
+        pool_line: None,
     };
     let indexes: BTreeSet<u32> = cur.panes.iter().map(|p| p.window).collect();
     for idx in indexes {
@@ -929,9 +1359,16 @@ fn attach_step(
     }
 }
 
-/// W§8.1 steps 4-12 for one target, and 13 when `attach` (crate-private, for W8).
-pub(crate) fn up_target(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write, attach: bool) -> i32 {
-    match build(opts, target, out, err, attach) {
+/// W§8.1 steps 4-12 for one target, and 13 when `attach` (crate-private, for W8). `repo_read` is false for `--all`:
+/// its loadout choice makes no default-branch read (R§10).
+pub(crate) fn up_target(
+    opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write, attach: bool, repo_read: bool,
+) -> i32 {
+    // D3: one line when the saved `main_root` is no longer a valid worktree and this `up` replaces it.
+    if let Some(old) = &target.moved_from {
+        say(err, &moved_line(old, &target.main_root));
+    }
+    match build(opts, target, out, err, attach, repo_read) {
         Ok(code) => code,
         Err(e) => {
             say(err, &e.message);
@@ -940,7 +1377,7 @@ pub(crate) fn up_target(opts: &UpOpts, target: Target, out: &mut dyn Write, err:
     }
 }
 
-fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write, attach: bool) -> Result<i32, Exit> {
+fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write, attach: bool, repo_read: bool) -> Result<i32, Exit> {
     let id = target.id.clone();
     let name = target.name.clone();
     let session = format!("zygo-{name}");
@@ -1054,7 +1491,7 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
             }
             restore_plan(&store, cur, &mut report)
         }
-        _ => loadout_plan(opts, &target, ws.as_ref(), &mut report, err)?,
+        _ => loadout_plan(opts, &target, ws.as_ref(), repo_read, &mut report, err)?,
     };
     check_plan(&plan)?;
     check_separators(&opts.zygo, &id, &target.main_root, &plan, repaired)?;
@@ -1127,14 +1564,9 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
                     .flat_map(|(w, &window)| {
                         w.panes.iter().enumerate().map(move |(i, p)| (window, i, p))
                     })
-                    .map(|(window, i, p)| Pane {
-                        key: p.key.clone(),
-                        window,
-                        index: i as u32,
-                        active: p.active,
-                        cwd: p.cwd.clone(),
-                        kind: plan.kinds.get(&p.key).copied().unwrap_or_default(),
-                        ..Pane::default()
+                    .map(|(window, i, p)| {
+                        let kind = plan.kinds.get(&p.key).copied().unwrap_or_default();
+                        new_pane(p, window, i as u32, kind, plan.fresh.get(&p.key))
                     })
                     .collect();
                 for (k, m) in &plan.fresh {
@@ -1144,6 +1576,10 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
                 for p in cur.panes.iter_mut() {
                     if let Some(k) = plan.kinds.get(&p.key) {
                         p.kind = *k;
+                        // M§6: a pane restored as a shell (its record not resumed, or forgotten below) has no name.
+                        if *k == PaneKind::Shell {
+                            p.name = None;
+                        }
                     }
                 }
                 for k in &plan.resumed {
@@ -1168,6 +1604,9 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
             Ok(())
         })
         .map_err(write_err)?;
+    if let Some(l) = &plan.pool_line {
+        say(err, l);
+    }
     let _ = snapshot::after_write(&opts.paths, &Tmux::new(opts.tmux.clone(), written.tmux_socket.clone()), &id, snapshot::OP_WAIT);
     // Step 9.
     let first = &plan.windows[0];
@@ -1200,6 +1639,11 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
                     say(err, &no_build_plan_line(&name));
                 }
                 let _ = snapshot::after_write(&opts.paths, &Tmux::new(opts.tmux.clone(), w.tmux_socket.clone()), &id, snapshot::OP_WAIT);
+                // M§5 P1: after the undo write, which put the `plan.forget` records back, the maildirs of the fresh
+                // records that `take_back_plan` dropped go.
+                if let Err(e) = mail::prune(&store, MAIL_LOCK_WAIT) {
+                    say(err, &not_pruned_line(&e));
+                }
             }
             Err(e) => say(err, &format!("zygo: state not cleaned: {e}")),
         }
@@ -1403,18 +1847,28 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
     if let Err(e) = snapshot::after_write(&opts.paths, &Tmux::new(opts.tmux.clone(), done.tmux_socket.clone()), &id, snapshot::OP_WAIT) {
         say(err, &format!("zygo: final snapshot not saved: {e:#}"));
     }
-    // D23.
+    // M§5 P1: after `phase = up`, the maildirs of the records this `up` dropped (`--reset`, `plan.forget`, members
+    // not built) go, under mail/lock and the state read there.
+    if let Err(e) = mail::prune(&store, MAIL_LOCK_WAIT) {
+        say(err, &not_pruned_line(&e));
+    }
+    // D23; M§9: the unread count when it is not zero.
+    let mail = mail_dir(&opts.paths, &id);
     let detached: Vec<String> = done
         .members
         .iter()
         .filter(|(k, m)| m.state == MemberState::Resumable && !planned_keys.contains(*k) && !not_built.contains(*k))
         .filter_map(|(k, m)| {
             m.agent_session.as_deref().map(|s| {
-                format!(
+                let line = format!(
                     "zygo: {} agent session {} is detached (its pane was closed); resume it by hand or run zygo ws forget-pane {k}",
                     kind_name(m),
                     esc(s)
-                )
+                );
+                match mail_store::unread(&mail, k) {
+                    Ok(n) if n > 0 => format!("{line}; unread {n}"),
+                    _ => line,
+                }
             })
         })
         .collect();
@@ -1426,20 +1880,20 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
     Ok(if attach { attach_step(&mux, &name, &socket, opts.tmux_env.as_deref(), quiet, out, err) } else { 0 })
 }
 
-fn run(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    match preflight(&opts.paths, &opts.tmux, opts.name.as_deref(), &opts.cwd) {
+fn run(opts: &UpOpts, git: &OsStr, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    match preflight_with(&opts.paths, &opts.tmux, opts.name.as_deref(), &opts.cwd, git) {
         Err(e) => {
             say(err, &e.message);
             e.code
         }
-        Ok(t) => up_target(opts, t, out, err, true),
+        Ok(t) => up_target(opts, t, out, err, true, true),
     }
 }
 
 /// `zygo up` for one workspace (W§8.1 steps 2-13), on the process stdout and stderr.
 pub fn up(opts: &UpOpts) -> i32 {
     let (stdout, stderr) = (std::io::stdout(), std::io::stderr());
-    run(opts, &mut stdout.lock(), &mut stderr.lock())
+    run(opts, OsStr::new("git"), &mut stdout.lock(), &mut stderr.lock())
 }
 
 const ALL_FLAGS: &str = "zygo: up --all takes no workspace name, --loadout or --reset";
@@ -1523,7 +1977,7 @@ fn run_all(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             continue;
         }
         // D7: `up_target` takes and releases its own `op.lock`.
-        if up_target(opts, target, out, err, false) == 0 {
+        if up_target(opts, target, out, err, false, false) == 0 {
             say(out, &format!("zygo: {name} is up"));
         } else {
             say(err, &format!("zygo: {name} skipped"));
@@ -1614,14 +2068,15 @@ fn clear_down_all(opts: &UpOpts, ws: &Workspace, mux: &dyn Multiplexer, err: &mu
 /// `zygo attach` (W§12, D21), on the process stdout and stderr.
 pub fn attach(paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path) -> i32 {
     let (stdout, stderr) = (std::io::stdout(), std::io::stderr());
-    attach_to(paths, tmux, tmux_env, name, cwd, &mut stdout.lock(), &mut stderr.lock())
+    attach_to(paths, tmux, tmux_env, name, cwd, OsStr::new("git"), &mut stdout.lock(), &mut stderr.lock())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn attach_to(
-    paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path, out: &mut dyn Write,
-    err: &mut dyn Write,
+    paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path, git: &OsStr,
+    out: &mut dyn Write, err: &mut dyn Write,
 ) -> i32 {
-    let t = match preflight(paths, tmux, name, cwd) {
+    let t = match preflight_saved(paths, tmux, name, cwd, git) {
         Ok(t) => t,
         Err(e) => {
             say(err, &e.message);

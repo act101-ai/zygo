@@ -18,7 +18,7 @@ pub(crate) fn run(a: &LaunchOpenCode) -> i32 {
         }
     };
     match launch_opts(a, Env::from_process(), cwd, Paths::from_env()) {
-        Ok(opts) => member::launch_hand(&|z| -> Box<dyn AgentAdapter> { Box::new(OpenCode::new(z)) }, opts, saved_launch(a)),
+        Ok(opts) => member::launch_hand(&|z| -> Box<dyn AgentAdapter> { Box::new(OpenCode::new(z)) }, opts, saved_launch(a), a.name.clone()),
         Err(m) => {
             print_err(&format!("{m}\n"));
             2
@@ -40,6 +40,7 @@ pub(crate) fn launch_opts(a: &LaunchOpenCode, env: Env, cwd: PathBuf, paths: Pat
     o.server = a.server.clone();
     o.compact = compact;
     o.yolo = a.yolo;
+    o.definition = a.definition.clone();
     Ok(o)
 }
 
@@ -67,6 +68,8 @@ mod tests {
             server: Some("https://example.invalid".into()),
             compact: compact.map(String::from),
             yolo: true,
+            name: None,
+            definition: None,
             rest: vec!["run".into(), "x".into()],
         }
     }

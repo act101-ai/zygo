@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "pc3 input is over the limit",
+    "type": "invalid_request_error",
+    "param": "input",
+    "code": "context_length_exceeded"
+  }
+}

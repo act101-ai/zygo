@@ -1,7 +1,8 @@
 //! N71: the results sweep (§10.1) runs at every `zygo` command except hooks and `zygo mcp`. Every run uses a scratch
 //! HOME and cache; no agent is started.
+mod common;
+
 use std::ffi::OsStr;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
@@ -37,7 +38,7 @@ fn stale(home: &Path, name: &str, hours: u64) -> PathBuf {
 }
 
 fn zygo_env(home: &Path, args: &[&str], stdin: &[u8], extra: &[(&str, &OsStr)]) -> std::process::Output {
-    std::fs::write(home.join("config.toml"), "").unwrap();
+    std::fs::write(home.join("config.toml"), common::NO_MARKETPLACE).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
     cmd.args(args)
         .env("HOME", home).env("LOCALAPPDATA", home).env("APPDATA", home)
@@ -47,7 +48,7 @@ fn zygo_env(home: &Path, args: &[&str], stdin: &[u8], extra: &[(&str, &OsStr)]) 
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     for (k, v) in extra { cmd.env(k, v); }
     let mut c = cmd.spawn().unwrap();
-    c.stdin.take().unwrap().write_all(stdin).unwrap();
+    common::write_stdin(c.stdin.take().unwrap(), stdin);
     c.wait_with_output().unwrap()
 }
 
@@ -77,6 +78,7 @@ fn zygo_claude_sweeps_before_it_looks_for_the_agent() {
     let o = zygo_env(h.path(), &["claude"], b"", &[("PATH", empty.as_os_str())]);
     assert_eq!(o.status.code(), Some(13), "{}", stderr_of(&o));
     assert!(!old.exists());
+    common::assert_no_marketplace_sync(h.path());
 }
 
 #[test] // only the lock on `pid` keeps a live session: token present, every entry 25 h old

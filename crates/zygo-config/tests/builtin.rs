@@ -226,8 +226,9 @@ fn minimum_agent_versions_match_premises() {
         let l = p.lines().find_map(|l| l.strip_prefix(name)).unwrap();
         Version::parse(l.trim()).unwrap()
     };
-    assert_eq!(min_agent_version(Agent::ClaudeCode), pin("Claude Code: "));
-    assert_eq!(min_agent_version(Agent::OpenCode), pin("OpenCode: "));
+    for a in Agent::ALL {
+        assert_eq!(min_agent_version(a), pin(&format!("{}: ", a.spec().name)), "{a}");
+    }
     assert!(min_agent_version(Agent::ClaudeCode) >= Version::new(2, 1, 323));
 }
 
@@ -239,7 +240,7 @@ fn builtin_layer_has_the_act101_marketplace() {
     assert_eq!((a.name.as_str(), a.source.as_str()), ("act101", "github:act101-ai/act101"));
     assert_eq!(a.default_on, ["act-lite"]);
     assert_eq!(a.git_ref, "v2.9.2");
-    assert_eq!(a.commit.as_deref(), Some("409b9dad5da85a9857e8d584d1c6a9fe4136c3e3"));
+    assert_eq!(a.commit.as_deref(), Some("9d82bd9714927ac713212c07b60d87fd73a7500f"));
 }
 
 #[test]

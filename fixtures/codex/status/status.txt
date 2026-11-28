@@ -1,0 +1,13 @@
+configured=model-with-reasoning
+status_row=gpt-mock default
+model_shown=yes
+dir_shown=no
+tui_exit=0
+control=default
+control_row=gpt-mock default · /repo · tracer-pc11-turn
+control_model_shown=yes
+control_dir_shown=yes
+control_tui_exit=0
+differs=yes
+warnings_total=2
+warnings_captured=2

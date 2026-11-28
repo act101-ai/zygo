@@ -149,7 +149,10 @@ impl Upstream {
     fn at(&self, prefix: &str) -> Got { self.got().into_iter().rev().find(|g| g.path.starts_with(prefix)).expect("a recorded request") }
 }
 
-/// Counts every key lookup; `keychain:k-same` resolves, every other name is absent.
+/// The value of `keychain:k-space`: a key configured with a trailing space (RS-14 round 2 G2).
+const SPACE_KEY: &str = "test-key-space-0123456789 ";
+
+/// Counts every key lookup; `keychain:k-same` and `keychain:k-space` resolve, every other name is absent.
 #[derive(Default)]
 struct CountKeys { calls: AtomicUsize }
 impl KeyResolver for CountKeys {
@@ -157,6 +160,7 @@ impl KeyResolver for CountKeys {
         self.calls.fetch_add(1, Ordering::SeqCst);
         match r {
             KeyRef::Keychain(n) if n == "k-same" => Some(Secret::new("test-key-same")),
+            KeyRef::Keychain(n) if n == "k-space" => Some(Secret::new(SPACE_KEY)),
             _ => None,
         }
     }
@@ -344,8 +348,8 @@ fn final_rows(t: &T, g: &SessionGrant, k: u64, statuses: &[u16]) -> (Vec<Request
 #[test] // §12.2 row; §12.4 allowlist; reading 6 host match
 fn unit_credential_type_row_and_allowlist() {
     assert_eq!(TYPES, &[CLAUDE_AI]);
-    assert_eq!((CLAUDE_AI.name, CLAUDE_AI.agent, CLAUDE_AI.upstream_host, CLAUDE_AI.dialect, CLAUDE_AI.header, CLAUDE_AI.scheme, CLAUDE_AI.prefix),
-               ("claude-ai", Agent::ClaudeCode, "api.anthropic.com", Dialect::Anthropic, "authorization", "Bearer", "sk-ant-oat"));
+    assert_eq!((CLAUDE_AI.name, Agent::ClaudeCode.spec().passthrough_credential, CLAUDE_AI.upstream_host, CLAUDE_AI.dialect, CLAUDE_AI.header, CLAUDE_AI.scheme, CLAUDE_AI.prefix),
+               ("claude-ai", Some(CLAUDE_AI.name), "api.anthropic.com", Dialect::Anthropic, "authorization", "Bearer", "sk-ant-oat"));
     assert_eq!((CLAUDE_AI.refused, CLAUDE_AI.forwarded), (&["x-api-key"][..], &["authorization", "anthropic-beta"][..]));
     assert_eq!((CredentialType::for_agent(Agent::ClaudeCode), CredentialType::for_agent(Agent::OpenCode)), (Some(&CLAUDE_AI), None));
     for (h, ok) in [(hm(&[("authorization", BEARER)]), true), (hm(&[("authorization", "bearer sk-ant-oat-x")]), true),
@@ -518,6 +522,20 @@ fn upstream_429_error_type_and_message_recorded() {
                (429, Some("auxiliary"), "rate_limit_error", "limit"));
     let q = &rows(&t, &g)[0];
     assert_eq!((w[0].session.as_str(), w[0].model.as_str(), w[0].ts), (g.session.as_str(), q.model.as_str(), q.ts));
+}
+
+#[test] // RS-14 (K§6.4.4): the client's own login is no provider key: an answer that echoes it, in the body or a
+         // header, 2xx or not, reaches the client unchanged
+fn upstream_echo_of_the_login_reaches_the_client_unchanged() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    for status in [200u16, 401] {
+        let e = json!({"type":"error","error":{"type":"authentication_error","message":format!("bad login {OAT}")}});
+        t.anth.answer(status, &[("x-echo", BEARER)], &e);
+        let r = post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main"));
+        assert_eq!((r.0, hv(&r.1, "x-echo")), (status, BEARER));
+        assert_eq!(r.2, e.to_string().into_bytes());
+    }
 }
 
 #[test] // FIX-10: a 2xx answer writes no upstream_errors row
@@ -961,6 +979,81 @@ fn e2e_normal_session_unchanged() {
     let u = t.up.at("/same/v1/messages");
     assert_eq!(hv(&u.headers, "x-api-key"), "test-key-same");
     assert!(u.headers.get("authorization").is_none());
+}
+
+#[test] // RS-14 round 2 G2, K§6.4.4: a key configured with a trailing space, echoed without it, is replaced in the body and its header dropped
+fn trimmed_key_echo_is_replaced() {
+    let t = setup(&model("test-space", &[prov("p-space", "{UP}/space", "test-space", "key = \"keychain:k-space\"\n")]));
+    let g = grant(&t, Agent::ClaudeCode, false);
+    let echo = SPACE_KEY.trim_ascii();
+    t.up.answer(200, &[("x-echo", &format!("Bearer {echo}"))],
+        &json!({"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":format!("echo {echo}.")}],"usage":{"input_tokens":1,"output_tokens":1}}));
+    let r = send(&t, "POST", M, &[("x-api-key", g.token.as_str()), ("x-zygo-session", g.session.as_str())], Some(mb("test-space")));
+    assert_eq!(r.0, 200, "{}", String::from_utf8_lossy(&r.2));
+    assert!(!has(&r.2, echo.as_bytes()), "{}", String::from_utf8_lossy(&r.2));
+    assert!(has(&r.2, b"echo [REDACTED]."), "{}", String::from_utf8_lossy(&r.2));
+    assert!(r.1.get("x-echo").is_none(), "{:?}", r.1);
+}
+
+#[test] // RS-14 round 3 H3, K§6.4.4: a translated stream (Responses client → anthropic upstream) with a key configured with a trailing space: an error event that echoes the trimmed key with a `\u` escape reaches the client without the key
+fn trimmed_key_escaped_in_translated_error_event_is_replaced() {
+    let facts = "[model.facts]\nreasoning = \"none\"\nmax_output_tokens = 1024\ncontext_window = 200000\n";
+    let m = format!("[[model]]\nid = \"test-space-r\"\n{facts}\n{}", prov("p-space-r", "{UP}/space-r", "test-space-r", "key = \"keychain:k-space\"\n"));
+    let t = setup(&m);
+    let g = grant(&t, Agent::OpenCode, false);
+    let echo = SPACE_KEY.trim_ascii();
+    let escaped = format!("\\u{:04x}{}", echo.as_bytes()[0], &echo[1..]);
+    let start = json!({"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[],"usage":{"input_tokens":1,"output_tokens":1}}});
+    let err = format!(r#"{{"type":"error","error":{{"type":"overloaded_error","message":"key {escaped}."}}}}"#);
+    let sse = format!("event: message_start\ndata: {start}\n\nevent: error\ndata: {err}\n\n");
+    assert!(!has(sse.as_bytes(), echo.as_bytes()));
+    t.up.answer_raw(200, "text/event-stream", &sse);
+    let body = json!({"model":"test-space-r","stream":true,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]});
+    let bearer = format!("Bearer {}", g.token);
+    let r = send(&t, "POST", "openai/v1/responses", &[("authorization", bearer.as_str()), ("x-zygo-session", g.session.as_str())], Some(body.to_string().into_bytes()));
+    assert_eq!(r.0, 200, "{}", String::from_utf8_lossy(&r.2));
+    assert!(has(&r.2, b"response.failed"), "{}", String::from_utf8_lossy(&r.2));
+    assert!(!has(&r.2, echo.as_bytes()), "{}", String::from_utf8_lossy(&r.2));
+    assert!(has(&r.2, b"key [REDACTED]."), "{}", String::from_utf8_lossy(&r.2));
+}
+
+#[test] // RS-14 round 2 G7: a client that leaves a keyed stream gets a usage row with the exact counts read
+fn keyed_stream_client_disconnect_exact_counts() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, false);
+    let ev = |v: Value| format!("event: {}\ndata: {v}\n\n", v["type"].as_str().unwrap());
+    let sse = [
+        ev(json!({"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[],
+            "usage":{"input_tokens":11,"cache_read_input_tokens":3,"cache_creation_input_tokens":2,"output_tokens":1}}})),
+        ev(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})),
+        ev(json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"echo test-key-same"}})),
+        ev(json!({"type":"message_delta","delta":{"stop_reason":null},"usage":{"output_tokens":22}})),
+    ]
+    .concat();
+    t.up.answer_hang(200, &sse);
+    *t.up.ctype.lock().unwrap() = "text/event-stream".into();
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let read = rt.block_on(async {
+        let c = reqwest::Client::builder().no_proxy().build().unwrap();
+        let mut r = c.post(t.h.url().join(M).unwrap())
+            .header("x-api-key", g.token.as_str()).header("x-zygo-session", g.session.as_str())
+            .header("content-type", "application/json").body(mb("code")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 200);
+        // Read until the usage line came through (no timer), then leave.
+        let mut read = Vec::new();
+        while !has(&read, b"message_delta") {
+            read.extend_from_slice(&r.chunk().await.unwrap().expect("the body ends only when the client leaves"));
+        }
+        drop(r);
+        read
+    });
+    drop(rt);
+    assert!(!has(&read, b"test-key-same"), "{}", String::from_utf8_lossy(&read));
+    // No total limit (no timing assertion): a missing row hangs the test; the Duration is only the poll period.
+    while !t.h.usage_written(1, Duration::from_secs(1)) {}
+    let r = &rows(&t, &g)[0];
+    assert_eq!((r.status, r.input_tokens, r.cache_read_tokens, r.cache_write_tokens, r.output_tokens), (200, 11, 3, 2, 22));
 }
 
 // ---- coverage ----
