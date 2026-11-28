@@ -146,7 +146,8 @@ EOF_PATHS
   esac
 
   if [ "$result" = failed ]; then
-    pat="\*\(Note [0-9]{4}-[0-9]{2}-[0-9]{2}, N2, $id: [^)]*\)\*"
+    # Node FX-32 (as SX-10 review F5 did for ST): the note text may hold ")"; it runs to the closing ")*" on the line.
+    pat="\*\(Note [0-9]{4}-[0-9]{2}-[0-9]{2}, N2, $id: .*\)\*"
     case "$id" in
       PW*) ;;
       # Node MS-25 Acceptance: "a failed SP row names the spec change or work node that answers it".

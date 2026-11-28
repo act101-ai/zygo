@@ -2,7 +2,8 @@
 # Tests of ver_ge (scripts/premises/ver.sh), the agent version rule of pinned_agents
 # (scripts/premises/live.sh) and the agent row rule of scripts/check-premises.sh (node PRB-2:
 # a pinned agent version is a minimum; act-lite stays exact), and its SP rows and `git:` header
-# (node MS-25), and its ST rows and failed-ST-row note rule (node SX-10).
+# (node MS-25), and its ST rows and failed-ST-row note rule (node SX-10), and its failed P and Q row
+# notes whose text holds ")" (node FX-32).
 # Usage: sh scripts/premises/ver_test.sh   ->  "ver tests: ok (<n>)", exit 0
 # No agent, no network; not run by CI. Stub claude and opencode programs print fixed text.
 set -u
@@ -296,6 +297,30 @@ ksplant "K28 failed ST4 with its note only in a T§12.2 code block" "$ST4F" \
 ksplant "K29 failed ST4 with a note dated 0000-99-99" "$ST4F" "$(stnote '*(Note 0000-99-99, P3-15, ST4: failed)*')" 1 "$NONOTE"
 ksplant "K30 failed ST4 with a T§12.1 note whose text holds )" "$ST4F" \
   "$(stnote '*(Note 2026-11-25, P3-15, ST4: failed (see SX-9))*')" 0 "check-premises: ok"
+
+# --- K (node FX-32): a failed P or Q row's dated N2 note may hold ")" (spec §19, §19a; P6a also §10.5) -------
+ZS=docs/specs/2026-11-18-zygo-design.md
+# kzplant <case> <premises.md sed, or ''> <zygo spec sed, or ''> <want rc> <fixed text>
+kzplant() { kplant_in "$ZS" "$@"; }
+P2Q3F='s/^\(| P2 | .*| 2026-11-18 | \)verified |/\1failed |/;s/^\(| Q3 | .*| 2026-11-18 | \)verified |/\1failed |/'
+# znotes <P2 note> <Q3 note>: a sed that puts the P2 note on a line of its own in §19 (after the line that
+# names PW1-PW17) and the Q3 note on a line of its own in §19a (after the Q1 note).
+znotes() { printf '/^The workspace premises PW1-PW17/a %s\n/^\\*(Note 2026-11-18, N2, Q1:/a %s\n' "$1" "$2"; }
+kzplant "K31 failed P2 and Q3 with §19 and §19a notes whose text holds )" "$P2Q3F" \
+  "$(znotes '*(Note 2026-11-28, N2, P2: failed (see FX-32))*' '*(Note 2026-11-28, N2, Q3: failed (see FX-32))*')" 0 \
+  "check-premises: ok"
+kzplant "K32 failed P6a with §19 and §10.5 notes whose text holds )" '' 's/(Note 2026-11-18, N2, P6a: /&(see P6) /' 0 \
+  "check-premises: ok"
+kzplant "K33 failed P6a with only its §10.5 note holding )" '' \
+  '/^- \*\*Source file\*\*/s/(Note 2026-11-18, N2, P6a: /&(see P6) /' 0 "check-premises: ok"
+kzplant "K34 failed P2 with a note that holds ) but has no closing )*" "$P2Q3F" \
+  "$(znotes '*(Note 2026-11-28, N2, P2: failed (see FX-32)' '*(Note 2026-11-28, N2, Q3: failed (see FX-32))*')" 1 \
+  "check-premises: P2: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, P2: …)*"
+kzplant "K35 failed Q3 with a note that holds ) but has no closing )*" "$P2Q3F" \
+  "$(znotes '*(Note 2026-11-28, N2, P2: failed (see FX-32))*' '*(Note 2026-11-28, N2, Q3: failed (see FX-32)')" 1 \
+  "check-premises: Q3: failed, but spec §19a has no dated note *(Note YYYY-MM-DD, N2, Q3: …)*"
+kzplant "K36 failed Q3 alone with a §19a note whose text holds )" "${P2Q3F#*;}" \
+  '/^\*(Note 2026-11-18, N2, Q1:/a *(Note 2026-11-28, N2, Q3: failed (see FX-32))*' 0 "check-premises: ok"
 
 # --- L (node PRB-1): a LIVE line names the agent version that pinned_agents found, never the pin ----
 # The fallback of each LIVE_VER site in the live scripts is LIVE_CC_VER or LIVE_OC_VER (both set by
