@@ -534,7 +534,7 @@
           "missing": [
             {
               "criterion": "WA-3.1",
-              "text": "A member busy in a turn reads mail delivered during the turn before the turn ends: its Stop hook blocks with the unread count, except while the phase is draining or stopping and when stop_hook_active is true (M§7.1).",
+              "text": "A member with mail on ([features] mail) that is busy in a turn reads mail delivered during the turn before the turn ends: its Stop hook blocks with the unread count only when the input's stop_hook_active is false and the phase is not draining or stopping (M§7.1).",
               "reason": "OpenCode has no Stop block: the plugin sends its idle event as stop and does not read the hook output (opencode-plugin.js:75-78), and the hook blocks only a Claude Code Stop (workspace.rs:347-358); mail that comes after the last model request of a turn waits for the next turn or start"
             }
           ],

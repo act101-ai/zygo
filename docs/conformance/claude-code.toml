@@ -433,7 +433,7 @@ evidence = ["premise:docs/premises.md#PW5", "fixture:fixtures/claude-code/worksp
 [[grade]]
 criterion = "WA-3.1"
 status = "met"
-evidence = ["test:crates/zygo-hooks/tests/workspace.rs::mail_stop_blocks_once_and_keeps_busy", "test:crates/zygo-hooks/tests/workspace.rs::mail_stop_does_not_block_while_draining", "premise:docs/premises.md#PM1"]
+evidence = ["test:crates/zygo-hooks/tests/workspace.rs::mail_stop_blocks_once_and_keeps_busy", "test:crates/zygo-hooks/tests/workspace.rs::mail_stop_does_not_block_while_draining", "test:crates/zygo-hooks/tests/workspace.rs::mail_stop_without_the_active_key_does_not_block", "premise:docs/premises.md#PM1"]
 
 [[grade]]
 criterion = "WA-3.2"
