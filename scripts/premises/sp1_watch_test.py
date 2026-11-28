@@ -2,12 +2,16 @@
 """Tests of sp1_watch.py (node MS-23): python3 -I scripts/premises/sp1_watch_test.py -> "sp1_watch tests: ok (<n>)".
 
 Pure parts only: argv classes, /proc stat and tcp parsing, environ names, git trace2 events, the judge and the
-side-traffic check on authored watcher events. No process is started, nothing is read from /proc, no network.
+side-traffic check on authored watcher events; the known_hosts add and remove and the note 3.4 reader (node FX-38)
+on files in a temporary folder (never the real ~/.ssh or HOME). No process is started, nothing is read from /proc,
+no network.
 """
 import datetime
 import json
 import os
+import shutil
 import sys
+import tempfile
 
 sys.dont_write_bytecode = True   # no __pycache__ in the checkout
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -259,6 +263,127 @@ ok, text = w.side_traffic(child_ev + [dict(npm, t=T - 5)], lines, clean, LO, HI)
 check("side: connection before the window: listed, passes", (ok, "opencode 2606:4700:0:0:0:0:6810:722:443 x1" in text), (True, True))
 check("side: known_marketplaces present: fail", w.side_traffic([], [], {"known_marketplaces": True, "git_dirs": 0}, LO, HI)[0], False)
 check("side: .git under config: fail", w.side_traffic([], [], {"known_marketplaces": False, "git_dirs": 1}, LO, HI)[0], False)
+
+# known_hosts add and remove (node FX-38): temporary folders only, never the real ~/.ssh or HOME
+RUNL = b"[ssh.github.com]:443 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+L1 = b"github.com ssh-ed25519 AAAAone"
+L2 = b"gitlab.com ssh-ed25519 AAAAtwo"
+TMP = tempfile.mkdtemp(prefix="sp1-kh-")
+
+
+def kh_case(name, target_bytes):
+    """A folder <TMP>/<name> with the target file and ssh/known_hosts, a relative link to it; the run's line file."""
+    d = os.path.join(TMP, name)
+    os.makedirs(os.path.join(d, "ssh"))
+    tgt = os.path.join(d, "target")
+    with open(tgt, "wb") as f:
+        f.write(target_bytes)
+    os.chmod(tgt, 0o644)
+    link = os.path.join(d, "ssh", "known_hosts")
+    os.symlink("../target", link)
+    lf = os.path.join(d, "kh443")
+    with open(lf, "wb") as f:
+        f.write(RUNL + b"\n")
+    return d, tgt, link, lf
+
+
+def rb(p):
+    with open(p, "rb") as f:
+        return f.read()
+
+
+try:
+    # the run's line between two other lines; before the add the target was L1, L2
+    d, tgt, link, lf = kh_case("between", L1 + b"\n" + RUNL + b"\n" + L2 + b"\n")
+    ino = os.stat(tgt).st_ino
+    res = w.kh_remove(link, lf)
+    check("kh_remove_through_a_symlinked_known_hosts",
+          (res, os.path.islink(link), os.readlink(link), rb(tgt), os.stat(tgt).st_ino, os.stat(tgt).st_mode & 0o7777),
+          ("removed", True, "../target", L1 + b"\n" + L2 + b"\n", ino, 0o644))
+
+    # add, then remove, through the link: the target is byte-equal to its content before the add
+    before = L1 + b"\n" + L2 + b"\n"
+    d, tgt, link, lf = kh_case("roundtrip", before)
+    save = os.path.join(d, "start")
+    a = w.kh_add(link, lf, save)
+    mid = rb(tgt)
+    r = w.kh_remove(link, lf)
+    check("kh_add_then_remove_through_a_link_is_byte_equal",
+          (a, mid, rb(save), r, os.path.islink(link), rb(tgt), w.kh_compare(save, link)),
+          ("added", before + RUNL + b"\n", before, "removed", True, before, (0, 0)))
+
+    # another process adds a line after the run's line: the remove keeps it, the comparison names it
+    d, tgt, link, lf = kh_case("other", L1 + b"\n")
+    save = os.path.join(d, "start")
+    a = w.kh_add(link, lf, save)
+    with open(link, "ab") as f:
+        f.write(L2 + b"\n")
+    r = w.kh_remove(link, lf)
+    check("kh_remove_keeps_other_lines_added_during_the_run",
+          (a, r, rb(tgt), os.path.islink(link), w.kh_compare(save, link)),
+          ("added", "removed", L1 + b"\n" + L2 + b"\n", True, (0, 1)))
+
+    # an append to a read-only target fails: not added; the remove then changes nothing
+    d, tgt, link, lf = kh_case("readonly", L1 + b"\n")
+    os.chmod(tgt, 0o444)
+    a = w.kh_add(link, lf, os.path.join(d, "start"))
+    r = w.kh_remove(link, lf)
+    check("kh_add_failed_append_is_not_recorded_as_added",
+          (a.startswith("failed: "), r == "removed", rb(tgt), os.path.islink(link)),
+          (True, False, L1 + b"\n", True))
+    os.chmod(tgt, 0o644)
+
+    # an append whose flush fails (a link to /dev/full: ENOSPC at the flush): not added
+    d = os.path.join(TMP, "full")
+    os.makedirs(d)
+    os.symlink("/dev/full", os.path.join(d, "known_hosts"))
+    with open(os.path.join(d, "kh443"), "wb") as f:
+        f.write(RUNL + b"\n")
+    a = w.kh_add(os.path.join(d, "known_hosts"), os.path.join(d, "kh443"), os.path.join(d, "start"))
+    check("kh_add_flush_failure_is_not_added", a.startswith("failed: "), True)
+
+    # the line is there before the run: present, the file is not changed
+    d, tgt, link, lf = kh_case("present", L1 + b"\n" + RUNL + b"\n")
+    check("kh_add_present_line", (w.kh_add(link, lf, os.path.join(d, "start")), rb(tgt)), ("present", L1 + b"\n" + RUNL + b"\n"))
+
+    # a file without a line end at its end is not changed
+    d, tgt, link, lf = kh_case("noeol", L1)
+    a = w.kh_add(link, lf, os.path.join(d, "start"))
+    check("kh_add_no_line_end", (a.startswith("failed: "), rb(tgt)), (True, L1))
+
+    # no known_hosts file: not created
+    d = os.path.join(TMP, "missing")
+    os.makedirs(d)
+    with open(os.path.join(d, "kh443"), "wb") as f:
+        f.write(RUNL + b"\n")
+    a = w.kh_add(os.path.join(d, "known_hosts"), os.path.join(d, "kh443"), os.path.join(d, "start"))
+    check("kh_add_missing_file", (a.startswith("failed: "), os.path.exists(os.path.join(d, "known_hosts"))), (True, False))
+
+    # note 3.4: only this run's workspaces are read
+    st = os.path.join(TMP, "state", "workspaces")
+    mine, other = "bc10a6a9" + "0" * 18, "e77e1d00" + "1" * 18
+    for wid, s in ((mine, {"last_ok": 1795846625, "public": {"verdict": "private"}, "pushed": {"ack/sp1ssh.json": "x"}}),
+                   (other, {"last_ok": 1700000000, "last_error": "OTHER-ERROR-TEXT",
+                            "public": {"verdict": "OTHER-VERDICT"}, "pushed": {"registry/OTHER-HOST.json": "y"}})):
+        os.makedirs(os.path.join(st, wid, "mail", "sync"))
+        with open(os.path.join(st, wid, "mail", "sync", "state.json"), "w") as f:
+            json.dump(s, f)
+    acc = w.acceptance_text(st, [mine])
+    note = w.acc_note(acc, [mine])
+    check("acceptance_note_reads_only_this_runs_workspaces",
+          (any(x in acc + note for x in ("OTHER-ERROR-TEXT", "OTHER-VERDICT", "OTHER-HOST", "1700000000", other)),
+           "not this run" in note,
+           note),
+          (False, False, "bc10a6a9… (this run): last_ok 1795846625, last_error absent, public private, pushed ack/sp1ssh.json"))
+    check("acceptance note: an id with no state.json", w.acc_note(w.acceptance_text(st, ["f" * 26]), ["f" * 26]),
+          "ffffffff… (this run): no state.json")
+finally:
+    for root, dirs, files in os.walk(TMP):
+        for x in dirs + files:
+            p = os.path.join(root, x)
+            if not os.path.islink(p):
+                os.chmod(p, 0o700)
+    shutil.rmtree(TMP)
 
 if bad == 0:
     print("sp1_watch tests: ok (%d)" % n)
